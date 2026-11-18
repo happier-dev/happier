@@ -1157,6 +1157,12 @@ contracts under `packages/protocol/src/machines/peer/mediation`.
 
 ## Database copy and reference components (unreleased 0.3)
 
+Workbench target descriptors optionally carry `endpointLabel`, projected by the connection
+owner from hostname and explicit port only. Credentials and URL options stay private.
+Descriptors without this fact remain unknown; Machine names come from the existing
+qualified host lookup, and a catalogue page is never treated as a total table count.
+Matching development database-protocol producers and strict readers reload together.
+
 Protected provider target-link content optionally carries `data` presentation:
 engine, version and a credential-free HTTP(S) provider-console URL and label.
 The existing mode-aware link artifact writer captures these provider-produced

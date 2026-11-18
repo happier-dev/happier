@@ -135,6 +135,8 @@ export type DatabaseOperationInputV1 = z.infer<typeof DatabaseOperationInputV1Sc
 
 export const DatabaseDescriptorV1Schema = z.strictObject({
     target: DatabaseTargetV1Schema, label: z.string(), engine: DatabaseEngineIdV1Schema,
+    /** Connection owner projects only the public host and explicit port, never credentials or URL options. */
+    endpointLabel: z.optional(z.string().check(z.minLength(1))),
     origin: z.strictObject({ label: z.string(), environment: z.optional(z.enum(['development', 'preview', 'production'])) }),
     capabilities: z.array(DatabaseCapabilityV1Schema),
     access: z.optional(DatabaseAccessSummaryV1Schema),

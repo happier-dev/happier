@@ -102,3 +102,11 @@ it.skipIf(!mysqlAddress)('selects the real MySQL adapter for an acquired manual 
         .toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'manual-mysql' }] }] }] });
     expect(JSON.stringify(connection)).not.toContain(mysqlAddress!);
 });
+
+it('publishes only the parsed network endpoint in cold connection descriptors', async () => {
+    const { describeDatabaseConnection } = await import('./connection.js');
+    expect(describeDatabaseConnection('postgresql://alice:private@[::1]:5432/billing?token=private'))
+        .toMatchObject({ engine: 'postgresql', endpointLabel: '[::1]:5432' });
+    expect(describeDatabaseConnection('mysql://alice:private@db/billing')).toMatchObject({ endpointLabel: 'db' });
+    expect(describeDatabaseConnection('file:///private/billing.sqlite')).not.toHaveProperty('endpointLabel');
+});

@@ -27,6 +27,7 @@ function selectDatabaseConnection(connectionString: string, databaseEngines?: Da
 
 type DatabaseConnectionDescriptor = Readonly<{
     engine: DatabaseEngineIdV1; capabilities: readonly DatabaseCapabilityV1[];
+    endpointLabel?: string;
 }>;
 
 /** Cold discovery ignores URLs whose schemes have no enabled database engine. */
@@ -34,7 +35,11 @@ export function findDatabaseConnectionDescriptor(connectionString: string, datab
     const selected = selectDatabaseConnection(connectionString, databaseEngines);
     if (!selected) return undefined;
     const { engine, capabilities } = selected;
-    return { engine, capabilities };
+    if (selected.contributed) return { engine, capabilities };
+    const connection = parseDatabaseConnectionUrl(connectionString);
+    const endpointLabel = connection.hostname
+        ? `${connection.hostname}${connection.port === undefined ? '' : `:${connection.port}`}` : undefined;
+    return { engine, capabilities, ...(endpointLabel ? { endpointLabel } : {}) };
 }
 
 /** No driver load or connection open is needed to select a contributed scheme. */

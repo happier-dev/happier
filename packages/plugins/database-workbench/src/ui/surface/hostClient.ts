@@ -98,6 +98,7 @@ export function createHostWorkbenchClient(
     return value;
   }
   return {
+    machineDisplayName: (request, options) => hostApi.readMachineDisplayName(request, options),
     async targets(input, signal) {
       const result = await hostApi.executeAction(
         DATABASE_TARGETS_LIST_ACTION_ID_V1,

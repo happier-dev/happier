@@ -37,7 +37,7 @@ export type WorkbenchAccess = Readonly<{
 export type WorkbenchTarget = Readonly<{
     targetKey: string; target: DatabaseTargetV1; name: string; engineLabel: string;
     origin: Readonly<{ variable: string; serviceName: string }> | Readonly<{ connectedBy: string }>;
-    endpointLabel: string | null; relationCount: string | null;
+    endpointLabel: string | null; relationCount: string | null; machineLabel: string | null;
 }>;
 export type DatabaseTargets = Readonly<{
     targets: readonly WorkbenchTarget[];
@@ -70,6 +70,8 @@ export type WorkbenchReview = readonly Readonly<{
 
 /** The host/producer owns admission and transport; the instance owns only local demand and projection. */
 export interface WorkbenchClient {
+    /** Qualified presentation from the mounted host's Machine owner; null is unknown, never an id. */
+    machineDisplayName?: import('@happier-dev/plugin-sdk/ui').PluginUiHostApi['readMachineDisplayName'];
     targets(input: DatabaseTargetsListInputV1, signal: AbortSignal): Promise<DatabaseTargetsListResultV1 & { looked?: DatabaseTargets['looked'] }>;
     operation(input: Exclude<DatabaseOperationInputV1, DatabaseStatementRunInputV1 | DatabaseStatementExplainInputV1 | DatabaseEditsApplyInputV1>, signal: AbortSignal): Promise<DatabaseOperationResultV1>;
     access(target: DatabaseTargetV1, signal: AbortSignal): Promise<WorkbenchAccess>;

@@ -3,6 +3,7 @@ import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   EmptyState,
   ErrorState,
+  Icon,
   Item,
   ItemGroup,
   LoadingState,
@@ -22,7 +23,6 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
-import { databaseEngineName } from './engines.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -54,7 +54,7 @@ function targetSubtitle(
           'connected by {name}',
           { name: target.origin.connectedBy },
         );
-  return [databaseEngineName(target.engineLabel), origin, target.endpointLabel]
+  return [target.engineLabel, origin, target.endpointLabel]
     .filter(Boolean)
     .join(' · ');
 }
@@ -144,6 +144,9 @@ function DatabaseRows(
         <Item
           key={target.targetKey}
           title={target.name}
+          // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
+          icon={<Icon name="database" tone="secondary" />}
+          showChevron
           subtitle={targetSubtitle(target, translate)}
           {...(target.relationCount
             ? {

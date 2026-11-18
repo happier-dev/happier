@@ -8,6 +8,7 @@ import { createConsoleState } from './consoleState.js';
 import { createConsole, type WorkbenchConsole } from './console.js';
 import { createStagedEdits } from './drafts.js';
 import { projectRelationPage } from './projections.js';
+import { databaseEngineName } from './surface/engines.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
 import { createApplyControl, selectRelationChanges } from './apply.js';
@@ -149,14 +150,17 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         targets(scope: DatabaseTargetsListInputV1['scope']) {
             return resource<DatabaseTargets>(key(['targets', scope]), async () => {
                 const result = await client.targets({ scope }, reads.signal);
-                return { targets: result.targets.map(descriptor => {
+                return { targets: await Promise.all(result.targets.map(async descriptor => {
                     const targetKey = key(descriptor.target);
                     targets.set(targetKey, descriptor);
                     const source = descriptor.target.kind === 'worktree' ? descriptor.target.source : undefined;
-                    return { targetKey, target: descriptor.target, name: descriptor.label, engineLabel: descriptor.engine,
+                    const machine = await client.machineDisplayName?.({ serverId: descriptor.placement.serverId,
+                        machineId: descriptor.placement.machineId }, { signal: reads.signal });
+                    return { targetKey, target: descriptor.target, name: descriptor.label, engineLabel: databaseEngineName(descriptor.engine),
                         origin: source?.kind === 'service' ? { variable: source.variable, serviceName: source.serviceId } : { connectedBy: descriptor.origin.label },
-                        endpointLabel: null, relationCount: null };
-                }), looked: result.looked ?? [], completeness: result.completeness };
+                        endpointLabel: descriptor.endpointLabel ?? null, relationCount: null,
+                        machineLabel: machine?.status === 'ready' ? machine.displayName : null };
+                })), looked: result.looked ?? [], completeness: result.completeness };
             });
         },
         /** Schema page only. Expanded groups demand their own relation page. */

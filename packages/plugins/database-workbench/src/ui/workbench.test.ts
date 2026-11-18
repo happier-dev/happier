@@ -163,3 +163,32 @@ it('keeps typed filters, full FK Back state and loaded-only export on the same c
         expect(rowReads).toBe(1);
     } finally { instance.close(); }
 });
+
+it('projects target facts from the connection and Machine owners without inventing a catalogue count', async () => {
+    const { describeDatabaseConnection } = await import('../connection.js');
+    let known = true;
+    const selected = { ...descriptor, ...describeDatabaseConnection('postgresql://alice:private@localhost:5432/billing?token=private') };
+    const unexpected = async (): Promise<never> => { throw new Error('Listing must not open a database'); };
+    const client: WorkbenchClient = {
+        targets: async () => ({ targets: [known ? selected : descriptor], completeness: { complete: true } }),
+        machineDisplayName: async () => known ? { status: 'ready', displayName: 'MacBook Pro' } : { status: 'unavailable' },
+        operation: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
+        navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: unexpected, saveExport: unexpected,
+    };
+    const scope = { kind: 'project' as const, accountId: 'account', installationId: 'installation', projectKey: 'project' };
+    const instance = createWorkbenchInstance({ client, scope,
+        location: { targetKey, mode: 'overview', sort: [], columns: [], page: { rows: 40, offset: 0 }, fkTrail: [] },
+        cataloguePageRows: 40, statementRanges: () => [], consoleStorage: () => ({ read: async () => null, write: async () => {} }) });
+    try {
+        const resource = instance.targets(scope);
+        await resource.demand();
+        expect(resource.get().data?.targets[0]).toMatchObject({ engineLabel: 'PostgreSQL', endpointLabel: 'localhost:5432',
+            machineLabel: 'MacBook Pro', relationCount: null });
+        expect(JSON.stringify(resource.get().data)).not.toContain('private');
+        known = false;
+        resource.invalidate();
+        await resource.demand();
+        expect(resource.get().data?.targets[0]).toMatchObject({ engineLabel: 'PostgreSQL', endpointLabel: null,
+            machineLabel: null, relationCount: null });
+    } finally { instance.close(); }
+});
