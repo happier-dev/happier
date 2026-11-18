@@ -25,6 +25,7 @@ import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
+import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
 import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -477,15 +478,26 @@ describe('shared Usage identity and dependent coverage', () => {
             sources: [usageSourceTitle('work'), usageSourceTitle('how_you_work')].join(', '),
         }));
     });
-    it('dates the page by its latest observed source without rewriting older source freshness', () => {
+    it('dates accounting pages by the accounting observation even when a view reads newer private facts or quota', () => {
         const sources: UsageQueryResultSlice['sources'] = [
             { source: 'accounting', status: 'available', asOfMs: 100 },
             { source: 'historic-source', status: 'partial', asOfMs: 50 },
             { source: 'quota', status: 'available', asOfMs: 200 },
         ];
-        expect(readUsagePageAsOfMs([{ sources }])).toBe(200);
-        expect(sources[1]?.asOfMs).toBe(50);
-        expect(readUsagePageAsOfMs([{ sources: [{ source: 'accounting', status: 'pending' }] }])).toBeNull();
+        expect(readUsagePageAsOfMs([{ sources }])).toBe(100);
+        expect(readUsagePageAsOfMs([{ sources }, { sources: [
+            { source: 'how_you_work', status: 'available', asOfMs: 300 },
+            { source: 'work', status: 'available', asOfMs: 400 },
+        ] }])).toBe(100);
+        expect(readUsagePageAsOfMs([{ sources }, { sources: [{ source: 'accounting', status: 'partial', asOfMs: 80 }] }])).toBe(80);
+        expect(readUsagePageAsOfMs([{ sources: [
+            { source: 'accounting', status: 'pending' },
+            { source: 'quota', status: 'available', asOfMs: 200 },
+        ] }])).toBeNull();
+        const today = new Date(2026, 10, 18, 16).getTime();
+        expect(isUsageObservationFromEarlierDay(new Date(2026, 10, 13, 6).getTime(), today)).toBe(true);
+        expect(isUsageObservationFromEarlierDay(new Date(2026, 10, 18, 6).getTime(), today)).toBe(false);
+        expect(isUsageObservationFromEarlierDay(new Date(2026, 10, 19, 6).getTime(), today)).toBe(false);
     });
     it('includes retained allowance observations while a refresh has only its conservative aggregate source date', () => {
         const readAt = (accountId: string, atMs: number, state: 'loaded_empty' | 'not_loaded' = 'loaded_empty') => {

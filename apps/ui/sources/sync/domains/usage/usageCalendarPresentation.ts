@@ -78,10 +78,16 @@ export function formatUsageWeeklyBucketLabel(startMs: number, range: UsageCalend
 }
 
 /** Observation clocks use the viewer's local calendar, not the queried accounting bucket offset. */
+function isUsageObservationOnCurrentDay(timestampMs: number, nowMs: number): boolean {
+    return new Date(timestampMs).toDateString() === new Date(nowMs).toDateString();
+}
+
+export function isUsageObservationFromEarlierDay(timestampMs: number, nowMs = Date.now()): boolean {
+    return timestampMs < nowMs && !isUsageObservationOnCurrentDay(timestampMs, nowMs);
+}
+
 export function formatUsageObservedAt(timestampMs: number, nowMs = Date.now(), locales?: Intl.LocalesArgument): string {
-    const observed = new Date(timestampMs);
-    const now = new Date(nowMs);
-    const today = observed.getFullYear() === now.getFullYear() && observed.getMonth() === now.getMonth() && observed.getDate() === now.getDate();
+    const today = isUsageObservationOnCurrentDay(timestampMs, nowMs);
     return formatWithCachedDateTimeFormatter(timestampMs, locales ?? getPreferredLanguage(), { hour: 'numeric', minute: '2-digit',
         ...(!today ? { year: 'numeric', month: 'short', day: 'numeric' } as const : {}) });
 }

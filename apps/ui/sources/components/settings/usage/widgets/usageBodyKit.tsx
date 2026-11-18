@@ -941,22 +941,29 @@ export function describeUsagePagePartialSources(slices: readonly Pick<UsageQuery
 }
 
 export function readUsagePageAsOfMs(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'quota'>[]): number | null {
-  // Older observations retain their own dates in source detail. The page names
-  // its latest witnessed update, never the oldest historical source in a total.
-  let latest: number | null = null;
+  // The page dates its displayed accounting scopes by their oldest witnessed accounting observation.
+  // Quota-only reads can still describe their own clock without lending it to accounting.
+  let hasAccounting = false;
+  let accountingAsOf: number | null = null;
+  let quotaAsOf: number | null = null;
   for (const slice of slices) {
     for (const source of slice.sources) {
-      if (source.asOfMs !== undefined) latest = latest === null ? source.asOfMs : Math.max(latest, source.asOfMs);
+      if (source.source === 'accounting' && source.status !== 'not_loaded') {
+        hasAccounting = true;
+        if (source.asOfMs !== undefined) accountingAsOf = accountingAsOf === null ? source.asOfMs : Math.min(accountingAsOf, source.asOfMs);
+      } else if ((source.source === 'quota' || source.source.startsWith('quota:')) && source.asOfMs !== undefined) {
+        quotaAsOf = quotaAsOf === null ? source.asOfMs : Math.max(quotaAsOf, source.asOfMs);
+      }
     }
     // A refresh can retain individual account facts before its qualified source
     // rows arrive. The aggregate quota date deliberately remains conservative.
     for (const read of slice.quota ?? []) {
       if (read.current && wasConnectedServiceQuotaObserved(read.current)) {
-        latest = latest === null ? read.current.fetchedAtMs : Math.max(latest, read.current.fetchedAtMs);
+        quotaAsOf = quotaAsOf === null ? read.current.fetchedAtMs : Math.max(quotaAsOf, read.current.fetchedAtMs);
       }
     }
   }
-  return latest;
+  return hasAccounting ? accountingAsOf : quotaAsOf;
 }
 
 export function describeUsagePagePendingSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'accounting'>[]): string | null {

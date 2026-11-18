@@ -39,7 +39,7 @@ import {
 import { useCorePageWidgetAreaLayoutBar } from '@/components/widgets/area/useCorePageWidgetAreaLayoutBar';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
+import { formatUsageObservedAt, isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
 import { t } from '@/text';
 import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
@@ -519,7 +519,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
 /** Select only facts rendered by page chrome; widget evidence stays with its body. */
 function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean) {
   const accounting = slices.find(slice => slice.accounting)?.accounting;
-  const latest = accounting ? readUsagePageAsOfMs(slices) : null;
+  const observedAt = accounting ? readUsagePageAsOfMs(slices) : null;
   return {
     // Until unfiltered inventory answers, keep the existing displayed-result choices.
     filterFallback: needsFilterFallback ? slices : null,
@@ -530,7 +530,8 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       newerServer: describeUsagePageNewerServerSources(slices),
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
-      observedAtMs: latest === null ? null : Math.floor(latest / 60_000) * 60_000,
+      observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,
+      olderReading: observedAt !== null && isUsageObservationFromEarlierDay(observedAt),
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
       coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
@@ -626,7 +627,7 @@ function UsagePageHeader(
   // never an ellipsis mid-word (USAGE-ACCEPT #16).
   const [noticeOpen, setNoticeOpen] = React.useState(false);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
-  const { observedAtMs, machines, agents } = props.facts;
+  const { observedAtMs, olderReading, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
   const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
   // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
@@ -653,7 +654,8 @@ function UsagePageHeader(
           {...(shortened && noticeOpen ? { glyph: 'clock' as const } : {})}
           testID={resolved.testID}
           asOf={props.facts.observedAtMs}
-          reason={shortened && !noticeOpen ? shortened : resolved.reason}
+          reason={[shortened && !noticeOpen ? shortened : resolved.reason,
+            olderReading ? t('usage.board.coach.staleEvidence') : null].filter(Boolean).join(' · ')}
           tone={resolved.tone}
           {...(resolved.busy ? { busy: true } : {})}
           {...(resolved.action ? { action: resolved.action } : shortened ? { action: {
@@ -663,14 +665,15 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     ) : null;
-  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen]);
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen, olderReading]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
-      ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]
+      ? [{ key: 'asOf', icon: 'clock' as const, text: [t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }),
+        olderReading ? t('usage.board.coach.staleEvidence') : null].filter(Boolean).join(' · ') }]
       : []),
     ...(machines ? [{ key: 'machines', text: t('usage.board.page.machinesCount', { count: machines }) }] : []),
     ...(agents ? [{ key: 'agents', text: t('usage.board.page.agentsCount', { count: agents }) }] : []),
-  ], [observedAtMs, machines, agents]);
+  ], [observedAtMs, olderReading, machines, agents]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (
