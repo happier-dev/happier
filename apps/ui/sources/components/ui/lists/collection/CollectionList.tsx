@@ -675,7 +675,10 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
     const [endHovered, setEndHovered] = React.useState(false);
     const [menuHeld, setMenuHeld] = React.useState(false);
     const engaged = overlaysMenu && (pressHovered || endHovered || menuHeld);
-    const engagement = React.useMemo(() => ({ engaged, hold: setMenuHeld }), [engaged]);
+    // In a web tree only the roving row's ⋯ is a tab stop: Tab goes row, its ⋯, then out of the tree; arrows reach
+    // the other rows (a ⋯ on every row kept Tab inside the tree, AUTO-LIVE 11-18).
+    const tabbable = props.treeItem ? (props.treeItem.webTabIndex ?? 0) >= 0 : true;
+    const engagement = React.useMemo(() => ({ engaged, tabbable, hold: setMenuHeld }), [engaged, tabbable]);
     const inFlowMenu = overlaysMenu ? null : props.rowMenu;
     const endParts = [trailing, disclosureTarget, props.rightElement, inFlowMenu].filter(part => part != null && part !== false);
     const rightElement = overlaysMenu ? (

@@ -16,7 +16,7 @@ export const ROW_MENU_BUTTON_PX = 24;
  * A column row that overlays its ⋯ (`CollectionNavigationRow` `rowMenu` on a pointer screen): whether the row is
  * engaged (pointer on it or its end, or the menu held), and how the menu holds it while it is open or focused.
  */
-export type CollectionRowMenuEngagement = Readonly<{ engaged: boolean; hold: (held: boolean) => void }>;
+export type CollectionRowMenuEngagement = Readonly<{ engaged: boolean; tabbable: boolean; hold: (held: boolean) => void }>;
 export const CollectionRowMenuEngagementContext = React.createContext<CollectionRowMenuEngagement | null>(null);
 /**
  * The free space around the button inside the shortest row (the button is centred in it). Stacked rows
@@ -90,6 +90,7 @@ export const CollectionRowMenu = React.memo(function CollectionRowMenu(
           accessibilityLabel={rowName ? t('common.moreActionsFor', { title: rowName }) : t('common.moreActions')}
           expanded={open}
           tooltipHidden={open}
+          {...(engagement && !engagement.tabbable ? { tabIndex: -1 as const } : null)}
           onPress={(event) => {
             stopPressEventPropagation(event);
             setOpen((current) => !current);
