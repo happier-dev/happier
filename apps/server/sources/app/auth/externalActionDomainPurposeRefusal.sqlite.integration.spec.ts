@@ -36,6 +36,7 @@ import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/pro
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -147,6 +148,28 @@ async function createFixture() {
   return { account, app, homeId, keys, machine, mint, verify };
 }
 
+it('admits setup autostart placement reads under the original prepare root without granting config writes', async () => {
+  const { app, homeId, machine, mint, verify } = await createFixture();
+  try {
+    // Captured READY-bed shape: setup settles, then its automatic Service child
+    // retains projects.prepare as the signed root for placement preparation.
+    const workspace = { serverId: homeId, machineId: machine.id, workspaceId: crypto.randomUUID(), rootPath: '/qa/autostart' };
+    const root = await mint('projects.prepare', { workspace, phase: 'setup' });
+    if (typeof root === 'string') throw new Error(`Prepare did not mint: ${root}`);
+    expect(await verify(root, root.binding.actionId, 'GET', '/v1/account/encryption', undefined))
+      .toEqual({ admitted: true, phase: undefined });
+    const address = { serverId: homeId, refId: workspace.workspaceId };
+    expect(await verify(root, root.binding.actionId, 'POST', `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`, { address }))
+      .toEqual({ admitted: true, phase: undefined });
+    expect((await verify(root, root.binding.actionId, 'POST', `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/mutate`, {
+      address, expectedRevision: 'absent', content: null,
+    })).admitted).toBe(false);
+    expect((await verify(root, root.binding.actionId, 'GET', '/v1/account/profile', undefined)).admitted).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
 async function createBoundManagedMachine({ account, homeId, machine, mint }: Awaited<ReturnType<typeof createFixture>>) {
   const root = await mint('machines.managed.acquire', { homeId });
   if (typeof root === 'string') throw new Error('Bound Setup acquisition did not mint');
@@ -160,7 +183,7 @@ async function createBoundManagedMachine({ account, homeId, machine, mint }: Awa
   return { managed, root };
 }
 
-it('names the refusing reviewed-purpose check without changing admission', async () => {
+it('retains reviewed-purpose refusals and admitted requester reads', async () => {
   const fixture = await createFixture();
   const { account, app, homeId, keys, machine, mint, verify } = fixture;
   const target = { homeId, managedId: 'retained-managed' };
@@ -194,7 +217,9 @@ it('names the refusing reviewed-purpose check without changing admission', async
     ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },
       'POST', '/v2/sessions', {}, { admitted: false, phase: 'verification_purpose' }],
     ['machines.list', { serverId: homeId }, 'GET', '/v1/machines', undefined, { admitted: true }],
-    ['machines.list', { serverId: homeId }, 'GET', '/v1/elsewhere', undefined, { admitted: false, phase: 'verification_purpose' }],
+    // Present-user read roots signed by the requester's own Machine use the
+    // canonical admitted-read rule; the eventual HTTP route retains access.
+    ['machines.list', { serverId: homeId }, 'GET', '/v1/elsewhere', undefined, { admitted: true }],
     ['machines.replacement.set', { ...machineTarget, replacementMachineId: 'replacement' }, 'POST', `${machinePath}/replacement`,
       { replacementMachineId: 'replacement' }, { admitted: true }],
     ['machines.replacement.set', { ...machineTarget, replacementMachineId: 'replacement' }, 'POST', '/v1/machines/another-machine/replacement',
@@ -220,11 +245,11 @@ it('names the refusing reviewed-purpose check without changing admission', async
     ['machines.access.prepareKeys', machineTarget, 'GET', machinePath, undefined, { admitted: true }],
     ['machines.access.prepareKeys', machineTarget, 'GET', `${machinePath}/content-key/transition`, undefined, { admitted: true }],
     ['machines.access.grants.list', machineTarget, 'GET', `${machinePath}/content-key/transition`, undefined,
-      { admitted: false, phase: 'machine_access_transport' }],
+      { admitted: true }],
     ['machines.access.prepareKeys', machineTarget, 'POST', `${machinePath}/data-key-envelopes`, {},
       { admitted: false, phase: 'machine_access_key_preparation' }],
     ['machines.access.grants.list', machineTarget, 'GET', `${machinePath}/data-key-envelopes`, undefined,
-      { admitted: false, phase: 'machine_access_key_preparation' }],
+      { admitted: true }],
     ['machines.access.prepareKeys', machineTarget, 'GET', '/v1/elsewhere', undefined,
       { admitted: false, phase: 'machine_access_transport' }],
     ['workflow.trigger.run_now', runNow, 'POST', '/v3/automations/automation_123/run-now', undefined, { admitted: true }],
@@ -235,7 +260,7 @@ it('names the refusing reviewed-purpose check without changing admission', async
     ['workflow.trigger.run_now', runNow, 'POST', '/v3/automations/automation_456/run-now', undefined,
       { admitted: false, phase: 'automation_run_now_target' }],
     ['discussion.candidates.list', {}, 'GET', '/v1/elsewhere', undefined,
-      { admitted: false, phase: 'discussion_candidate_purpose' }],
+      { admitted: true }],
   ];
   try {
     for (const [actionId, input, method, path, body, expected] of rows) {

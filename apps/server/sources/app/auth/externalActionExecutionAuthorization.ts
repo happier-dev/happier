@@ -2553,7 +2553,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     }
     // Preparation, including an unsigned proposal replayed inside its admitted
     // decision, spends the unchanged signed root. Reads confer no mutation authority.
-    const readsExecutionConfig = actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
+    const readsExecutionConfig = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)
         || actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.restartManaged'
         || actionId === 'approval.request.create' || actionId === 'approval.request.decide';
     if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID || readsExecutionConfig) {
