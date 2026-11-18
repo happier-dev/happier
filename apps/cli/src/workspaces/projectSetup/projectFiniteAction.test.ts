@@ -1606,6 +1606,21 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-trust/mutate'))).toEqual([]);
     });
 
+    it('accepts a held This time or Skip decision from the verified present-user ingress', async () => {
+        const h = await harness({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const held = ProjectCommandActionOutputV1Schema.parse(await h.invoke('projects.prepare', { workspace: h.address, phase: 'setup' }));
+        await expect.poll(() => h.operationRuntime.store.get(scope, held.operation.operationId)?.setupReview?.code)
+            .toBe('project_setup_consent_required');
+        const reviewed = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, held.operation.operationId)!.setupReview);
+        const decide = createFiniteActionWithCapturedRequester(h.runtime, { ...h.context, callerAuthority: 'present_user' });
+        const result = await decide({ actionId: 'projects.prepare', input: {
+            workspace: h.address, phase: 'setup', heldOperationId: held.operation.operationId,
+            expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope: 'thisTime',
+        }, context: { ...h.context, authority: 'account_automation', surface: 'agent', actionRequestId: 'present-user-decision' } });
+        expect(result, JSON.stringify(result)).toMatchObject({ operation: { state: 'accepted' } });
+    });
+
     it('satisfies the held same-digest setup after This time completion without a second native setup and leaves a different digest held', async () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
