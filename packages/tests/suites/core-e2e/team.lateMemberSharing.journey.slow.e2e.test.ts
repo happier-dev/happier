@@ -8,6 +8,7 @@ import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_ST
 import { connectUiActionClient, installBundledPluginUiDeclarationsForTests } from '@happier-tests/ui-action-client';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedAcceptedV1Schema, ManagedGetOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -168,11 +169,6 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   for (const account of [departed, later, outsider]) {
     await selectCollectionPlugin(account, await home.enrollDaemon(account));
   }
-  const control = await home.assertKnownGoodSessionControl(owner, machine);
-  const controlPrompt = 'Confirm the sharing journey reaches its enrolled Agent.';
-  await act(owner, 'session.message.send', { sessionId: control.sessionId, message: controlPrompt });
-  await waitForFakeClaudeUserText(agent.logPath, text => text.includes(controlPrompt), { invocationId: 'late-member-sharing' });
-  console.info('LATE-MEMBER CONTROL PASS: CLI Action → PostgreSQL Home → real enrolled daemon Session');
   await home.claimHomeOwner(owner);
   const teamId = TeamSummaryV1Schema.parse(await act(owner, 'teams.create', { v: 1, name: 'Previously shared resources',
     initialOwnerAccountId: accountId(owner), requestKey: randomUUID() })).id;
@@ -301,12 +297,13 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
     contentEncryptionMode: 'e2ee', ...originalPreset,
   }));
   if (saved.kind !== 'saved') throw new Error('Preset producer did not save');
-  const acquisition = await owner.executeReviewed('machines.managed.acquire', {
+  const acquisition = await owner.executeAsPerson('machines.managed.acquire', {
     selection: { kind: 'preset', homeId: home.serverId, id: presetId, revision: saved.preset.revision },
-  });
-  expect(acquisition.ok, 'native preset acquisition review').toBe(true);
+  }, { managedPresetOrigin: saved.preset });
+  expect(acquisition, JSON.stringify(acquisition)).toMatchObject({ ok: true, result: { managedId: expect.any(String) } });
   if (!acquisition.ok) throw new Error(`Native preset acquisition refused: ${acquisition.errorCode}`);
-  const managedId = ManagedAcceptedV1Schema.parse(acquisition.result).managedId;
+  const acquired = ManagedAcceptedV1Schema.parse(acquisition.result);
+  const managedId = acquired.managedId;
   ownedManagedIds.add(managedId);
   console.info('LATE-MEMBER PRODUCER: managed preset acquisition admitted');
   const managedAddress = { homeId: home.serverId, managedId };
@@ -319,9 +316,18 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
       accountId: accountId(account), accountKey: account.auth.accountMachineKey,
     }) };
   };
-  await waitFor(async () => (await readSnapshot(owner)).machine.allocation === 'bound', {
-    timeoutMs: 180_000, context: 'real devcontainer acquires retained preset snapshot',
-  });
+  if (acquired.operation) {
+    const observation = await owner.executeAsPerson('action.operations.get', {
+      serverId: home.serverId, machineId: controller.machineId, managed: managedAddress,
+      operationId: acquired.operation.operationId, waitForTerminal: true,
+    });
+    expect(observation, JSON.stringify(observation)).toMatchObject({ ok: true });
+    if (!observation.ok) throw new Error(`Retained preset acquisition observation refused: ${observation.errorCode}`);
+    const observed = ActionOperationGetV1ResponseSchema.parse(observation.result);
+    expect(observed.kind).toBe('found');
+    if (observed.kind !== 'found') throw new Error('Accepted retained preset acquisition operation is unavailable');
+  }
+  expect((await readSnapshot(owner)).machine.allocation).toBe('bound');
   const retainedContent = (await readSnapshot(owner)).content;
   if (!retainedContent) throw new Error('Owner cannot decrypt the bound preset snapshot');
   expect(retainedContent).toMatchObject({ v: presetContent.v, name: presetContent.name,
@@ -330,6 +336,11 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   // The native provider resolves the launch display name during acquisition.
   // Every recipient must open the same retained definition the owner observes.
   const retainedDefinition = { v: retainedContent.v, name: retainedContent.name, launch: retainedContent.launch };
+  const control = await home.assertKnownGoodSessionControl(owner, machine);
+  const controlPrompt = 'Confirm the sharing journey reaches its enrolled Agent.';
+  await act(owner, 'session.message.send', { sessionId: control.sessionId, message: controlPrompt });
+  await waitForFakeClaudeUserText(agent.logPath, text => text.includes(controlPrompt), { invocationId: 'late-member-sharing' });
+  console.info('LATE-MEMBER CONTROL PASS: CLI Action → PostgreSQL Home → real enrolled daemon Session');
   // Same-share controls prove the keys and public consumers before any refusal.
   expect(await readCredential(departed)).toBe('Previously shared credential');
   expect(await readSecret(departed)).toEqual(secretContent);
@@ -368,8 +379,9 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   expect(PluginCollectionSharingActionOutputSchemasV1[collectionActions.get].parse(
     await act(later, collectionActions.get, collectionAddress)).value).toEqual(document);
   const retained = await readSnapshot(owner);
-  expect(await owner.executeReviewed('machines.managed.power.set', { ...managedAddress, intent: 'stop', when: 'now',
-    expectedRevision: retained.machine.intentRevision })).toMatchObject({ ok: true });
+  expect(await owner.executeAsPerson('machines.managed.power.set', { ...managedAddress, intent: 'stop', when: 'now',
+    expectedRevision: retained.machine.intentRevision }))
+    .toMatchObject({ ok: true });
   // Native control reports are the production snapshot-envelope repair trigger.
   await waitFor(async () => {
     expect((await readSnapshot(later)).content).toMatchObject(retainedDefinition);
