@@ -225,7 +225,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     return kCreateJobFailed;
   }
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  // Kill-on-close ends the daemon tree with this launcher. Breakaway lets a Session holder
+  // leave it for its own kill-on-close job (process-custody `held-launch`), so held Agents end
+  // with their holder, as on Linux and macOS, never with the daemon or this launcher.
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
   if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
     Log(log.value, "configure_job", "failed", GetLastError());
     return kConfigureJobFailed;

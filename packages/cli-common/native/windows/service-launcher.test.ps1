@@ -330,6 +330,40 @@ Start-Sleep -Seconds 30
   $ownedProcessIds.Remove($forcedChildPid) | Out-Null
   $ownedProcessIds.Remove($unrelated.Id) | Out-Null
 
+  # A Session holder outlives its runner and the daemon: it breaks away from the launcher's job
+  # into its own kill-on-close job (process-custody `held-launch`). The launcher's job must
+  # allow that breakaway while still ending the daemon tree when the launcher ends.
+  $limitsPath = Join-Path $fixtureRoot 'job limits.txt'
+  $limitsWrapper = Join-Path $fixtureRoot 'job limits wrapper.ps1'
+  $limitsLog = Join-Path $fixtureRoot 'job limits.launcher.log'
+  Set-Content -LiteralPath $limitsWrapper -Encoding UTF8 -Value @"
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class HappierLauncherJobLimits {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct Basic { public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags;
+    public UIntPtr MinimumWorkingSetSize; public UIntPtr MaximumWorkingSetSize; public uint ActiveProcessLimit;
+    public UIntPtr Affinity; public uint PriorityClass; public uint SchedulingClass; }
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out Basic info, int length, IntPtr returned);
+  public static uint Flags() {
+    Basic info;
+    if (!QueryInformationJobObject(IntPtr.Zero, 2, out info, Marshal.SizeOf(typeof(Basic)), IntPtr.Zero)) return 0;
+    return info.LimitFlags;
+  }
+}
+'@
+Set-Content -LiteralPath '$($limitsPath.Replace("'", "''"))' -Value ([HappierLauncherJobLimits]::Flags())
+exit 0
+"@
+  $limitsRun = Start-Launcher $limitsWrapper $limitsLog
+  $limitsRun.WaitForExit(30000) | Out-Null
+  Assert-True ($limitsRun.HasExited -and $limitsRun.ExitCode -eq 0) "Job-limits probe launcher failed with exit $($limitsRun.ExitCode)"
+  $limitFlags = [uint32](Get-Content -LiteralPath $limitsPath -Raw).Trim()
+  Assert-True (($limitFlags -band 0x2000) -ne 0) "Launcher job lost kill-on-close (flags $limitFlags)"
+  Assert-True (($limitFlags -band 0x800) -ne 0) "Launcher job forbids breakaway (flags $limitFlags)"
+
   Write-Output 'Windows service launcher synthetic lifecycle tests passed.'
 } finally {
   foreach ($ownedProcessId in @($ownedProcessIds)) {
