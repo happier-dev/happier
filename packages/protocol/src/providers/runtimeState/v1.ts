@@ -1,4 +1,4 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
@@ -96,10 +96,10 @@ const observedStateShape = {
   observedAt: RuntimeTimestampSchema,
   staleAt: z.optional(RuntimeTimestampSchema),
 } as const;
-const failedStateShape = {
+const failedStateShape = lazyDefinition(() => ({
   ...observedStateShape,
   failureCause: z.optional(ActionFailureCauseV1Schema),
-} as const;
+} as const));
 
 export const ProviderEndpointRuntimeStateV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
