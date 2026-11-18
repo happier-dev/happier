@@ -3,8 +3,10 @@ import type { PluginContributionRef, JsonValue } from '../plugins/registration/c
 import type {
     FeaturesResponse,
     PluginConnectedAccountAuthenticationModeV2,
+    PluginDiagnosticDataV1,
 } from '@happier-dev/protocol';
 
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeConnectedAccountConfigurationV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import type { ConnectedAccountCredentialSecretReader, ConnectedAccountCredentialOperationSecretReader } from './credentialMaterial.js';
 
@@ -143,6 +145,16 @@ type ConfigurationReplacement = Readonly<{
     secretValues?: Readonly<Record<string, unknown>>;
 }>;
 
+type ConfigurationPersistenceRefusal = Readonly<{
+    status: 'conflict' | 'unavailable';
+    code: string;
+    diagnostic?: PluginDiagnosticDataV1;
+}>;
+
+type ConfigurationPersistenceReplaceResult =
+    | Readonly<{ status: 'committed'; record: ConnectedAccountConfigurationRecord }>
+    | (Omit<ConfigurationPersistenceRefusal, 'code'> & Readonly<{ code?: string }>);
+
 type AttemptConfigurationTarget = Extract<ConnectedAccountConfigurationTarget, { kind: 'attempt' }>;
 
 export type ConnectedAccountAttemptConfigurationStore = Readonly<{
@@ -153,7 +165,7 @@ export type ConnectedAccountAttemptConfigurationStore = Readonly<{
         replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
     }>): Promise<
         | Readonly<{ status: 'committed'; record: ConnectedAccountConfigurationRecord }>
-        | Readonly<{ status: 'conflict' | 'unavailable'; code: string }>
+        | ConfigurationPersistenceRefusal
     >;
     destroy(attemptId: string): Promise<void>;
 }>;
@@ -179,25 +191,35 @@ export function createConnectedAccountAttemptConfigurationStore(params: Readonly
             expectedRevision: string | null;
             replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
         }>) {
+            const code = 'connected_account_configuration_persistence_unavailable';
+            const unavailable = (failureCause?: ReturnType<typeof projectActionFailureCauseV1>): ConfigurationPersistenceRefusal =>
+                Object.freeze({ status: 'unavailable', code,
+                    ...(failureCause ? { diagnostic: { code, severity: 'error' as const, details: { failureCause: { ...failureCause } } } } : {}) });
+            const address = params.transactions?.address;
+            let phase = 'connected_account.configuration.attempt_address_read';
             try {
-                const address = params.transactions?.address;
                 if (address) {
                     const transaction = await address.read(input.target.attemptId);
-                    if (!transaction || !address.readConfiguration || !address.replaceConfiguration) {
-                        return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
-                    }
+                    // Do not distinguish absent and inaccessible addressed transactions.
+                    if (!transaction) return unavailable();
+                    if (!address.readConfiguration || !address.replaceConfiguration) return unavailable({
+                        phase: 'connected_account.configuration.attempt_replace', errorClass: 'Error',
+                        errorCode: 'configuration_port_unavailable', httpStatus: null,
+                    });
+                    phase = 'connected_account.configuration.attempt_configuration_read';
                     if (!sameService(transaction.scope.service, input.target.service)
                         || transaction.scope.modeId !== input.target.modeId
                         || ((await address.readConfiguration(transaction))?.revision ?? null) !== input.expectedRevision) {
                         return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
                     }
+                    phase = 'connected_account.configuration.attempt_replace';
                     const record = parseConnectedAccountConfigurationRecordContent(input.replacement, params.createRevision(), 'attempt');
                     await address.replaceConfiguration({ attemptId: input.target.attemptId, record: transaction, configuration: record });
                     return Object.freeze({ status: 'committed' as const, record });
                 }
-                return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
-            } catch {
-                return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
+                return unavailable({ phase, errorClass: 'Error', errorCode: 'address_port_unavailable', httpStatus: null });
+            } catch (error) {
+                return unavailable(projectActionFailureCauseV1(error, phase));
             }
         },
         async destroy(_attemptId: string): Promise<void> {
@@ -482,10 +504,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
             snapshot: PluginConnectedAccountRuntimeConfiguration;
             configuration: ConfigurationControlView;
         }>
-        | Readonly<{
-            status: 'conflict' | 'unavailable';
-            code: string;
-        }>
+        | ConfigurationPersistenceRefusal
     >;
     admit(input: Readonly<{
         intent: 'connect' | 'reconnect';
@@ -509,10 +528,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
             status: 'committed';
             snapshot: PluginConnectedAccountRuntimeConfiguration;
         }>
-        | Readonly<{
-            status: 'conflict' | 'unavailable';
-            code: string;
-        }>
+        | ConfigurationPersistenceRefusal
     >;
     isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration): Promise<boolean>;
     /** Host-owned revocation signal for this exact configuration snapshot. */
@@ -532,10 +548,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
         occurrenceId: string;
         sourceCustody: ConnectedAccountSourceCustodyV1;
-    }>): Promise<
-        | Readonly<{ status: 'committed'; record: ConnectedAccountConfigurationRecord }>
-        | Readonly<{ status: 'conflict' | 'unavailable'; code?: string }>
-    >;
+    }>): Promise<ConfigurationPersistenceReplaceResult>;
     replaceForControl?(input: Readonly<{
         target: ConnectedAccountConfigurationTarget;
         expectedRevision: string | null;
@@ -544,10 +557,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretValues: Readonly<Record<string, string>>;
         occurrenceId: string;
         sourceCustody: ConnectedAccountSourceCustodyV1;
-    }>): Promise<
-        | Readonly<{ status: 'committed'; record: ConnectedAccountConfigurationRecord }>
-        | Readonly<{ status: 'conflict' | 'unavailable'; code?: string }>
-    >;
+    }>): Promise<ConfigurationPersistenceReplaceResult>;
     destroyAttempt(attemptId: string): MaybePromise<void>;
     secrets: ConnectedAccountCredentialSecretReader & Readonly<{
         has(secretId: string): Promise<boolean>;
@@ -940,7 +950,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 },
             );
             await assertRuntimeCurrent(service, runtimeIdentity);
-            const result = await (async () => {
+            const result = await (async (): Promise<ConfigurationPersistenceReplaceResult> => {
                 if (target.kind !== 'service') {
                     return params.replace({
                         target,
@@ -987,6 +997,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                             ? 'connected_account_configuration_changed'
                             : 'connected_account_configuration_unavailable'
                     ),
+                    ...(result.status === 'unavailable' && result.diagnostic ? { diagnostic: result.diagnostic } : {}),
                 });
             }
             revokeCurrentnessFence(target);
@@ -1197,6 +1208,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                             ? 'connected_account_configuration_changed'
                             : 'connected_account_configuration_unavailable'
                     ),
+                    ...(result.status === 'unavailable' && result.diagnostic ? { diagnostic: result.diagnostic } : {}),
                 });
             }
             revokeCurrentnessFence(target);

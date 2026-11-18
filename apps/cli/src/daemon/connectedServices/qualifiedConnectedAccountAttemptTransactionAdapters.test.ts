@@ -277,9 +277,12 @@ describe('qualified Connected Account attempt transaction adapters', () => {
       createRevision: () => 'configuration-3', transactions: createHost(),
     });
     expect(await independent.read(target)).toEqual({ revision: 'configuration-2', ...replacement });
-    vi.spyOn(api, 'replace').mockRejectedValueOnce(new Error('database unavailable'));
+    vi.spyOn(api, 'replace').mockRejectedValueOnce(Object.assign(new Error('private draft fixture'), { code: 'ECONNRESET' }));
     expect(await independent.replace({ target, expectedRevision: 'configuration-2',
-      replacement: { ...replacement, values: { tenant: 'not-saved' } } })).toMatchObject({ status: 'unavailable' });
+      replacement: { ...replacement, values: { tenant: 'not-saved' } } })).toMatchObject({
+      status: 'unavailable', code: 'connected_account_configuration_persistence_unavailable',
+      diagnostic: { details: { failureCause: { phase: 'connected_account.configuration.attempt_replace', errorCode: 'ECONNRESET' } } },
+    });
     expect(await independent.read(target)).toEqual({ revision: 'configuration-2', ...replacement });
     expect(await configurations.replace({ target, expectedRevision: recovered!.revision, replacement })).toEqual({
       status: 'conflict', code: 'connected_account_configuration_changed',
