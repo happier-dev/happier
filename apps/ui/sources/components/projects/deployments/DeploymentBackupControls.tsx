@@ -91,10 +91,9 @@ export function useDeploymentBackupOperations(props: Readonly<{
   const { actions, configuration } = props;
   const change = useDeploymentChangePress(props.review, props.onSettled);
   const [result, setResult] = React.useState<string | null>(null);
-  const target = props.detail ? deploymentDataTargetOperands(props.detail) : null;
+  // One admitted backup input (its deployment and config revision) for every operation: run, verify and prune.
+  const input = actions && props.detail && configuration ? backupTargetInput(props.detail, configuration) : null;
   const deploymentId = props.detail?.runtimeTargetLink?.activeDeploymentId ?? null;
-  const input = actions && target && deploymentId && configuration
-    ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
   const run = actions && input ? () => change.press(async () => {
     setResult(null);
     const capture = await actions.runBackup(input);
@@ -113,15 +112,15 @@ export function useDeploymentBackupOperations(props: Readonly<{
     return { ok: true };
   }) : null;
   const retention = configuration?.retention.kind === 'keep' ? configuration.retention : null;
-  const prune = actions && target && retention ? () => change.press(async () => {
+  const prune = actions && input && retention ? () => change.press(async () => {
     setResult(null);
-    const pruned = await actions.pruneBackups({ ...target, retention });
+    const pruned = await actions.pruneBackups({ ...input, retention });
     setResult(pruned.forgottenSnapshotIds.length > 0
       ? t('projects.deployments.settingsSections.pruned', { count: pruned.forgottenSnapshotIds.length })
       : t('projects.deployments.settingsSections.prunedNothing'));
     return { ok: true };
   }) : null;
-  return { change, result, run, verify, prune, machineId: target?.machineId ?? null, deployed: deploymentId !== null };
+  return { change, result, run, verify, prune, machineId: input?.machineId ?? null, deployed: deploymentId !== null };
 }
 
 export type DeploymentBackupOperations = ReturnType<typeof useDeploymentBackupOperations>;
@@ -235,7 +234,7 @@ export { useDeploymentBackupFacts, deploymentBackupAttention, type DeploymentBac
 type ActionsFactory = ReturnType<typeof createDeploymentActions>;
 
 /** The exact capture target the finite backup Actions address, or null before anything runs on a Machine. */
-function useBackupTarget(detail: DeploymentEnvironmentReadDetailV1, configuration: DeploymentBackupConfigurationV1) {
+function backupTargetInput(detail: DeploymentEnvironmentReadDetailV1, configuration: DeploymentBackupConfigurationV1) {
   const target = deploymentDataTargetOperands(detail);
   const deploymentId = detail.runtimeTargetLink?.activeDeploymentId;
   return target && deploymentId ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
@@ -265,7 +264,7 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   testID: string;
 }>) {
   const { theme } = useUnistyles();
-  const target = useBackupTarget(props.detail, props.configuration);
+  const target = backupTargetInput(props.detail, props.configuration);
   const [tested, setTested] = React.useState<Readonly<{ ok: boolean; line: string }> | null>(null);
   const [running, setRunning] = React.useState(false);
   const projection = usePluginUiProjectionCurrentness({ serverId: props.detail.environment.serverId,
@@ -336,20 +335,11 @@ export function DeploymentBackupPruneRow(props: Readonly<{
   machineName: (machineId: string) => string;
   testID: string;
 }>) {
-  const { configuration, actions } = props;
-  const target = useBackupTarget(props.detail, configuration);
-  const prune = useDeploymentChangePress(props.review, noop);
-  const [pruned, setPruned] = React.useState<string | null>(null);
-  const removeOld = () => prune.press(async () => {
-    if (!actions || !target || configuration.retention.kind !== 'keep') return { ok: true };
-    setPruned(null);
-    const result = await actions.pruneBackups({ ...target, retention: configuration.retention });
-    setPruned(result.forgottenSnapshotIds.length > 0
-      ? t('projects.deployments.settingsSections.pruned', { count: result.forgottenSnapshotIds.length })
-      : t('projects.deployments.settingsSections.prunedNothing'));
-    return { ok: true };
-  });
-  if (!actions || !target || configuration.retention.kind !== 'keep') return null;
+  // The same operations owner the Database page's ⋯ uses, so prune submits one complete admitted input.
+  const operations = useDeploymentBackupOperations({ detail: props.detail, configuration: props.configuration,
+    actions: props.actions, review: props.review, onSettled: noop });
+  const { change: prune, result: pruned, prune: removeOld, machineId } = operations;
+  if (!removeOld || !machineId) return null;
   return (
     <>
       <Item
@@ -363,7 +353,7 @@ export function DeploymentBackupPruneRow(props: Readonly<{
         }
       />
       {prune.outcome && props.review ? <DeployOutcomeBanner controller={prune.banner}
-        machine={props.machineName(target.machineId)} copy="setting" /> : null}
+        machine={props.machineName(machineId)} copy="setting" /> : null}
     </>
   );
 }

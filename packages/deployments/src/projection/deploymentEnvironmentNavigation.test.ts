@@ -7,10 +7,10 @@ import {
 } from './deploymentEnvironmentNavigation.js';
 
 describe('Environment navigation destinations', () => {
-    it('owns exactly seven tabs and six Settings sections, in page order', () => {
+    it('owns exactly seven tabs and the eight Settings sections, in page order', () => {
         expect(DEPLOYMENT_ENVIRONMENT_TABS_V1).toEqual(['overview', 'history', 'variables', 'domains', 'telemetry', 'permissions', 'settings']);
         expect(DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)
-            .toEqual(['servers-build', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews']);
+            .toEqual(['servers-build', 'sharing', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews', 'automations']);
     });
 
     it('keeps Variables, Domains and Permissions as tabs and lands an unknown or removed section on Settings', () => {

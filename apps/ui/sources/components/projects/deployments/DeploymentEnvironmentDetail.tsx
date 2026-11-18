@@ -5,6 +5,8 @@ import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } 
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
+import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
+import { ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   DeploymentEnvironmentDestinationV1,
@@ -353,6 +355,9 @@ export const DeploymentEnvironmentDetail = React.memo(
     const { tab, section: settingsSection } =
       props.destination ?? ownDestination;
     const onNavigate = props.onNavigate ?? setOwnDestination;
+    // Automations sit under the Settings panel; a link to them (Project defaults) scrolls there (D16, F8).
+    const automationsReveal = useSettingReveal(tab === ENVIRONMENT_AUTOMATIONS_DESTINATION.tab
+      && settingsSection === ENVIRONMENT_AUTOMATIONS_DESTINATION.section ? settingsSection : null, REVEAL_DELAY_MS);
     const navigationScope = React.useMemo(() => ({ serverId: props.serverId, accountId: props.accountId }), [props.serverId, props.accountId]);
     const buildDeploymentId = history.result.items[0]?.id ?? activeId;
     const logsOffered = detail !== null && (buildDeploymentId !== null || (machineIds.length === 1 && runtime?.source.kind === 'host'));
@@ -1281,6 +1286,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
             {/* Automations and Deploy from CI configure the Environment, so they live with its Settings (lab envsettings). */}
               {triggerSubject ? (
+                <View ref={automationsReveal.hostRef} collapsable={false}>
                 <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
                   deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
@@ -1295,6 +1301,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     project: { machineId: detail.environment.controllerMachineId, directory: '~' },
                     protection: detail.environment.protection,
                   } : undefined} />
+                </View>
               ) : null}
               {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
               {ciInput ? (

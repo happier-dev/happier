@@ -20,7 +20,7 @@ import { SETTING_ANCHOR_QUERY_PARAM, type SettingRef, type SettingsSectionRef } 
 /** How long the row stays marked after search opens it (two gentle pulses). */
 const REVEAL_PULSE_MS = 650;
 /** Lets the page lay out before the reveal scrolls to it. */
-const REVEAL_DELAY_MS = 250;
+export const REVEAL_DELAY_MS = 250;
 
 /**
  * Requested anchors whose row is mounted right now. A `SettingSection` holding the requested setting
@@ -84,7 +84,11 @@ function revealWebBlock(host: unknown): 'center' | 'start' {
  * under reduced motion it marks it briefly without animation.
  */
 /** Scrolls the host into view and pulses it once while `active`: settings search anchors and in-page section links. */
-export function useSettingReveal(active: boolean, delayMs: number) {
+export function useSettingReveal(
+    /** On, or the id of the target to reveal: a new id reveals again while the page stays mounted. */
+    active: boolean | string | null,
+    delayMs: number,
+) {
     const focused = useIsFocused();
     const reducedMotion = useReducedMotionPreference();
     const scrollSourceRef = usePopoverScrollSourceRef();

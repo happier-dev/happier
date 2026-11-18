@@ -30,7 +30,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useSettingReveal } from '@/components/settings/shell/SettingRow';
+import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
@@ -137,7 +137,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     const editing = props.detail.environment.capabilities.role === 'manager' ? props.editing ?? null : null;
     const change = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
     // One reveal for whichever section the address names; only that section's host takes its ref.
-    const sectionReveal = useSettingReveal(props.focusSection != null, 0);
+    // Keyed by the section, so a second link to another section while Settings is open reveals that one too.
+    const sectionReveal = useSettingReveal(props.focusSection ?? null, REVEAL_DELAY_MS);
     const revealHost = (id: DeploymentEnvironmentSettingsSectionV1) => props.focusSection === id ? sectionReveal.hostRef : undefined;
     const { detail, machineName } = props;
     const previewEnrollmentEnabled = detail.environment.purpose !== 'preview' && detail.content.previewTemplate?.enabled === true;
@@ -329,7 +330,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         </View>
 
-        <DeploymentPrivateServiceExports detail={detail} editing={editing} />
+        <View ref={revealHost('sharing')} collapsable={false}>
+          <DeploymentPrivateServiceExports detail={detail} editing={editing} />
+        </View>
 
         <View ref={revealHost('controller')} collapsable={false}>
         <ItemGroup

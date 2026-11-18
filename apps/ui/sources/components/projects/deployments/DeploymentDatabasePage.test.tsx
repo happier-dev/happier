@@ -372,6 +372,7 @@ async function renderDatabase(
     'deployments.backups.history',
     'deployments.backups.run',
     'deployments.backups.inventory',
+    'deployments.backups.prune',
   ] as const) {
     await answerExternalActionAccountForHome(homes, serverId, {
       machineId,
@@ -383,7 +384,9 @@ async function renderDatabase(
           actionId,
           input: DeploymentBackupActionInputSchemasV1[actionId].parse(operand),
         });
-        return actionId === 'deployments.backups.inventory'
+        return actionId === 'deployments.backups.prune'
+            ? { kind: 'pruned', environmentId, configRevision: 1, forgottenSnapshotIds: ['f'.repeat(64)] }
+            : actionId === 'deployments.backups.inventory'
             ? { kind: 'inventory', environmentId, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
               { snapshot: manifest(environmentId, snapshotId, '2026-11-01T12:00:00Z').snapshot,
                 source: { sourceId: 'database', kind: 'dump' },
@@ -1454,6 +1457,13 @@ describe('Environment → Data → Database page (P9)', () => {
       const more = view.screen.findAllByType(DropdownMenu).filter(node => (node.props.items as Array<{ id: string }>)
         .some(item => item.id === 'prune'));
       expect(more).toHaveLength(1);
+      // Pressing it submits a request the prune Action admits (the executor parses it with the protocol schema): the
+      // same deployment and config revision Back up now sends (WAVE-REVIEW F2).
+      await act(async () => { (more[0]!.props.onSelect as (id: string) => void)('prune'); });
+      await vi.waitFor(() => expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.prune')).toHaveLength(1));
+      expect(view.effects.find(effect => effect.actionId === 'deployments.backups.prune')?.input).toMatchObject({
+        deploymentId: expect.any(String), configRevision: 1, retention: { kind: 'keep', last: 3 } });
+      await vi.waitFor(() => expect(view.screen.getTextContent()).toContain('Removed 1 old backup'));
       // Restore offers this database's named volume next to its dump.
       expect(await view.settle(`${page}.restore`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.restore`);

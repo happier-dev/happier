@@ -1,13 +1,14 @@
 /**
- * P40-R54 Environment navigation: the one owner of the seven Environment tabs and the six Settings
- * section ids. Variables, Domains and Permissions are tabs, never Settings sections; consumers
+ * P40-R54 Environment navigation: the one owner of the seven Environment tabs and the Settings section
+ * ids another page links to (Private sharing from a database's Share, Automations from Project defaults).
+ * Variables, Domains and Permissions are tabs, never Settings sections; consumers
  * (P41/P42/P45/P60 links, the host page and its URL) import these instead of copying ids.
  */
 export const DEPLOYMENT_ENVIRONMENT_TABS_V1 = ['overview', 'history', 'variables', 'domains', 'telemetry', 'permissions', 'settings'] as const;
 export type DeploymentEnvironmentTabV1 = (typeof DEPLOYMENT_ENVIRONMENT_TABS_V1)[number];
 
 export const DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1 = [
-    'servers-build', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews',
+    'servers-build', 'sharing', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews', 'automations',
 ] as const;
 export type DeploymentEnvironmentSettingsSectionV1 = (typeof DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)[number];
 

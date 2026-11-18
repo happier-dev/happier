@@ -437,7 +437,7 @@ export function DeploymentDatabasePage(
   // Sharing is authored in Settings › Private sharing; its owner decides whether this viewer can do it here.
   const sharing = privateServiceExportAuthoring(detail, detail.environment.capabilities.role === 'manager');
   const openSharing = sharing.kind === 'ready'
-    ? () => props.onNavigate({ tab: 'settings', section: 'servers-build' }) : null;
+    ? () => props.onNavigate({ tab: 'settings', section: 'sharing' }) : null;
   const sharingBlocked = sharing.kind === 'unavailable' ? privateServiceExportUnavailableReason(sharing.reason) : null;
   const openConnect = database.kind === 'selfHosted' && setBindings && controller ? () => showDeploymentSheet({
     component: DeploymentConnectSheet,

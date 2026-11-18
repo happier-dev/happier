@@ -17,15 +17,21 @@ describe('the shared Action approval presentation owner', () => {
         const deployArgs = { serverId: 'home', environmentId: 'env-orders', targetLinkId: 'link-web-01' };
         const agentText = deploy.inputHints?.description ?? deploy.description ?? '';
         expect(agentText.length).toBeGreaterThan(0);
-        expect(presentActionApproval({ actionId: 'deployments.deploy', actionArgs: deployArgs, kind: 'confirmation',
-            preview: { summary: agentText } }).summary).toBeNull();
+        // Both receivers (WAVE-REVIEW F6): a host that passes the text as its authored summary, and a stored request
+        // whose preview carries it, read through the same reader the approval surfaces use.
+        const authored = presentActionApproval({ actionId: 'deployments.deploy', actionArgs: deployArgs, kind: 'confirmation',
+            authoredSummary: agentText });
+        expect(authored.summary).not.toBe(agentText);
+        const carried = readApprovalPreviewSummary({ summary: agentText }, { actionId: 'deployments.deploy', actionArgs: deployArgs });
+        expect(carried).not.toBe(agentText);
+        expect(carried).toBe(authored.summary);
 
         const configure = getActionSpec('deployments.backups.configure');
         const configureArgs = { serverId: 'home', environmentId: 'env-orders', expectedRevision: 1, intent: 'initializeAndSave',
             configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: 'local' },
                 occurrenceId: 'local', config: { path: '/srv/backups/orders-api' } } };
         const shown = presentActionApproval({ actionId: 'deployments.backups.configure', actionArgs: configureArgs, kind: 'confirmation',
-            preview: { summary: configure.inputHints?.description ?? configure.description } });
+            authoredSummary: configure.inputHints?.description ?? configure.description });
         expect(shown.summary).not.toBe(configure.inputHints?.description);
         expect(shown.summary).not.toBe(configure.description);
         // The person reads one consequence sentence; raw configuration stays under Technical details.

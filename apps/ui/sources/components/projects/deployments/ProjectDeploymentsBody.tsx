@@ -53,7 +53,7 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
-import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT } from './deploymentNavigation';
+import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { useProjectSource } from '../sources/useProjectSources';
@@ -303,13 +303,17 @@ const ProjectDeploymentsPage = React.memo(
       setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: null });
       navigateEnvironment(next);
     }, [navigateEnvironment, setSelection]);
-    // Project settings lead to each Environment's own Triggers (on its Overview); no Project-wide trigger read.
+    // Project settings lead to each Environment's own Automations (its Settings tab); no Project-wide trigger read.
     const triggerEnvironments = React.useMemo(() => (collection.snapshot.value?.items ?? [])
       .map((item) => ({ id: item.environment.id, title: item.title,
         previewTemplateConfigured: item.previewTemplateConfigured })), [collection.snapshot.value]);
-    const openEnvironmentTriggers = React.useCallback((id: string) => {
+    const selectEnvironment = React.useCallback((id: string) => {
       setSelection({ environmentId: id, deploymentId: null });
     }, [setSelection]);
+    const openEnvironmentTriggers = React.useCallback((id: string) => {
+      setSelection({ environmentId: id, deploymentId: null });
+      navigateEnvironment(ENVIRONMENT_AUTOMATIONS_DESTINATION);
+    }, [navigateEnvironment, setSelection]);
     const openEnvironmentPreviews = React.useCallback((id: string) => {
       setSelection({ environmentId: id, deploymentId: null });
       navigateEnvironment({ tab: 'settings', section: 'previews' });
@@ -642,7 +646,7 @@ const ProjectDeploymentsPage = React.memo(
                 onSettings={openDefaults}
                 paging={{ hasPrevious: collection.hasPreviousPage, hasNext: collection.hasNextPage,
                   previous: collection.previousPage, next: collection.nextPage }}
-                onSelect={openEnvironmentTriggers}
+                onSelect={selectEnvironment}
               />
             </>
           )}
