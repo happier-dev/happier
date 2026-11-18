@@ -11,7 +11,7 @@ import { toAutomationDefinitionListItemApiDto } from './automationApiProjection'
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationListItem } from './automationTypes';
-import { readArtifactHeadersForCallerInTx, resolveArtifactAudienceInTx,
+import { resolveArtifactAccessBatchInTx, resolveArtifactAudienceInTx,
     type ArtifactHeaderForCaller } from '@/app/artifacts/artifactAccessService';
 import { automationActionIndexSelect, readAutomationActionWorkflowRevisionsInTx, projectAutomationActionIndexRows,
     type AutomationActionIndexDefinition } from './automationActionIndex';
@@ -26,17 +26,12 @@ export type WorkflowSummaryArtifactAccess = Pick<ArtifactHeaderForCaller, 'owner
 export async function readWorkflowSummaryArtifactAccessInTx(tx: Tx, input: Readonly<{
     accountId: string; workflowDefinitionIds: readonly string[];
 }>): Promise<ReadonlyMap<string, WorkflowSummaryArtifactAccess>> {
-    if (input.workflowDefinitionIds.length === 0) return new Map();
-    const headers = await readArtifactHeadersForCallerInTx(tx, {
+    const access = await resolveArtifactAccessBatchInTx(tx, {
         actorAccountId: input.accountId, artifactIds: input.workflowDefinitionIds,
     });
-    const access = new Map<string, WorkflowSummaryArtifactAccess>();
-    for (const item of headers) {
-        if (item.read.ok) access.set(item.artifactId, {
-            ownerAccountId: item.read.artifact.ownerAccountId, access: item.read.artifact.access,
-        });
-    }
-    return access;
+    return new Map([...access].map(([artifactId, decision]) => [artifactId, {
+        ownerAccountId: decision.ownerAccountId, access: decision.level,
+    }]));
 }
 
 /** Candidate-scoped Artifact admission includes direct-person grants without a Team selection. */

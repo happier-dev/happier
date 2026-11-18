@@ -18,7 +18,7 @@ import { openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactPr
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from "@/app/session/encryption/sessionDataKeyRecipientProjection";
 import { resolveResourceGrantAccessFromFacts, resolveResourceGrantAudienceFromFacts, resolveResourceGrantTeamIdsFromFacts,
-    resolveResourceGrantAccessInTx, resolveResourceGrantAudienceInTx,
+    resolveResourceGrantAccessInTx, resolveResourceGrantAccessBatchInTx, resolveResourceGrantAudienceInTx,
     type ResourceGrantAccess, projectResourceRecipientEnvelope as projectRecipientEnvelope,
     projectResourceRecipientCensus, validateResourceRecipientEnvelopeCommit, applyResourceRecipientKeyEnvelopesInTx,
     mayManageResourceGrants, isResourceAccessLevelIncrease, validateResourceGrantPrincipalInTx, validateResourceGrantPrincipalsInTx,
@@ -101,6 +101,19 @@ export async function resolveArtifactAccessInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactId: string;
 }>): Promise<ArtifactAccess | null> {
     return resolveResourceGrantAccessInTx(tx, artifactGrantStorageAdapter, { resourceId: input.artifactId, actorAccountId: input.actorAccountId });
+}
+
+/** Structural consumers need the grant decision without requiring a recipient key envelope. */
+export async function resolveArtifactAccessBatchInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; artifactIds: readonly string[];
+}>): Promise<ReadonlyMap<string, ArtifactAccess>> {
+    const decisions = await resolveResourceGrantAccessBatchInTx(tx, artifactGrantStorageAdapter, {
+        resourceIds: input.artifactIds, actorAccountId: input.actorAccountId,
+    });
+    return new Map(input.artifactIds.map((artifactId, index) => {
+        const decision = decisions[index];
+        return decision ? [artifactId, decision] as const : null;
+    }).filter((entry): entry is readonly [string, ArtifactAccess] => entry !== null));
 }
 
 /** Candidate discovery is a database predicate per access arm; only the access owner admits rows.
