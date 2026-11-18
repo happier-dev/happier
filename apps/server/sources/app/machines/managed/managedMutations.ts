@@ -21,7 +21,7 @@ import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContex
 import { createSavedSecretResourceInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
 import type { Prisma } from "@prisma/client";
 import * as privacyKit from "privacy-kit";
-import { inReadSnapshot, type Tx } from "@/storage/inTx";
+import { afterTx, inReadSnapshot, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/db";
 import { jsonPathEquals } from "@/storage/jsonPathFilter";
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -46,6 +46,7 @@ import {
     hasPossibleManagedNativeResource, hasBoundManagedLifecycle,
 } from "./managedRows";
 import { readStoredOpaquePresetLaunch } from './managedMachineProjection';
+import { markManagedMachineOfflineInTx, publishInactiveMachines } from '@/app/presence/timeout';
 
 /** Admission/control returns the exact retained opaque envelope, never a latest Preset read. */
 function projectManagedAdmissionCarrier(row: StoredManagedMachine, machine = projectManagedMachine(row)) {
@@ -502,6 +503,11 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
         const admitted = readManagedAdmissionState(row.admittedInput);
         const pending = readManagedIntentReportAuthority(row, canonical);
         if (!pending) throw new ManagedMachineError("request_conflict");
+        const publishManagedStopPresence = async (observation: Readonly<{ power?: unknown }> | undefined): Promise<void> => {
+            if (pending.intent !== 'stop' || observation?.power !== 'stopped' || !row.enrolledMachineId) return;
+            const offline = await markManagedMachineOfflineInTx(tx, row.enrolledMachineId);
+            if (offline) afterTx(tx, () => { void publishInactiveMachines([offline]); });
+        };
         if (isStoredOpaquePresetMachine(row)) {
             if (!('presetContent' in canonical)) throw new ManagedMachineError('invalid_request');
             if (canonical.result.kind === 'pending' && pending.intent !== 'delete') throw new ManagedMachineError('resource_mismatch');
@@ -563,6 +569,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
                 const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
                 await invalidateManagedMachineInTx(tx, row);
+                await publishManagedStopPresence(currentObservation);
                 return { machine: await projectManagedMachineInTx(tx, current) };
             }
             const currentControl = admitted.currentAdmission?.kind === 'control' ? admitted.currentAdmission.request : undefined;
@@ -595,6 +602,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
+            await publishManagedStopPresence(currentObservation);
             return { machine: await projectManagedMachineInTx(tx, current) };
         }
         if ('presetContent' in canonical) throw new ManagedMachineError('invalid_request');
@@ -619,6 +627,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
+            await publishManagedStopPresence(currentObservation);
             return { machine: await projectManagedMachineInTx(tx, current) };
         };
         if (!admitted.submittedEffect) {

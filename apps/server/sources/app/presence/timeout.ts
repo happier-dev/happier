@@ -62,8 +62,9 @@ type TimedOutPresenceCandidate = {
     kind?: MachineKind;
 };
 type MachinePresenceObservation = Readonly<{ accountId: string; machineId: string; lastActiveAt: Date }>;
+export type MachineOfflinePublication = TimedOutPresenceCandidate & { recipientAccountIds: string[] };
 
-async function publishInactiveMachines(machines: Array<TimedOutPresenceCandidate & { recipientAccountIds: string[] }>): Promise<void> {
+export async function publishInactiveMachines(machines: readonly MachineOfflinePublication[]): Promise<void> {
     for (const machine of machines) {
         // Runner presence belongs to its Session, not broad Machine inventory.
         if (!isPersistentMachine(machine)) continue;
@@ -83,6 +84,13 @@ async function persistMachineOfflineInTx(tx: Tx, machine: MachinePresenceRow) {
     await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
         occurredAt: Date.now(), recipientAccountIds });
     return { ...machine, recipientAccountIds };
+}
+
+/** A confirmed managed Stop withdraws server presence through the same owner as socket expiry. */
+export async function markManagedMachineOfflineInTx(tx: Tx, machineId: string): Promise<MachineOfflinePublication | null> {
+    const current = await lockMachinePresenceInTx(tx, machineId);
+    if (!current || !current.active || current.revokedAt || current.replacedByMachineId) return null;
+    return persistMachineOfflineInTx(tx, current);
 }
 
 /** Any known publisher withdrawal uses the same offline transition as deadline expiry. */
