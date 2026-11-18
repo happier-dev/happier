@@ -267,8 +267,11 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                             const opened = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode,
                                 material: options.material, page }, options);
                             if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
+                            // This projection interns one admitted frame. The drain
+                            // owns continuation and requires the terminal cursor.
                             const admitted = openPage(packProviderAccountUsagePageProjectionV1(
-                                buildProviderAccountUsagePageProjectionV1({ recordId, range, history: opened }))).history;
+                                buildProviderAccountUsagePageProjectionV1({ recordId, range,
+                                    history: { entries: opened.entries, nextCursor: null } }))).history;
                             for (const entry of admitted.entries) entries.push(entry);
                         });
                     }

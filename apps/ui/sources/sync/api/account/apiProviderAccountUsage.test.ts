@@ -102,10 +102,13 @@ describe('apiProviderAccountUsage', () => {
         expect(summaryReads).toBe(1);
     });
     it.each([
-        { accountMode: 'plain' as const, missingCoverage: false },
-        { accountMode: 'e2ee' as const, missingCoverage: false },
-        { accountMode: 'plain' as const, missingCoverage: true },
-    ])('reads $accountMode daily history without downloading the selected Year observations (gap=$missingCoverage)', async ({ accountMode, missingCoverage }) => {
+        { accountMode: 'plain' as const, missingCoverage: false, wire: 'stream' },
+        { accountMode: 'e2ee' as const, missingCoverage: false, wire: 'stream' },
+        { accountMode: 'plain' as const, missingCoverage: true, wire: 'stream' },
+        { accountMode: 'plain' as const, missingCoverage: false, wire: 'json' },
+        { accountMode: 'e2ee' as const, missingCoverage: false, wire: 'native' },
+        { accountMode: 'plain' as const, missingCoverage: false, wire: 'truncated' },
+    ])('reads $accountMode daily history over $wire without downloading the selected Year observations (gap=$missingCoverage)', async ({ accountMode, missingCoverage, wire }) => {
         // Orchestrator 2026-11-16: Year/All day facts use sealed days plus exact current-window operands.
         const { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryReadV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
         const { projectProviderAccountUsageQuotaReadV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
@@ -163,15 +166,26 @@ describe('apiProviderAccountUsage', () => {
                 if ('projection' in query) { projectionReads++; return Response.json({ projection: null, complete: false }); }
                 if (!('history' in query)) throw new Error('Unexpected exact witness demand');
                 ranges.push(query.history.range);
-                const page = { entries: entries.filter(entry => entry.observedAtMs >= query.history.range.startAtMs && entry.observedAtMs < query.history.range.endAtMs)
-                    .map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs, record: record(entry.snapshot) })), nextCursor: null };
-                return new Response(JSON.stringify(page) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+                const selected = entries.filter(entry => entry.observedAtMs >= query.history.range.startAtMs && entry.observedAtMs < query.history.range.endAtMs
+                    && entry.observedAtMs > (query.history.cursor?.observedAtMs ?? -1));
+                const pages = selected.map((entry, index) => ({ entries: [{ id: entry.id, observedAtMs: entry.observedAtMs, record: record(entry.snapshot) }],
+                    nextCursor: index < selected.length - 1 || wire === 'truncated' ? { id: entry.id, observedAtMs: entry.observedAtMs } : null }));
+                if (wire === 'json') return Response.json(pages[0] ?? { entries: [], nextCursor: null });
+                const response = new Response(pages.map(page => JSON.stringify(page)).join('\n') + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+                if (wire === 'native') Object.defineProperty(response, 'body', { value: undefined });
+                return response;
             }
             throw new Error(`Unexpected daily read path: ${parsed.pathname}`);
         });
         const options = { accountMode, material, request, historyView: 'daily' as const, includePendingWork: false, nowMs: current.observedAtMs,
             readAllHistory: { onProgress: () => {} } };
-        const result = await (await loadApi({ daySummaries: true })).getProviderAccountUsageQuota(credentials, input, options);
+        const reading = (await loadApi({ daySummaries: true })).getProviderAccountUsageQuota(credentials, input, options);
+        if (wire === 'truncated') {
+            await expect(reading).rejects.toMatchObject({ code: 'provider_account_usage_content_unavailable' });
+            expect(writes).toBe(0);
+            return;
+        }
+        const result = await reading;
         const exact = projectProviderAccountUsageQuotaReadV1({ input, current, history: { entries, nextCursor: null }, daySummaries: summaries, nowMs: current.observedAtMs });
         expect.soft(projectionReads, 'daily demand must not acquire an exact Year projection').toBe(0);
         expect.soft(writes, 'daily demand must not bootstrap an exact Year projection').toBe(0);
