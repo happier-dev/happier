@@ -53,7 +53,11 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
       id: 'team', name: 'Team', description: null, logo: null, archivedAt: null, recovery: null,
       policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
         defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null,
-        managedDefaults: { team: { approvalProfileId: 'team-profile' }, groups: {} }, homeDefaults: null },
+        managedDefaults: { team: { approvalProfileId: 'team-profile', modelByAgentTargetKey: {
+          'agent:happier.agent.codex/codex': { v: 2, updatedAt: 7, ref: { source: 'team_resource',
+            teamId: 'team', resourceId: 'model-resource', expectedResourceRevision: 3, deliveryMode: 'brokered',
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-spark-1.3-contributor' },
+        } } }, groups: {} }, homeDefaults: null },
       managedDefaultsGroupIds: [], viewerRole: 'member', capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
       admission: resolveTeamAdmissionProjectionV1(), counts: null }) };
     throw new Error(`Unexpected HTTP read ${path}`);
@@ -74,6 +78,9 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
   }
   const prepared = await preparation;
   expect(prepared.input.agentTarget).toMatchObject({ identity: { localId: 'codex' } });
+  if (placement !== 'unavailable-team') expect(prepared.input.modelSelection).toEqual({ v: 2, updatedAt: 7, ref: { source: 'team_resource',
+      teamId: 'team', resourceId: 'model-resource', expectedResourceRevision: 3, deliveryMode: 'brokered',
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-spark-1.3-contributor' } });
   expect(prepared.defaults.context.personalProjectDefaults).toBeNull();
   expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
     .toMatchObject({ value: 'project-profile', source: 'project', teamOrGroupDerived: true });

@@ -143,6 +143,12 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       ...(selected.placement.source === 'explicit' && input.sessionPlacement
         ? { sessionPlacement: input.sessionPlacement }
         : selected.placement.value ? { sessionPlacement: selected.placement.value } : {}),
+      // A signed Machine request must carry the requester's resolved model
+      // choice just as it carries its resolved Agent and placement. Leaving a
+      // Team resource model in the private defaults context makes the receiver
+      // resolve a different provider/runtime tuple from an explicit request.
+      ...(!input.modelSelection && !modelSelectionInput && selected.model.value
+        ? { modelSelection: selected.model.value } : {}),
       ...(modelSelectionInput && modelSelectionRef ? { modelSelection: { v: 1, ref: modelSelectionRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
       ...(sessionConfiguration ? { configuration: sessionConfiguration } : {}),
       ...(connectedServices ? { connectedServices } : {}),
