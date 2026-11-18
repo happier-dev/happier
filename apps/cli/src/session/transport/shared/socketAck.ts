@@ -8,6 +8,8 @@ type AckableSocket<TEvent extends string = string, TPayload = unknown> = Readonl
   emitWithAck?(event: TEvent, payload: TPayload): Promise<unknown>;
   emit?(event: TEvent, payload: TPayload, callback: (answer: unknown) => void): void;
   timeout?(ms: number): AckableSocket<TEvent, TPayload>;
+  on?(event: 'disconnect', listener: () => void): unknown;
+  off?(event: 'disconnect', listener: () => void): unknown;
 }>;
 
 export type SocketAckErrorCode = 'socket_not_connected' | 'socket_ack_timeout';
@@ -106,6 +108,7 @@ export async function emitSocketWithAck<
     const cleanup = () => {
       clearTimeout(timeout);
       params.signal?.removeEventListener('abort', onAbort);
+      if (timeoutMs === null) params.socket.off?.('disconnect', onDisconnect);
     };
     const settle = (operation: () => void) => {
       if (settled) return;
@@ -114,7 +117,15 @@ export async function emitSocketWithAck<
       operation();
     };
     onAbort = () => settle(() => reject(new SocketAckAbortError(params.event)));
-    if (timeoutMs !== null) {
+    const onDisconnect = () => {
+      // Preserve an ACK already delivered in this turn. Socket.IO rejects sent
+      // ACKs on close, but keeps buffered packets for reuse of the same socket.
+      // Happier reconnects on a replacement socket, so those ACKs cannot arrive.
+      queueMicrotask(() => settle(() => reject(new Error('socket has been disconnected'))));
+    };
+    if (timeoutMs === null) {
+      params.socket.on?.('disconnect', onDisconnect);
+    } else {
       timeout = setTimeout(
         () => settle(() => reject(new SocketAckError({ code: 'socket_ack_timeout', event: params.event, timeoutMs }))),
         timeoutMs,
