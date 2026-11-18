@@ -657,6 +657,23 @@ describe('SessionAuthoringControls', () => {
     await selects.screen.unmount();
   });
 
+  it('keeps a field select\'s choices inside the panel that holds the selects', async () => {
+    const { SessionAuthoringControls } = await import('./SessionAuthoringControls');
+    const { PopoverBoundaryProvider } = await import('@/components/ui/popover/PopoverBoundary');
+    const panelRef = React.createRef<unknown>();
+    const screen = await renderScreen(
+      <PopoverBoundaryProvider boundaryRef={panelRef}>
+        <SessionAuthoringControls fields={['permissionMode']} values={baseValues()} onChangeField={() => {}}
+          presentation="selects" facts={{ agentTargets: [directCapableClaude()] }} />
+      </PopoverBoundaryProvider>,
+    );
+    await act(async () => { screen.pressByTestId('session-authoring-control-permissionMode'); });
+    // A labelled select in a panel (Step options) opens within it (WF-ACCEPT-1118 item 1), not across the page.
+    const popover = screen.root.findAllByType(AgentInputChipPickerPopover).find((node) => node.props.open);
+    expect(popover?.props.boundaryRef).toBe(panelRef);
+    await screen.unmount();
+  });
+
   it('draws no field select for an Agent-owned field while its engine sits beside the selects (a step card header)', async () => {
     const { screen } = await renderControls({
       presentation: 'selects',

@@ -149,15 +149,10 @@ export type WorkflowBlockListEditorProps = Readonly<{
   ) => void;
   onCommitChange?: () => void;
   onSelect: (blockId: string | null) => void;
-  /** Opens Step options for a block, anchored beside the control that asked. */
-  /**
-   * Opens a block's Step options from its control (`anchorRef`, where focus returns). A leaf block
-   * also names its card region (`cardRef`), so the options sit beside the card without covering it.
-   */
+  /** Opens a block's Step options hung from the control that asked (`anchorRef`, where focus returns). */
   onCustomize: (
     blockId: string,
     anchorRef: React.RefObject<View | null>,
-    cardRef?: React.RefObject<View | null>,
   ) => void;
   /** The web Session drop target for Agent steps (J19); absent where no drag source exists. */
   sessionDrop?: WorkflowSessionDrop;
@@ -766,12 +761,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
     block: WorkflowBlock,
     anchorRef: React.RefObject<View | null>,
   ) => {
-    const leaf =
-      block.kind === 'step' ||
-      block.kind === 'action' ||
-      block.kind === 'workflow' ||
-      block.kind === 'wait';
-    onCustomize(block.id, anchorRef, leaf ? cardRefFor(block.id) : undefined);
+    onCustomize(block.id, anchorRef);
   };
   const nameEditorFor = (
     block: WorkflowBlock,

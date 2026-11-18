@@ -1468,16 +1468,20 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-inspector-options')).toBeNull();
     });
 
-    it('places Step options against the step card while focus returns to the control that opened it', async () => {
+    it('hangs Step options from the control that opened it, right edges aligned, inside the editor pane', async () => {
         const harness = await loadHarness();
         const { Popover } = await import('@/components/ui/popover/Popover');
         const screen = await renderBody(harness, { selectedBlockId: 'analyze' });
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
         const popover = screen.root.findAllByType(Popover).find((node) => node.props.open);
         expect(popover).toBeDefined();
-        // The card is what the panel avoids; the chip is where focus comes back to.
-        expect(popover!.props.anchorRef).not.toBe(popover!.props.focusReturnRef);
+        // WF-ACCEPT-1118 item 1 (lab 1116b bstep-v-Aopen): the "…" is both the anchor and where focus returns;
+        // the panel opens below or above it by room, bounded by the editor so it never covers the tab bar.
+        expect(popover!.props.anchorRef).toBe(popover!.props.focusReturnRef);
+        expect(popover!.props.portal.anchorAlign).toBe('end');
         expect(popover!.props.placement).toBe('auto-vertical');
+        expect(popover!.props.boundaryRef).not.toBeNull();
+        expect(popover!.props.boundaryRef).toBeDefined();
     });
 
     it('keeps one page tree across the phone breakpoint: the same scroll, step card and open Step options', async () => {
@@ -1489,17 +1493,19 @@ describe('workflow editor body', () => {
             machineName="Mac Studio" composerScope={MACHINE_COMPOSER_SCOPE} selectedBlockId="analyze" onSelectBlock={() => {}}
             onCustomizeBlock={() => {}} view="steps" onChangeView={() => {}} onRunNow={() => {}} />;
         const screen = await renderScreen(element, { createNodeMock: node => {
-            // The placement ref is on the outer listitem, not the inner step editor's testID.
-            if (node.props.role !== 'listitem') return undefined;
-            // A remount would receive a new platform node, losing focus, selection and scroll.
-            const card = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(100, 100, 600, 160) };
-            cardNodes.push(card);
-            return card;
+            // The step's list item and the "…" anchor (a non-collapsable view) get platform nodes; a remount
+            // would receive a new one, losing focus, selection and scroll.
+            const isCard = node.props.role === 'listitem';
+            if (!isCard && node.props.collapsable !== false) return undefined;
+            const platformNode = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(100, 100, 600, 160) };
+            if (isCard) cardNodes.push(platformNode);
+            return platformNode;
         } });
         const currentAnchor = () => screen.findAllByType(Popover).find(node => node.props.open)?.props.anchorRef.current;
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        // Step options hang from the "…" that opened them; the same control keeps them across the breakpoint.
         const firstCard = currentAnchor();
-        expect(firstCard === cardNodes.at(-1)).toBe(true);
+        expect(firstCard).toBeTruthy();
         const firstScroll = screen.findAllByType(KeyboardAwareScrollView as never)[0];
         const cardCount = cardNodes.length;
 
@@ -1535,6 +1541,20 @@ describe('workflow editor body', () => {
         expect(idsIn(page!)).not.toContain('workflow-editor-inspector-done');
         expect(idsIn(page!)).toContain('workflow-editor-inspector-review');
         expect(screen.findByTestId('workflow-editor-inspector-done')).not.toBeNull();
+    });
+
+    it('keeps the menus opened inside Step options within its frame', async () => {
+        const harness = await loadHarness();
+        const { PopoverBoundaryProvider } = await import('@/components/ui/popover/PopoverBoundary');
+        const frameNode = { measureInWindow: () => {} };
+        const screen = await renderBody(harness, { selectedBlockId: 'analyze' }, {
+            createNodeMock: (node) => (node.props.testID === 'workflow-editor-inspector-options' ? frameNode : null),
+        });
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        // WF-ACCEPT-1118 item 1: a select's menu (Other tools, Workspace) is bounded by the panel, not the window.
+        const boundary = screen.root.findAllByType(PopoverBoundaryProvider)
+            .find((provider) => provider.findAll((node) => node.props.testID === 'workflow-editor-inspector-options-page').length > 0);
+        expect(boundary?.props.boundaryRef.current).toBe(frameNode);
     });
 
     it('offers every Session field a step can set in workflow Agent and model settings, through the same controls (owner parity 2026-11-15)', async () => {

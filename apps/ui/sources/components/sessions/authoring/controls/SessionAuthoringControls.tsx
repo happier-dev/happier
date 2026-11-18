@@ -2,6 +2,8 @@ import * as React from 'react';
 import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { Platform, View } from 'react-native';
+
+import { usePopoverBoundaryRef } from '@/components/ui/popover/PopoverBoundary';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -186,6 +188,9 @@ function SessionAuthoringOptionChip(props: Readonly<{
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    // A labelled select sits in a host's panel (Step options): its choices open within that panel. A chip keeps
+    // the composer's rule of opening over the whole window (agent-input popovers ignore a modal's boundary).
+    const panelBoundaryRef = usePopoverBoundaryRef();
     const currentLabel = props.valueLabel ?? resolveSessionAuthoringOptionLabel(props.options, props.selectedOptionId, props.unselectedLabel);
     const offered = props.pickerOptions ?? props.options;
     const reset = props.changed === true ? props.reset : undefined;
@@ -207,6 +212,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
             onSelect={select}
             onRequestClose={() => setOpen(false)}
             maxHeightCap={460}
+            {...(props.presentation === 'selects' && panelBoundaryRef !== null ? { boundaryRef: panelBoundaryRef } : {})}
         />
     );
     const openDemand = open ? props.openDemand : null;

@@ -898,10 +898,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
      */
     const [settingsPopover, setSettingsPopover] = React.useState<Readonly<{
         blockId: string;
-        /** The control that opened it: focus returns here. */
+        /** The control that opened it: the panel hangs from it and focus returns here. */
         anchorRef: React.RefObject<View | null>;
-        /** What the panel sits beside: the step's card when it has one, else the control. */
-        placementRef: React.RefObject<View | null>;
     }> | null>(null);
     const promptFocusByBlockId = React.useRef(new Map<string, () => void>());
     /**
@@ -1242,12 +1240,11 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const openInspector = React.useCallback((
         blockId: string,
         anchorRef: React.RefObject<View | null>,
-        cardRef?: React.RefObject<View | null>,
     ) => {
         props.onCustomizeBlock(blockId);
         // Every block kind has Step options (04 §5.2): a step's, a leaf's or a container's.
         if (findWorkflowBlock(readDraft(), blockId) === null) return;
-        setSettingsPopover({ blockId, anchorRef, placementRef: cardRef ?? anchorRef });
+        setSettingsPopover({ blockId, anchorRef });
     }, [props.onCustomizeBlock, readDraft]);
     // Step options stay open while their block exists; the page reads that block's kind only.
     const settingsBlockKind = useWorkflowEditorSelector(draftStore, (draft) => settingsPopover === null ? null
@@ -1262,18 +1259,21 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const settingsPopoverNode = settingsPopover === null || !settingsPopoverShown ? null : (
         <Popover
             open
-            // Below (or, when there is no room, above) the card or control, so it never covers what it edits.
-            anchorRef={settingsPopover.placementRef}
+            // Hung from the control that opened it, right edges aligned (lab round 1116b bstep-v-Aopen), below it or,
+            // when there is no room, above it; inside the editor's own pane, so it never covers the tab bar.
+            anchorRef={settingsPopover.anchorRef}
             focusReturnRef={settingsPopover.anchorRef}
-            boundaryRef={null}
+            boundaryRef={liveEventsAnchorRef}
             placement="auto-vertical"
             placementMinSpace={POPOVER_PREFERRED_ROOM_PX}
             phonePresentation="sheet"
             sheetHeader="none"
             sheetMaterial="solid"
             accessibilityLabel={t('workflows.page.inspector.stepOptions')}
-            edgePadding={{ horizontal: 12, vertical: 12 }}
-            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+            // The editor pane is the boundary and already stands in from the window, so the panel carries no side
+            // gutter: its visible right edge is the "…"'s, not the gutter's.
+            edgePadding={{ horizontal: 0, vertical: 12 }}
+            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             maxWidthCap={settingsWidth}
             maxHeightCap={STEP_OPTIONS_MAX_HEIGHT_PX}
             onRequestClose={closeSettingsPopover}
