@@ -5,7 +5,8 @@ import type {
 } from '../actions/executor/types.js';
 import { DeploymentEnvironmentListResultV1Schema } from '../deployments/deploymentActionsV1.js';
 import type { InputOption } from './inputFields.js';
-import { readNonEmptyString } from './inputRecords.js';
+import { readNonEmptyString, readRecord, readRecordListProperty } from './inputRecords.js';
+import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, databaseActionLocalIdV1 } from '../actions/actionIdsDatabaseV1.js';
 
 /** The host option source a widget or Action field names to pick one Environment whose telemetry is on. */
 export const DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1 =
@@ -59,4 +60,79 @@ export async function resolveDeploymentTelemetryEnvironmentOptionsV1(
     cursor = parsed.data.nextCursor;
   } while (cursor !== null);
   return { ok: true, result: options };
+}
+
+/** The host option source a Telemetry widget's Route field names: the routes the chosen Environment served. */
+export const DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1 =
+  'deployments.environments.telemetry.routes' as const;
+
+const TELEMETRY_PLUGIN_ID = 'happier.telemetry';
+/** The routes a person picks from: what the collector saw over the last day, the same window a new widget reads. */
+const ROUTE_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** One collector page per read; the list continues by cursor until the collector has no more. */
+const ROUTE_PAGE_LIMIT = 100;
+
+/**
+ * `deployments.environments.telemetry.routes`: the routes the draft's Environment served, read from its collector
+ * through the telemetry endpoints Action (which admits the viewer, R16), valued `{ method, route }` and named
+ * "POST /checkout". A route served by two services is offered once: a route measure selects by method and route.
+ */
+export async function resolveDeploymentTelemetryRouteOptionsV1(
+  params: Readonly<{
+    deps: ActionExecutorDeps;
+    ctx: ActionExecutorContext;
+    input: Readonly<Record<string, unknown>>;
+    readFailure: (result: unknown) => ActionExecuteFailure | null;
+  }>,
+): Promise<
+  ActionExecuteFailure | Readonly<{ ok: true; result: readonly InputOption[] }>
+> {
+  const environment = readRecord(params.input.environment);
+  const serverId = readNonEmptyString(environment.serverId);
+  const environmentId = readNonEmptyString(environment.environmentId);
+  if (!serverId || !environmentId) {
+    return { ok: false, errorCode: 'missing_option_dependency', error: 'missing_option_dependency',
+      details: { requiredDraftPath: 'environment' } };
+  }
+  const { createActionExecutor } = await import('../actions/actionExecutor.js');
+  const executor = createActionExecutor(params.deps);
+  const listed = await executor.execute('deployments.environments.list', { serverId, environmentIds: [environmentId] }, params.ctx);
+  if (!listed.ok) return listed;
+  const listFailure = params.readFailure(listed.result);
+  if (listFailure) return listFailure;
+  // The collector Machine answers the read, as every Environment telemetry read is targeted.
+  const collectorMachineId = readNonEmptyString(readRecordListProperty(listed.result, 'items')
+    .find(item => item.id === environmentId)?.telemetryMachineId);
+  if (!collectorMachineId) return { ok: false, errorCode: 'telemetry_not_set_up', error: 'telemetry_not_set_up' };
+  const until = Date.now();
+  const window = { since: Math.max(0, until - ROUTE_WINDOW_MS), until };
+  const options = new Map<string, InputOption>();
+  let before: Readonly<Record<string, unknown>> | null = null;
+  do {
+    const executed = await executor.execute('action.invoke', {
+      action: { pluginId: TELEMETRY_PLUGIN_ID, localId: databaseActionLocalIdV1(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1) },
+      input: { source: { kind: 'environment', serverId, environmentId }, ...window,
+        page: { limit: ROUTE_PAGE_LIMIT, ...(before === null ? {} : { before }) } },
+    }, { ...params.ctx, externalActionTarget: { kind: 'machine', machineId: collectorMachineId } });
+    if (!executed.ok) return executed;
+    const failure = params.readFailure(executed.result);
+    if (failure) return failure;
+    params.ctx.signal?.throwIfAborted();
+    const page = readRecord(executed.result);
+    // The collector answers its own typed failures in-band.
+    if (page.ok === false) {
+      const code = readNonEmptyString(page.code) ?? 'telemetry_unavailable';
+      return { ok: false, errorCode: code, error: code };
+    }
+    for (const item of readRecordListProperty(page, 'items')) {
+      const method = readNonEmptyString(item.method);
+      const route = readNonEmptyString(item.route);
+      if (!method || !route) continue;
+      const label = `${method} ${route}`;
+      if (!options.has(label)) options.set(label, { value: { method, route }, label });
+    }
+    const next = readRecord(page.nextCursor);
+    before = Object.keys(next).length > 0 ? next : null;
+  } while (before !== null);
+  return { ok: true, result: [...options.values()] };
 }

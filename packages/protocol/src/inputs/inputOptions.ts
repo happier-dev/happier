@@ -37,7 +37,8 @@ import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createProjectAnchorOfKeyV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { MachineVitalsSnapshotV1Schema } from '../machines/vitals/machineVitalsRpcV1.js';
 import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
-import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, resolveDeploymentTelemetryEnvironmentOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
+import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
+  resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
 import { readUsageScopeOptions } from '../usage/usageFilterOptions.js';
 import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
 import { DesktopDisplaysListResultSchema } from '../actions/specs/desktopShell.js';
@@ -521,6 +522,10 @@ export async function resolveInputOptions(params: Readonly<{
 
   if (optionsSourceId === DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1) {
     return await resolveDeploymentTelemetryEnvironmentOptionsV1({ deps, ctx, readFailure: params.readFailure });
+  }
+
+  if (optionsSourceId === DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1) {
+    return await resolveDeploymentTelemetryRouteOptionsV1({ deps, ctx, input, readFailure: params.readFailure });
   }
 
   if (optionsSourceId === 'machines.volumes.available') {

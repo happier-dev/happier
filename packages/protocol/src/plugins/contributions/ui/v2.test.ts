@@ -394,6 +394,26 @@ describe('declarative node vocabulary v2', () => {
     }
   });
 
+  it('admits a widget description, the purpose line Add widget shows under its title', () => {
+    const widget = { id: 'vitals', renderer: 'native', container: 'widget', target: { kind: 'app' },
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' } };
+    const description = { key: 'vitals.purpose', fallback: 'Requests, p95 and errors.' };
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    for (const candidate of [widget, { ...widget, description }]) {
+      expect(PluginUiViewV2Schema.safeParse(candidate).success).toBe(true);
+      expect(validate(candidate)).toBe(true);
+    }
+    const projected = projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse({
+      schemaVersion: 2, id: 'acme.described-widget', version: '1.0.0', displayName: 'Described widget',
+      runtime: { apiVersion: 1 }, contributes: { ui: {
+        views: [{ ...widget, description }],
+        renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Vitals' } }],
+      } },
+    }));
+    expect(projected['surfacePlacement:acme.described-widget:vitals']).toHaveProperty('display.description', description);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, description: 7 }).success).toBe(false);
+  });
+
   it('admits an appPage headerStyle in the parser, author schema and generated display only', () => {
     const page = { id: 'reviews', renderer: 'native', container: 'appPage', target: { kind: 'app' } };
     const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(z.toJSONSchema(PluginUiViewV2Schema, { io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));

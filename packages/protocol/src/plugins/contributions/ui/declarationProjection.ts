@@ -349,7 +349,10 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
         ...(destinationDefinition?.counts !== undefined ? { counts: destinationDefinition.counts } : {}),
         ...(destinationDefinition?.container === 'appPage' && destinationDefinition.description !== undefined
             ? { description: destinationDefinition.description }
-            : {}),
+            // A widget's purpose line, which Add widget shows under its title.
+            : definition.container === 'widget' && 'description' in definition && definition.description !== undefined
+                ? { description: definition.description }
+                : {}),
         ...(destinationDefinition?.container === 'appPage' && destinationDefinition.headerStyle !== undefined
             ? { headerStyle: destinationDefinition.headerStyle }
             : {}),

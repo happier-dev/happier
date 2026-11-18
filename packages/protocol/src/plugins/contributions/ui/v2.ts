@@ -574,6 +574,8 @@ function createPluginUiViewBindingSchemaV2() {
         container: z.literal(role),
         target: PluginUiViewTargetSchemaByKindV1[targetKind],
         home: z.optional(PluginUiWidgetHomeV1Schema),
+        // The widget's purpose line, shown under its title in Add widget.
+        description: zMini.optional(PluginLocalizedStringV2Schema),
         sizeDeclaration: WidgetSizeDeclarationV1Schema,
         availability: zMini.optional(PluginAvailabilityDescriptorV2Schema),
         publicPresentation: z.optional(WidgetPublicSnapshotPresentationV1Schema),
@@ -704,6 +706,7 @@ export type PluginUiViewInlineBindingInputV2 = {
       resourceLinks?: TSlot['role'] extends 'scmPullRequest' ? PluginUiResourceLinkV1[] : never;
       target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
+      description?: TSlot['role'] extends 'widget' ? PluginLocalizedStringV2 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
       publicPresentation?: TSlot['role'] extends 'widget' ? WidgetPublicSnapshotPresentationV1 : never;
     }> & (TSlot['role'] extends 'widget' ? Readonly<{ sizeDeclaration: WidgetSizeDeclarationV1 }> : Readonly<{ sizeDeclaration?: never }>) & (TSlot['role'] extends 'widget'
@@ -761,6 +764,7 @@ export type PluginUiViewInlineBindingV2 = {
       resourceLinks?: TSlot['role'] extends 'scmPullRequest' ? PluginUiResourceLinkV1[] : never;
       target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
+      description?: TSlot['role'] extends 'widget' ? PluginLocalizedStringV2 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
       publicPresentation?: TSlot['role'] extends 'widget' ? WidgetPublicSnapshotPresentationV1 : never;
     }> & (TSlot['role'] extends 'widget' ? Readonly<{ sizeDeclaration: WidgetSizeDeclarationV1 }> : Readonly<{ sizeDeclaration?: never }>) & (TSlot['role'] extends 'widget'

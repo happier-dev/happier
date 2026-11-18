@@ -15,7 +15,7 @@ export function projectInputOptionsDependencies(input: Readonly<Record<string, u
     'agentTarget', 'modelId', 'modelSelection', 'configuration', 'directory', 'path', 'selection', 'capabilitySelection',
     'profileId', 'connectedServices', 'runtimeDescriptorV1', 'probe',
     'includeDisabled', 'includeUnavailable', 'limit', 'selectedPaths', 'selectedFiles', 'fieldPath', 'consumer',
-    'query', 'period', 'agents', 'machines', 'projects', 'sources', 'session', 'costBasis', 'breakdown'] as const;
+    'query', 'period', 'agents', 'machines', 'projects', 'sources', 'session', 'costBasis', 'breakdown', 'environment'] as const;
   const dependencies: Record<string, unknown> = Object.fromEntries(keys.filter((key) => hasOwn(input, key)).map((key) => [key, input[key]]));
   if (Array.isArray(input.targets)) {
     const homeId = readInputPath(input, 'targets.0.homeId');
