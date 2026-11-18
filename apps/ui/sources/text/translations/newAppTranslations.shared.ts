@@ -193,6 +193,8 @@ type Copy = Readonly<{
       whatsIncluded: string;
       includedTitle: (p: Readonly<{ platform: string }>) => string;
       includedLabel: string;
+      /** A declared plan's price row, printed by the shared cost presenter (owner ruling A1). */
+      price: string;
       /** Review's group for the chosen platform's declared plans (deploy auto-mode U3). */
       costTitle: string;
       /** The plan the connected account is on, read through its connection (deploy auto-mode U4). */
@@ -418,6 +420,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'What’s included',
         includedTitle: ({ platform }) => `What ${platform} plans include`,
         includedLabel: 'Included',
+        price: 'Price',
         costTitle: 'Cost',
         yourPlan: 'Your plan',
         notCreated: 'Not created yet',
@@ -622,6 +625,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Què inclou',
         includedTitle: ({ platform }) => `Què inclouen els plans de ${platform}`,
         includedLabel: 'Inclou',
+        price: 'Preu',
         costTitle: 'Cost',
         yourPlan: 'El teu pla',
         notCreated: 'Encara no s’ha creat',
@@ -826,6 +830,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Was enthalten ist',
         includedTitle: ({ platform }) => `Was die Pläne von ${platform} enthalten`,
         includedLabel: 'Enthalten',
+        price: 'Preis',
         costTitle: 'Kosten',
         yourPlan: 'Dein Plan',
         notCreated: 'Noch nicht erstellt',
@@ -1030,6 +1035,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Qué incluye',
         includedTitle: ({ platform }) => `Qué incluyen los planes de ${platform}`,
         includedLabel: 'Incluye',
+        price: 'Precio',
         costTitle: 'Coste',
         yourPlan: 'Tu plan',
         notCreated: 'Aún no creado',
@@ -1234,6 +1240,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Ce qui est inclus',
         includedTitle: ({ platform }) => `Ce qu’incluent les offres ${platform}`,
         includedLabel: 'Inclus',
+        price: 'Prix',
         costTitle: 'Coût',
         yourPlan: 'Votre offre',
         notCreated: 'Pas encore créé',
@@ -1438,6 +1445,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Cosa include',
         includedTitle: ({ platform }) => `Cosa includono i piani di ${platform}`,
         includedLabel: 'Incluso',
+        price: 'Prezzo',
         costTitle: 'Costo',
         yourPlan: 'Il tuo piano',
         notCreated: 'Non ancora creato',
@@ -1642,6 +1650,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '含まれるもの',
         includedTitle: ({ platform }) => `${platform} のプランに含まれるもの`,
         includedLabel: '含まれるもの',
+        price: '料金',
         costTitle: '費用',
         yourPlan: 'ご利用中のプラン',
         notCreated: 'まだ作成されていません',
@@ -1846,6 +1855,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Co zawiera',
         includedTitle: ({ platform }) => `Co zawierają plany ${platform}`,
         includedLabel: 'Zawiera',
+        price: 'Cena',
         costTitle: 'Koszt',
         yourPlan: 'Twój plan',
         notCreated: 'Jeszcze nie utworzono',
@@ -2050,6 +2060,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'O que está incluído',
         includedTitle: ({ platform }) => `O que os planos da ${platform} incluem`,
         includedLabel: 'Incluído',
+        price: 'Preço',
         costTitle: 'Custo',
         yourPlan: 'Seu plano',
         notCreated: 'Ainda não criado',
@@ -2254,6 +2265,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Что входит',
         includedTitle: ({ platform }) => `Что входит в тарифы ${platform}`,
         includedLabel: 'Входит',
+        price: 'Цена',
         costTitle: 'Стоимость',
         yourPlan: 'Ваш план',
         notCreated: 'Ещё не создано',
@@ -2454,6 +2466,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '包含内容',
         includedTitle: ({ platform }) => `${platform} 套餐包含的内容`,
         includedLabel: '包含',
+        price: '价格',
         costTitle: '费用',
         yourPlan: '你的套餐',
         notCreated: '尚未创建',
@@ -2654,6 +2667,7 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '包含內容',
         includedTitle: ({ platform }) => `${platform} 方案包含的內容`,
         includedLabel: '包含',
+        price: '價格',
         costTitle: '費用',
         yourPlan: '你的方案',
         notCreated: '尚未建立',

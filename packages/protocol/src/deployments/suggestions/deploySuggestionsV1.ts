@@ -7,6 +7,7 @@ import { InteractionTransientQuestionsAuthorRequestV1Schema, InteractionTransien
 import { resolvePublishTargetRecommendation } from '../resolvePublishTargetRecommendation.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { DeploymentTargetPlanV1Schema } from '../../plugins/contributions/deploymentTargets.js';
 
 const id = () => z.string().check(z.minLength(1));
 export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObject({
@@ -14,7 +15,9 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
         sourceId: z.optional(id()), itemId: z.optional(id()) })),
     apps: z.array(z.strictObject({ id: id(), title: z.string(), sourceId: z.optional(id()), itemId: z.optional(id()) })),
     targets: z.array(z.strictObject({ id: id(), title: z.string(), targetClass: z.enum(['ownServer', 'platform']),
-        availability: z.enum(['available', 'unavailable', 'unknown']), ...deploymentTargetFitFieldsV1() })),
+        availability: z.enum(['available', 'unavailable', 'unknown']), ...deploymentTargetFitFieldsV1(),
+        // The target's declared plans, as the plugin dated them; cards show them, the model never writes a price.
+        plans: z.optional(z.array(DeploymentTargetPlanV1Schema)) })),
     // `label` is absent while the Machine owner has no name for it yet (still loading); never its placeholder.
     machines: z.array(z.strictObject({ machineId: id(), label: z.optional(z.string()), online: z.boolean(),
         homeDir: z.optional(z.string()), readiness: z.enum(['ready', 'needsSetup', 'unknown']) })),

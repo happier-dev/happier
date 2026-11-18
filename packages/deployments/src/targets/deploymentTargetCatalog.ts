@@ -161,6 +161,7 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
             ...(target.accepts === undefined ? {} : { accepts: target.accepts }),
             ...(target.needs === undefined ? {} : { needs: target.needs }),
             ...(target.sources === undefined ? {} : { sources: target.sources }),
+            ...(target.plans === undefined ? {} : { plans: target.plans }),
         }] : []),
         // An engine association does not identify a selected saved store.
         // Linked-store discovery remains with the selected-target owner.

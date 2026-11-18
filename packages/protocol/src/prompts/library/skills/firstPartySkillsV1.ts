@@ -98,8 +98,10 @@ forges; never invent identifiers or prices. Ask necessary clarifying questions
 through the agent's native ask-user-question tool. Variable and secret names
 are enough: never put their values in the suggestion or conversation.
 
-Call \`deployments.suggestions.check\` with the proposed setup and the catalog
-snapshot. Its accepted typed result renders the same setup cards as the dialog.
+Call \`deployments.suggestions.check\` with the proposed setup, the catalog
+snapshot and \`description\`: the person's own words exactly as they wrote them,
+never your summary. Its accepted typed result renders the same setup cards as
+the dialog.
 Let the person choose Use this setup. Starter and scratch setups create the
 repository, Project and Source through \`projects.starters.create\`, then open
 the ordinary Session with the person's description and reviewed plan. A catalog

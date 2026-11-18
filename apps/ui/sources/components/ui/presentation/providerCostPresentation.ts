@@ -8,6 +8,7 @@ import {
   type ManagedPriceLabels,
 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { BillingCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ProviderAmountV1 } from '@happier-dev/protocol/common/providerAmountV1';
 import { t } from '@/text';
 import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -59,6 +60,11 @@ export function formatDeclaredPlanSource(source: Readonly<{ url: string; checked
   const [year, month, day] = source.checkedAt.split('-').map(Number);
   const time = formatCalendarDate(new Date(year!, month! - 1, day!));
   return t('managedMachines.price.checked', { provider: sourceName(source.url) ?? source.url, time });
+}
+
+/** A declared plan's price (Protocol ProviderAmountV1), said like any provider price: "$20.00 a month". */
+export function formatDeclaredPlanPrice(price: ProviderAmountV1): string {
+  return `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`;
 }
 
 /** One observed price with its public pricing page, when it has one: "$0.05 a month · digitalocean.com". */

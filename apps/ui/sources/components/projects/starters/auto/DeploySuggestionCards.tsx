@@ -11,6 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { FieldLayout } from '@/components/ui/lists/FieldRow';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { DeploymentTargetPlans } from '@/components/projects/deployments/DeploymentTargetPlans';
 
 /** One labelled fact on a suggestion card (lab autoRecs): what it starts from, where it runs, its data. */
 export type NewAppAutoFact = Readonly<{
@@ -23,10 +24,13 @@ export type NewAppAutoFact = Readonly<{
 export type NewAppAutoCard = Readonly<{
   id: string;
   title: string;
-  why: string;
   recommended: boolean;
   facts: readonly NewAppAutoFact[];
+  /** The platform's declared plans with their dated source (U3); never the person's plan, which only Review reads (A2). */
+  plans: Readonly<{ plans: TargetPlans; platform: string }> | null;
 }>;
+
+type TargetPlans = NonNullable<DeploySuggestionCatalogV1['targets'][number]['plans']>;
 
 const CARD_PREFIX = 'suggestion-';
 
@@ -59,9 +63,10 @@ export function presentDeploySuggestionCard(
       : source.kind === 'catalogApp'
         ? catalog.apps.find((item) => item.id === source.appId)?.title
         : undefined;
-  const target = catalog.targets.find(
+  const targetRow = catalog.targets.find(
     (item) => item.id === recommendation.targetId,
-  )?.title;
+  );
+  const target = targetRow?.title;
   const data = recommendation.data;
   const dataTitle =
     data.kind === 'store'
@@ -82,14 +87,12 @@ export function presentDeploySuggestionCard(
     ...(target ? [{ key: 'runsOn' as const, value: target }] : []),
     ...(dataTitle ? [{ key: 'data' as const, value: dataTitle }] : []),
   ];
-  const card = recommendation as DeploySuggestionRecommendationV1 &
-    Partial<Readonly<{ title: string; why: string }>>;
   return {
     id: deploySuggestionCardId(index),
-    title: card.title ?? recommendation.whatToBuild,
-    why: card.why ?? '',
+    title: recommendation.whatToBuild,
     recommended: index === 0,
     facts,
+    plans: targetRow?.plans?.length ? { plans: targetRow.plans, platform: targetRow.title } : null,
   };
 }
 
@@ -117,8 +120,8 @@ export function useDeploySuggestionCards(
 }
 
 /**
- * The suggestion cards (lab autoRecs): one card per line, the recommended one first and badged, each with its why
- * and its labelled facts on one label column. A card is a radio in the group; Tab enters the group at the chosen
+ * The suggestion cards (lab autoRecs): one card per line, the recommended one first and badged, each with its
+ * labelled facts on one label column and its platform's dated plans. A card is a radio in the group; Tab enters the group at the chosen
  * card, the arrow keys move between cards, and the next Tab leaves for the host's actions.
  */
 export function DeploySuggestionCardTiles(
@@ -136,7 +139,6 @@ export function DeploySuggestionCardTiles(
       cards.map((card) => ({
         id: card.id,
         title: card.title,
-        subtitle: card.why,
         ...(card.recommended ? { badge: t('newApp.auto.recommended') } : {}),
       })),
     [cards],
@@ -155,7 +157,7 @@ export function DeploySuggestionCardTiles(
       renderOptionFooter={({ option }) => {
         const card = cards.find((candidate) => candidate.id === option.id);
         return card ? (
-          <CardFacts facts={card.facts} phone={props.phone} />
+          <CardFacts card={card} phone={props.phone} testID={`${props.testIdPrefix}:${card.id}`} />
         ) : null;
       }}
     />
@@ -168,14 +170,18 @@ const FACT_LABEL_KEY = {
   data: 'newApp.auto.factData',
 } as const;
 
-/** The card's floor: its three labelled facts on one label column, the identity before each value. */
+/**
+ * The card's floor: its labelled facts on one label column, the identity before each value, then the platform's
+ * declared plans with their price and dated source (U3) through the plans owner the Where cards use.
+ */
 function CardFacts(
-  props: Readonly<{ facts: readonly NewAppAutoFact[]; phone: boolean }>,
+  props: Readonly<{ card: NewAppAutoCard; phone: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
+  const { facts, plans } = props.card;
   return (
     <View style={styles.facts}>
-      {props.facts.map((fact) => (
+      {facts.map((fact) => (
         <FieldLayout
           key={fact.key}
           label={t(FACT_LABEL_KEY[fact.key])}
@@ -192,6 +198,12 @@ function CardFacts(
           </View>
         </FieldLayout>
       ))}
+      {plans ? (
+        <View testID={`${props.testID}:plans`}>
+          <DeploymentTargetPlans plans={plans.plans} platform={plans.platform} columns={!props.phone}
+            phone={props.phone} testID={`${props.testID}:plans`} />
+        </View>
+      ) : null}
     </View>
   );
 }

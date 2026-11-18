@@ -9,7 +9,7 @@ import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/componen
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { formatDeclaredPlanSource } from '@/components/ui/presentation/providerCostPresentation';
+import { formatDeclaredPlanPrice, formatDeclaredPlanSource } from '@/components/ui/presentation/providerCostPresentation';
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
@@ -19,20 +19,30 @@ type Plans = NonNullable<DeploymentPlatformTarget['plans']>;
 
 const sourceLine = (source: Plans[number]['source']) => formatDeclaredPlanSource(source);
 
+const words = (value: string) => value.trim().toLowerCase().split(/[\s_-]+/).filter(Boolean).join(' ');
+
 /**
- * The declared plan the connected account is on: the provider's plan name matched to a declared plan's id or title.
- * An unmapped or absent name matches nothing, and the facts stand alone (deploy auto-mode U4).
+ * The declared plan the connected account is on: the provider's plan name matched to a declared plan's id or title,
+ * or to that title named with its product ("Workers Paid" is Cloudflare Workers' Paid). A name qualified with another
+ * product matches nothing here, so an account-wide Workers plan never reads as the Pages plan. An unmapped or absent
+ * name matches nothing, and the facts stand alone (deploy auto-mode U4).
  */
-export function matchAccountPlan(plans: Plans, planLabel: string | null | undefined): Plans[number] | null {
-  const name = planLabel?.trim().toLowerCase();
+export function matchAccountPlan(plans: Plans, planLabel: string | null | undefined, platform: string): Plans[number] | null {
+  const name = planLabel ? words(planLabel) : '';
   if (!name) return null;
-  return plans.find((plan) => plan.id.toLowerCase() === name || plan.title.trim().toLowerCase() === name) ?? null;
+  const product = words(platform);
+  return plans.find((plan) => {
+    const title = words(plan.title);
+    if (words(plan.id) === name || title === name) return true;
+    const named = `${product} ${title}`;
+    return named.endsWith(` ${name}`) && name.split(' ').length > title.split(' ').length;
+  }) ?? null;
 }
 
 /**
- * A platform's declared plans in its Where card (journey-deploy where): each plan's title, its facts as the plugin
- * wrote them, and where and when they were read; What's included opens them side by side (wherePeek). These are dated
- * display facts (Protocol DeploymentTargetPlanV1), printed as declared: nothing here computes a price.
+ * A platform's declared plans in its Where card (journey-deploy where): each plan's title, its price through the shared
+ * cost presenter, its facts as the plugin wrote them, and where and when they were read; What's included opens them
+ * side by side (wherePeek). These are dated declared facts (Protocol DeploymentTargetPlanV1), never a live quote.
  */
 type DeploymentTargetPlansProps = Readonly<{
   plans: Plans;
@@ -62,7 +72,7 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
   const [comparing, setComparing] = React.useState(false);
   const anchorRef = React.useRef<View>(null);
   const title = t('newApp.deploy.plan.includedTitle', { platform: props.platform });
-  const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel);
+  const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel, props.platform);
   return (
     <View style={styles.body}>
       {yourPlan ? (
@@ -74,6 +84,11 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
         {props.plans.map((plan) => (
           <View key={plan.id} style={[styles.plan, props.columns ? styles.planColumn : null]}>
             <Text variant="meta" emphasis="medium">{plan.title}</Text>
+            {plan.price ? (
+              <FieldLayout label={t('newApp.deploy.plan.price')} columns>
+                <FieldValue value={formatDeclaredPlanPrice(plan.price)} />
+              </FieldLayout>
+            ) : null}
             {plan.facts.map((fact, index) => (
               <FieldLayout key={`${index}:${fact.label}`} label={fact.label} columns>
                 <FieldValue value={fact.value} />
@@ -130,6 +145,8 @@ function DeploymentTargetPlanComparison(props: Readonly<{ plans: Plans; title: s
           <View style={styles.cell} />
           {props.plans.map((plan) => <Text key={plan.id} variant="meta" emphasis="medium" style={styles.cell}>{plan.title}</Text>)}
         </View>
+        {props.plans.some((plan) => plan.price) ? row(':price', t('newApp.deploy.plan.price'),
+          props.plans.map((plan) => plan.price ? formatDeclaredPlanPrice(plan.price) : '—')) : null}
         {labels.map((label) => row(label, label,
           props.plans.map((plan) => plan.facts.find((fact) => fact.label === label)?.value ?? '—')))}
         {included ? row(':included', t('newApp.deploy.plan.includedLabel'),

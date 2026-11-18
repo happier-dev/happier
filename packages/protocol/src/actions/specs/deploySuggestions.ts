@@ -20,6 +20,7 @@ export const DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1 = lazyActionSpecArray(() => [
     bindings: { mcpToolName: 'deployments_suggestions_check' },
     inputSchema: inputs[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1], outputSchema: outputs[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1],
     inputHints: { fields: [{ path: 'catalog', title: 'Held catalog snapshot', widget: 'json', required: true },
-        { path: 'suggestion', title: 'Suggested setups', widget: 'json', required: true }] },
+        { path: 'suggestion', title: 'Suggested setups', widget: 'json', required: true },
+        { path: 'description', title: 'The person\u2019s description, unchanged', widget: 'textarea', required: false }] },
     cli: { acceptsServerId: true, commands: [{ path: ['deployments', 'suggestions', 'check'], visibility: 'canonical' }] },
 }] as const satisfies readonly PreNormalizedActionSpec[]);

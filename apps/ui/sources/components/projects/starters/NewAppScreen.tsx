@@ -459,7 +459,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       // The brief names the forge the person kept, which the validator admitted with this target.
       const applied = await applyDeploySuggestion({ serverId: scope.serverId,
         suggestion: { ...suggestion.recommendation, repositoryProviderKind: actionInput.repository.providerKind },
-        catalog: suggestion.catalog, description: auto.description,
+        // The words the person reviewed on this step lead the brief, byte for byte (decision 5).
+        catalog: suggestion.catalog, description,
         create: { input: createInput, lifetime, ...(name.trim() ? { sessionName: name.trim() } : {}) } });
       if (applied.kind === 'created') {
         if (applied.sessionOpened) stepAside();
@@ -507,7 +508,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       if (await startSession(outcome)) stepAside();
       else setCreate({ kind: 'projectReady', created: outcome });
     }
-  }, [appliedSuggestion, auto.description, create, forge.markNeedsAccount, input, name, scope, startSession, stepAside]);
+  }, [appliedSuggestion, create, description, forge.markNeedsAccount, input, name, scope, startSession, stepAside]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
   // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.

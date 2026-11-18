@@ -68,7 +68,11 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
 export const DeploymentTargetPlanV1Schema = lazyZodSchema(() => z.strictObject({
     id: local(), title: z.string(),
     price: z.optional(ProviderAmountV1Schema),
-    facts: z.array(z.strictObject({ label: z.string(), value: z.string() })),
+    // The price is `price`; a "Price" text fact beside it would be a second, unformatted copy.
+    facts: z.array(z.strictObject({
+        label: z.string().check(z.refine(label => label.trim().toLowerCase() !== 'price', 'Declare the price as `price`.')),
+        value: z.string(),
+    })),
     included: z.optional(z.array(z.string())),
     source: z.strictObject({ url: z.url(), checkedAt: z.iso.date() }),
 }));

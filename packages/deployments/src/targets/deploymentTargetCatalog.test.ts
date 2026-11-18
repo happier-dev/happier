@@ -21,6 +21,20 @@ it('carries the host repository source routes into the suggestion catalog', () =
     expect(catalog.targets[0]?.sources).toEqual({ gitIntegration: ['github', 'gitlab', 'bitbucket', 'azure-devops'], upload: false });
 });
 
+it('carries a platform target\u2019s declared plans into the suggestion catalog unchanged (deploy auto-mode U3)', () => {
+    const closed = { type: 'object' as const, properties: {}, additionalProperties: false };
+    const plans = [{ id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
+        facts: [{ label: 'Builds', value: '500 a month' }], source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
+    const catalog = projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1([{
+        pluginId: 'com.example.host', identity: { pluginId: 'com.example.host', localId: 'pages' },
+        definition: { id: 'pages', role: 'runtime', title: 'Pages', icon: 'server-outline', targetKind: 'example',
+            targetSchema: closed, linkSchema: closed, plans,
+            actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } },
+    }]));
+    expect(catalog.targets.find(target => target.id === 'com.example.host/pages')?.plans).toEqual(plans);
+    expect(catalog.targets.find(target => target.id === 'own-server')).not.toHaveProperty('plans');
+});
+
 it('defaults linked and legacy resources to unlink and offers provider delete only when declared', () => {
     const source = { kind: 'plugin', contribution: { pluginId: 'provider', localId: 'runtime' } } as const;
     const targets = [{ pluginId: 'provider', targetId: 'runtime', teardown: true as const }];

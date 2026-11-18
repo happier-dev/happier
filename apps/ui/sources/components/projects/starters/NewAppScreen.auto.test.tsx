@@ -41,7 +41,14 @@ vi.mock(
     ...(await importOriginal<
       typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')
     >()),
-    createFrontDoorActionExecute: () => execute,
+    // Reviewed creates (Use this setup) go through `confirmed`, bound the way the real front door binds them.
+    createFrontDoorActionExecute: () => Object.assign(execute, {
+      confirmed: async (actionId: string, input: unknown, context: object) => {
+        const { bindPresentUserActionConfirmationV1 } = await import('@happier-dev/protocol/actions/executor/approvalReview');
+        return execute(actionId, input, bindPresentUserActionConfirmationV1(actionId as never, input,
+          { ...context, runtimeAccountId: 'alice', actionRequestId: 'reviewed-create' } as never));
+      },
+    }),
   }),
 );
 
@@ -718,6 +725,53 @@ it('F5: Code lives on offers only forges that pair with the target, describes ea
     expect(row(screen, 'newApp.repository')?.props.subtitle).toContain('bitbucket-team/');
     expect(vi.mocked(describeTargets), 'a choice reads nothing more').toHaveBeenCalledTimes(2);
     expect(execute, 'and writes nothing until Create').not.toHaveBeenCalled();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('a Session suggestion without the person\u2019s words opens with the description empty, and the build brief starts with the words they type (decision 5)', async () => {
+  suggestionBoundary({ registryActionExecute: async () => ({ pages: [] }) });
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { machineScmHostingRepositoryDescribePublishTargets: describeTargets } = await import('@/sync/ops/scm/machineScm');
+  const { ScmHostingRepositoryDescribePublishTargetsResponseSchema } = await import('@happier-dev/protocol/scm');
+  vi.mocked(describeTargets).mockImplementation(async () => ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse({
+    success: true, defaultRepositoryName: 'bakery', auth: { state: 'authenticated', profileKind: 'connected_account' },
+    targets: [{ provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.example.test',
+      urlSafety: { allowedSchemes: ['https:'] } }, owner: 'alice', ownerKind: 'user', label: 'alice', isDefault: true,
+      supportedVisibilities: ['private'], supportedRemoteUrlKinds: ['https'] }],
+  }));
+  const catalog: DeploySuggestionCatalogV1 = {
+    starters: [{ id: '["starter","website"]', title: 'Static website', sourceId: 'starter', itemId: 'website',
+      deploy: { framework: 'html', output: 'static' } }],
+    apps: [], targets, machines: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }],
+  };
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://auto-session-host.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated', { handleRequest: async () => null });
+  const scope = storage.getState().settingsScope;
+  if (!scope) throw new Error('Expected admitted Home Account');
+  await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
+  // What a Session host hands over when the agent's check call carried no description: the card, and no words.
+  const screen = await renderScreen(<NewAppScreen onClose={vi.fn()}
+    suggestion={{ description: '', recommendation: recommendation as never, catalog }} />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.auto.useSetup');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
+    expect(screen.findByTestId('newApp.description')?.props.value, 'never the model\u2019s whatToBuild').toBe('');
+    await act(async () => screen.changeTextByTestId('newApp.nameField', 'Bakery'));
+    await waitForHomeGovernance(() => expect(row(screen, 'newApp.repository')?.props.subtitle).toContain('alice/'));
+    expect(screen.findByTestId('newApp.create')?.props.disabled, 'Create asks for the person\u2019s words first').toBe(true);
+    await act(async () => screen.changeTextByTestId('newApp.description', '  A page for my bakery\n'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.create');
+    await waitForHomeGovernance(() => expect(calls('projects.starters.create')).toHaveLength(1));
+    const brief = (calls('projects.starters.create')[0]![1] as { description: string }).description;
+    expect(brief.startsWith('  A page for my bakery\n\n'), brief).toBe(true);
     await screen.unmount();
   } finally {
     await standardCleanup();

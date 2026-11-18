@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { makeToolCall, makeToolViewProps, renderScreen } from '@/dev/testkit';
 import { DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentSuggestionActionInputSchemasV1 } from '@happier-dev/protocol/deployments/suggestions/actionsV1';
 import {
   DeploySuggestionCatalogV1Schema,
   validateDeploySuggestionV1,
@@ -9,6 +10,17 @@ import {
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const { execute, showModal } = vi.hoisted(() => ({ execute: vi.fn(), showModal: vi.fn() }));
+// The Action transport boundary: rendering and choosing a checked suggestion must not call it (F7).
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>()),
+  createFrontDoorActionExecute: () => execute,
+}));
+// The dialog presentation boundary: Use this setup opens Deploy an app through it.
+vi.mock('@/modal', async () =>
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { show: showModal } }).module,
+);
 
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
   ToolSectionView: ({ children }: any) =>
@@ -74,13 +86,18 @@ const invented = {
   whatToBuild: 'An invented host',
 };
 
-function checkCall(suggestion: unknown) {
+/** The check call's input exactly as the real Action schema admits it: a fixture field the schema rejects fails here. */
+function checkInput(input: Readonly<{ description?: string; suggestion: unknown }>) {
+  return DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog, ...input });
+}
+
+function checkCall(suggestion: unknown, description?: string) {
   return makeToolCall({
     name: 'mcp__happier__action_execute',
     state: 'completed',
     input: {
       actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
-      input: { catalog, suggestion },
+      input: checkInput(description === undefined ? { suggestion } : { description, suggestion }),
     },
     result: {
       ok: true,
@@ -101,10 +118,7 @@ async function render(suggestion: unknown) {
 describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F7)', () => {
   it('reads a completed check call into the validator’s recommendations and the checked catalog', async () => {
     const { readTranscriptDeploySuggestionCheck } = await import('@/components/sessions/transcript/references/transcriptDeploySuggestionReference');
-    const tool = { ...checkCall({ recommendations: [site, invented, analytics], questions: null }), input: {
-      actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
-      input: { description: '  Make me a bakery landing page  ', catalog, suggestion: { recommendations: [site, invented, analytics], questions: null } },
-    } };
+    const tool = checkCall({ recommendations: [site, invented, analytics], questions: null }, '  Make me a bakery landing page  ');
     const read = readTranscriptDeploySuggestionCheck(tool);
     expect(read?.recommendations.map((row) => row.whatToBuild)).toEqual(['A bakery landing page', 'Self-hosted analytics']);
     expect(read?.catalog.targets.map((row) => row.id)).toEqual(['pages', 'own']);
@@ -139,6 +153,70 @@ describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F
     });
     try {
       expect(screen.findByTestId('deploy-suggestion-check')).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+});
+
+describe('Use this setup from a transcript card (deploy auto-mode U10, F4/F7)', () => {
+  async function useFirstCard(description?: string) {
+    execute.mockReset();
+    showModal.mockReset();
+    const { MCPToolView } = await import('./MCPToolView');
+    const screen = await renderScreen(
+      <MCPToolView {...makeToolViewProps(checkCall({ recommendations: [site, analytics], questions: null }, description),
+        { detailLevel: 'summary' })} />,
+    );
+    try {
+      expect(execute, 'rendering checked cards reads nothing (F7)').not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync('deploy-suggestion-check.use');
+      expect(execute, 'choosing a card calls no Action; the dialog owns what follows (F7)').not.toHaveBeenCalled();
+      expect(showModal).toHaveBeenCalledTimes(1);
+      return (showModal.mock.calls[0]![0] as { props: { suggestion: { description: string; recommendation: unknown } } }).props.suggestion;
+    } finally {
+      await screen.unmount();
+    }
+  }
+
+  it('hands the dialog the person\u2019s words from the check call, byte for byte', async () => {
+    const suggestion = await useFirstCard('  Make me a bakery landing page\n');
+    expect(suggestion.description).toBe('  Make me a bakery landing page\n');
+    expect(suggestion.recommendation).toEqual(site);
+  });
+
+  it('without the person\u2019s words it hands over none, never the model\u2019s whatToBuild', async () => {
+    const suggestion = await useFirstCard();
+    expect(suggestion.description).toBe('');
+  });
+});
+
+describe('a card\u2019s platform plan facts (deploy auto-mode U3, owner ruling A2)', () => {
+  it('shows the platform\u2019s declared plans with their price, as of date and source, and never the person\u2019s plan', async () => {
+    const withPlans = DeploySuggestionCatalogV1Schema.parse({
+      ...catalog,
+      targets: catalog.targets.map((target) => target.id !== 'pages' ? target : { ...target, plans: [{
+        id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
+        facts: [{ label: 'Builds', value: '500 a month' }],
+        source: { url: 'https://developers.cloudflare.com/pages/platform/limits/', checkedAt: '2026-11-16' },
+      }] }),
+    });
+    const { MCPToolView } = await import('./MCPToolView');
+    const suggestion = { recommendations: [site, analytics], questions: null };
+    const call = makeToolCall({ name: 'mcp__happier__action_execute', state: 'completed',
+      input: { actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
+        input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog: withPlans, suggestion }) },
+      result: { ok: true, result: validateDeploySuggestionV1(suggestion, withPlans) } });
+    const screen = await renderScreen(<MCPToolView {...makeToolViewProps(call, { detailLevel: 'summary' })} />);
+    try {
+      const card = screen.findByTestId('deploy-suggestion-check.card:suggestion-0:plans');
+      expect(card, screen.getTextContent()).not.toBeNull();
+      const text = screen.getTextContent();
+      expect(text).toContain('$0.00 a month');
+      expect(text).toContain('500 a month');
+      expect(text).toContain('developers.cloudflare.com');
+      expect(text).not.toContain('Your plan');
+      expect(screen.findByTestId('deploy-suggestion-check.card:suggestion-1:plans'), 'the own server declares no plans').toBeNull();
     } finally {
       await screen.unmount();
     }

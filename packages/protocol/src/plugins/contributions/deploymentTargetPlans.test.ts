@@ -18,6 +18,9 @@ it('rejects unknown plan fields and malformed source provenance', () => {
         { ...plan, priceCalculator: 'external' },
         { ...plan, price: { ...plan.price, amount: '$0' } },
         { ...plan, price: { ...plan.price, text: 'free' } },
+        // One price shape (O-DEPLOY, owner ruling A1): a price written as a text fact beside it is refused.
+        { ...plan, facts: [{ label: 'Price', value: '$0 a month' }] },
+        { ...plan, facts: [{ label: 'price', value: 'Free' }] },
         { ...plan, facts: [{ ...plan.facts[0], currency: 'USD' }] },
         { ...plan, source: { ...plan.source, live: true } },
         { ...plan, source: { ...plan.source, url: 'not a URL' } },

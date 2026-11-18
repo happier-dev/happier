@@ -8,8 +8,9 @@ export const DeploymentSuggestionActionInputSchemasV1 = {
         projection: z.optional(z.literal('forges')),
     })),
     // Keep the model result untrusted until the one validator can drop individual bad recommendations.
+    // `description` is the person's own words, carried unchanged to the build Session's first message; the validator ignores it.
     [DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1]: lazyZodSchema(() => z.strictObject({
-        catalog: DeploySuggestionCatalogV1Schema, suggestion: z.unknown(),
+        catalog: DeploySuggestionCatalogV1Schema, suggestion: z.unknown(), description: z.optional(z.string()),
     })),
 };
 export const DeploymentSuggestionActionOutputSchemasV1 = {

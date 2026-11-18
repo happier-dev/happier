@@ -36,6 +36,24 @@ export type DeploymentSuggestionsActionInputById = {
                 title: string;
                 targetClass: 'ownServer' | 'platform';
                 availability: 'available' | 'unavailable' | 'unknown';
+                plans?: undefined | {
+                    id: string;
+                    title: string;
+                    facts: {
+                        label: string;
+                        value: string;
+                    }[];
+                    source: {
+                        url: string;
+                        checkedAt: string;
+                    };
+                    price?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                    };
+                    included?: string[] | undefined;
+                }[];
                 accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
                 needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
                 sources?: undefined | {
@@ -74,6 +92,7 @@ export type DeploymentSuggestionsActionInputById = {
             }[];
         };
         suggestion: unknown;
+        description?: string | undefined;
     };
 };
 export type DeploymentSuggestionsActionResultById = {
@@ -105,6 +124,24 @@ export type DeploymentSuggestionsActionResultById = {
             title: string;
             targetClass: 'ownServer' | 'platform';
             availability: 'available' | 'unavailable' | 'unknown';
+            plans?: undefined | {
+                id: string;
+                title: string;
+                facts: {
+                    label: string;
+                    value: string;
+                }[];
+                source: {
+                    url: string;
+                    checkedAt: string;
+                };
+                price?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                };
+                included?: string[] | undefined;
+            }[];
             accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
             needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
             sources?: undefined | {
