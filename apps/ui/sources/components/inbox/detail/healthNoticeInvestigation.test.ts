@@ -130,7 +130,7 @@ describe('useHealthNoticeInvestigate', () => {
       purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'other-account-machine', buildMachineId: undefined,
       runtimeTargetLinkId: 'runtime', contentArtifactId: 'environment-content',
       contentHeaderVersion: 1, contentBodyVersion: 1,
-      capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+      capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
         manageBindings: true, manageTargets: true, delete: true },
       createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1,
     }), targetLinks: [] });
@@ -521,13 +521,14 @@ describe('readNoticeInvestigationSubject', () => {
     title: 'TypeError: Invalid pool size NaN', body: 'New issue in Sentry.', ...header,
   } });
 
+  // An adopted service's id is its opaque watch id, not a name: the detail never shows it (BL2-HEALTH #177).
   it('offers Investigate on a failing service only while it is open', () => {
     const service = MachineServiceIdentityV1Schema.parse({ kind: 'adopted', machineId: 'machine', serviceId: 'watch-a',
       watchId: 'watch-a', watchRevision: 'watch-revision-a' });
     expect(subjectOf(createServiceHealthNoticeArtifactFixture(scope.serverId, { header: {
       source: { kind: 'host', topic: 'service_health', subject: service },
       page: { kind: 'host', page: 'machine_service', machine: { serverId: scope.serverId, machineId: service.machineId }, service },
-    } }))).toMatchObject({ kind: 'service', service: 'watch-a', open: true, investigable: true });
+    } }))).toMatchObject({ kind: 'service', service: null, open: true, investigable: true });
     expect(subjectOf(createServiceHealthNoticeArtifactFixture(scope.serverId))).toMatchObject({ kind: 'service', open: true, investigable: true });
     expect(subjectOf(createServiceHealthNoticeArtifactFixture(scope.serverId, { header: { healthPhase: 'recovered' } })))
       .toMatchObject({ kind: 'service', open: false, investigable: false });

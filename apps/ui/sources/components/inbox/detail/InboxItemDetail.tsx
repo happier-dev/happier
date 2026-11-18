@@ -283,7 +283,8 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
         <ItemGroup testID="inbox.notice.investigate.ineligible" surface="none" description={ineligible}>{null}</ItemGroup>
       ) : null}
       {service || subject?.kind === 'environment' ? (
-        <ItemGroup testID="inbox.notice.health" title={t('inbox.work.healthNotice.where')}
+        // "Where it's failing" only while it is; a recovered notice keeps its rows under no heading.
+        <ItemGroup testID="inbox.notice.health" title={subject?.open === true ? t('inbox.work.healthNotice.where') : undefined}
           description={canInvestigate ? investigateHint : ineligible}>
           {subject?.kind === 'environment' ? (
             <Item testID="inbox.notice.health.environment" icon={<Icon name="hard-drives" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
@@ -291,7 +292,7 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
           ) : null}
           {service ? (
             <Item testID="inbox.notice.health.service" icon={<Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-              title={t('inbox.work.healthNotice.service')} detail={service.service}
+              title={t('inbox.work.healthNotice.service')} detail={service.service ?? undefined}
               {...(subjectRoute ? { onPress: openSubject, showChevron: true } : { mode: 'info' as const })} />
           ) : null}
           {service && machine ? (

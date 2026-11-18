@@ -90,6 +90,26 @@ describe('Inbox notice detail: the way to the cause (COR5B #162 "1 of 1 servers 
 });
 
 describe('Inbox notice detail', () => {
+  it('names where it is failing only while the notice is open (BL2-HEALTH #177 recovered notice)', async () => {
+    const draw = (open: boolean) => renderScreen(
+      <InboxNoticeDetail title="web: http recovered" body={null} source="Service health" createdAt={Date.now() - 60_000}
+        serverId="home-a" onDismiss={async () => {}}
+        subject={{ kind: 'service', machineId: 'machine-1', service: null, open, investigable: false }} />,
+    );
+    const recovered = await draw(false);
+    expect(recovered.findByTestId('inbox.notice.health.service')).not.toBeNull();
+    expect(recovered.getTextContent()).not.toContain('inbox.work.healthNotice.where');
+  });
+
+  it('heads an open service notice with where it is failing', async () => {
+    const screen = await renderScreen(
+      <InboxNoticeDetail title="web: http needs attention" body={null} source="Service health" createdAt={Date.now() - 60_000}
+        serverId="home-a" onDismiss={async () => {}}
+        subject={{ kind: 'service', machineId: 'machine-1', service: null, open: true, investigable: false }} />,
+    );
+    expect(screen.getTextContent()).toContain('inbox.work.healthNotice.where');
+  });
+
   it('shows the typed refusal when the Session exists but its input was rejected', async () => {
     const screen = await render({ kind: 'unavailable', code: 'session_input_target_unavailable' });
     await act(async () => { await screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('start'); });

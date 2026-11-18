@@ -10,7 +10,8 @@ type EnvironmentNoticePage = Extract<NonNullable<AccountNoticeArtifactHeaderV1['
  * only while the subject is open and the notice's investigation data hook admits it.
  */
 export type NoticeInvestigationSubject =
-  | Readonly<{ kind: 'service'; machineId: string; service: string; open: boolean; investigable: boolean }>
+  /** `service` is the service's name when the notice carries one; an adopted service carries only its opaque watch id. */
+  | Readonly<{ kind: 'service'; machineId: string; service: string | null; open: boolean; investigable: boolean }>
   | Readonly<{ kind: 'environment'; environment: EnvironmentNoticePage['environment']; targetLinkId?: string; open: boolean; investigable: boolean }>
   | Readonly<{ kind: 'alert'; open: boolean; investigable: boolean }>;
 
@@ -22,7 +23,7 @@ export function readNoticeInvestigationSubject(
   if (header.source.kind === 'host' && header.source.topic === 'service_health'
     && header.page && 'kind' in header.page && header.page.page === 'machine_service') {
     return { kind: 'service', machineId: header.page.machine.machineId,
-      service: header.page.service.kind === 'deployment' ? header.page.service.composeService : header.page.service.serviceId,
+      service: header.page.service.kind === 'deployment' ? header.page.service.composeService : null,
       open, investigable: open && eligible };
   }
   if (header.source.kind === 'host' && header.source.topic === 'service_health'
