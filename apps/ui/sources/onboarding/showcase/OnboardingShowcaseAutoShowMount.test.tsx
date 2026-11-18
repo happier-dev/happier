@@ -131,6 +131,19 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         expect(modalState.show).toHaveBeenCalledTimes(1);
     });
 
+    it('still shows after the first sign-in when the page reloads in between (an OAuth return, a refresh)', async () => {
+        const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
+        const signedOut = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await vi.advanceTimersByTimeAsync(300);
+        await signedOut.unmount();
+
+        authState.isAuthenticated = true;
+        authState.credentials = { token: 'token', secret: 'secret' };
+        await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await vi.advanceTimersByTimeAsync(300);
+        expect(modalState.show).toHaveBeenCalledTimes(1);
+    });
+
     it('offers Ask Happier on the last card as an explicit choice that closes the tour as seen', async () => {
         const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
         const { getShowcaseSeenVersion } = await import('./storage');

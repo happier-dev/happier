@@ -9,6 +9,7 @@ import { OnboardingShowcaseStorySurface } from '@/components/onboarding/showcase
 import { Modal, useModal } from '@/modal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+import { isShowcaseAwaitingSignIn, markShowcaseAwaitingSignIn } from './storage';
 import { useOnboardingShowcaseState } from './useOnboardingShowcaseState';
 
 function markCurrentReleaseNotesSeen(): void {
@@ -17,8 +18,9 @@ function markCurrentReleaseNotesSeen(): void {
 }
 
 /**
- * Shows the evergreen tour once, right after the first sign-in or account creation this mount watched
- * (signed out, then signed in). The signed-out doorway stays clear: welcome-1115 draws it with no sheet
+ * Shows the evergreen tour once, right after the first sign-in or account creation on this device: the
+ * device was seen signed out with the tour unread (kept across a reload, so an OAuth return or a refresh
+ * between sign-in and Home still gets it), then signs in. The signed-out doorway stays clear: welcome-1115 draws it with no sheet
  * (LABPARITY-ACCEPT-D-1118). An app that opens already signed in is an existing user, silently seeded as
  * seen. After sign-in the tour waits for Home and for any open modal, never covering a task the person
  * came to do (a Team invitation, a terminal connect link).
@@ -30,13 +32,14 @@ export function OnboardingShowcaseAutoShowMount(): null {
     const modalStackActive = modal.state.modals.length > 0;
     const welcomeActive = isWelcomeRoute(useCurrentRouteSegments());
     const ranRef = React.useRef(false);
-    // Whether this mount has watched the device signed out: only then is a sign-in a first one here.
-    const watchedSignedOutRef = React.useRef(false);
-    if (!auth.isAuthenticated) watchedSignedOutRef.current = true;
 
     React.useEffect(() => {
-        if (ranRef.current || !showcase.hasUnread || !auth.isAuthenticated) return;
-        if (!watchedSignedOutRef.current) {
+        if (ranRef.current || !showcase.hasUnread) return;
+        if (!auth.isAuthenticated) {
+            if (!isShowcaseAwaitingSignIn()) markShowcaseAwaitingSignIn();
+            return;
+        }
+        if (!isShowcaseAwaitingSignIn()) {
             ranRef.current = true;
             showcase.markSeen();
             return;
