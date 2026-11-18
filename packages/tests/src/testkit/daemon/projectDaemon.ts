@@ -35,8 +35,8 @@ import { createEphemeralTlsServerFixture } from '../tls/ephemeralTlsServerFixtur
  * every consent is made separately by the person through the real UI client. */
 export async function startProjectDaemonFixture(params: Readonly<{
   testDir: string;
-  /** Real TLS ingress for flows that create a guest outside the controller's loopback. */
-  guestReachableHome?: boolean;
+  /** Real TLS ingress; a guest network may name its actual controller-side interface. */
+  guestReachableHome?: boolean | Readonly<{ host: string }>;
   serverEnv?: EnvOverrides;
   dbProvider?: TestDbProvider;
   serverPreloadModules?: readonly string[];
@@ -52,7 +52,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
   let tls: Awaited<ReturnType<typeof createEphemeralTlsServerFixture>> | undefined;
   let previousCertificates: string[] | undefined;
   if (params.guestReachableHome) {
-    const host = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address;
+    const host = typeof params.guestReachableHome === 'object' ? params.guestReachableHome.host
+      : Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address;
     if (!host) throw new Error('Guest Home fixture requires a non-loopback IPv4 interface');
     tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
     try {
