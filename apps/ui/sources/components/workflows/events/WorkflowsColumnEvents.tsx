@@ -59,6 +59,7 @@ export function WorkflowsColumnEventsListening(
       testID="workflows-column:events:listening"
       status={feed.status}
       listeningSince={feed.listeningSince}
+      historyError={feed.historyError}
       onRetry={feed.retry}
     />
   );

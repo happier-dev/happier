@@ -42,6 +42,12 @@ it('projects exact retained Run causes despite coalesced source revisions withou
     const fresh = createWorkflowRunSummaryFixture({ id: 'fresh-member', createdAt: '2026-11-17T10:00:06.000Z', origin: { kind: 'direct' } });
     const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-cause-account', fixtureResponse: async (id, input) => {
         if (id !== 'workflow.run.list') throw new Error(`Unexpected activity read: ${id}`);
+        if (input.projection !== 'membership') {
+            const requestedRunIds = input.runIds;
+            if (!Array.isArray(requestedRunIds) || requestedRunIds.length === 0) throw new Error('Expected an exact lean name read');
+            return { ok: true, result: { runs: [...children, ...latestSources, secondTrigger, fresh]
+                .filter(run => requestedRunIds.includes(run.id)), metadataByRunId: {} } };
+        }
         reads++;
         return { ok: true, result: { runs: input.cursor ? children.slice(2).filter(run => !removedChild || run.id !== 'child-6')
             : [...(refreshed ? [fresh] : []), children[1], children[0], secondTrigger],
@@ -86,7 +92,7 @@ it('projects exact retained Run causes despite coalesced source revisions withou
         const detail = await renderHook(() => useWorkflowEventPresentation(selected, lifetime.scope, feed.retained!.runs));
         expect(detail.getCurrent()?.lines.some(line => line.key === 'result')).toBe(false);
         expect(detail.getCurrent()?.runsStarted.map(run => run.id)).toEqual(['child-7']);
-        expect(detail.getCurrent()?.subtitle).not.toBeNull();
+        expect(detail.getCurrent()?.fact).toMatchObject({ coverage: 'retained_cause', event: 'needs_attention', sourceRevision: 7 });
         await detail.unmount();
         const keys = feed.keys;
         refreshed = true;
@@ -129,6 +135,13 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
     const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-host-account',
         fixtureResponse: async (id, input) => {
             if (id !== 'workflow.run.list') throw new Error(`Unexpected activity read: ${id}`);
+            if (input.projection !== 'membership') {
+                if (unavailable) throw new Error('fixture transport unavailable');
+                const requestedRunIds = input.runIds;
+                if (!Array.isArray(requestedRunIds) || requestedRunIds.length === 0) throw new Error('Expected an exact lean name read');
+                return { ok: true, result: { runs: [first, second]
+                    .filter(run => requestedRunIds.includes(run.id)), metadataByRunId: {} } };
+            }
             reads++;
             if (unavailable) throw new Error('fixture transport unavailable');
             return { ok: true, result: { runs: input.cursor ? [second] : [first],
@@ -170,11 +183,13 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
         await act(async () => { storage.getState().setSocketStatus('connected'); });
         unavailable = true;
         await act(async () => { await column.getCurrent().retry().catch(() => {}); });
-        await vi.waitFor(() => expect(companion.getCurrent().status).toBe('failed'));
+        await vi.waitFor(() => expect(companion.getCurrent().historyError).not.toBeNull());
+        expect(companion.getCurrent().status).toBe('live');
         expect(companion.getCurrent().retained?.runs).toHaveLength(2);
         unavailable = false;
         await act(async () => { await companion.getCurrent().retry(); });
         await vi.waitFor(() => expect(companion.getCurrent().status).toBe('live'));
+        expect(companion.getCurrent().historyError).toBeNull();
         await act(async () => {
             const now = Date.now();
             storage.getState().applySessions([createSessionFixture({ id: 'arrived', seq: 2, createdAt: now, updatedAt: now })]);

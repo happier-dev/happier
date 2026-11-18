@@ -13,11 +13,12 @@ type FeedState = Readonly<{
     listeningSince: number | null;
     retained: WorkflowRunListResultV1 | null;
     error: unknown;
+    historyError: unknown;
     loadingMore: boolean;
     loadMoreError: unknown;
 }>;
 const INITIAL: FeedState = Object.freeze({ status: 'connecting', listeningSince: null,
-    retained: null, error: null, loadingMore: false, loadMoreError: null });
+    retained: null, error: null, historyError: null, loadingMore: false, loadMoreError: null });
 const EMPTY_KEYS: readonly string[] = Object.freeze([]);
 const subscribeInactive = () => () => {};
 const owners = new WeakMap<ServerAccountScopeLifetime, ReturnType<typeof createFeed>>();
@@ -80,9 +81,10 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
                     onLive: batch => projection.apply(batch),
                     onRetained: retained => {
                         projection.applyRetained(retained.runs);
-                        publish({ ...state, retained, status: connectionStatus(), error: null });
+                        publish({ ...state, retained, status: connectionStatus(), error: null, historyError: null });
                     },
                     onError: error => publish({ ...state, status: 'failed', error }),
+                    onHistoryError: error => publish({ ...state, status: connectionStatus(), historyError: error }),
                 });
                 // The source owns mounted-Account admission, including retirement
                 // between render and effect; an unadmitted host adds no observers.
@@ -106,8 +108,8 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
 }
 
 /** Both presented hosts borrow one live source, frame projection and retained Run window.
- * Closed hosts subscribe to neither the source nor the projection. Observed rows stay
- * local to this Account lifetime; reopening starts a new producer baseline. */
+ * Closed hosts subscribe to neither the source nor the projection. Live observations stay
+ * local to this Account lifetime; durable Machine presence is rehydrated by the source. */
 export function useWorkflowActivityFeed(input: Readonly<{ lifetime: ServerAccountScopeLifetime | null; active: boolean }>) {
     const owner = React.useMemo(() => {
         if (!input.active || input.lifetime === null) return null;

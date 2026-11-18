@@ -1,5 +1,6 @@
 import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -13,6 +14,8 @@ import { isBeyondWorkflowRunListSpan, workflowRunStoreKey } from '@/sync/store/d
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { executeMachineAccessHttpAction } from '@/sync/api/machines/machineAccessApi';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
 import { workflowActivityRunEventKey, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
@@ -25,10 +28,25 @@ function compareRuns(left: WorkflowRunSummaryV1, right: WorkflowRunSummaryV1): n
         : isBeyondWorkflowRunListSpan(rightPosition, leftPosition) ? -1 : 0;
 }
 
+function listeningSinceStorageKey(lifetime: ServerAccountScopeLifetime): string {
+    return `workflow-events-listening-since-v1:${encodeURIComponent(lifetime.scope.serverId)}:${encodeURIComponent(lifetime.scope.accountId)}`;
+}
+
+function readPersistedListeningSince(lifetime: ServerAccountScopeLifetime): number | null {
+    const raw = getPersistenceStorage().getString(listeningSinceStorageKey(lifetime));
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function persistListeningSince(lifetime: ServerAccountScopeLifetime, value: number): void {
+    getPersistenceStorage().set(listeningSinceStorageKey(lifetime), String(value));
+}
+
 function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySource {
     const observers = new Set<WorkflowActivityObserver>();
     const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
-    let since: number | null = null;
+    let since: number | null = readPersistedListeningSince(lifetime);
     let page: WorkflowRunListResultV1 | undefined;
     let failed = false;
     let queue: ViewDemandSync | null = null;
@@ -77,10 +95,10 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         queue?.stop();
         queue = null;
         failed = false;
-        since = null;
     };
     const open = () => {
-        since = Date.now();
+        since ??= Date.now();
+        persistListeningSince(lifetime, since);
         const listeningSince = since;
         controller = new AbortController();
         const snapshot = storage.getState();
@@ -177,13 +195,35 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         const reportError = (error: unknown) => {
             if (signal.aborted) return;
             failed = true;
-            for (const observer of observers) observer.onError?.(error);
+            for (const observer of observers) observer.onHistoryError?.(error);
         };
         queue = new ViewDemandSync(async () => {
             const retained = await readPage();
             if (signal.aborted) return;
             publishPage(mergePage(retained), true);
         }, { onError: reportError, onRetryFailure: reportError });
+        void Promise.all([...machines.keys()].map(async machineId => {
+            try {
+                const result = MachinePresenceReadResultV1Schema.parse(await executeMachineAccessHttpAction({
+                    scope: lifetime.scope, actionId: 'machines.presence.read',
+                    input: { serverId: lifetime.scope.serverId, machineId },
+                    isCurrent: () => lifetime.isCurrent() && !signal.aborted, signal,
+                }));
+                if (result.kind !== 'present' || !result.transitions || signal.aborted) return;
+                const batch: WorkflowActivityLiveFact[] = [];
+                for (const event of ['offline', 'online'] as const) {
+                    const occurrence = result.transitions[event];
+                    if (!occurrence) continue;
+                    batch.push({ kind: 'machine', machineId, event, sourceRevision: occurrence.revision,
+                        occurredAt: occurrence.occurredAt, coverage: 'retained',
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'machine', machineId, event, String(occurrence.revision)) });
+                }
+                publish(batch);
+            } catch {
+                // Presence history is additive. A refused or unavailable Machine must not withdraw
+                // the live subscription or turn a working Events feed into a listening failure.
+            }
+        }));
     };
     // Requested membership follows the Account across view handoffs; live listeners follow demand.
     lifetime.onRetire(() => { close(); page = undefined; observers.clear(); });

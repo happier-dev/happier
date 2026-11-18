@@ -281,3 +281,42 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     detailRelease();
     expect(activeSubscriptions).toBe(0);
 });
+
+it('hydrates durable Machine presence transitions on every admission and keeps listening start stable across remounts', async () => {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-presence.test' });
+    boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'presence-account',
+        fixtureResponse: async (actionId) => {
+            if (actionId !== 'workflow.activity.list') throw new Error(`Unexpected activity HTTP read: ${actionId}`);
+            return { ok: true, result: { retained: { runs: [], metadataByRunId: {}, projection: 'membership' },
+                live: { kind: 'unavailable', reason: 'ui_local_only' } } };
+        } });
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer(boundary.credentials);
+    boundary.prime();
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const scope = getActiveServerAccountScope()!;
+    const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: 20 });
+    await publishMachineInventoryForTest(scope, [machine]);
+    const access = await import('@/sync/api/machines/machineAccessApi');
+    vi.spyOn(access, 'executeMachineAccessHttpAction').mockResolvedValue({ kind: 'present', machineId: machine.id,
+        transitions: { v: 1, revision: 4, offline: { revision: 3, occurredAt: 10 }, online: { revision: 4, occurredAt: 20 } } });
+    const { getWorkflowActivitySource } = await import('./workflowActivitySource');
+    const source = getWorkflowActivitySource()!;
+    const first: WorkflowActivityLiveFact[] = [];
+    const release = source.acquire({ onLive: rows => first.push(...rows), onRetained() {} });
+    releases.push(release);
+    await vi.waitFor(() => expect(first.filter(row => row.kind === 'machine')).toHaveLength(2));
+    const listeningSince = source.listeningSince();
+    expect(listeningSince).not.toBeNull();
+    release();
+    expect(source.listeningSince()).toBe(listeningSince);
+    const second: WorkflowActivityLiveFact[] = [];
+    const remountRelease = source.acquire({ onLive: rows => second.push(...rows), onRetained() {} });
+    releases.push(remountRelease);
+    await vi.waitFor(() => expect(second.filter(row => row.kind === 'machine')).toHaveLength(2));
+    expect(source.listeningSince()).toBe(listeningSince);
+    expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(2);
+});

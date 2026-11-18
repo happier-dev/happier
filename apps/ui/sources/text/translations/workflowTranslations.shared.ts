@@ -291,7 +291,7 @@ export const en = {
         listeningSince: ({ time }: { time: string }) => `Listening since ${time}`,
         connecting: 'Connecting…',
         paused: 'Paused while your Home is offline',
-        failed: 'Couldn’t start listening',
+        failed: 'Couldn’t load earlier events · Try again',
         // Only the read of earlier events failed: live events keep arriving under this line (D9a).
         historyFailed: 'Couldn’t load earlier events',
         filtersAccessibility: 'Show events',

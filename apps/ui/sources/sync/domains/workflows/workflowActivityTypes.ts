@@ -3,11 +3,11 @@ import type { WorkflowActivityListRequestV1, WorkflowRunListResultV1 } from '@ha
 import type { AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
-/** UI-local observations of committed facts; never a retained event journal. */
+/** Live observations plus server-retained Machine transitions; never a client event journal. */
 export type WorkflowActivityLiveFact = Readonly<{
     key: string;
     occurredAt: number;
-    coverage: 'live';
+    coverage: 'live' | 'retained';
 }> & (
     | Readonly<{ kind: 'session'; sessionId: string; event: 'started' | 'archived'; sourceRevision: number }>
     | Readonly<{ kind: 'session'; sessionId: string; event: 'turn_started'; turnId: string; sourceRevision: number }>
@@ -46,6 +46,7 @@ export type WorkflowActivityObserver = Readonly<{
     onLive(batch: WorkflowActivityLiveBatch): void;
     onRetained(page: WorkflowRunListResultV1): void;
     onError?(error: unknown): void;
+    onHistoryError?(error: unknown): void;
 }>;
 
 /** The source owns requested Run membership; the projection accumulates facts through shared frames. */

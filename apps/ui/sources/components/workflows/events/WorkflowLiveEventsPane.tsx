@@ -103,6 +103,7 @@ export const WorkflowLiveEventsPane = React.memo(
             testID={`${props.testID}:listening`}
             status={feed.status}
             listeningSince={feed.listeningSince}
+            historyError={feed.historyError}
             onRetry={feed.retry}
           />
           <WorkflowEventsFilters

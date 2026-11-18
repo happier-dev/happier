@@ -118,7 +118,7 @@ export const WorkflowEventDetailPage = React.memo(
           <SurfaceStateCard
             testID="workflow-events:pick:feed"
             size="pane"
-            {...(feed.status === 'failed'
+            {...(feed.status === 'failed' || feed.historyError !== null
               ? { kind: 'error' as const, title: t('workflows.events.failed'),
                   action: { label: t('workflows.retry'), onPress: () => { void feed.retry(); } } }
               : feed.status === 'offline'

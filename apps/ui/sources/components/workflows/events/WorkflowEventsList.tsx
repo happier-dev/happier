@@ -56,6 +56,7 @@ export const WorkflowEventsListening = React.memo(
     props: Readonly<{
       status: WorkflowEventsFeed['status'];
       listeningSince: number | null;
+      historyError: unknown;
       onRetry: () => void;
       testID: string;
     }>,
@@ -66,6 +67,16 @@ export const WorkflowEventsListening = React.memo(
           testID={`${props.testID}:failed`}
           tone="warning"
           reason={t('workflows.events.failed')}
+          action={{ label: t('workflows.retry'), onPress: props.onRetry }}
+        />
+      );
+    }
+    if (props.historyError !== null) {
+      return (
+        <SurfaceFreshnessLine
+          testID={`${props.testID}:history-failed`}
+          tone="warning"
+          reason={t('workflows.events.historyFailed')}
           action={{ label: t('workflows.retry'), onPress: props.onRetry }}
         />
       );
