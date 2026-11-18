@@ -14,7 +14,7 @@ import { emitSourceAuthorPackages } from './source_author_packages.mjs';
 import { setBundleReadOnly } from './build_source_runtime.mjs';
 import { captureRuntimeDependencies } from './captured_runtime_dependencies.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
-import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { collectExternalRuntimeDependencies, resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
 test('source author runtime emits the 18-package closure without native declaration compilers', async context => {
   const fixture = await createTempFixture(context, { prefix: 'source-author-js-' });
@@ -179,4 +179,53 @@ test('source author runtime emits the 18-package closure without native declarat
   const value = await import(pathToFileURL(join(materializedSdk, 'dist/index.js')).href);
   assert.equal(value.value, 'captured', 'the same physical SDK closure remains executable');
   await emitSourceAuthorDeclarations([materializedSdk], async () => assert.fail('already prepared author packages need no compiler'));
+});
+
+test('source author runtime emits the real plugin-sdk to agents closure for the packaged resolver', async context => {
+  const fixture = await createTempFixture(context, { prefix: 'source-author-real-closure-' });
+  const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+  const projectDir = fixture.path('project');
+  await mkdir(projectDir);
+  const runtimeDir = fixture.path('bundle/apps/cli');
+  const pluginSdkManifest = JSON.parse(await readFile(join(repositoryRoot, 'packages/plugin-sdk/package.json'), 'utf8'));
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(join(runtimeDir, 'package.json'), JSON.stringify({ name: '@fixture/runtime' }));
+  const workspacePackages = await readWorkspacePackages(repositoryRoot);
+  const workspaceOwner = fixture.path('workspaces.mjs');
+  await build({ entryPoints: [join(repositoryRoot, 'packages/cli-common/src/workspaces/index.ts')],
+    outfile: workspaceOwner, bundle: true, platform: 'node', format: 'esm', conditions: ['happier-source'], logLevel: 'silent' });
+  const { resolveInternalWorkspacePackageNameClosure, resolveWorkspaceBundlesFromPackageJson } =
+    await import(pathToFileURL(workspaceOwner).href);
+  const closure = resolveInternalWorkspacePackageNameClosure({ repoRoot: repositoryRoot,
+    packageNames: [pluginSdkManifest.name, ...pluginSdkManifest.bundledDependencies] });
+  const hostBundles = resolveWorkspaceBundlesFromPackageJson({ repoRoot: repositoryRoot,
+    hostPackageDir: join(repositoryRoot, 'apps/cli') });
+  assert.ok(closure.every(name => hostBundles.some(bundle => bundle.packageName === name)),
+    'the real CLI declares the SDK bundled workspace closure');
+  // Emit only this public SDK's real closure, without unrelated CLI SDK roots.
+  await writeFile(join(projectDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', bundledDependencies: closure }));
+  const imports = closure.flatMap(name => {
+    const workspace = workspacePackages.get(name);
+    return collectExternalRuntimeDependencies(workspace.manifest)
+      .filter(dependency => !workspacePackages.has(dependency.name))
+      .map(dependency => ({ path: dependency.name, resolveFrom: join(workspace.root, 'package.json') }));
+  });
+  captureRuntimeDependencies({ imports, outputDir: runtimeDir, sourceRepoDir: repositoryRoot,
+    manifestPath: join(repositoryRoot, 'packages/plugin-sdk/package.json') });
+  await writeFile(fixture.path('bundle/source-bundle.json'), JSON.stringify({ runtimeDir, cliDir: runtimeDir }));
+
+  await emitSourceAuthorPackages({ repoDir: repositoryRoot, sourceRepoDir: repositoryRoot, projectDir, runtimeDir,
+    workspacePackages, build, sourceInputDigests: {},
+    readSourceInput: path => readFile(path), env: process.env });
+
+  const resolverOutput = await runCapture(process.execPath, [
+    '--conditions=happier-source', '--import', join(repositoryRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+    '--input-type=module', '-e', `import { resolvePackagedCliBundledWorkspacePackageRoot } from './apps/cli/src/plugins/authoring/hostSdkResolution.ts';
+      console.log(resolvePackagedCliBundledWorkspacePackageRoot(${JSON.stringify(runtimeDir)}, '@happier-dev/agents'));`,
+  // The CLI's `@/` aliases resolve through its own tsconfig, as in the canonical launcher.
+  ], { cwd: repositoryRoot, env: { ...process.env, TSX_TSCONFIG_PATH: join(repositoryRoot, 'apps/cli/tsconfig.json') } });
+  const agentsRoot = resolverOutput.trim();
+  assert.equal(agentsRoot, join(runtimeDir, 'authoring/node_modules/@happier-dev/agents'));
+  assert.equal(JSON.parse(await readFile(join(agentsRoot, 'package.json'))).name, '@happier-dev/agents');
+  assert.ok((await readFile(join(agentsRoot, 'dist/index.js'))).length > 0, 'the physical agents package contains emitted code');
 });
