@@ -42,6 +42,33 @@ export function compareWebBootWeight(candidate, baseline) {
   return { ...size, markdown };
 }
 
+/** Marks the one sticky PR comment that the trusted follow-up workflow updates. */
+export const WEB_BOOT_WEIGHT_COMMENT_MARKER = '<!-- happier-web-boot-weight -->';
+
+// Measurement artifacts come from runs that executed pull-request code. Only finite numbers,
+// booleans, null and plain path-like identifiers are accepted, so a posted comment can carry
+// no links, markup, mentions or table breaks.
+const PLAIN_TEXT = /^[A-Za-z0-9_./+\-[\]()]{0,300}$/u;
+/** @param {unknown} value @returns {any} */
+function assertPlainMeasurement(value, depth = 0) {
+  const plain = depth < 8 && (value === null || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))
+    || (typeof value === 'string' && PLAIN_TEXT.test(value))
+    || (Array.isArray(value) && value.length <= 500 && value.every(item => assertPlainMeasurement(item, depth + 1) !== undefined))
+    || (typeof value === 'object' && !Array.isArray(value) && Object.entries(value)
+      .every(([key, item]) => PLAIN_TEXT.test(key) && assertPlainMeasurement(item, depth + 1) !== undefined)));
+  if (!plain) throw new Error('Web boot weight measurement is not plain measurement data');
+  return value ?? true;
+}
+
+/** The sticky PR comment: the candidate must be plain data; an unusable base is dropped. @param {unknown} candidate @param {unknown} baseline */
+export function renderWebBootWeightComment(candidate, baseline) {
+  assertPlainMeasurement(candidate);
+  let base = null;
+  try { if (baseline) { assertPlainMeasurement(baseline); base = baseline; } } catch { base = null; }
+  return `${WEB_BOOT_WEIGHT_COMMENT_MARKER}\n${compareWebBootWeight(candidate, base).markdown}`;
+}
+
 /** @param {string} input */
 function exportRoot(input) {
   const path = resolve(input);
@@ -54,8 +81,18 @@ function exportRoot(input) {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    export: { type: 'string' }, out: { type: 'string' }, baseline: { type: 'string' }, summary: { type: 'string' }, sha: { type: 'string' },
+    export: { type: 'string' }, candidate: { type: 'string' }, out: { type: 'string' }, baseline: { type: 'string' }, summary: { type: 'string' }, sha: { type: 'string' },
   }, allowPositionals: false });
+  if (values.candidate) {
+    // Trusted follow-up workflow: render the sticky comment from downloaded artifacts only.
+    const read = (/** @type {string | undefined} */ file) => {
+      try { return file ? JSON.parse(readFileSync(file, 'utf8')) : null; } catch { return null; }
+    };
+    const comment = renderWebBootWeightComment(read(values.candidate), read(values.baseline));
+    if (values.summary) writeFileSync(values.summary, comment);
+    else console.log(comment);
+    return;
+  }
   if (!values.export) throw new Error('--export <web export directory or release .tar.gz> is required');
   const { root, cleanup } = exportRoot(values.export);
   try {
