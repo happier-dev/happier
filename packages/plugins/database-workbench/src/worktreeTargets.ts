@@ -18,7 +18,14 @@ type Request = Readonly<{ identity: Partial<DatabaseManualIdentity>; requester: 
 
 function unavailable(): never { throw new PluginError({ code: 'database_target_unavailable' }); }
 function admittedScope(scope: DatabaseTargetsListInputV1['scope'], identity: Request['identity']) {
-    if (!identity.requesterAccount || !identity.chosenMachine) throw new PluginError({ code: 'plugin_service_unavailable' });
+    if (!identity.requesterAccount || !identity.chosenMachine) throw new PluginError({
+        code: 'plugin_service_unavailable',
+        message: 'Database discovery requires the admitted Account and Machine identity. Reconnect the Machine and retry the database action.',
+        details: { reason: 'database_host_identity_unavailable',
+            missing: [...(!identity.requesterAccount ? ['requesterAccount'] : []), ...(!identity.chosenMachine ? ['chosenMachine'] : [])],
+            recovery: 'Reconnect the Machine and retry the database action.' },
+        remediation: { kind: 'retry' },
+    });
     if (scope.kind === 'environment' || scope.accountId !== identity.requesterAccount.accountId
         || scope.installationId !== identity.chosenMachine.installationId) return unavailable();
     if (scope.kind === 'worktree') {

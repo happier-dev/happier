@@ -24,6 +24,17 @@ const identity = { requesterAccount: { accountId: 'alice' }, chosenMachine: { ma
 const workspace = { serverId: 'home', machineId: 'machine', workspaceId: 'selected', rootPath: '/selected' };
 const scope = { kind: 'worktree', accountId: 'alice', installationId: 'installation', projectKey: 'project', workspace } as const;
 
+it('reports the missing host fact and recovery when discovery has no admitted Machine', async () => {
+    const targets = createWorktreeDatabaseTargets();
+    await expect(targets.list({ input: { scope }, identity: { requesterAccount: identity.requesterAccount },
+        storage: emptyStorage, requester: 'person' })).rejects.toMatchObject({
+        code: 'plugin_service_unavailable',
+        details: { reason: 'database_host_identity_unavailable', missing: ['chosenMachine'],
+            recovery: 'Reconnect the Machine and retry the database action.' },
+        remediation: { kind: 'retry' },
+    });
+});
+
 it('discovers the selected launched service from prepared originals, isolates custody and removes it on service release', async () => {
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { storage } });
     try {
