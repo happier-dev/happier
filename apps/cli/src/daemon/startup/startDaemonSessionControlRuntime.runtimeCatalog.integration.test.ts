@@ -2849,17 +2849,22 @@ describe('startDaemonSessionControlRuntime', () => {
                 if (policy === 'wake-native-unknown' && report.observation?.power === 'running') {
                     machine = ManagedMachineV1Schema.parse({ ...machine, observation: report.observation, submittedNativeEffect: undefined });
                 }
+                if (policy === 'creation-cleanup' && report.result.kind === 'confirmed' && report.observation?.availability === 'absent') {
+                    machine = ManagedMachineV1Schema.parse({ ...machine, observation: report.observation,
+                        allocation: 'confirmed-absent', resource: undefined, cleanup: undefined, submittedNativeEffect: undefined });
+                }
             }
-            if (policy === 'wake-approved-replay' && path.endsWith('/prepare-policy')) {
+            if (['wake-approved-replay', 'creation-cleanup'].includes(policy) && path.endsWith('/prepare-policy')) {
                 return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
-                    machine: { ...machine, desired: 'start' },
+                    machine: policy === 'creation-cleanup' ? machine : { ...machine, desired: 'start' },
                     requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
                 }) };
             }
             if (policy === 'wake-approved-replay' && path.endsWith('/report-intent')) {
                 machine = ManagedMachineV1Schema.parse({ ...machine, observation: { observedAt: Date.now(), availability: 'present', power: 'running' } });
             }
-            if (policy === 'explicit-delete-waiver' && path === managedMachineActionEndpointPathV1('machines.managed.get')) return { status: 200, data: machine };
+            if (['explicit-delete-waiver', 'creation-cleanup'].includes(policy)
+                && path === managedMachineActionEndpointPathV1('machines.managed.get')) return { status: 200, data: machine };
             if (policy === 'explicit-delete-waiver' && path.endsWith('/pools/list')) return { status: 200, data: { pools: [] } };
             if (policy === 'explicit-delete-waiver' && path.endsWith('/admit-control')) {
                 readsBeforeNativeAdmission = [...censusReads];
@@ -2931,9 +2936,6 @@ describe('startDaemonSessionControlRuntime', () => {
             const path = new URL(String(url)).pathname;
             observedTransport.push({ method: 'GET', path });
             if (path === '/v1/account/profile') return { status: 200, data: { id: machine.custodianAccountId } };
-            if (policy === 'creation-cleanup' && path === managedMachineActionEndpointPathV1('machines.managed.get')) {
-                return { status: 200, data: machine };
-            }
             if (socketPolicy && path === '/v1/auth/ping') return { status: 200, data: {} };
             if (policy === 'explicit-delete-waiver') {
                 if (path === '/v1/artifacts') { censusReads.push('boards'); return { status: 200, data: [...artifacts.values()] }; }
@@ -3094,26 +3096,16 @@ describe('startDaemonSessionControlRuntime', () => {
                     onUnavailable: error => { unavailable.push(error); },
                 });
                 try {
-                    const artifactId = await approvalCreated;
-                    await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1));
-                    expect(approvals).toHaveLength(1);
-                    const approval = ApprovalRequestV2Schema.parse(approvals[0]);
-                    expect(approval).toMatchObject({ actionId: 'machines.managed.delete',
-                        actionArgs: { homeId, managedId: machine.id, intent: 'delete', when: 'now', expectedRevision: 1, reviewedDependencies: true },
-                        approval: { flow: 'blocking' }, executionOriginV1: { authority: 'account_automation', caller: { kind: 'host' } } });
-                    expect(nativeEffects).toEqual([]);
+                    await vi.waitFor(() => expect(settledPolicies + approvals.length, JSON.stringify(boundaryDiagnostics())).toBeGreaterThan(0), { timeout: 5_000 });
+                    expect(approvals).toEqual([]);
+                    expect(settledPolicies).toBe(1);
+                    expect(nativeEffects.filter(role => role === 'destroy'), JSON.stringify(boundaryDiagnostics())).toHaveLength(1);
+                    expect(nativeIntentReports).toMatchObject([{ result: { kind: 'confirmed' }, observation: { availability: 'absent' } }]);
+                    expect(machine).toMatchObject({ allocation: 'confirmed-absent' });
                     const held = ActionOperationListV1ResponseSchema.parse(await apiMachine
                         .invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
                     expect(held.items).toHaveLength(1);
                     const operationId = held.items[0]!.operationId;
-                    const ingress = runtime.externalActionIngressOwner;
-                    if (!ingress) throw new Error('Expected the actual current Actions ingress');
-                    expect(await ingress.executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-                        { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-creation-cleanup-answer' }))
-                        .toMatchObject({ ok: true });
-                    await vi.waitFor(() => expect(settledPolicies).toBe(1));
-                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(1);
-                    expect(approvals).toHaveLength(1);
                     expect(cleanupAdmissions).toHaveLength(1);
                     expect(unavailable).toEqual([]);
                     expect(ActionOperationGetV1ResponseSchema.parse(await apiMachine
@@ -3354,7 +3346,7 @@ describe('startDaemonSessionControlRuntime', () => {
         await runManagedPolicyFixture('deferred-acquire');
     });
 
-    it('runs signed canceled creation cleanup behind one real Ask while leaving manual retirement and until-delete peers alone', async () => {
+    it('settles admitted canceled creation without a second Ask and leaves manual retirement and until-delete peers alone', async () => {
         await runManagedPolicyFixture('creation-cleanup');
     });
 

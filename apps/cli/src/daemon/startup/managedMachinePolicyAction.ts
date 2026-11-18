@@ -4,7 +4,7 @@ import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machine
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
-/** Configured unused Stops consume rule consent; other policy effects retain shared Ask. */
+/** Run managed policy through its recorded consent or the shared approval flow. */
 export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineReadSnapshotV1>(input: Readonly<{
     machine: Machine;
     purpose: ManagedPolicyPurposeV1;
@@ -22,10 +22,11 @@ export async function executeManagedMachinePolicyAction<Machine extends ManagedM
     if (!operationId || !signal || !context.operationOwnerUpdate) {
         throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
     }
-    // The rule's admission is consent for its later unused Stop/Suspend.
-    // Home still admits this exact policy/revision before native submission.
-    if (input.purpose.kind === 'retention' && machine.retention.kind === 'unused'
-        && machine.retention.effect === 'stop' && (machine.desired === 'stop' || machine.desired === 'suspend')) {
+    // Cancel commits cleanup intent. An unused Stop/Suspend consumes its configured rule.
+    // Home admits the exact policy and revision before the controller submits native work.
+    if (input.purpose.kind === 'creation-cleanup'
+        || (input.purpose.kind === 'retention' && machine.retention.kind === 'unused'
+            && machine.retention.effect === 'stop' && (machine.desired === 'stop' || machine.desired === 'suspend'))) {
         return await input.runApproved(context);
     }
     const actionId = machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
