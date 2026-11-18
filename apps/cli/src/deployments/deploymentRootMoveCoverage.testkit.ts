@@ -2,11 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import * as undici from 'undici';
 import { expect, vi } from 'vitest';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { DeploymentMoveToRepositoryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
@@ -27,6 +28,7 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
     home: DeploymentSocketHomeFixture;
     credentials: StoredCredentials;
     invoke(name: string, input: unknown): Promise<ActionExecuteResult>;
+    invokeSession(name: string, input: unknown): Promise<ActionExecuteResult>;
     environmentId: string;
     projectSourceId: string;
     definition: Readonly<{ contentRevision: number; composeDigest: string; document: string }>;
@@ -78,15 +80,15 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
         }] })));
     expect(placed.status).toBe('applied');
     let repositoryCreated = false;
-    let opened: { number: number; title: string; html_url: string; state: string;
+    let opened: { number: number; title: string; html_url: string; state: string; merged?: boolean; merge_commit_sha?: string;
         base: { ref: string }; head: { ref: string; sha: string; repo: { full_name: string } } } | undefined;
     const requests: { method: string; path: string }[] = [];
-    const nativeFetch = undici.fetch;
-    const githubHttp = vi.spyOn(undici, 'fetch').mockImplementation(async (url, init) => {
+    const nativeFetch = globalThis.fetch;
+    const githubHttp = stubUndiciFetch(async (url: string | URL | Request, init?: RequestInit) => {
         const parsed = new URL(typeof url === 'object' && 'url' in url ? url.url : String(url));
         if (parsed.origin !== 'https://api.github.com') return nativeFetch(url, init);
         const method = init?.method ?? 'GET';
-        expect(new undici.Headers(init?.headers).get('authorization')).toBe(`Bearer ${token}`);
+        expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${token}`);
         requests.push({ method, path: parsed.pathname });
         const repository = { id: 123, name: repositoryName, full_name: nameWithOwner, html_url: `https://github.com/${nameWithOwner}`,
             clone_url: cloneUrl, ssh_url: `git@github.com:${nameWithOwner}.git`, visibility: 'private', default_branch: 'main' };
@@ -100,6 +102,7 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
         } else if (method === 'GET' && parsed.pathname === `/repos/${nameWithOwner}`) {
             body = repositoryCreated ? repository : {}; status = repositoryCreated ? 200 : 404;
         } else if (method === 'GET' && parsed.pathname === `/repos/${nameWithOwner}/pulls`) body = opened ? [opened] : [];
+        else if (method === 'GET' && parsed.pathname === `/repos/${nameWithOwner}/pulls/4` && opened) body = opened;
         else if (method === 'POST' && parsed.pathname === `/repos/${nameWithOwner}/pulls`) {
             const authored = JSON.parse(Buffer.from(init?.body as Uint8Array).toString('utf8')) as { title: string; base: string; head: string };
             const sha = execFileSync('git', ['rev-parse', `refs/heads/${authored.head}`], { cwd: remotePath, encoding: 'utf8' }).trim();
@@ -107,7 +110,7 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
                 base: { ref: authored.base }, head: { ref: authored.head, sha, repo: { full_name: nameWithOwner } } };
             body = opened; status = 201;
         } else throw new Error(`Unexpected GitHub request: ${method} ${parsed.pathname}`);
-        return new undici.Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     });
     try {
         const operand = { serverId: home.serverId, environmentId: input.environmentId, workspace,
@@ -133,5 +136,23 @@ export async function runDeploymentRootMoveCoverage(input: Readonly<{
         expect(requests).toEqual(expect.arrayContaining([{ method: 'POST', path: '/user/repos' },
             { method: 'POST', path: `/repos/${nameWithOwner}/pulls` }]));
         expect(JSON.stringify(moved)).not.toContain(token);
-    } finally { githubHttp.mockRestore(); await transport.cleanup(); }
+        if (!opened) throw new Error('Move must open its real pull request before continuing');
+        execFileSync('git', ['update-ref', 'refs/heads/main', moved.continuation.headCommit], { cwd: remotePath });
+        opened = { ...opened, state: 'closed', merged: true, merge_commit_sha: moved.continuation.headCommit };
+        if (!moved.repository) throw new Error('Move must retain its created repository identity');
+        const { createRepository: _createRepository, ...continuationOperand } = operand;
+        // The native Session creates the root and requester projections. Home
+        // validates its real child signatures; no test supplies HTTP headers.
+        const continued = await input.invokeSession('deployments.environments.moveToRepository', {
+            ...continuationOperand, mode: 'apply', repository: moved.repository.repository,
+            continuation: moved.continuation,
+        });
+        expect(continued).toMatchObject({ ok: true, result: { kind: 'switched', environmentId: input.environmentId,
+            commitSha: moved.continuation.headCommit } });
+        const current = await invoke('deployments.environments.get', { serverId: home.serverId, environmentId: input.environmentId });
+        if (!current.ok) throw new Error(`Moved Environment read refused: ${current.errorCode}`);
+        const environment = DeploymentEnvironmentGetResultV1Schema.parse(current.result);
+        expect(environment).toMatchObject({ ok: true, content: { definition: { kind: 'repository', ref: moved.continuation.headCommit,
+            compose: { path: operand.path } } } });
+    } finally { githubHttp.mockReset(); await transport.cleanup(); }
 }

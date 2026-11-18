@@ -308,7 +308,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     write([{ Id: image.nativeId, Descriptor: { digest: image.image.manifestDigest, mediaType: 'application/vnd.oci.image.manifest.v1+json' },
         RepoTags: [...new Set([...(state.pruneImages?.[image.nativeId]?.repoTags || []),
             ...Object.keys(state.tags).filter(alias => !alias.includes('@') && imageFor(alias)?.nativeId === image.nativeId)])],
-        RepoDigests: [...new Set([...(state.pruneImages?.[image.nativeId]?.repoDigests || ['example/s0@' + image.image.manifestDigest]),
+        RepoDigests: [...new Set([...(state.pruneImages?.[image.nativeId]?.repoDigests || [image.image.registryReference]),
             ...Object.keys(state.tags).filter(alias => alias.includes('@') && imageFor(alias)?.nativeId === image.nativeId)])] }]);
 } else if (args[0] === 'buildx' && args[1] === 'imagetools' && args[2] === 'inspect') {
     const image = imageFor(args.at(-1));

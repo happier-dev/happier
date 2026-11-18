@@ -1648,7 +1648,8 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const mcpDeploy = CallToolResultSchema.parse(await mcpClient.callTool({ name: 'action_execute',
                 arguments: { actionId: 'deployments.deploy', input: deployInput } }));
             const mcpDeployText = mcpDeploy.content.find(item => item.type === 'text');
-            expect(mcpDeploy.isError, JSON.stringify(mcpDeploy)).not.toBe(true);
+            expect(mcpDeploy.isError, JSON.stringify({ mcpDeploy,
+                nativeFailures: await s0Docker.readFailures() })).not.toBe(true);
             if (!mcpDeployText || mcpDeployText.type !== 'text') throw new Error('Deploy MCP result is missing');
             const proposedDeploy: ActionExecuteResult = { ok: true, result: JSON.parse(mcpDeployText.text) };
             expect(refusedDeploymentHttpPaths).toEqual([]);
