@@ -56,13 +56,15 @@ export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions 
     const livenessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
         if (isShutdown()) {
             reply.code(503).send(createShuttingDownMonitoringResponse());
-            return;
+            return reply;
         }
         reply.send(createHealthyMonitoringResponse());
+        return reply;
     };
 
     const readinessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
         await sendDatabaseReadinessResponse(reply, options);
+        return reply;
     };
 
     app.get('/health', livenessHandler);

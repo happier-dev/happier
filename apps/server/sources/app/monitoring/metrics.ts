@@ -16,18 +16,22 @@ export async function createMetricsServer() {
             const metrics = await register.metrics();
             reply.type('text/plain; version=0.0.4; charset=utf-8');
             reply.send(metrics);
+            return reply;
         } catch (error) {
             log({ module: 'metrics', level: 'error' }, `Error generating metrics: ${error}`);
             reply.code(500).send('Internal Server Error');
+            return reply;
         }
     });
 
     app.get('/health', async (_request, reply) => {
         reply.send(createHealthyMonitoringResponse());
+        return reply;
     });
 
     app.get('/ready', async (_request, reply) => {
         await sendDatabaseReadinessResponse(reply);
+        return reply;
     });
 
     return app;
