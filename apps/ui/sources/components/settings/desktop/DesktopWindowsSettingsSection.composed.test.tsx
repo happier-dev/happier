@@ -12,6 +12,10 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { Modal } from '@/modal';
+import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { getDesktopHostAvailability } from '@/utils/platform/desktopHost';
 import { Switch } from '@/components/ui/forms/Switch';
 
 vi.mock('react-native', async () =>
@@ -62,22 +66,28 @@ afterEach(() => {
 function stubDesktopHost() {
   vi.stubGlobal('isTauri', true);
   const secureStorage = createDesktopSecureStorageBoundary();
+  let secureReadsReady: Promise<void> | undefined;
   vi.stubGlobal('__TAURI_INTERNALS__', {
-    invoke: (command: string, args?: Record<string, unknown>) => {
+    invoke: async (command: string, args?: Record<string, unknown>) => {
       if (command === 'desktop_host_get_availability')
-        return Promise.resolve({
+        return {
           activity: { kind: 'available' },
           pet: { kind: 'available' },
           windows: { kind: 'available' },
-        });
+        };
+      if (command === 'desktop_secure_storage_read' && secureReadsReady) {
+        await secureReadsReady;
+      }
       return secureStorage.invoke(command, args);
     },
   });
+  return (ready: Promise<void>) => { secureReadsReady = ready; };
 }
 
 describe('Settings → Desktop app → Windows', () => {
-  it('turns the Session window Bot rail off and on from the row and from settings.set', async () => {
-    stubDesktopHost();
+  it('shows when the Bot rail choice cannot apply yet, then admits the row and settings.set', async () => {
+    const holdSecureReads = stubDesktopHost();
+    const secureReads = createDeferred<void>();
     const account = await createSecretSettingsTestHarness({
       settings: settingsParse({
         actionsSettingsV1: {
@@ -88,6 +98,8 @@ describe('Settings → Desktop app → Windows', () => {
     });
     storage.getState().applyLocalSettings({ ...localSettingsDefaults });
     try {
+      await getDesktopHostAvailability();
+      holdSecureReads(secureReads.promise);
       const screen = await renderScreen(<DesktopWindowsSettingsSection />);
       const row = () =>
         screen.tree
@@ -95,11 +107,17 @@ describe('Settings → Desktop app → Windows', () => {
           .find(
             (item) => item.props.testID === 'settings-desktop-window-bot-rail',
           )!;
-      await vi.waitFor(() => expect(row()).toBeDefined());
       expect(row().props.value).toBe(true);
+      vi.mocked(Modal.alert).mockClear();
+      await act(async () => { await row().props.onValueChange(false); });
+      expect(storage.getState().localSettings.desktopWindowBotRailEnabled).toBe(true);
+      const refusalShown = vi.mocked(Modal.alert).mock.calls.length > 0;
+
       await act(async () => {
-        await row().props.onValueChange(false);
+        secureReads.resolve();
+        await resolveServerCredentialAccountScope(account.scope.serverId);
       });
+      await act(async () => { await row().props.onValueChange(false); });
       await vi.waitFor(() =>
         expect(
           storage.getState().localSettings.desktopWindowBotRailEnabled,
@@ -128,10 +146,11 @@ describe('Settings → Desktop app → Windows', () => {
       );
       expect(row().props.value).toBe(true);
       expect(account.settingsWrites).toEqual([]);
+      expect(refusalShown).toBe(true);
     } finally {
+      secureReads.resolve();
       standardCleanup();
       await account.dispose();
     }
   });
-
 });

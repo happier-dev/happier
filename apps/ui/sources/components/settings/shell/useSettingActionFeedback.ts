@@ -12,16 +12,18 @@ export function useSettingActionFeedback(options?: Parameters<typeof useSettingA
     const write = useSettingActionWriter(options);
     const setSetting = React.useCallback(async (setting: SettingActionAddress, value: SettingValue,
         operation?: Parameters<typeof write>[2]): Promise<boolean> => {
-        if (!write.isCurrent(setting)) return false;
-        const binding = readBuiltInSettingUiStorage(setting.anchor);
-        const withdraw = holdSettingWrite(setting, value, binding?.scope === 'account' && 'kind' in binding && binding.kind === 'owner'
-            ? current => {
-                const parsed = binding.parse(value);
-                return parsed.success ? binding.mutate(current, parsed.value) : null;
-            } : undefined);
+        const canPreview = write.isCurrent(setting);
+        const binding = canPreview ? readBuiltInSettingUiStorage(setting.anchor) : undefined;
+        const withdraw = canPreview
+            ? holdSettingWrite(setting, value, binding?.scope === 'account' && 'kind' in binding && binding.kind === 'owner'
+                ? current => {
+                    const parsed = binding.parse(value);
+                    return parsed.success ? binding.mutate(current, parsed.value) : null;
+                } : undefined)
+            : undefined;
         try {
             const result = await write(setting, value, { ...operation, onApprovalPending: () => {
-                withdraw(); operation?.onApprovalPending?.();
+                withdraw?.(); operation?.onApprovalPending?.();
             } });
             if (!write.isAccountCurrent(setting)) return false;
             if (result.ok) return true;
@@ -29,7 +31,7 @@ export function useSettingActionFeedback(options?: Parameters<typeof useSettingA
         } catch (error) {
             if (!write.isAccountCurrent(setting)) return false;
             presentSettingWriteFailure(error);
-        } finally { withdraw(); }
+        } finally { withdraw?.(); }
         return false;
     }, [write]);
     return { setSetting, isCurrent: write.isCurrent, ready: write.ready, approval: write.approval };

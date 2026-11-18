@@ -57,8 +57,9 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
         }>): Promise<ActionExecuteResult> => {
         const revision = operation?.expectedSettingsVersion === undefined ? {}
             : { expectedSettingsVersion: operation.expectedSettingsVersion };
+        const accountCurrent = isAccountCurrent(setting);
         // Device preferences remain available before sign-in, through the same executor policy.
-        if (!lifetime && isCurrent(setting) && !operation?.invocation) {
+        if (!lifetime && accountCurrent && !localLifetime.controller.signal.aborted && !operation?.invocation) {
             return await (operation?.confirmed ? localFrontDoor.confirmed : localFrontDoor)('settings.set', { anchor: setting.anchor,
                 ...revision,
                 ...(setting.key !== undefined ? { key: setting.key } : {}),
@@ -67,8 +68,11 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
                 signal: operation?.signal,
             });
         }
-        if (!lifetime || !isCurrent()) {
-            return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        if (!lifetime || !accountCurrent || !mounted.isCurrent()) {
+            // A current view can receive input while its credential binding is still being resolved.
+            const errorCode = lifetime && accountCurrent && !localLifetime.controller.signal.aborted && !operation?.signal?.aborted
+                ? 'setting_not_bound' : 'action_account_scope_changed';
+            return { ok: false, errorCode, error: errorCode };
         }
         const input = { anchor: setting.anchor, ...revision, ...(setting.key !== undefined ? { key: setting.key } : {}),
             ...(setting.target ? { target: setting.target } : {}), value };
@@ -83,7 +87,7 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
         return await (operation?.invocation
             ? operation.invocation.execute(mounted, 'settings.set', input, mountedOperation)
             : mounted.execute('settings.set', input, mountedOperation));
-    }, [isCurrent, lifetime, localFrontDoor, mounted.execute, mounted.executeForCaller, mounted.binding]);
+    }, [isAccountCurrent, lifetime, localFrontDoor, localLifetime, mounted.isCurrent, mounted.execute, mounted.executeForCaller, mounted.binding]);
     return React.useMemo(() => Object.assign(write, { isCurrent, isAccountCurrent,
         ready: mounted.ready, approval: mounted.approval }), [isCurrent, isAccountCurrent, write, mounted.ready, mounted.approval]);
 }
