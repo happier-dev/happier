@@ -1316,6 +1316,10 @@ part of the Providers integration journey.
 
 ## Protocol and capability matchmaking
 
+In 0.3 development, Run credential materialization returns a retryable
+unavailable result when the daemon cannot read retained Run state. A successful
+read that fails the exact runner identity check still refuses materialization.
+
 DeepSec review Runs in 0.3 development use the same Provider compatibility,
 authorization and per-Run materialization owner as other Agent launches. Its
 adapter supports credentialed OpenAI Responses through the native Codex harness,

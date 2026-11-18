@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { TrackedSession } from '@/daemon/types';
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
@@ -8,6 +9,21 @@ import { findTrackedSessionByRunnerPid, resolveTrackedSessionRunnerIdentity } fr
 import { normalizeOptionalString } from '../sessionAuthSwitch/targets';
 import type { CreateExecutionRunConnectedServicesBridgeDeps } from './executionRunMaterialization';
 import { trackedSessionOnProcess, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
+import { logger } from '@/ui/logger';
+
+export type RetainedRunStateReadFailure = Readonly<{ failureCause: ActionFailureCauseV1 }>;
+
+export async function readRetainedRunStateForConnectedServices(runId: string): Promise<
+  Readonly<{ record: Awaited<ReturnType<typeof readRetainedExecutionRunRecord>> }> | RetainedRunStateReadFailure
+> {
+  try {
+    return { record: await readRetainedExecutionRunRecord(runId) };
+  } catch (error) {
+    const failureCause = projectActionFailureCauseV1(error, 'connected_service.execution_run.retained_state_read');
+    logger.warnLocalFile('[DAEMON RUN] Retained connected-services authority unavailable', failureCause);
+    return { failureCause };
+  }
+}
 
 /** One identity owner for Session runners and in-daemon detached Runs. */
 export function createExecutionRunConnectedServicesRunnerIdentityCapture(params: Readonly<{
@@ -19,8 +35,10 @@ export function createExecutionRunConnectedServicesRunnerIdentityCapture(params:
   isCurrent(): boolean;
 }>): CreateExecutionRunConnectedServicesBridgeDeps['captureRunnerIdentity'] {
   return async ({ runnerPid, expectedParentSessionId, runId, controllerOccurrenceId }) => {
+    const retained = runId === undefined ? { record: null } : await readRetainedRunStateForConnectedServices(runId);
+    if ('failureCause' in retained) return retained;
+    const record = retained.record;
     if (runnerPid === process.pid && expectedParentSessionId === undefined && runId !== undefined) {
-      const record = await readRetainedExecutionRunRecord(runId).catch(() => null);
       const attribution = record?.requesterWorkAttributionV1;
       if (record?.state.runId === runId && record.state.sessionId === null) {
         const resume = record.state.status !== 'running' && controllerOccurrenceId
@@ -50,7 +68,6 @@ export function createExecutionRunConnectedServicesRunnerIdentityCapture(params:
     }
     // A Run belongs to the Session that started it: its retained record (or the caller) names that
     // Session. One process may host several Sessions, so its pid alone never picks the Session.
-    const record = runId === undefined ? null : await readRetainedExecutionRunRecord(runId).catch(() => null);
     if (runId !== undefined && (!record || record.state.runId !== runId)) return null;
     const runSessionId = record ? normalizeOptionalString(record.state.sessionId) : expectedParentSessionId;
     if (record && (!runSessionId || (expectedParentSessionId !== undefined && runSessionId !== expectedParentSessionId))) return null;

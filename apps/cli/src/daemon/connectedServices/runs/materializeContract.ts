@@ -162,7 +162,8 @@ export const ConnectedServiceRunMaterializationFailureResponseSchema = z.strictO
     ok: z.literal(false),
     errorCode: z.union([
         z.literal(CONNECTED_SERVICE_AUTH_GROUP_QUOTA_PROBE_INCOMPLETE_ERROR_CODE),
-        z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
+        z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable]),
@@ -192,15 +193,8 @@ export type ConnectedServiceRunRejectedStartRequest = z.infer<typeof ConnectedSe
 export const ConnectedServiceRunRejectedStartResultSchema = z.union([
     z.strictObject({ ok: z.literal(true), retry: z.literal(true) }),
     z.extend(ConnectedServiceRunMaterializationFailureResponseSchema, {
-        errorCode: z.union([z.enum([
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable,
-        ]), ConnectedServiceRunCurrentnessErrorCodeSchema,
-        z.literal(CONNECTED_SERVICE_AUTH_GROUP_QUOTA_PROBE_INCOMPLETE_ERROR_CODE)]),
+        errorCode: z.union([ConnectedServiceRunMaterializationFailureResponseSchema.shape.errorCode,
+            z.literal(CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale)]),
     }),
 ]);
 export type ConnectedServiceRunRejectedStartResult = z.infer<typeof ConnectedServiceRunRejectedStartResultSchema>;

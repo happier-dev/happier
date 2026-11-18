@@ -875,6 +875,41 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         }
     });
 
+    it('reports unreadable retained Run state as unavailable before materializing credentials', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-run-state-unavailable-'));
+        const originalKey = Object.getOwnPropertyDescriptor(configuration, 'deviceLocalSecretKeyFile')!;
+        Object.defineProperty(configuration, 'deviceLocalSecretKeyFile', { ...originalKey, value: directory });
+        try {
+            const { bridge, registerRunTargets } = createBridge({
+                captureRunnerIdentity: createExecutionRunConnectedServicesRunnerIdentityCapture({
+                    machineId: 'machine-test', trackedSessionsByKey: new Map(), getApiMachineForSessions: () => null,
+                    isCurrent: () => true,
+                }),
+            });
+            const app = createDaemonControlApp({
+                getChildren: () => [], machineId: 'machine-test', stopSession: async () => ({ status: 'not_found' }),
+                spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+                requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'master-token',
+                verifyRunMaterializeToken: provided => isValidConnectedServiceRunMaterializeToken(provided, 'master-token'),
+                materializeConnectedServicesForExecutionRun: bridge.materialize,
+            });
+            try {
+                const response = await app.inject({ method: 'POST', url: '/connected-service-run/materialize',
+                    headers: { 'x-happier-daemon-token': deriveConnectedServiceRunMaterializeToken('master-token') },
+                    payload: { ...MATERIALIZE_INPUT, connectedServices: PERSISTED_RUN_BINDINGS, activationId: randomUUID() } });
+                const result = ConnectedServiceRunMaterializationFailureResponseSchema.parse(response.json());
+                expect(result).toMatchObject({ ok: false, errorCode: 'connected_service_run_materialization_unavailable',
+                    failureCause: { phase: 'authentication', retryable: true,
+                        actionCause: { phase: 'connected_service.execution_run.retained_state_read' } } });
+                expect(response.body).not.toContain(directory);
+                expect(registerRunTargets).not.toHaveBeenCalled();
+            } finally { await app.close(); }
+        } finally {
+            Object.defineProperty(configuration, 'deviceLocalSecretKeyFile', originalKey);
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it('waits for a resolve-pending exited runner attempt and cleans its root and contribution lease', async () => {
         let finishResolution!: () => void;
         let markResolutionStarted!: () => void;

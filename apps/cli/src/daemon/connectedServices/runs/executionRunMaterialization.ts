@@ -36,7 +36,7 @@ import type { ConnectedServiceRuntimeFailureClassification } from '../runtimeAut
 import { applyConnectedServiceRuntimeAuthFailureSourceBinding, readConnectedServiceRuntimeAuthFailureSourceBinding } from '../runtimeAuth/handleConnectedServiceRuntimeAuthFailure';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/requesterSessionCredentials';
-import { readRetainedExecutionRunRecord } from '../../executionRunRegistry';
+import { readRetainedRunStateForConnectedServices, type RetainedRunStateReadFailure } from './runnerIdentity';
 import { readRequesterHomeWithinActionLifetime } from '../../sessionEncryption/requesterCurrentness';
 import { ConnectedServiceCredentialRevisionV1Schema, type ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
@@ -103,6 +103,13 @@ type CapturedExecutionRunRunnerIdentity = Readonly<{
     requesterSessionBootstrap?: import('@/daemon/sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap;
     isCurrent(): boolean;
 }>;
+
+type ExecutionRunRunnerIdentityResult = CapturedExecutionRunRunnerIdentity | RetainedRunStateReadFailure | null;
+
+function runStateUnavailable(failure: RetainedRunStateReadFailure) {
+    return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
+        failureCause: { phase: 'authentication', failureReason: 'unknown', retryable: true, actionCause: failure.failureCause } } as const;
+}
 
 type ResolveAuthForSpawn = (
     input: ResolveAuthForSpawnInput,
@@ -208,7 +215,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
         /** Fresh materialization must belong to this runner's canonical retained Run. */
         runId?: string;
         controllerOccurrenceId?: string;
-    }>) => CapturedExecutionRunRunnerIdentity | null | Promise<CapturedExecutionRunRunnerIdentity | null>;
+    }>) => ExecutionRunRunnerIdentityResult | Promise<ExecutionRunRunnerIdentityResult>;
     acquireAgentPurposeContributions: (input: Readonly<{
         agentId: CatalogAgentId;
     }>) => Promise<Readonly<{
@@ -496,9 +503,7 @@ export function createExecutionRunConnectedServicesBridge(
         runKey: string;
         runnerPid: number;
         agentId: CatalogAgentId;
-        runner: NonNullable<
-            Awaited<ReturnType<CreateExecutionRunConnectedServicesBridgeDeps['captureRunnerIdentity']>>
-        >;
+        runner: CapturedExecutionRunRunnerIdentity;
         connectedServicesBindings: Parameters<
             typeof resolveQualifiedPurposeBindingSnapshotForAgentSpawn
         >[0]['bindings'];
@@ -712,7 +717,7 @@ export function createExecutionRunConnectedServicesBridge(
                 runnerPid: input.runnerPid,
                 expectedParentSessionId: input.sessionId,
             });
-            if (!runner || !runner.isCurrent()) return false;
+            if (!runner || 'failureCause' in runner || !runner.isCurrent()) return false;
             const current = retainedCleanupByRunKey.get(registration.runKey);
             const matchesCurrentRunner = Boolean(
                 current
@@ -920,6 +925,7 @@ export function createExecutionRunConnectedServicesBridge(
                 runId: input.runId,
                 ...(input.controllerOccurrenceId ? { controllerOccurrenceId: input.controllerOccurrenceId } : {}),
             });
+            if (runner && 'failureCause' in runner) return runStateUnavailable(runner);
             if (!runner || !runner.isCurrent()) {
                 return blocked(
                     'Execution-run connected services runner identity is not current',
@@ -930,12 +936,9 @@ export function createExecutionRunConnectedServicesBridge(
             // materialize request is also used during native launch, before
             // the provider is opened, and must not turn a retained Run into
             // a fresh home merely because this is not auth-failure recovery.
-            let retainedRun: Awaited<ReturnType<typeof readRetainedExecutionRunRecord>>;
-            try {
-                retainedRun = await readRetainedExecutionRunRecord(runKey);
-            } catch {
-                return blocked('Retained execution-run state is unavailable. Reopen the Run before continuing.');
-            }
+            const retained = await readRetainedRunStateForConnectedServices(runKey);
+            if ('failureCause' in retained) return runStateUnavailable(retained);
+            const retainedRun = retained.record;
             if (retainedRun && (retainedRun.state.sessionId !== runner.parentSessionId
                 || retainedRun.state.backendId !== agentId)) {
                 return blocked('Retained execution-run identity does not match this materialization.');
@@ -1277,6 +1280,7 @@ export function createExecutionRunConnectedServicesBridge(
         const request = parsed.data;
         const entry = retainedCleanupByRunKey.get(request.runId);
         const runner = await deps.captureRunnerIdentity({ runnerPid: request.runnerPid, runId: request.runId });
+        if (runner && 'failureCause' in runner) return { status: 'unavailable', reason: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable };
         let target = deps.getRunRuntimeTarget?.(request.runId);
         const hasCurrentAuthority = () => Boolean(entry && entry.authorityActive && !entry.retiring
             && retainedCleanupByRunKey.get(request.runId) === entry
@@ -1341,7 +1345,7 @@ export function createExecutionRunConnectedServicesBridge(
         return await withRunKeyMutation(input.runId, async () => {
             const entry = retainedCleanupByRunKey.get(input.runId);
             const runner = await deps.captureRunnerIdentity({ runnerPid: input.runnerPid, runId: input.runId });
-            if (!entry || !runner || !entry.authorityActive || entry.retiring
+            if (!entry || !runner || 'failureCause' in runner || !entry.authorityActive || entry.retiring
                 || entry.activationId !== input.activationId || entry.runnerPid !== input.runnerPid
                 || runner.identity !== entry.runnerIdentity || !runner.isCurrent() || !entry.isCurrent()
                 || !deps.getRunRuntimeTarget?.(input.runId)) return { ok: true, accepted: false };
@@ -1356,6 +1360,7 @@ export function createExecutionRunConnectedServicesBridge(
         const input = parsed.data;
         const entry = retainedCleanupByRunKey.get(input.runId);
         const runner = await deps.captureRunnerIdentity({ runnerPid: input.runnerPid, runId: input.runId });
+        if (runner && 'failureCause' in runner) return { status: 'failed', reason: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable };
         let target = deps.getRunRuntimeTarget?.(input.runId);
         const isCurrent = () => Boolean(!signal.aborted && entry && target && entry.authorityActive && !entry.retiring
             && retainedCleanupByRunKey.get(input.runId) === entry && entry.activationId === input.activationId
@@ -1412,6 +1417,7 @@ export function createExecutionRunConnectedServicesBridge(
         return await withRunKeyMutation(input.runId, async () => {
             const entry = retainedCleanupByRunKey.get(input.runId);
             const runner = await deps.captureRunnerIdentity({ runnerPid: input.runnerPid, runId: input.runId });
+            if (runner && 'failureCause' in runner) return runStateUnavailable(runner);
             const isCurrent = () => Boolean(entry && entry.authorityActive && !entry.retiring
                 && entry.activationId === input.activationId && entry.runnerPid === input.runnerPid
                 && runner?.identity === entry.runnerIdentity && runner.isCurrent() && entry.isCurrent());
@@ -1486,7 +1492,7 @@ export function createExecutionRunConnectedServicesBridge(
                     expectedParentSessionId: input.sessionId,
                 })
                 : null;
-            if (runner?.isCurrent()) {
+            if (runner && !('failureCause' in runner) && runner.isCurrent()) {
                 const cleanupOnlyEntry: RunReleaseEntry = {
                     modelId: null,
                     selections: null,
