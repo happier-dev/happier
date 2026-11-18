@@ -10,6 +10,7 @@ import { RawRecordSchema, type RawRecord } from "@happier-dev/session-core/raw";
 import { HappierStructuredInputV1Schema, RawIngressStructuredInputV1Schema, readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { isHostAuthoredInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 
 import {
@@ -271,9 +272,13 @@ describe('pendingQueueV2 decrypt mapping', () => {
         const sessionId = 'pending-discussion-request';
         const encryption = await createPendingQueueEncryption({ sessionId });
         const authored = 'Verify the final receipt.\n\nUse the report as evidence.';
-        const text = '<happier_input_context v="1">\nsource_kind="sessionAction"\ninput_kind="discussion_request"\n'
-            + 'discussion_sender_account_id="account-fixture"\ndiscussion_id="discussion-fixture"\n'
-            + '</happier_input_context>\n\n' + authored;
+        const sender = { kind: 'person', accountId: 'account-fixture' } as const;
+        const text = renderSessionInputContextPromptV1({
+            inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+            discussionRequest: { discussionId: 'discussion-fixture', messageId: 'message-fixture', throughSeq: 2, sender },
+            discussionContext: [{ author: sender, text: 'Earlier discussion context.' }],
+            transformedUserText: authored,
+        });
         const rawRecord: RawRecord = { role: 'user', content: { type: 'text', text } };
         const content = { t: 'encrypted', c: await encryptRawRecordForPending({ encryption, sessionId, rawRecord }) };
         await fetchAndApplyPendingMessagesV2({ sessionId, encryption,
