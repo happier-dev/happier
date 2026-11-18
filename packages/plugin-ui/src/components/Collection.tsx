@@ -2584,11 +2584,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       return {
         key: group?.key ?? `collection-${index}`,
         title: group?.title ?? '',
-        // A page section names its rows; a dense list's caption band counts them (a nested group every item
-        // it holds, open or not, but not the owners shown only to place a match).
+        // Every titled group says how many rows it holds, a page section's heading as a dense list's band does (one
+        // group-label anatomy, owner 2026-11-17; LABPARITY-ACCEPT-E fix 4: "Your machines 6"): a nested group every item
+        // it holds, open or not, but not the owners shown only to place a match.
         // A collapsed group counts the rows it puts away. A catalog list's group is a plain heading (lab m:mcp), uncounted.
         // A group sharing a page section's sheet is that sheet's band, counted like the table's (owner D1).
-        ...((pageSections && !pageTable && group?.section === undefined) || catalogList ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
+        ...(catalogList ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
         // Groups that are parts of one page section share its heading and sheet (page sections only).

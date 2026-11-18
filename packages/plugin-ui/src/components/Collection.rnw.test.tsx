@@ -7719,6 +7719,17 @@ describe('an ungrouped page list (a phone)', () => {
     }
   });
 
+  // LABPARITY-ACCEPT-E fix 4: the Machines index's sections ("Your machines", "Created by Happier") lost their counts
+  // when it became a page list. One group-label anatomy (owner 2026-11-17): every titled group says how many it holds.
+  it('titles each group that is its own page section with its count, as a band does', () => {
+    for (const width of [1200, 390]) {
+      const view = mountTree({ presentation: 'list', scroll: 'page' });
+      view.measure(width);
+      expect(view.container.textContent?.replace(/\s/gu, ' ')).toMatch(/Started by Happier ?7/u);
+      view.unmount();
+    }
+  });
+
   it('gives each group sharing a page section its own action, beside its own sub-heading', () => {
     const opened: string[] = [];
     const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true,
