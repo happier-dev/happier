@@ -1044,6 +1044,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     reviewedChildAdmission?: ReviewedActionChildHttpProofV1;
     /** Setup catalog target that signed this read; it spends only its paired operands. */
     setupReceiverMachineId?: string;
+    /** The bound Machine's own (or custody) key signed this request, not a captured Session or handoff source. */
+    boundMachineSigned?: true;
 }>;
 
 type ExternalActionExecutionRequestProof = Readonly<{
@@ -1743,6 +1745,7 @@ async function verifyCommon(
     let signatureCurrent = custody
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
         : Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
+    const boundMachineSigned = signatureCurrent;
     // Target currentness and the captured source both sign the exact destination
     // tuple. Only the accepted continuation survives its publisher stopping.
     const managedGuestMetadata = proof.method.toUpperCase() === 'GET'
@@ -1961,7 +1964,8 @@ async function verifyCommon(
     return { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal, effectiveAuthority: principal.authority,
         ...(machineNpmProfileAdmission ? { machineNpmProfileAdmission } : {}),
         ...reviewedAdmission,
-        ...(setupReceiver ? { setupReceiverMachineId: setupReceiver } : {}) };
+        ...(setupReceiver ? { setupReceiverMachineId: setupReceiver } : {}),
+        ...(boundMachineSigned ? { boundMachineSigned: true as const } : {}) };
 }
 
 /** Only a current installation of a Machine named by the Setup app admission. */
@@ -2700,6 +2704,16 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
 }
 
 /**
+ * The one foreign-custodian read rule. A Team member's Machine reads a requester resource only where
+ * that custodian itself holds access to it (isContributedRootEnvironmentRead checks the custodian's own
+ * Environment). A requester read with no custodian access (the requester's own GETs and Machine list)
+ * needs the requester's own Machine, signed by that Machine's own key.
+ */
+function isRequesterOwnMachineRequest(verified: VerifiedSignedChildRequest): boolean {
+    return verified.binding.custodianAccountId === verified.binding.accountId && verified.boundMachineSigned === true;
+}
+
+/**
  * A read-only Account root (its ActionSpec declares sideEffectClass 'read' and the effect is the
  * root itself) makes the GET reads its effect needs with the requester's own Account credential.
  * Every route still applies the requester's own access, so this equals the requester's bearer read,
@@ -2713,7 +2727,7 @@ function isAdmittedReadRootRequesterGet(verified: VerifiedSignedChildRequest,
     const binding = verified.binding;
     const root = ActionIdSchema.safeParse(binding.actionId);
     if (!root.success || verified.effectActionId !== binding.actionId || !('authentication' in binding)
-        || binding.custodianAccountId !== binding.accountId) return false;
+        || !isRequesterOwnMachineRequest(verified)) return false;
     const spec = getActionSpec(root.data);
     return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined;
@@ -4070,6 +4084,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             backupHttpPurpose = purpose;
         }
     } else if (isDeploymentReadActionIdV1(verified.binding.actionId)) {
+        // Not folded into the read-root rule: this sets the read purpose the native deployment route consumes.
         const purpose = await readDeploymentNativeReadHttpPurpose(verified, proof, isAdmittedRootRelay || readsExecutionMachine);
         if (!purpose) return refuse('deployment_native_read_purpose');
         backupHttpPurpose = purpose;
@@ -4131,11 +4146,11 @@ export async function verifyExternalActionDomainExecutionRequest(
         if ('grant' in verified.principal && !evaluateApiTokenGrantV1({ grant: verified.principal.grant,
             actionId: verified.binding.actionId, automationId, target: verified.target,
             targetMachineId: verified.binding.machineId }).ok) return refuse('automation_run_now_grant');
-    } else if (verified.binding.actionId.startsWith('workflow.run.')) {
+    } else if (verified.binding.actionId.startsWith('workflow.run.') && !admittedReadRootRequesterGet) {
         if (!isWorkflowRunActionHttpPurpose(verified, proof)) return refuse('workflow_run_purpose');
         // Direct and Session-origin Runs use the same requester storage port.
         // Automation workers retain their separate installed-publisher path.
-    } else if (verified.binding.actionId === 'discussion.candidates.list') {
+    } else if (verified.binding.actionId === 'discussion.candidates.list' && !admittedReadRootRequesterGet) {
         // Keep this composed read out of generic read-root Session admission.
         // Native directory/roster routes still own current actor and resource access.
         if (!isDiscussionCandidateReadHttpPurpose(verified, proof, snapshotBatch)) return refuse('discussion_candidate_purpose');
@@ -4173,9 +4188,11 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if ((managedBoundSessionPurpose = await readManagedBoundSessionHttpPurpose(
         verified.binding, verified.effectActionId, proof)) !== null) {
         if (!managedBoundSessionPurpose) return refuse('managed_bound_session_setup');
-    } else if (verified.binding.actionId === MACHINE_LIST_ACTION_ID_V1) {
+    } else if (verified.binding.actionId === MACHINE_LIST_ACTION_ID_V1 && !admittedReadRootRequesterGet) {
+        // API-token roots keep the list transport; a foreign custodian has no access to the requester's list.
         if (verified.effectActionId !== verified.binding.actionId || proof.method.toUpperCase() !== 'GET'
-            || proof.body !== undefined || proof.path.split('?')[0] !== '/v1/machines') return refuse('verification_purpose');
+            || proof.body !== undefined || proof.path.split('?')[0] !== '/v1/machines'
+            || !isRequesterOwnMachineRequest(verified)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === MACHINE_REPLACEMENT_SET_ACTION_ID_V1
         || verified.binding.actionId === MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1
         || verified.binding.actionId === MACHINE_REMOVE_ACTION_ID_V1) {
@@ -4192,7 +4209,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         && proof.method.toUpperCase() === 'POST'
         && proof.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
         && PluginAvailabilityMaterializationsReadActionInputV1Schema.safeParse(proof.body).success) {
-        // Materializations is a POST read and remains outside the GET read-root rule.
+        // Materializations is a POST read outside the GET read-root rule. Machine admission
+        // already refuses this root on a foreign custodian's Machine (target_unavailable).
     } else if (verified.binding.actionId === EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1) {
         const lookup = proof.method.toUpperCase() === 'POST' && proof.path === '/v2/sessions/lookup-by-tags'
             ? SessionLookupByTagsRequestV2Schema.safeParse(proof.body) : null;
@@ -4281,7 +4299,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (!referencePurpose && !controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose && !boundSetupPurpose
             && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return refuse('managed_machine_purpose');
         if (guestPurpose) managedGuestActivity = guestPurpose;
-    } else if (rootMachineAction.success || effectMachineAction.success) {
+    } else if ((rootMachineAction.success || effectMachineAction.success) && !admittedReadRootRequesterGet) {
         if (!rootMachineAction.success || !effectMachineAction.success
             || rootMachineAction.data !== effectMachineAction.data) return refuse('machine_access_effect');
         const path = proof.path.split('?')[0];
@@ -4306,6 +4324,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // The installed signature spends the unchanged root as its original
         // requester, not the daemon's ambient bearer or a new Account grant.
     } else if (isOriginalAccountProjectAction(verified.binding.actionId)) {
+        // Not folded into the read-root rule: only projects.open's own purpose may read a selected Source.
         const actionId = verified.binding.actionId;
         const path = proof.path.split('?')[0];
         if (verified.effectActionId !== actionId) return refuse('verification_purpose');
@@ -4330,6 +4349,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.binding.actionId === 'session.agent.transition' || verified.binding.actionId === 'session.continuation.inspect') {
         if (!await isSessionAgentTransitionHttpPurpose(verified, proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'quota_read') {
+        // Not folded into the read-root rule: the captured quota root keeps only its native quota purposes.
         if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'agents.models.list') {
         // Automatic Summary models consume the requester's current default-auth
@@ -4350,6 +4370,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             || verified.binding.accountId !== verified.binding.custodianAccountId
             || !isScmReviewedMarksHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1) {
+        // Not folded into the read-root rule: the summary root reads its own KV prefix, not unrelated Account KV.
         if (verified.effectActionId !== verified.binding.actionId
             || !isMachineOutcomeSummaryHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'session_board_write') {
@@ -4388,14 +4409,15 @@ export async function verifyExternalActionDomainExecutionRequest(
         // owns current actor, Team and resource authorization.
         if (!verified.signedChildPurpose.sibling.teamUsage
             || !isAccountActionHttpOperation(verified.effectActionId, proof)) return refuse('verification_purpose');
-    } else if (isSessionFollowActionIdV1(verified.binding.actionId) && verified.binding.actionId.startsWith('follow.')) {
+    } else if (isSessionFollowActionIdV1(verified.binding.actionId) && verified.binding.actionId.startsWith('follow.')
+        && !admittedReadRootRequesterGet) {
         // A finite Follow root cannot fall through to generic Session read
-        // admission or spend a sibling Follow subaction/private census.
+        // admission or spend a sibling Follow subaction; its own GETs use the read-root rule.
         if (verified.effectActionId !== verified.binding.actionId
             || !isAccountActionHttpOperation(verified.effectActionId, proof)) return refuse('verification_purpose');
-    } else if (templateHttpPurpose !== null) {
+    } else if (templateHttpPurpose !== null && !admittedReadRootRequesterGet) {
         if (!templateHttpPurpose) return refuse('verification_purpose');
-    } else if (signedLinkHttpPurpose !== null) {
+    } else if (signedLinkHttpPurpose !== null && !admittedReadRootRequesterGet) {
         if (verified.effectActionId !== verified.binding.actionId
             || !(signedLinkHttpPurpose || verified.binding.actionId !== 'artifact.public_link.join'
                 && isReadOnlyArtifactHttpPurpose(proof))) return refuse('verification_purpose');
