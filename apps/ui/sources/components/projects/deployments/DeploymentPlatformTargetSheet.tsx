@@ -105,58 +105,61 @@ type TargetDeclarationsState =
   | Readonly<{ status: 'ready'; declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[] }>
   | Readonly<{ status: 'failed'; code: string }>;
 
-/** The plugins' own deployment targets, loaded only while a draft or this sheet asks for them. */
+const LOADING_TARGET_DECLARATIONS: TargetDeclarationsState = Object.freeze({ status: 'loading' });
+
+/** The plugins' own deployment targets, loaded only while a consumer asks for them. */
 export function useDeploymentTargetDeclarations(lifetime: ServerAccountScopeLifetime | null) {
-  const [state, setState] = React.useState<TargetDeclarationsState>({
-    status: 'loading',
-  });
+  const [read, setRead] = React.useState<Readonly<{ lifetime: ServerAccountScopeLifetime; state: TargetDeclarationsState }> | null>(null);
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
     if (!lifetime) return;
-    let live = true;
-    setState((previous) =>
-      previous.status === 'ready' ? previous : { status: 'loading' },
-    );
-    let stopWaiting: (() => void) | null = null;
     const reader = readPluginAccountAvailability(lifetime.scope);
-    reader
-      .ensureCurrentAccountExecutionDeclarations({
-        family: 'deploymentTargets',
-      })
-      .then((result) => {
-        if (!live) return;
-        if (result.kind === 'available') {
-          setState({ status: 'ready', declarations: result.declarations });
-          return;
-        }
-        // Availability that has not arrived for this Account yet (not loaded, still the previous Account's, or a
-        // declaration still pending) is not a refusal: keep loading and read again once it changes.
-        if (result.code === 'account_availability_not_loaded' || result.code === 'account_availability_scope_mismatch'
-          || result.code === 'plugin_ui_declaration_pending') {
-          stopWaiting = reader.subscribe(() => {
-            stopWaiting?.();
-            stopWaiting = null;
-            if (live) setAttempt((value) => value + 1);
-          });
-          return;
-        }
-        setState({ status: 'failed', code: result.code });
-      })
-      .catch((error: unknown) => {
+    let live = true;
+    let running = false;
+    let changed = false;
+    const publish = (state: TargetDeclarationsState) => {
+      if (!live) return;
+      stopWaiting();
+      setRead({ lifetime, state });
+    };
+    const acquire = async () => {
+      running = true;
+      try {
+        do {
+          changed = false;
+          const result = await reader.ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' });
+          if (!live) return;
+          if (result.kind === 'available') {
+            publish({ status: 'ready', declarations: result.declarations });
+            return;
+          }
+          if (result.code !== 'account_availability_not_loaded' && result.code !== 'account_availability_scope_mismatch'
+            && result.code !== 'plugin_ui_declaration_pending') {
+            publish({ status: 'failed', code: result.code });
+            return;
+          }
+          // A publication while the read was settling must wake a still-pending result.
+        } while (changed);
+      } catch (error: unknown) {
         const code = (error as { code?: unknown } | null)?.code;
-        if (live)
-          setState({
-            status: 'failed',
-            code: typeof code === 'string' && code ? code : 'unknown_error',
-          });
-      });
+        publish({ status: 'failed', code: typeof code === 'string' && code ? code : 'unknown_error' });
+      } finally {
+        running = false;
+      }
+    };
+    const stopWaiting = reader.subscribe(() => {
+      changed = true;
+      if (!running) void acquire();
+    });
+    setRead({ lifetime, state: LOADING_TARGET_DECLARATIONS });
+    void acquire();
     return () => {
       live = false;
-      stopWaiting?.();
+      stopWaiting();
     };
   }, [lifetime, attempt]);
   return {
-    state,
+    state: read && read.lifetime === lifetime ? read.state : LOADING_TARGET_DECLARATIONS,
     retry: React.useCallback(() => setAttempt((value) => value + 1), []),
   };
 }
@@ -178,22 +181,10 @@ const titleKey = (pluginId: string, localId: string) => `${pluginId}/${localId}`
  * declarations while `wanted`. Every Environment row, header and Settings row names its platform through this.
  */
 export function useDeploymentPlatformTargetTitles(lifetime: ServerAccountScopeLifetime | null, wanted: boolean) {
-  const [titles, setTitles] = React.useState<ReadonlyMap<string, string>>(NO_TITLES);
-  React.useEffect(() => {
-    if (!lifetime || !wanted) return;
-    let live = true;
-    void readPluginAccountAvailability(lifetime.scope)
-      .ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' })
-      .then((result) => {
-        if (!live || result.kind !== 'available') return;
-        setTitles(new Map(readDeploymentPlatformTargets(result.declarations)
-          .map((target) => [titleKey(target.pluginId, target.targetId), target.title])));
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [lifetime, wanted]);
+  const { state } = useDeploymentPlatformTargets(wanted ? lifetime : null);
+  const titles = React.useMemo(() => state.status === 'ready'
+    ? new Map(state.targets.map(target => [titleKey(target.pluginId, target.targetId), target.title]))
+    : NO_TITLES, [state]);
   return React.useCallback(
     (source: PlatformTargetSource) => titles.get(titleKey(source.contribution.pluginId, source.contribution.localId)) ?? null,
     [titles],

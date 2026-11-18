@@ -12,7 +12,7 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, DEPLOYMENT_TARGETS_TEST_SERVICE, answerDeploymentTargetInspectForHome } from './deploymentPlatformTargetPlugin.testFixture';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -28,7 +28,7 @@ installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { createDeploymentActions } = await import('./deploymentActions');
-const { showDeploymentPlatformTargetSheet } = await import('./DeploymentPlatformTargetSheet');
+const { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets } = await import('./DeploymentPlatformTargetSheet');
 const { ModalProvider, Modal } = await import('@/modal');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
@@ -40,6 +40,32 @@ const { Item } = await import('@/components/ui/lists/Item');
 afterEach(async () => {
   await act(async () => Modal.hideAll());
   standardCleanup();
+});
+
+it('settles when Account availability arrives between the first read and its result', async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Target availability', serverUrl: 'https://target-availability.test',
+    serverIdentityId: 'srv_target_availability', accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } =
+    await import('@/sync/domains/plugins/availability/projection');
+  clearPluginAccountAvailabilityProjection();
+  const hook = await renderHook(() => {
+    // This effect queues publication before the picker reads. The microtask runs after that read and before its result
+    // handler. The projection publishes only once, so another update cannot wake a late subscriber.
+    React.useEffect(() => {
+      queueMicrotask(() => replacePluginAccountAvailabilityProjection({ scope: context.accountLifetime.scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } }));
+    }, []);
+    return useDeploymentPlatformTargets(context.accountLifetime);
+  });
+  try {
+    await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
+  } finally {
+    await hook.unmount();
+    clearPluginAccountAvailabilityProjection();
+    context.dispose();
+  }
 });
 
 it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfirmed'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
