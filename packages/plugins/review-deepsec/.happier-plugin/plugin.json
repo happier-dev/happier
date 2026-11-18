@@ -192,6 +192,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -277,7 +278,7 @@
   "description": "Runs DeepSec as a review and security-review execution engine.",
   "displayName": "DeepSec review engine",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],

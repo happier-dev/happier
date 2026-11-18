@@ -50,6 +50,7 @@
             }
           }
         },
+        "connectedAccounts": [],
         "id": "coderabbit",
         "primary": "executionRuns",
         "runtime": {
@@ -114,6 +115,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -184,7 +186,7 @@
   "description": "Runs CodeRabbit as a review-only execution engine.",
   "displayName": "CodeRabbit review engine",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],

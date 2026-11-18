@@ -37,11 +37,6 @@ describe('CodeRabbit review descriptor', () => {
   it('discloses only launch-environment keys consumed by the native review path', () => {
     const processAccess = PLUGIN_MANIFEST.hostAccess.required.find((request) => request.id === 'coderabbit-process');
 
-    expect(processAccess?.scope.envKeys).toEqual([
-      'CODERABBIT_API_KEY',
-      'HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS',
-      'HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS',
-      'HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES',
-    ]);
+    expect(processAccess?.scope.envKeys).toEqual(['CODERABBIT_API_KEY']);
   });
 });

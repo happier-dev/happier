@@ -1,6 +1,6 @@
 import type { SystemToolDiagnostic as PluginSystemToolDiagnostic } from '@happier-dev/plugin-sdk/exec';
 
-export type DeepSecPrerequisite = 'deepsec' | 'node>=22' | 'claude-or-codex' | 'AI_GATEWAY_API_KEY';
+export type DeepSecPrerequisite = 'deepsec' | 'node>=22' | 'claude-or-codex';
 
 export type DeepSecToolRuntime =
   | Readonly<{
@@ -34,8 +34,6 @@ export function checkDeepSecReadiness(params: Readonly<{
   executablePath: string | null | undefined;
   toolRuntime?: DeepSecToolRuntime | null;
   agentCli?: 'claude' | 'codex' | 'both' | null;
-  hasGatewayKey: boolean;
-  hasProviderCredential?: boolean;
 }>): DeepSecReadiness {
   const missing: DeepSecPrerequisite[] = [];
   const executablePath = String(params.executablePath ?? '').trim();
@@ -43,7 +41,6 @@ export function checkDeepSecReadiness(params: Readonly<{
   if (!executablePath) missing.push('deepsec');
   if (toolRuntime.kind === 'node' && toolRuntime.majorVersion < 22) missing.push('node>=22');
   if (!params.agentCli) missing.push('claude-or-codex');
-  if (!params.hasGatewayKey && !params.hasProviderCredential) missing.push('AI_GATEWAY_API_KEY');
 
   if (missing.length > 0) {
     return {

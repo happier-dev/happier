@@ -15,9 +15,10 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 
 import { parseDeepSecCommentOutMarkdown } from './commentOut.js';
-import type { DeepSecReviewMode } from './command.js';
+import { isDeepSecReviewMode, isDeepSecThinkingLevel, type DeepSecReviewMode, type DeepSecThinkingLevel } from './command.js';
+import { DEEPSEC_AGENT_CLIS } from './profile.js';
 import { resolveDeepSecProfileMode } from './profileMode.js';
-import type { DeepSecCostWarningInput } from './costWarning.js';
+import { DEFAULT_DEEPSEC_COST_WARNING_THRESHOLDS, type DeepSecCostWarningInput } from './costWarning.js';
 import { normalizeDeepSecFindings } from './findings.js';
 import {
   runDeepSecReview,
@@ -25,8 +26,8 @@ import {
   type DeepSecScopedPathListDiagnostic,
 } from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
-import { readDeepSecProviderLaunch } from '../providerBinding.js';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { buildDeepSecLaunchEnvironment, readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { prepareDeepSecClaudeAccount } from '../connectedAccount.js';
 
 type NormalizedDeepSecStart = Readonly<{
@@ -35,12 +36,13 @@ type NormalizedDeepSecStart = Readonly<{
   confirmedCostWarning: boolean;
   preferredExecutablePath?: string | null;
   agentCli?: DeepSecAgentCli | null;
+  thinkingLevel?: DeepSecThinkingLevel;
   cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   projectId?: string;
   workspaceId?: string;
 }>;
 
-type DeepSecAgentCli = 'claude' | 'codex' | 'both';
+type DeepSecAgentCli = typeof DEEPSEC_AGENT_CLIS[number];
 
 class DeepSecProviderHarnessMismatchError extends Error {}
 
@@ -63,7 +65,7 @@ function readNumber(value: unknown): number | undefined {
 }
 
 function readAgentCli(value: unknown): DeepSecAgentCli | null {
-  return value === 'claude' || value === 'codex' || value === 'both' ? value : null;
+  return DEEPSEC_AGENT_CLIS.find(agentCli => agentCli === value) ?? null;
 }
 
 function readDeepSecEngineConfig(intentRecord: Record<string, unknown>): Record<string, unknown> {
@@ -82,15 +84,7 @@ function readMode(
   profileId: string,
 ): DeepSecReviewMode {
   const mode = readString(engineConfig.mode) ?? readString(intentRecord.mode);
-  if (
-    mode === 'repository_security_audit'
-    || mode === 'current_diff'
-    || mode === 'staged'
-    || mode === 'working_tree'
-    || mode === 'selected_files'
-  ) {
-    return mode;
-  }
+  if (isDeepSecReviewMode(mode)) return mode;
   return resolveDeepSecProfileMode(
     readString(engineConfig.profileId)
     ?? readString(intentRecord.profileId)
@@ -104,13 +98,8 @@ function readCost(
 ): Omit<DeepSecCostWarningInput, 'mode'> | undefined {
   const costRecord = readRecord(engineConfig.cost) ?? readRecord(intentRecord.cost);
   if (!costRecord) return undefined;
-  return {
-    changedFileCount: readNumber(costRecord.changedFileCount),
-    diffBytes: readNumber(costRecord.diffBytes),
-    selectedFileCount: readNumber(costRecord.selectedFileCount),
-    selectedBytes: readNumber(costRecord.selectedBytes),
-    largestSelectedFileBytes: readNumber(costRecord.largestSelectedFileBytes),
-  };
+  return Object.fromEntries(Object.keys(DEFAULT_DEEPSEC_COST_WARNING_THRESHOLDS)
+    .map(key => [key, readNumber(costRecord[key])]));
 }
 
 function normalizeReviewStartInput(params: Readonly<{
@@ -124,7 +113,7 @@ function normalizeReviewStartInput(params: Readonly<{
   const instructions = (readString(rawIntent.instructions) ?? params.fallbackInstructions.trim()) || 'Run DeepSec review.';
   return ReviewStartInputSchema.parse({
     ...rawIntent,
-    engineIds: ['deepsec'],
+    reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
     instructions,
   }) as Record<string, unknown>;
 }
@@ -139,6 +128,10 @@ function normalizeDeepSecStart(params: Readonly<{
   const engineConfig = readDeepSecEngineConfig(reviewInput);
   const mode = readMode(engineConfig, reviewInput, params.profileId);
   const cost = readCost(engineConfig, reviewInput);
+  const thinkingLevel = engineConfig.thinkingLevel;
+  if (thinkingLevel !== undefined && !isDeepSecThinkingLevel(thinkingLevel)) {
+    throw new Error('The selected DeepSec thinking level is unsupported.');
+  }
 
   return {
     mode,
@@ -152,6 +145,7 @@ function normalizeDeepSecStart(params: Readonly<{
       ?? readString(engineConfig.executablePath)
       ?? null,
     agentCli: readAgentCli(engineConfig.agentCli) ?? readAgentCli(reviewInput.agentCli) ?? null,
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
     ...(cost ? { cost } : {}),
     ...(readString(reviewInput.projectId) ? { projectId: readString(reviewInput.projectId) } : {}),
     ...(readString(reviewInput.workspaceId) ? { workspaceId: readString(reviewInput.workspaceId) } : {}),
@@ -256,8 +250,11 @@ async function resolveSelectedScopePaths(params: Readonly<{
 }
 
 function assertSupportedScmReviewScope(start: NormalizedDeepSecStart): void {
-  if (start.mode === 'repository_security_audit') return;
   const scope = start.scmScope ?? null;
+  if (scope?.comparison || scope?.revisionRange) {
+    throw new Error('DeepSec cannot review this captured comparison or exact revision range. Choose a reviewer that supports this subject.');
+  }
+  if (start.mode === 'repository_security_audit') return;
   if (!scope) throw new Error('DeepSec review requires host-resolved SCM scope facts.');
   if (scope.status !== 'supported') {
     throw new Error(scope.diagnostics[0]?.message || 'DeepSec review requires a source-control repository in the current session scope.');
@@ -405,20 +402,47 @@ async function resolveAgentCliReadiness(params: Readonly<{
   return readReadyAgentCli(readiness);
 }
 
-function readGatewayEnvironment(request: AgentExecutionRunOpenRequest): Readonly<{
-  environment: Readonly<Record<string, string>> | undefined;
-  hasGatewayKey: boolean;
-}> {
+function readGatewayKey(request: AgentExecutionRunOpenRequest): string | null {
   const launchEnvironment = request.launchEnvironment;
-  if (!launchEnvironment) return { environment: undefined, hasGatewayKey: false };
+  if (!launchEnvironment) return null;
   const unset = new Set(launchEnvironment.unset.map((key) => key.toUpperCase()));
-  if (unset.has('AI_GATEWAY_API_KEY')) return { environment: undefined, hasGatewayKey: false };
+  if (unset.has('AI_GATEWAY_API_KEY')) return null;
   const gatewayEntry = Object.entries(launchEnvironment.values)
     .find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY');
   const value = gatewayEntry?.[1]?.trim();
-  return value
-    ? { environment: Object.freeze({ AI_GATEWAY_API_KEY: gatewayEntry?.[1] ?? value }), hasGatewayKey: true }
-    : { environment: undefined, hasGatewayKey: false };
+  return value ? gatewayEntry?.[1] ?? value : null;
+}
+
+type DeepSecModelAccess = Readonly<{
+  environment: Readonly<Record<string, string>>;
+  agentCli: DeepSecAgentCli | null;
+  provider?: DeepSecProviderRoute;
+  claudeSubscription: boolean;
+  gateway?: true;
+}>;
+
+async function prepareDeepSecModelAccess(
+  request: AgentExecutionRunOpenRequest,
+  context: AgentRuntimeContext,
+  agentCli: DeepSecAgentCli | null | undefined,
+): Promise<DeepSecModelAccess> {
+  if (request.providerBinding) {
+    const provider = readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment);
+    if (agentCli && agentCli !== provider.route.agent) {
+      throw new DeepSecProviderHarnessMismatchError('The selected DeepSec Provider requires the Codex harness.');
+    }
+    return { environment: provider.environment, agentCli: provider.route.agent,
+      provider: provider.route, claudeSubscription: false };
+  }
+  const claudeAccount = await prepareDeepSecClaudeAccount(context, agentCli);
+  if (claudeAccount) return { environment: claudeAccount, agentCli: 'claude', claudeSubscription: true };
+  const gatewayKey = readGatewayKey(request);
+  if (gatewayKey) return { environment: buildDeepSecLaunchEnvironment({ AI_GATEWAY_API_KEY: gatewayKey }),
+    agentCli: agentCli ?? null, claudeSubscription: false, gateway: true };
+  // An absent Connected Account is not authority to borrow the Machine's login.
+  // Native login requires the host's selected credential-source projection.
+  throw new PluginError({ code: 'deepsec_model_access_unavailable',
+    message: 'Select a Provider or Connected Account for DeepSec model access.' });
 }
 
 function createRuntime(
@@ -472,21 +496,15 @@ function createRuntime(
         });
         return { status: 'failed', diagnostic: { code: 'deepsec_scope_failed', severity: 'error' } };
       }
-      const provider = request.providerBinding
-        ? readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment) : null;
-      const claudeAccount = provider ? null : await prepareDeepSecClaudeAccount(context, startInput.agentCli);
-      if (provider && startInput.agentCli && startInput.agentCli !== provider.route.agent) {
-        throw new DeepSecProviderHarnessMismatchError('The selected DeepSec Provider requires the Codex harness.');
-      }
+      const modelAccess = await prepareDeepSecModelAccess(request, context, startInput.agentCli);
       const agentCli = await resolveAgentCliReadiness({
         context,
-        configuredAgentCli: claudeAccount ? 'claude' : provider?.route.agent ?? startInput.agentCli ?? null,
+        configuredAgentCli: modelAccess.agentCli,
         cwd: request.cwd,
         projectId: startInput.projectId,
         workspaceId: startInput.workspaceId,
         signal,
       });
-      const gateway = readGatewayEnvironment(request);
       const runResult = await runDeepSecReview({
         cwd: request.cwd,
         mode: startInput.mode,
@@ -494,14 +512,16 @@ function createRuntime(
         confirmedCostWarning: startInput.confirmedCostWarning,
         cost: startInput.cost,
         preferredExecutablePath: startInput.preferredExecutablePath,
+        thinkingLevel: startInput.thinkingLevel,
+        agentCli: agentCli === 'both' ? 'codex' : agentCli ?? undefined,
         exec: context.services.exec,
         tempFiles: await createDeepSecTempFiles(),
-        environment: provider?.environment ?? claudeAccount ?? gateway.environment,
-        provider: provider?.route,
-        claudeSubscription: Boolean(claudeAccount),
+        environment: modelAccess.environment,
+        provider: modelAccess.provider,
+        claudeSubscription: modelAccess.claudeSubscription,
+        gateway: modelAccess.gateway,
         readiness: {
           agentCli,
-          hasGatewayKey: gateway.hasGatewayKey,
         },
         signal,
       });
@@ -528,7 +548,8 @@ function createRuntime(
         return { status: 'failed', diagnostic: { code: 'deepsec_confirmation_required', severity: 'error' } };
       }
 
-      const findings = normalizeDeepSecFindings(parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
+      const findings = normalizeDeepSecFindings('exportedEntries' in runResult && runResult.exportedEntries
+        ? runResult.exportedEntries : parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
       emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
       return runResult.status === 'completed'
         ? { status: 'complete' }

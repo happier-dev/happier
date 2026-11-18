@@ -3,6 +3,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { CODERABBIT_CLI_AUTH } from './agent/authStatus.js';
 import { createCodeRabbitExecutionRunFactory } from './agent/reviews/nativeRun.js';
 import { createCodeRabbitReviewExecutionProfile } from './agent/reviews/profile.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
@@ -32,12 +33,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
       reason: 'Launch the user-installed CodeRabbit review CLI for an admitted review run.',
       scope: {
         executables: [{ kind: 'systemTool', id: CODERABBIT_SYSTEM_TOOL_ID }],
-        envKeys: [
-          'CODERABBIT_API_KEY',
-          'HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS',
-          'HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS',
-          'HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES',
-        ],
+        envKeys: ['CODERABBIT_API_KEY'],
       },
     }],
     optional: [],
@@ -61,10 +57,10 @@ export const CODERABBIT_PLUGIN = definePlugin({
             docsUrl: null,
           },
           auth: {
-            support: 'status_only',
+            support: 'login_terminal',
             environmentVariables: ['CODERABBIT_API_KEY'],
             missingCredentialState: 'unknown',
-            loginLaunches: [],
+            loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },
         },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
@@ -75,6 +71,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
         },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
       },
+      cliAuth: CODERABBIT_CLI_AUTH,
       factory: createCodeRabbitRuntime,
     },
   },

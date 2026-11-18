@@ -14,9 +14,10 @@ type ParsedDeepSecHeading = Readonly<{
   filePath: string;
   startLine: number | null;
   endLine: number | null;
+  severity?: string;
 }>;
 
-function normalizeSafeOutputPath(filePath: string): string | null {
+export function normalizeSafeOutputPath(filePath: string): string | null {
   const slashNormalized = filePath.trim().replace(/\\/g, '/');
   if (
     !slashNormalized
@@ -32,12 +33,15 @@ function normalizeSafeOutputPath(filePath: string): string | null {
   return segments.join('/');
 }
 
-function parseHeading(line: string): ParsedDeepSecHeading | null {
+function parseHeading(line: string, nativeReport: boolean): ParsedDeepSecHeading | null {
   const headingMatch = line.trim().match(/^#{2,6}\s+(.+?)\s*$/);
   const content = headingMatch?.[1]?.trim();
   if (!content) return null;
-  const locationMatch = content.match(/^(.*):(\d+)(?:-(\d+))?$/);
-  const filePath = normalizeSafeOutputPath(locationMatch?.[1] ?? content);
+  const nativeHeading = content.match(/^.+?\s+([A-Z][A-Z ]*)\s+\u00b7\s+`(.+?)`$/);
+  if (nativeReport && !nativeHeading) return null;
+  const location = nativeHeading?.[2]?.replace(/:L(\d+)(?:-L(\d+))?$/, (_match, start: string, end: string | undefined) => `:${start}${end ? `-${end}` : ''}`) ?? content;
+  const locationMatch = location.match(/^(.*):(\d+)(?:-(\d+))?$/);
+  const filePath = normalizeSafeOutputPath(locationMatch?.[1] ?? location);
   if (!filePath) return null;
   const startLine = locationMatch?.[2] ? Number(locationMatch[2]) : null;
   const endLine = locationMatch?.[3] ? Number(locationMatch[3]) : startLine;
@@ -57,6 +61,7 @@ function parseHeading(line: string): ParsedDeepSecHeading | null {
     filePath,
     startLine,
     endLine,
+    ...(nativeHeading ? { severity: nativeHeading[1]?.trim().replaceAll(' ', '_') } : {}),
   };
 }
 
@@ -68,6 +73,7 @@ function readMetadata(line: string): Readonly<{ key: string; value: string }> | 
 
 export function parseDeepSecCommentOutMarkdown(markdown: string): readonly ParsedDeepSecCommentOutEntry[] {
   const entries: ParsedDeepSecCommentOutEntry[] = [];
+  const nativeReport = /^## \ud83d\udd0e deepsec found /m.test(markdown);
   let current: {
     filePath: string;
     startLine: number | null;
@@ -108,19 +114,25 @@ export function parseDeepSecCommentOutMarkdown(markdown: string): readonly Parse
   };
 
   for (const rawLine of markdown.split('\n')) {
-    const heading = parseHeading(rawLine);
+    const heading = parseHeading(rawLine, nativeReport);
     if (heading) {
       flush();
       current = {
         filePath: heading.filePath,
         startLine: heading.startLine,
         endLine: heading.endLine,
-        metadata: {},
+        metadata: heading.severity ? { severity: heading.severity } : {},
         body: [],
       };
       continue;
     }
     if (!current) continue;
+    if (nativeReport && rawLine.startsWith('<sub>')) {
+      const slug = rawLine.match(/^<sub>slug: `([^`]+)`/);
+      if (slug?.[1]) current.metadata.rule = slug[1];
+      continue;
+    }
+    if (nativeReport && rawLine.trim() === '---') continue;
     const metadata = readMetadata(rawLine);
     if (metadata) {
       current.metadata[metadata.key] = metadata.value;

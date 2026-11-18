@@ -9,7 +9,7 @@ export const deepsecReviewDescriptor = Object.freeze({
         intents: ['review'],
         modes: ['repository_security_audit', 'change_scoped_review'],
         requiresSystemCli: 'deepsec',
-        requiredPrerequisites: ['node>=22', 'claude-or-codex', 'AI_GATEWAY_API_KEY'],
+        requiredPrerequisites: ['node>=22', 'claude-or-codex'],
         directCommentWrite: false,
         taxonomyFamilies: ['security', 'cwe', 'cve', 'secrets'],
         costClass: 'expensive',

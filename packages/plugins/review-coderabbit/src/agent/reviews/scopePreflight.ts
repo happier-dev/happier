@@ -42,7 +42,6 @@ export async function preflightCodeRabbitReviewScope(params: Readonly<{
   cwd: string;
   intentInput: unknown;
   scope?: CodeRabbitReviewScopeFacts | null;
-  maxEligibleFiles?: number | null;
 }>): Promise<CodeRabbitReviewScopePreflightResult> {
   const cwd = String(params.cwd ?? '').trim();
   if (!cwd) return { ok: false, error: 'CodeRabbit review requires a session working directory.' };
@@ -56,6 +55,10 @@ export async function preflightCodeRabbitReviewScope(params: Readonly<{
     };
   }
   if (scope.scmMode !== '.git') return { ok: false, error: 'CodeRabbit review requires a git worktree in the current session scope.' };
+  // The native CLI selects the current worktree/HEAD; it cannot pin both captured endpoints.
+  if (scope.comparison || scope.revisionRange) {
+    return { ok: false, error: 'CodeRabbit cannot review these exact captured endpoints. Choose an engine that supports the captured comparison.' };
+  }
 
   let reviewInput: ReviewStartInput;
   try {
@@ -91,18 +94,6 @@ export async function preflightCodeRabbitReviewScope(params: Readonly<{
       ok: false,
       error:
         'No reviewable files found in the current session scope. Change the review scope, choose another change type, or start the review from a session rooted at the files you want reviewed.',
-    };
-  }
-
-  const maxEligibleFiles =
-    typeof params.maxEligibleFiles === 'number' && Number.isFinite(params.maxEligibleFiles)
-      ? Math.max(1, Math.trunc(params.maxEligibleFiles))
-      : null;
-  if (maxEligibleFiles !== null && eligibleFileCount > maxEligibleFiles) {
-    return {
-      ok: false,
-      error:
-        `Too many reviewable files found in the current session scope for CodeRabbit (${eligibleFileCount} > ${maxEligibleFiles}). Narrow the review scope, choose another change type, or increase HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES if the provider limit has changed.`,
     };
   }
 

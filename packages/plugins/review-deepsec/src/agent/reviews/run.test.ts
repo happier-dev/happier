@@ -41,6 +41,46 @@ function createTempFiles(overrides?: Partial<DeepSecTempFiles>): DeepSecTempFile
 }
 
 describe('runDeepSecReview', () => {
+  it.each(['current_diff', 'staged', 'working_tree', 'selected_files'] as const)(
+    'preserves direct-mode findings on exit 1 (%s)', async mode => {
+      const result = await runDeepSecReview({
+        cwd: '/repo', mode, selectedFiles: ['src/auth.ts'], confirmedCostWarning: true,
+        exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult(1) },
+        tempFiles: createTempFiles({ readText: async () => '### src/auth.ts\n\nCheck auth.' }),
+      });
+      expect(result).toMatchObject({ status: 'completed', commentOutMarkdown: '### src/auth.ts\n\nCheck auth.' });
+    },
+  );
+
+  it('does not treat a failed scan as direct-mode findings', async () => {
+    const run = vi.fn(async () => processResult(1));
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'repository_security_audit', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run }, tempFiles: createTempFiles(),
+    });
+    expect(result.status).toBe('failed');
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('keeps direct-mode exit 1 without a written finding report failed', async () => {
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'staged', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult(1) },
+      tempFiles: createTempFiles(),
+    });
+    expect(result.status).toBe('failed');
+  });
+
+  it('keeps requested cancellation from becoming completed findings', async () => {
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'staged', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => ({
+        ...processResult(1), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'abort' } },
+      }) }, tempFiles: createTempFiles(),
+    });
+    expect(result.status).toBe('failed');
+  });
+
   it.each(['selected_files', 'current_diff'] as const)('runs the canonical file list and cleans temporary artifacts (%s)', async mode => {
     const resolve = vi.fn(async () => resolvedTool);
     const run = vi.fn(async () => processResult());
@@ -122,7 +162,6 @@ describe('runDeepSecReview', () => {
       readiness: {
         toolRuntime: { kind: 'node', version: '20.19.0', majorVersion: 20, diagnostics: [] },
         agentCli: null,
-        hasGatewayKey: false,
       },
       exec: { systemTools: { resolve: async () => resolvedTool }, run },
       tempFiles: createTempFiles({ createTextFile, cleanup }),
@@ -132,7 +171,7 @@ describe('runDeepSecReview', () => {
       status: 'readiness_failed',
       readiness: {
         status: 'missing',
-        missing: ['node>=22', 'claude-or-codex', 'AI_GATEWAY_API_KEY'],
+        missing: ['node>=22', 'claude-or-codex'],
         toolRuntime: { kind: 'node', version: '20.19.0', majorVersion: 20, diagnostics: [] },
         installUrl: 'https://github.com/vercel-labs/deepsec',
         commandPreview: ['deepsec', '--help'],
@@ -145,7 +184,7 @@ describe('runDeepSecReview', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('runs repository audits as scan then process', async () => {
+  it('exports repository findings after processing instead of assuming a comment report exists', async () => {
     const run = vi.fn(async () => processResult());
     const cleanup = vi.fn(async () => {});
 
@@ -155,25 +194,64 @@ describe('runDeepSecReview', () => {
       confirmedCostWarning: true,
       exec: { systemTools: { resolve: async () => resolvedTool }, run },
       tempFiles: createTempFiles({
-        async readText() {
-          return '### src/auth.ts\n\nCheck auth.';
+        async readText(path) {
+          return path.endsWith('.json') ? JSON.stringify([{
+            title: '[HIGH] Missing authorization', description: '**File:** `src/auth.ts`\n\n## Finding\n\nCheck auth.\n\n## Recommendation\n\nRequire a role.',
+            severity: 'HIGH', metadata: { filePath: 'src/auth.ts', lineNumbers: [2, 4], vulnSlug: 'missing-auth' },
+          }]) : '';
         },
         cleanup,
       }),
     });
 
-    expect(result).toMatchObject({ status: 'completed', commentOutMarkdown: '### src/auth.ts\n\nCheck auth.' });
+    expect(result).toMatchObject({ status: 'completed', exportedEntries: [{
+      anchor: { kind: 'range', filePath: 'src/auth.ts', startLine: 2, endLine: 4 }, severity: 'HIGH', ruleId: 'missing-auth',
+      body: 'Missing authorization\n\n**File:** `src/auth.ts`\n\n## Finding\n\nCheck auth.\n\n## Recommendation\n\nRequire a role.',
+    }] });
     expect(run).toHaveBeenNthCalledWith(1, {
       executable: resolvedTool.executable,
-      args: ['scan'],
+      args: ['scan', '--root', '/repo'],
       cwd: { root: 'workspace', relativePath: '' },
+      env: { DEEPSEC_DATA_ROOT: '/tmp/deepsec-comments.md.data' },
     }, { signal: undefined });
     expect(run).toHaveBeenNthCalledWith(2, {
       executable: resolvedTool.executable,
-      args: ['process', '--comment-out', '/tmp/deepsec-comments.md'],
+      args: ['process', '--root', '/repo'],
       cwd: { root: 'workspace', relativePath: '' },
+      env: { DEEPSEC_DATA_ROOT: '/tmp/deepsec-comments.md.data' },
     }, { signal: undefined });
+    expect(run).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      args: ['export', '--format', 'json', '--out', '/tmp/deepsec-comments.md.json'],
+    }), { signal: undefined });
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it.each(['', '{', '{}', '[{"title":"finding"}]', JSON.stringify([{
+    title: 'Finding', description: 'Escaping anchor', severity: 'HIGH', metadata: { filePath: '../outside.ts', lineNumbers: [1] },
+  }])])('refuses invalid repository export evidence (%j)', async exported => {
+    await expect(runDeepSecReview({
+      cwd: '/repo', mode: 'repository_security_audit', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult() },
+      tempFiles: createTempFiles({ readText: async () => exported }),
+    })).rejects.toThrow();
+  });
+
+  it('accepts an explicit empty repository export as zero findings', async () => {
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'repository_security_audit', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult() },
+      tempFiles: createTempFiles({ readText: async () => '[]' }),
+    });
+    expect(result).toMatchObject({ status: 'completed', exportedEntries: [] });
+  });
+
+  it('keeps export process failure failed even when a file exists', async () => {
+    const run = vi.fn().mockResolvedValueOnce(processResult()).mockResolvedValueOnce(processResult()).mockResolvedValueOnce(processResult(1));
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'repository_security_audit', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run }, tempFiles: createTempFiles({ readText: async () => '[]' }),
+    });
+    expect(result.status).toBe('failed');
   });
 
   it('reports repository audit process failure as partial', async () => {

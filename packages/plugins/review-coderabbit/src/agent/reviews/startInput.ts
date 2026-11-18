@@ -13,33 +13,14 @@ export function normalizeCodeRabbitReviewStartInput(params: Readonly<{
   intentInput: unknown;
   fallbackInstructions: string;
 }>): ReviewStartInput {
-  const parsed = ReviewStartInputSchema.safeParse(params.intentInput ?? {});
-  if (parsed.success) {
-    return {
-      ...parsed.data,
-      engineIds: ['coderabbit'],
-    };
-  }
-
   const rawIntentInput = readRecord(params.intentInput);
   const fallbackInstructions = String(params.fallbackInstructions ?? '').trim();
-  const normalizedIntentInput = {
-    engineIds: ['coderabbit'],
-    instructions: fallbackInstructions,
-    ...(rawIntentInput ?? {}),
-  };
-
-  const instructions = typeof normalizedIntentInput.instructions === 'string'
-    ? normalizedIntentInput.instructions.trim()
+  const instructions = typeof rawIntentInput?.instructions === 'string'
+    ? rawIntentInput.instructions.trim()
     : '';
-  const parsedFallback = ReviewStartInputSchema.parse({
-    ...normalizedIntentInput,
-    engineIds: ['coderabbit'],
+  return ReviewStartInputSchema.parse({
+    ...(rawIntentInput ?? {}),
+    reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
     instructions: instructions.length > 0 ? instructions : fallbackInstructions,
   });
-
-  return {
-    ...parsedFallback,
-    engineIds: ['coderabbit'],
-  };
 }

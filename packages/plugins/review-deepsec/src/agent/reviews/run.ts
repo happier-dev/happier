@@ -5,11 +5,13 @@ import type {
   SystemToolDiagnostic as PluginSystemToolDiagnostic,
 } from '@happier-dev/plugin-sdk/exec';
 
-import { buildDeepSecCommand, type DeepSecReviewMode } from './command.js';
+import { buildDeepSecCommand, type DeepSecReviewMode, type DeepSecThinkingLevel } from './command.js';
 import { buildDeepSecCostWarning, type DeepSecCostWarningInput, type DeepSecCostWarningResult } from './costWarning.js';
 import { resolveDeepSecExecutable } from './executable.js';
 import { checkDeepSecReadiness, type DeepSecReadiness } from './readiness.js';
 import type { DeepSecProviderRoute } from '../providerBinding.js';
+import type { ParsedDeepSecCommentOutEntry } from './commentOut.js';
+import { parseDeepSecExport } from './exportOutput.js';
 
 export type DeepSecTempFileRequest = Readonly<{
   suffix: string;
@@ -44,6 +46,7 @@ export type DeepSecReviewRunResult =
       status: 'completed' | 'failed';
       result: PluginProcessResult;
       commentOutMarkdown: string;
+      exportedEntries?: readonly ParsedDeepSecCommentOutEntry[];
     }>
   | Readonly<{
       status: 'partial';
@@ -89,10 +92,12 @@ export type RunDeepSecReviewParams = Readonly<{
   environment?: Readonly<Record<string, string>>;
   provider?: DeepSecProviderRoute;
   claudeSubscription?: boolean;
+  gateway?: boolean;
+  thinkingLevel?: DeepSecThinkingLevel;
+  agentCli?: 'claude' | 'codex';
   readiness?: Readonly<{
     toolRuntime?: DeepSecReadiness['toolRuntime'];
     agentCli?: 'claude' | 'codex' | 'both' | null;
-    hasGatewayKey?: boolean | null;
   }>;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -135,9 +140,11 @@ function normalizeSelectedFiles(selectedFiles: readonly string[] | undefined): r
   return Object.freeze(normalizedFiles);
 }
 
-function commandFailed(result: PluginProcessResult): boolean {
+function commandFailed(result: PluginProcessResult, directFindingReport = false): boolean {
   const observed = result.termination.observed;
-  return observed.kind !== 'exit' || observed.exitCode !== 0;
+  return result.termination.requestedBy.kind !== 'none'
+    || observed.kind !== 'exit'
+    || (observed.exitCode !== 0 && !(observed.exitCode === 1 && directFindingReport));
 }
 
 function readTermination(result: PluginProcessResult): Readonly<{ exitCode: number | null; signal: string | null }> {
@@ -160,10 +167,6 @@ function resolveReadinessAgentCli(
   readiness: RunDeepSecReviewParams['readiness'],
 ): 'claude' | 'codex' | 'both' | null {
   return readiness && 'agentCli' in readiness ? readiness.agentCli ?? null : 'both';
-}
-
-function resolveReadinessGatewayKey(readiness: RunDeepSecReviewParams['readiness']): boolean {
-  return readiness && 'hasGatewayKey' in readiness ? readiness.hasGatewayKey === true : true;
 }
 
 function readDiagnosticString(
@@ -234,8 +237,6 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       executablePath: grant.executablePath,
       toolRuntime: params.readiness?.toolRuntime ?? resolveToolRuntimeFromGrant(grant),
       agentCli: resolveReadinessAgentCli(params.readiness),
-      hasGatewayKey: resolveReadinessGatewayKey(params.readiness),
-      hasProviderCredential: Boolean(params.provider || params.claudeSubscription),
     });
     if (readiness.status !== 'ready') {
       return {
@@ -271,12 +272,21 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       filesFromPath,
       provider: params.provider,
       claudeSubscription: params.claudeSubscription,
+      gateway: params.gateway,
+      thinkingLevel: params.thinkingLevel,
+      agentCli: params.agentCli,
+      rootPath: params.cwd,
     });
+    // Export defaults to every project in the native data root. Reuse this
+    // Run's existing temporary workspace so it cannot read stale/other projects.
+    const environment = params.mode === 'repository_security_audit'
+      ? { ...params.environment, DEEPSEC_DATA_ROOT: `${commentOutPath}.data` }
+      : params.environment;
     const run = (args: readonly string[]) => params.exec.run({
       executable: grant.executable,
       args,
       cwd: { root: 'workspace', relativePath: '' },
-      ...(params.environment ? { env: params.environment } : {}),
+      ...(environment ? { env: environment } : {}),
       ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
       ...(params.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: params.maxStdoutBytes }),
       ...(params.maxStderrBytes === undefined ? {} : { maxStderrBytes: params.maxStderrBytes }),
@@ -288,6 +298,10 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
         commentOutPath,
         provider: params.provider,
         claudeSubscription: params.claudeSubscription,
+        gateway: params.gateway,
+        thinkingLevel: params.thinkingLevel,
+        agentCli: params.agentCli,
+        rootPath: params.cwd,
       }));
       const commentOutMarkdown = await params.tempFiles.readText(commentOutPath);
       if (commandFailed(processResult)) {
@@ -299,15 +313,17 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
           commentOutMarkdown,
         };
       }
-      return {
-        status: 'completed',
-        result: processResult,
-        commentOutMarkdown,
-      };
+      const exportPath = `${commentOutPath}.json`;
+      const exportResult = await run(buildDeepSecCommand({ mode: 'repository_security_audit_export', exportPath }));
+      if (commandFailed(exportResult)) return { status: 'failed', result: exportResult, commentOutMarkdown: '' };
+      const exportedEntries = parseDeepSecExport(await params.tempFiles.readText(exportPath));
+      return { status: 'completed', result: exportResult, commentOutMarkdown: '', exportedEntries };
     }
     const commentOutMarkdown = commentOutPath ? await params.tempFiles.readText(commentOutPath) : '';
     return {
-      status: commandFailed(result) ? 'failed' : 'completed',
+      // DeepSec direct mode writes this newly-created report only after agent
+      // error/quota checks. Exit 1 alone also represents those failures.
+      status: commandFailed(result, params.mode !== 'repository_security_audit' && Boolean(commentOutMarkdown.trim())) ? 'failed' : 'completed',
       result,
       commentOutMarkdown,
     };

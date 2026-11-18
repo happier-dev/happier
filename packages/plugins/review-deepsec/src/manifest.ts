@@ -68,9 +68,9 @@ export const DEEPSEC_PLUGIN = definePlugin({
             sourcePreference: 'system-first',
           },
           install: {
-            managed: null,
+            managed: { kind: 'managed_package', packageName: 'deepsec', binaryName: 'deepsec' },
             manual: { kind: 'command' },
-            guideUrl: null,
+            guideUrl: 'https://github.com/vercel-labs/deepsec',
             docsUrl: null,
           },
           auth: {

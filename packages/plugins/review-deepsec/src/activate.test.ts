@@ -14,12 +14,13 @@ import type {
 import type {
   PluginServices,
 } from '@happier-dev/plugin-sdk';
-import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/reviews';
+import { ReviewFindingsV2Schema, ReviewScmScopeV1Schema } from '@happier-dev/plugin-sdk/reviews';
 import { AgentProviderBindingMaterializationV1Schema, resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { DEEPSEC_PROVIDER_ENV_KEYS } from './agent/providerBinding.js';
 import { buildGitSnapshot } from '../../scm-git/src/statusSnapshot.js';
 import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
 
@@ -69,7 +70,15 @@ function createRuntimeContext(params?: Readonly<{
     executablePath: '/usr/local/bin/deepsec',
   };
   const resolve = vi.fn(async () => resolvedTool);
-  const run = vi.fn(params?.run ?? (async () => processResult()));
+  const run = vi.fn(params?.run ?? (async request => {
+    if (request.args?.[0] === 'export') {
+      const outIndex = request.args.indexOf('--out');
+      const outPath = outIndex < 0 ? undefined : request.args[outIndex + 1];
+      if (!outPath) throw new Error('Expected native export output path');
+      await writeFile(outPath, '[]', 'utf8');
+    }
+    return processResult();
+  }));
   const stat = vi.fn(params?.stat ?? (async () => ({
     kind: 'file' as const,
     size: 0,
@@ -197,7 +206,7 @@ function createOpenRequest(params?: Readonly<{
       structuredInput: {
         projectId: 'project-1',
         workspaceId: 'workspace-1',
-        engineIds: ['deepsec'],
+        reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
         instructions: 'Review the current diff.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
@@ -271,7 +280,7 @@ describe('activate', () => {
       { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] }, expect.objectContaining({ expectedAccount: claude.account }));
     expect(claude.readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
     expect(fixture.checkReadiness).toHaveBeenCalledWith(expect.objectContaining({ candidates: ['claude'] }));
-    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process']);
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
     const processRequest = fixture.run.mock.calls[1]?.[0];
     expect(processRequest?.args).toEqual(expect.arrayContaining(['--agent', 'claude', '--ai-provider', 'anthropic', '--ai-base-url', 'https://api.anthropic.com']));
     expect(processRequest?.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'fixture-access-only',
@@ -332,7 +341,11 @@ describe('activate', () => {
       const binding = { connectionId: 'pc_fixture', model, upstream: { protocol, normalizedUrl: baseUrl, credential: 'apiKey' as const },
         materialization: { v: 1 as const, kind: 'spawnEnv' as const } };
       expect(JSON.stringify(binding)).not.toContain('fixture-provider-secret');
-      const fixture = createRuntimeContext({ checkReadiness: async (request) => ({ launchable: request.candidates.map(agentId => ({ agentId })) }) });
+      const fixture = createRuntimeContext({
+        connectedAccounts: { getBinding: async () => { throw new Error('Explicit Provider must bypass conflicting linked selection'); },
+          materialize: async () => { throw new Error('Explicit Provider must bypass linked credentials'); } },
+        checkReadiness: async (request) => ({ launchable: request.candidates.map(agentId => ({ agentId })) }),
+      });
       const runtime = await registration.factory({ plugin: { id: 'happier.review.deepsec', version: '0.0.0' }, agent: { id: 'deepsec' }, signal: new AbortController().signal });
       const opened = await runtime.executionRuns?.open({ ...createOpenRequest(
         { profileLocalId: 'repository-security-audit', includeExplicitMode: false, confirmedCostWarning: true }), providerBinding: binding,
@@ -347,7 +360,7 @@ describe('activate', () => {
       const processRequest = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
       expect(processRequest).toBeDefined();
       if (!processRequest) throw new Error('Expected DeepSec process launch');
-      expect(fixture.run.mock.calls[0]?.[0].args).toEqual(['scan']);
+      expect(fixture.run.mock.calls[0]?.[0].args).toEqual(['scan', '--root', '/repo']);
       expect(processRequest.args).toEqual(expect.arrayContaining(['--agent', expectedAgent, '--model', model.id,
         '--ai-provider', 'openai', '--ai-base-url', baseUrl]));
       expect(processRequest.env).toMatchObject({ AI_GATEWAY_API_KEY: '', VERCEL_OIDC_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN: '',
@@ -438,11 +451,11 @@ describe('activate', () => {
     const selectedPaths = pendingEntries.map(entry => entry.path);
     let filesFromContents = '';
     const commentOutMarkdown = [
-      '### src/auth.ts:2',
+      '## 🔎 deepsec found 1 finding',
       '',
-      '**Severity:** critical',
-      '**Rule:** CWE-601',
-      '**Category:** open_redirect',
+      '### 🔴 CRITICAL · `src/auth.ts:L2`',
+      '',
+      '<sub>slug: `CWE-601` · confidence: high</sub>',
       '',
       'Validate redirect destinations before use.',
     ].join('\n');
@@ -475,8 +488,9 @@ describe('activate', () => {
     expect(fixture.run).toHaveBeenCalledWith(expect.objectContaining({
       executable: { kind: 'systemTool', id: 'deepsec-cli' },
       cwd: { root: 'workspace', relativePath: '' },
-      env: { AI_GATEWAY_API_KEY: 'gateway-key' },
-      args: ['process', '--files-from', expect.any(String), '--no-ignore', '--comment-out', expect.any(String)],
+      env: expect.objectContaining({ AI_GATEWAY_API_KEY: 'gateway-key' }),
+      args: ['process', '--files-from', expect.any(String), '--no-ignore', '--comment-out', expect.any(String),
+        '--agent', 'claude', '--ai-provider', 'anthropic', '--ai-base-url', 'https://ai-gateway.vercel.sh'],
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(filesFromContents.split('\n').filter(Boolean)).toEqual(selectedPaths);
     expect(filesFromContents).not.toContain('other-area.ts');
@@ -543,8 +557,10 @@ describe('activate', () => {
 
     expect(events.at(-1)?.kind).toBe('run-complete');
     expect(fixture.run.mock.calls.map(([request]) => request.args)).toEqual([
-      ['scan'],
-      expect.arrayContaining(['process', '--comment-out']),
+      ['scan', '--root', '/repo'],
+      expect.arrayContaining(['process', '--root', '/repo', '--agent', 'claude',
+        '--ai-provider', 'anthropic', '--ai-base-url', 'https://ai-gateway.vercel.sh']),
+      ['export', '--format', 'json', '--out', expect.any(String)],
     ]);
     expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
   });
@@ -581,27 +597,15 @@ describe('activate', () => {
     const retryEvents = await watchToTerminal(retried);
     await retried.dispose();
     expect(retryEvents.at(-1)?.kind).toBe('run-complete');
-    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process']);
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
   });
 
   it('publishes repository audit process failures as diagnosable partial findings', async () => {
-    const commentOutMarkdown = [
-      '### src/auth.ts:2',
-      '',
-      '**Severity:** critical',
-      '**Rule:** CWE-601',
-      '**Category:** open_redirect',
-      '',
-      'Validate redirect destinations before use.',
-    ].join('\n');
     let launchCount = 0;
     const fixture = createRuntimeContext({
-      async run(request) {
+      async run() {
         launchCount += 1;
         if (launchCount === 1) return processResult();
-        const commentOutIndex = request.args?.indexOf('--comment-out') ?? -1;
-        const commentOutPath = commentOutIndex >= 0 ? request.args?.[commentOutIndex + 1] : undefined;
-        if (commentOutPath) await writeFile(commentOutPath, commentOutMarkdown, 'utf8');
         return processResult(2);
       },
     });
@@ -619,9 +623,9 @@ describe('activate', () => {
 
     expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_process_failed' } });
     expect(readStructuredOutput(events)).toMatchObject({
-      summary: 'DeepSec review partially completed with 1 finding(s).',
+      summary: 'DeepSec review partially completed with 0 finding(s).',
       reviewOutcome: 'partial',
-      findings: [expect.objectContaining({ filePath: 'src/auth.ts', startLine: 2 })],
+      findings: [],
       diagnostics: [{
         code: 'deepsec_process_failed',
         severity: 'warning',
@@ -843,16 +847,84 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_readiness_failed' } });
-    expect(readStructuredOutput(events)).toMatchObject({
-      status: 'failed',
-      error: { code: 'deepsec_readiness_failed' },
-      readiness: {
-        status: 'missing',
-        missing: ['AI_GATEWAY_API_KEY'],
-      },
-    });
-    expect(fixture.resolve).toHaveBeenCalledOnce();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it('blanks all unused credential keys for the admitted Gateway route', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const environment = fixture.run.mock.calls[0]?.[0].env;
+    expect(environment).toEqual(Object.fromEntries(DEEPSEC_PROVIDER_ENV_KEYS.map(name =>
+      [name, name === 'AI_GATEWAY_API_KEY' ? 'gateway-key' : ''])));
+  });
+
+  it.each([
+    { ready: ['claude'], agent: 'claude', provider: 'anthropic', baseUrl: 'https://ai-gateway.vercel.sh' },
+    { ready: ['codex'], agent: 'codex', provider: 'openai', baseUrl: 'https://ai-gateway.vercel.sh/v1' },
+    { ready: ['claude', 'codex'], agent: 'codex', provider: 'openai', baseUrl: 'https://ai-gateway.vercel.sh/v1' },
+  ])('pins the selected Gateway route against repository model config using the ready $agent harness', async ({ ready, agent, provider, baseUrl }) => {
+    const fixture = createRuntimeContext({ checkReadiness: async () => ({ launchable: ready.map(agentId => ({ agentId })) }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    // Native 2.3.12 applies repository model routes unless an explicit base
+    // flag is present, including switching Gateway to a stored local login.
+    expect(fixture.run.mock.calls[0]?.[0].args).toEqual(expect.arrayContaining([
+      '--agent', agent, '--ai-provider', provider, '--ai-base-url', baseUrl,
+    ]));
+  });
+
+  it('delivers the selected thinking level through the execution entry point', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const request = createOpenRequest();
+    const opened = await runtime.executionRuns?.open({ ...request, input: { ...request.input,
+      structuredInput: { ...request.input.structuredInput as Record<string, unknown>,
+        engines: { deepsec: { mode: 'current_diff', thinkingLevel: 'xhigh' } } } } }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(fixture.run.mock.calls[0]?.[0].args).toEqual(expect.arrayContaining(['--thinking-level', 'xhigh']));
+  });
+
+  it('does not borrow a Machine login when no model-access route was admitted', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(), launchEnvironment: undefined }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { comparison: { id: 'captured-review', source: { kind: 'branch', base: 'base', head: 'head' },
+      endpoints: { before: 'captured-before', after: 'captured-after' } } },
+    { revisionRange: { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } },
+  ])('refuses captured subjects it cannot honor before invoking an ambient review (%#)', async captured => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      ...('comparison' in captured ? { profileLocalId: 'repository-security-audit', includeExplicitMode: false,
+        confirmedCostWarning: true } : {}),
+      scmReviewScope: ReviewScmScopeV1Schema.parse({ ...createSupportedScmReviewScope(), ...captured }),
+    }), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_execution_failed' } });
     expect(fixture.run).not.toHaveBeenCalled();
   });
 

@@ -10,7 +10,7 @@ function firstLine(text: string): string {
 function mapSeverity(severity: string | undefined): ReviewFinding['severity'] {
   const normalized = String(severity ?? '').trim().toLowerCase();
   if (normalized === 'critical' || normalized === 'blocker') return 'blocker';
-  if (normalized === 'high' || normalized === 'error') return 'high';
+    if (normalized === 'high' || normalized === 'high_bug' || normalized === 'error') return 'high';
   if (normalized === 'medium' || normalized === 'moderate' || normalized === 'warning') return 'medium';
   if (normalized === 'low') return 'low';
   if (normalized === 'nit' || normalized === 'info' || normalized === 'informational') return 'nit';

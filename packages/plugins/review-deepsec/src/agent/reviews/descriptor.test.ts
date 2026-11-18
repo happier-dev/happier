@@ -42,10 +42,12 @@ describe('DeepSec review descriptor', () => {
     }));
   });
 
-  it('declares the gateway key environment permission consumed by readiness checks', () => {
+  it('declares the admitted Gateway environment permission without making it a required credential route', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({
       capability: 'environment',
       scope: { keys: ['AI_GATEWAY_API_KEY'] },
     }));
+    expect(deepsecReviewDescriptor.capabilities.executionRun.review.requiredPrerequisites)
+      .toEqual(['node>=22', 'claude-or-codex']);
   });
 });

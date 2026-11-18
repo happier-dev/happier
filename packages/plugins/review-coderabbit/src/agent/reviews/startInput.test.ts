@@ -6,28 +6,30 @@ describe('normalizeCodeRabbitReviewStartInput', () => {
   it('falls back to CodeRabbit review defaults for partial review-start input', () => {
     const normalized = normalizeCodeRabbitReviewStartInput({
       intentInput: {
-        engineIds: [],
+        reviewers: [],
         instructions: '   ',
         changeType: 'committed',
         base: { kind: 'none' },
         permissionMode: 'read_only',
+        engines: { coderabbit: { gate: 'major' } },
       },
       fallbackInstructions: 'Review this change.',
     });
 
     expect(normalized).toMatchObject({
-      engineIds: ['coderabbit'],
+      reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
       instructions: 'Review this change.',
       changeType: 'committed',
       base: { kind: 'none' },
       permissionMode: 'read_only',
+      engines: { coderabbit: { gate: 'major' } },
     });
   });
 
-  it('keeps CodeRabbit as the only engine id for plugin-local execution', () => {
+  it('selects CodeRabbit as the native reviewer for plugin-local execution', () => {
     const normalized = normalizeCodeRabbitReviewStartInput({
       intentInput: {
-        engineIds: ['deepsec'],
+        reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
         instructions: 'Review this change.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
@@ -35,6 +37,6 @@ describe('normalizeCodeRabbitReviewStartInput', () => {
       fallbackInstructions: 'fallback',
     });
 
-    expect(normalized.engineIds).toEqual(['coderabbit']);
+    expect(normalized.reviewers).toEqual([{ kind: 'engine', engineId: 'coderabbit' }]);
   });
 });

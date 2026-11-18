@@ -10,6 +10,12 @@ export const DEEPSEC_PROVIDER_ENV_KEYS = Object.freeze([
   'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY', 'OPENAI_BASE_URL',
 ] as const);
 
+export function buildDeepSecLaunchEnvironment(values: Readonly<Record<string, string>> = {}): Readonly<Record<string, string>> {
+  // Empty values suppress repository dotenv and competing ambient credentials,
+  // including when the selected route uses a stored native login.
+  return Object.freeze(Object.fromEntries(DEEPSEC_PROVIDER_ENV_KEYS.map(name => [name, values[name] ?? ''])));
+}
+
 export type DeepSecProviderRoute = Readonly<{
   agent: 'codex';
   provider: 'openai';
@@ -46,8 +52,7 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
   if (Object.keys(input.binding.endpoint.publicHeaders).length) throw new Error('DeepSec Provider binding cannot preserve custom public headers');
   if (input.credential.kind !== 'apiKey') throw new Error('DeepSec Provider binding requires an API key to suppress native subscription fallback');
   const { transport, value } = input.credential;
-  if (!value || JSON.stringify(transport) !== JSON.stringify(input.binding.runtimeCredentialTransport)
-    || !transport.protocols.includes(input.binding.endpoint.protocol) || !transport.uses.includes('runtime')
+  if (!value || !transport.protocols.includes(input.binding.endpoint.protocol) || !transport.uses.includes('runtime')
     || transport.destination.kind !== 'httpHeader') {
     throw new Error('DeepSec Provider credential does not match the selected transport');
   }
@@ -55,14 +60,12 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
   if (header !== 'authorization' || transport.destination.format !== 'bearer') {
     throw new Error('DeepSec Provider binding does not support this credential transport');
   }
-  const values: Record<string, string> = {
+  const values = buildDeepSecLaunchEnvironment({
     OPENAI_API_KEY: value,
     OPENAI_BASE_URL: route.baseUrl,
-  };
-  // Empty strings intentionally suppress DeepSec's dotenv refill and ambient
-  // Gateway/OIDC/native-login precedence. Null/unset would reload repository keys.
+  });
   return { v: 1 as const, kind: 'spawnEnv' as const,
-    env: DEEPSEC_PROVIDER_ENV_KEYS.map(name => ({ name, value: values[name] ?? '', source: 'provider' as const })) };
+    env: DEEPSEC_PROVIDER_ENV_KEYS.map(name => ({ name, value: values[name], source: 'provider' as const })) };
 }
 
 export const DEEPSEC_PROVIDER_BINDING_ADAPTER_V1: AgentProviderBindingAdapter = Object.freeze({
@@ -83,8 +86,5 @@ export function readDeepSecProviderLaunch(binding: AgentSessionProviderBinding, 
   const provided = new Map(Object.entries(environment?.values ?? {}).map(([key, value]) => [key.toUpperCase(), value]));
   const key = provided.get('OPENAI_API_KEY');
   if (unset.has('OPENAI_API_KEY') || !key?.trim()) throw new Error('DeepSec Provider credential is unavailable in the admitted launch environment');
-  const values = Object.fromEntries(DEEPSEC_PROVIDER_ENV_KEYS.map(name => [name, '']));
-  values.OPENAI_API_KEY = key;
-  values.OPENAI_BASE_URL = route.baseUrl;
-  return { route, environment: Object.freeze(values) };
+  return { route, environment: buildDeepSecLaunchEnvironment({ OPENAI_API_KEY: key, OPENAI_BASE_URL: route.baseUrl }) };
 }

@@ -7,7 +7,6 @@ describe('checkDeepSecReadiness', () => {
     expect(checkDeepSecReadiness({
       executablePath: '/tools/deepsec',
       agentCli: 'claude',
-      hasGatewayKey: true,
     })).toEqual({
       status: 'ready',
       executablePath: '/tools/deepsec',
@@ -29,10 +28,9 @@ describe('checkDeepSecReadiness', () => {
         diagnostics: [],
       },
       agentCli: null,
-      hasGatewayKey: false,
     })).toEqual({
       status: 'missing',
-      missing: ['deepsec', 'node>=22', 'claude-or-codex', 'AI_GATEWAY_API_KEY'],
+      missing: ['deepsec', 'node>=22', 'claude-or-codex'],
       toolRuntime: {
         kind: 'node',
         version: '20.19.0',
@@ -43,5 +41,9 @@ describe('checkDeepSecReadiness', () => {
       commandPreview: ['deepsec', '--help'],
       messageKey: 'plugins.deepsec.readiness.missing',
     });
+  });
+
+  it('checks native CLI prerequisites without redeciding selected model access', () => {
+    expect(checkDeepSecReadiness({ executablePath: '/tools/deepsec', agentCli: 'claude' })).toMatchObject({ status: 'ready' });
   });
 });

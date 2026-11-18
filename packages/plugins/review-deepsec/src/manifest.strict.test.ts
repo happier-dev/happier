@@ -9,6 +9,7 @@ describe('DeepSec strict plugin manifest', () => {
     expect(ingestion.ok, JSON.stringify(ingestion)).toBe(true);
     expect(PLUGIN_MANIFEST.contributes.agents[0]).toMatchObject({
       id: 'deepsec', runtime: { kind: 'custom' }, primary: 'executionRuns',
+      cli: { install: { managed: { kind: 'managed_package', packageName: 'deepsec', binaryName: 'deepsec' } } },
     });
     expect(PLUGIN_MANIFEST.contributes.executionRunProfiles.map((profile) => profile.id)).toEqual([
       'review', 'repository-security-audit',

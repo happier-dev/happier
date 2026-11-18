@@ -2,7 +2,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { DEEPSEC_PROVIDER_ENV_KEYS } from './providerBinding.js';
+import { buildDeepSecLaunchEnvironment } from './providerBinding.js';
 
 export const DEEPSEC_CLAUDE_ACCOUNT_PURPOSE = 'claude-subscription';
 
@@ -23,6 +23,6 @@ export async function prepareDeepSecClaudeAccount(context: AgentRuntimeContext, 
   }
   // DeepSec 2.3.12's Claude SDK environment forwards this native key. Empty
   // competing keys prevent repository dotenv and Gateway credentials taking over.
-  return Object.freeze({ ...Object.fromEntries(DEEPSEC_PROVIDER_ENV_KEYS.map(name => [name, ''])),
+  return buildDeepSecLaunchEnvironment({
     CLAUDE_CODE_OAUTH_TOKEN: accessToken, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' });
 }

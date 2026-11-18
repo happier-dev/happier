@@ -34,19 +34,19 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['a.txt']): un
 }
 
 describe('CodeRabbit review preflight', () => {
-  it('reports missing CODERABBIT_API_KEY as start-preflight remediation', async () => {
+  it('leaves native login and API-key readiness with the canonical Agent auth owner', async () => {
     await expect(runCodeRabbitReviewStartPreflight({
       cwd: '/workspace',
       env: {},
       intentInput: {
-        engineIds: ['coderabbit'],
+        reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review this change.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
       },
+      scope: createSupportedScmReviewScope(),
     })).resolves.toEqual({
-      ok: false,
-      reason: expect.stringContaining('CODERABBIT_API_KEY'),
+      ok: true,
     });
   });
 
@@ -61,7 +61,7 @@ describe('CodeRabbit review preflight', () => {
     })).resolves.toEqual({ ok: true, eligibleFileCount: 1 });
   });
 
-  it('rejects host-resolved scopes that exceed the configured file limit', async () => {
+  it('does not impose a local file ceiling before the vendor evaluates the scope (U3)', async () => {
     await expect(runCodeRabbitReviewStartPreflight({
       cwd: '/not-a-local-git-worktree',
       env: {
@@ -69,23 +69,20 @@ describe('CodeRabbit review preflight', () => {
         HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES: '1',
       },
       intentInput: {
-        engineIds: ['coderabbit'],
+        reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review this change.',
         changeType: 'committed',
         base: { kind: 'none' },
       },
       scope: createSupportedScmReviewScope(['a.txt', 'b.txt']),
-    })).resolves.toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('Too many reviewable files'),
-    });
+    })).resolves.toEqual({ ok: true });
   });
 
   it('rejects empty host-resolved session scopes without local fallback probing', async () => {
     await expect(preflightCodeRabbitReviewScope({
       cwd: '/not-a-local-git-worktree',
       intentInput: {
-        engineIds: ['coderabbit'],
+        reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review nested scope.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
