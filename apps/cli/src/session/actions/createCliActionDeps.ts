@@ -1372,8 +1372,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       }
       if (actionId === 'deployments.publish.prepare') {
         const selected = DeploymentActionInputSchemasV1[actionId].parse(input);
-        if (context.actionCaller && context.actionCaller.kind !== 'host')
-          return executionRunActionFailure('deployment_executor_unavailable');
+        // The original-root owner decides which callers may dispatch, including installed Workflow Runs.
         const execution = await dispatchOriginalDeploymentRoot(actionId, selected, context,
           async () => ({ ok: true, machineId: selected.machineId }));
         if (!execution.ok) return execution;

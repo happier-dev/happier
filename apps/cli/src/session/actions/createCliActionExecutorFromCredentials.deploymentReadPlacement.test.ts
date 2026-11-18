@@ -141,6 +141,66 @@ describe('deployment read placement from a CLI on another Machine', () => {
         });
     });
 
+    it('dispatches an installed Workflow Publish Prepare to its selected Machine through the original-root owner', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-workflow-publish-prepare-' }, async () => {
+            // Home is the network boundary: record the submitted request, refuse it typed.
+            const posts: Array<{ path: string; body: unknown }> = [];
+            const request = vi.fn(async (config: { url?: string; method?: string; data?: unknown }) => {
+                const path = String(config.url ?? '');
+                if ((config.method ?? 'get').toLowerCase() === 'get') {
+                    if (path.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 }, headers: {}, config };
+                    return { status: 404, data: { error: 'machine_not_found' }, headers: {}, config };
+                }
+                posts.push({ path, body: config.data });
+                return { status: 403, data: { error: 'credential_scope_denied' }, headers: {}, config };
+            });
+            vi.spyOn(axios, 'request').mockImplementation(request as never);
+            vi.spyOn(axios, 'post').mockImplementation(((url: string, data: unknown, config?: object) =>
+                request({ ...config, url, data, method: 'post' })) as never);
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null };
+            const identity = createMachineInstallationIdentityFixture();
+            const machineReads: string[] = [];
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+                machineReads.push(path);
+                return { status: 404, data: { error: 'machine_not_found' } };
+            });
+            const workspace = { machineId: 'workflow-machine', directory: process.cwd() };
+            const runId = 'workflow-run';
+            const context = buildWorkflowActionContext({ runId, workspace,
+                authorization: WorkflowAcceptedAuthorizationV1Schema.parse({
+                    admittedPermissionCeiling: 'default', principal: { kind: 'host' },
+                }),
+            });
+            const deps = createCliActionDeps({ token, credentials, sessionId: '', ctx: null, mode: 'plain',
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
+                machineActionDirectTargetTransport: { machineId: workspace.machineId, invoke: async () => {
+                    throw new Error('Publish Prepare must not execute on the Run workspace');
+                } },
+                externalActionMachineRequestPrivateKey: identity.privateKeyBase64,
+                externalActionMachineInstallationId: identity.installationId,
+            });
+            const result = await deps.deploymentAction!('deployments.publish.prepare', {
+                serverId: 'srv_home', machineId: 'publisher-machine', installationId: 'publisher-installation',
+                projectSourceId: 'source', sourceRevision: 1,
+                templateRef: { sourceId: 'apps', itemId: 'app', version: '1.0.0', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+            }, { ...context, actionRequestId: `${runId}/deployment/0`,
+                externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: workspace } });
+            const evidence = JSON.stringify({ result, machineReads, posts });
+            // The original-root owner admits the installed Run: it submits the Run's
+            // signed Workflow origin to Home for the selected publisher Machine.
+            expect(result, evidence).not.toMatchObject({ errorCode: 'deployment_executor_unavailable' });
+            const submitted = posts.find(post => post.path.endsWith('deployments.publish.prepare'));
+            expect(submitted, evidence).toBeDefined();
+            const body = typeof submitted!.body === 'string' ? submitted!.body : JSON.stringify(submitted!.body);
+            expect(body, evidence).toContain('"runId":"workflow-run"');
+            expect(body, evidence).toContain('"machineId":"publisher-machine"');
+        });
+    });
+
     it('keeps a CI API token out of the full Environment read during placement', async () => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-ci-placement-' }, async () => {
             const calls: URL[] = [];
