@@ -49,7 +49,7 @@ export function resolveComputerRecovery(state: ComputerTargetPickerState, access
     if (code === 'computer_machine_mismatch') return { cause: 'machine_mismatch', action: null, code };
     if (code === 'computer_display_unavailable') return { cause: 'headless', action: null, code };
     if (code === 'target_unsupported' || code === 'computer_unavailable') return { cause: 'unsupported', action: null, code };
-    if (code === 'driver_unavailable' || code === 'driver_install_failed') return { cause: 'driver_missing', action: 'repair_driver', code };
+    if (code === 'computer_provider_unavailable' || code === 'driver_unavailable' || code === 'driver_install_failed') return { cause: 'driver_missing', action: 'repair_driver', code };
     if (code === 'driver_result_invalid' || code === 'driver_executable_invalid' || code === 'driver_version_mismatch' || code === 'driver_protocol_error') return { cause: 'driver_invalid', action: 'repair_driver', code };
     if (code === 'stale_capture' || code === 'capture_expired' || code === 'capture_generation_mismatch'
         || code === 'capture_frame_mismatch' || code === 'capture_coordinate_invalid' || code === 'capture_not_found'

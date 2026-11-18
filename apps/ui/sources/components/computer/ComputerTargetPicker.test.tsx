@@ -28,7 +28,7 @@ function renderPicker(overrides: Partial<React.ComponentProps<typeof ComputerTar
 }
 
 describe('Computer driver recovery', () => {
-    it.each(['driver_unavailable', 'driver_result_invalid', 'driver_version_mismatch', 'driver_protocol_error'] as const)('offers driver repair, not list retry, after %s', async code => {
+    it.each(['computer_provider_unavailable', 'driver_unavailable', 'driver_result_invalid', 'driver_version_mismatch', 'driver_protocol_error'] as const)('offers driver repair, not list retry, after %s', async code => {
         const onRepairDriver = vi.fn();
         const onRetry = vi.fn();
         const screen = await renderPicker({ state: { kind: 'failed', code }, onRepairDriver, onRetry }).screen;
