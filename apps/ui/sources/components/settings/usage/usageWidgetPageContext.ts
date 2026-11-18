@@ -1,4 +1,4 @@
-import { USAGE_QUERY_INPUT_FIELDS, UsageQuerySchema, usageAnalyticsRequestToQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, USAGE_QUERY_INPUT_FIELDS, UsageQuerySchema, usageAnalyticsRequestToQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WidgetBindingResolutionInputV1 } from '@happier-dev/protocol/widgets';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -31,6 +31,16 @@ export function readUsageWidgetQueryOverrides(query: UsageQuery): UsageWidgetQue
 export function readUsageWidgetPageContext(scope: UsageWidgetPageScope): WidgetBindingResolutionInputV1['context'] {
     return { period: [projectNativeJsonValueForTransport(scope.period)], agents: [scope.agents], machines: [scope.machines], projects: [scope.projects],
         sources: [scope.sources], session: [scope.session], costBasis: [scope.costBasis] };
+}
+
+/** Inventory keeps the page period and Session while listing every value of the other scopes. */
+export function buildUsageWidgetPageInventoryQuery(clauses: UsageWidgetQueryOverrides,
+    context: WidgetBindingResolutionInputV1['context']): UsageQuery {
+    return normalizeUsageQuery({
+        ...clauses,
+        ...Object.fromEntries(Object.entries(context).map(([path, values]) => [path, values[0]])),
+        agents: [], machines: [], projects: [], sources: [], metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'],
+    });
 }
 
 const SCOPE_NOUN_KEYS = {

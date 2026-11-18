@@ -1,13 +1,11 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   flattenWidgetLayoutWidgetsV1,
-  readBuiltinWidgetDescriptorV1,
 } from '@happier-dev/protocol/widgets';
 import { HAPPIER_PAGE_METRICS, HAPPIER_PAGE_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -63,11 +61,12 @@ import {
   useUsageWidgetPageContext,
   type UsageWidgetPageContextState,
 } from './useUsageWidgetPageContext';
-import type {
-  UsageWidgetPageInitialFilters,
-  UsageWidgetQueryOverrides,
+import {
+  buildUsageWidgetPageInventoryQuery,
+  type UsageWidgetPageInitialFilters,
+  type UsageWidgetQueryOverrides,
 } from './usageWidgetPageContext';
-import { setUsageWidgetMetric } from './usageWidgetActions';
+import { setUsageWidgetMetric, usageWidgetAcceptsMetric } from './usageWidgetActions';
 import {
   UsageWidgetBatchProvider,
   isUsageQueryWidget,
@@ -233,13 +232,9 @@ type UsagePageDocumentProps = Readonly<{
 function UsagePageDocument(props: UsagePageDocumentProps) {
   const layout = useWidgetAreaLayout(props.port, props.context);
   const admittedContext = layout.state.status === 'ready' ? layout.state.context : null;
-  // Keep filter inventory summary-only: full contributions scale with accounting events,
-  // not Projects. Native Machine context stays unknown unless an existing binding supplies it.
-  const inventoryQuery = React.useMemo(() => admittedContext ? normalizeUsageQuery({
-    ...admittedContext.queryOverrides,
-    ...Object.fromEntries(Object.entries(widgetProvidedContext(admittedContext)).map(([path, values]) => [path, values[0]])),
-    agents: [], machines: [], projects: [], sources: [], metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'],
-  }) : undefined, [admittedContext]);
+  const inventoryQuery = React.useMemo(() => admittedContext
+    ? buildUsageWidgetPageInventoryQuery(admittedContext.queryOverrides, widgetProvidedContext(admittedContext))
+    : undefined, [admittedContext]);
   const queryWidgetIds = layout.state.status === 'ready' ? flattenWidgetLayoutWidgetsV1(layout.state.items)
     .filter(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id))
     .map(row => row.instance.id) : undefined;
@@ -301,12 +296,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const usageWidgets = React.useMemo(
     () =>
       ready
-        ? flattenWidgetLayoutWidgetsV1(ready.items).filter(
-            (row) =>
-              row.instance.definition.kind === 'builtin' &&
-              row.instance.definition.id.startsWith('usage_') &&
-              readBuiltinWidgetDescriptorV1(row.instance.definition)?.inputs?.fields.some(field => field.path === 'metric'),
-          )
+        ? flattenWidgetLayoutWidgetsV1(ready.items).filter(row => usageWidgetAcceptsMetric(row.instance.definition))
         : [],
     [ready],
   );

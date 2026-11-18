@@ -1,34 +1,27 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-vi.mock('react-native-mmkv', () => ({ MMKV: class { getString() { return undefined; } set() {} delete() {} } }));
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../../../server/sources/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '../../../server/sources/app/api/testkit/sqliteFastify';
 import { registerAccountUsageRoutes } from '../../../server/sources/app/api/routes/account/registerAccountUsageRoutes';
 import { registerAccountEncryptionRoutes } from '../../../server/sources/app/api/routes/account/registerAccountEncryptionRoutes';
 import { kvRoutes } from '../../../server/sources/app/api/routes/kv/kvRoutes';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageQueryAccountContext } from '../sync/api/account/usageQueryResource';
 import type { AuthCredentials } from '../auth/storage/tokenStorage';
 import { upsertServerProfile } from '../sync/domains/server/serverProfiles';
+import { seedUsageRigAccountingRows, USAGE_RIG_NOW, USAGE_RIG_DAY } from './testkit/fixtures/usageRigAccounting';
+import { createRootLayoutFeaturesResponse } from './testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '../sync/api/capabilities/serverFeaturesClient';
 
-const DAY = 86_400_000;
-const NOW = Date.UTC(2026, 10, 17, 12);
-const VIEWS = [
-    { id: 'Overview', widgets: ['usage_daily', 'usage_period_summary', 'usage_capacity', 'usage_projections', 'usage_coach', 'usage_efficiency', 'usage_rhythm'], breakdown: ['agent', 'model', 'source'] as const, includeActivity: true, includeInsights: true, includeModelTimeline: true, includeMessageStats: true },
-    { id: 'Costs', widgets: ['usage_cost_facts', 'usage_daily', 'usage_breakdowns', 'usage_efficiency', 'usage_plan_fit', 'usage_outcomes'], breakdown: ['agent', 'model'] as const, metric: 'cost' as const, includeInsights: true, includeActivity: true },
-    { id: 'Work', widgets: ['usage_project_ledger', 'usage_session_value', 'usage_outcomes'], breakdown: ['project', 'session'] as const, includeWorkEvidence: true },
-    { id: 'Usage', widgets: ['usage_daily', 'usage_breakdowns', 'usage_efficiency', 'usage_flow'], breakdown: ['model', 'machine'] as const, includeActivity: true, includeModelTimeline: true },
-    { id: 'Plans', widgets: ['usage_capacity', 'usage_projections', 'usage_resets', 'usage_plan_fit'], breakdown: ['model'] as const, includeActivity: true, includeInsights: true },
-    { id: 'Coach', widgets: ['usage_coach'], breakdown: ['agent', 'model'] as const, includeInsights: true, includeSessionEvidence: true, includeCoach: true },
-    { id: 'How you work', widgets: ['usage_rhythm', 'usage_human_loop', 'usage_parallel', 'usage_run_length', 'usage_planet', 'usage_recap'], breakdown: ['agent'] as const, includeActivity: true, includeSessionEvidence: true },
-    { id: 'Sources', widgets: ['usage_sources', 'usage_source_coverage', 'usage_unpriced'], breakdown: ['source'] as const, includeActivity: true },
-] as const;
-const PERIODS = [
-    { id: 'Week', relative: '7days' as const, days: 7 },
-    { id: 'Month', relative: '30days' as const, days: 30 },
-    { id: 'Year', relative: 'year' as const, days: 365 },
+// These are the six original failed requests, deliberately kept separate from
+// the mounted-preset matrix. Models were not requested by any of these cells.
+const ORIGINAL_FAILURES = [
+    { view: 'Work', breakdown: ['project', 'session'] as const },
+    { view: 'How you work', breakdown: ['agent'] as const },
+    { view: 'Sources', breakdown: ['source'] as const },
 ];
+const PERIODS = [{ id: 'Month', days: 30 }, { id: 'Year', days: 365 }];
 
 type RequestObservation = Readonly<{ path: string; status: number; bytes: number; elapsedMs: number }>;
 
@@ -45,38 +38,17 @@ function makeContext(accountId: string, request: UsageQueryAccountContext['reque
         readTransport: { scope: {}, serverId, key: `usage-rig:${accountId}`, read: async (path, init, _options, consume) => consume(await request(path, init)) } };
 }
 
-function seedRows(accountId: string, claudeSessionId: string, codexSessionId: string) {
-    return Array.from({ length: 45_000 }, (_, index) => {
-        const claude = index < 8_500;
-        const day = claude ? index % 13 : index % 22;
-        const observedAt = NOW - day * DAY - (index % 86_000) * 1_000;
-        const inputTokens = 800 + (index % 101);
-        const outputTokens = 200 + (index % 37);
-        const totalTokens = inputTokens + outputTokens;
-        return {
-            accountId, sessionId: claude ? claudeSessionId : codexSessionId,
-            observedAt: new Date(observedAt), agentId: claude ? 'claude' : 'codex',
-            backendMode: claude ? 'anthropic' : 'openai', modelId: claude ? 'claude-3-5-sonnet' : 'gpt-5-mini',
-            projectKey: claude ? 'project-claude' : 'project-codex', workspaceId: claude ? 'workspace-a' : 'workspace-b',
-            machineId: claude ? 'machine-claude' : 'machine-codex', source: claude ? 'claude_sdk' : 'codex_app_server',
-            scope: 'turn_delta', externalKey: `usage-rig-${index}`, isCumulative: false,
-            inputTokens, outputTokens, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens,
-            estimatedCostUsd: totalTokens / 100_000, costSource: 'pricing_estimate', currency: 'USD',
-            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
-        };
-    });
-}
 
 describe('Usage RIG: production-scale client/server data path', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-rig-', initAuth: false }); }, 120_000);
-    afterAll(async () => { if (harness) await harness.close(); });
+    afterAll(async () => { resetServerFeaturesClientForTests(); if (harness) await harness.close(); });
 
-    it('runs every default view and reports all failures after the full matrix', async () => {
+    it('distinguishes unrequested model breakdowns from field loss for every original failing cell', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
         const claudeSession = await db.session.create({ data: { accountId: account.id, tag: 'usage-rig-claude', encryptionMode: 'plain', metadata: '{}' }, select: { id: true } });
         const codexSession = await db.session.create({ data: { accountId: account.id, tag: 'usage-rig-codex', encryptionMode: 'plain', metadata: '{}' }, select: { id: true } });
-        const rows = seedRows(account.id, claudeSession.id, codexSession.id);
+        const rows = seedUsageRigAccountingRows(account.id, claudeSession.id, codexSession.id);
         for (let offset = 0; offset < rows.length; offset += 1_000) await db.usageEvent.createMany({ data: rows.slice(offset, offset + 1_000) });
         const observations: RequestObservation[] = [];
         const failures: Array<Record<string, unknown>> = [];
@@ -103,52 +75,57 @@ describe('Usage RIG: production-scale client/server data path', () => {
             };
             const profile = await upsertServerProfile({ serverUrl: 'http://usage-rig.test', name: 'Usage RIG', source: 'manual' });
             const context = makeContext(account.id, request, profile.id);
-            const cases = VIEWS.flatMap(view => PERIODS.map(period => ({ view, period, query: normalizeUsageQuery({
-                    period: { relative: period.relative }, metric: view.metric ?? 'tokens', costBasis: 'auto',
-                    includeSeries: false, includeInsights: false, includeActivity: false,
-                    includeModelTimeline: false, includeMessageStats: false,
-                    includeSessionEvidence: false, includeTranscriptEvidence: false,
-                    includeCoach: false, includeWorkEvidence: false,
-                    includeQuota: false, includeQuotaHistory: false,
-                    breakdown: [...new Set([...view.breakdown, 'model'])],
-                }) })));
-            for (const view of VIEWS) {
-                const viewCases = cases.filter(item => item.view.id === view.id);
-                const batchStarted = performance.now();
-                const batchBefore = observations.length;
-                const batch = await readUiUsageQueryBatch(context, { queries: viewCases.map(item => item.query) });
-                const batchElapsedMs = performance.now() - batchStarted;
-                const batchRows = observations.slice(batchBefore);
-                const analytics = batchRows.filter(row => row.path === '/v2/usage/query-batch' || row.path === '/v2/usage/query');
-                if (analytics.length > 1) failures.push({ cell: `${view.id}/batch-acquisition`, error: `analytics-acquisition:${analytics.length}`, requests: batchRows });
-                for (const [index, item] of viewCases.entries()) {
-                    const { period } = item;
-                    const cell = `${view.id}/${period.id}`;
+            primeServerFeaturesSnapshot({ serverId: profile.id, snapshot: { status: 'ready',
+                features: createRootLayoutFeaturesResponse({ features: { usage: { compactBatch: { enabled: true } } } }) } });
+            for (const view of ORIGINAL_FAILURES) for (const period of PERIODS) {
+                for (const modelControl of [false, true]) {
+                    const cell = `${view.view}/${period.id}/${modelControl ? 'model-control' : 'original'}`;
+                    const query = normalizeUsageQuery({
+                        period: { startMs: USAGE_RIG_NOW - period.days * USAGE_RIG_DAY, endMs: USAGE_RIG_NOW + 1 },
+                        metric: 'tokens', costBasis: 'auto', includeComparison: false,
+                        includeSeries: false, includeInsights: false, includeActivity: false,
+                        includeModelTimeline: false, includeMessageStats: false,
+                        includeSessionEvidence: false, includeTranscriptEvidence: false,
+                        includeCoach: false, includeWorkEvidence: false,
+                        includeQuota: false, includeQuotaHistory: false,
+                        breakdown: modelControl ? [...view.breakdown, 'model'] : [...view.breakdown],
+                    });
+                    const before = observations.length;
+                    const started = performance.now();
                     try {
-                        const slice = batch.results[index];
-                        if (!slice || slice.pending || slice.errorCode) throw new Error(`settlement:${slice?.errorCode ?? 'pending'}`);
-                        const accounting = slice.accounting;
-                        if (!accounting) throw new Error('missing accounting response');
-                        const decoded = UsageAnalyticsQueryResponseSchema.parse(accounting);
-                        const renderedUnits = period.days * Math.max(1, view.breakdown.length + 1);
-                        const budgetBytes = renderedUnits * 16_384 + 600_000;
-                        const bytes = Buffer.byteLength(JSON.stringify(accounting));
-                        if (bytes > budgetBytes) throw new Error(`decoded-bytes:${bytes}>${budgetBytes}`);
-                        const models = decoded.breakdowns?.model ?? [];
-                        if (!models.some(row => row.key === 'claude-3-5-sonnet') || !models.some(row => row.key === 'gpt-5-mini')) throw new Error('model-category-missing');
-                        const total = decoded.totals.tokens.total ?? 0;
-                        const grouped = models.reduce((sum, row) => sum + (row.tokens.total ?? 0), 0);
-                        const other = Math.max(0, total - grouped);
-                        if (grouped + other !== total) throw new Error('group-sum-conservation');
-                        table.push({ view: view.id, period: period.id, renderedUnits, bytes, budgetBytes, requests: analytics.length, elapsedMs: Math.round(batchElapsedMs), events: decoded.totals.eventCount, models: models.map(row => row.key) });
+                        // One query per acquisition: grouped requests and prior Resource
+                        // results cannot mask a single-cell producer/reader field loss.
+                        const batch = await readUiUsageQueryBatch(context, { queries: [query] });
+                        const slice = batch.results.find(item => item.key === getUsageQueryKey(query));
+                        expect(slice?.pending, cell).toBe(false);
+                        expect(slice?.errorCode, cell).toBeUndefined();
+                        const decoded = UsageAnalyticsQueryResponseSchema.parse(slice?.accounting);
+                        expect(decoded.totals.eventCount, cell).toBe(rows.length);
+                        const expectedTotal = rows.reduce((sum, row) => sum + row.totalTokens, 0);
+                        expect(decoded.totals.tokens.total, cell).toBe(expectedTotal);
+                        // Every requested dimension partitions the complete fixture.
+                        // No synthetic residual can make a missing category pass.
+                        for (const dimension of query.breakdown) {
+                            const groups = decoded.breakdowns?.[dimension] ?? [];
+                            expect(groups.length, `${cell}/${dimension}`).toBe(2);
+                            for (const category of ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 'total'] as const) {
+                                expect(groups.reduce((sum, group) => sum + (group.tokens[category] ?? 0), 0), `${cell}/${dimension}/${category}`)
+                                    .toBe(decoded.totals.tokens[category]);
+                            }
+                        }
+                        const models = decoded.breakdowns?.model;
+                        if (modelControl) expect(models?.map(row => row.key).sort(), cell).toEqual(['claude-3-5-sonnet', 'gpt-5-mini']);
+                        else expect(models, `${cell}: response honors requested dimensions`).toBeUndefined();
+                        const requests = observations.slice(before);
+                        expect(requests.filter(row => row.path === '/v2/usage/query-batch').length, cell).toBe(1);
+                        table.push({ cell, requestedDimensions: query.breakdown, returnedDimensions: Object.keys(decoded.breakdowns ?? {}),
+                            bytes: requests.reduce((sum, row) => sum + row.bytes, 0), requests: requests.length,
+                            seconds: (performance.now() - started) / 1000, eventCount: decoded.totals.eventCount,
+                            verdict: modelControl ? 'requested models and token categories preserved' : 'unrequested model correctly omitted' });
                     } catch (error) {
-                        failures.push({ cell, error: error instanceof Error ? error.message : String(error), requests: batchRows });
+                        failures.push({ cell, error: error instanceof Error ? error.message : String(error), requests: observations.slice(before) });
                     }
                 }
-                const reconnectBefore = observations.length;
-                const warm = await readUiUsageQueryBatch(context, { queries: viewCases.map(item => item.query) });
-                if (observations.length !== reconnectBefore) failures.push({ cell: `${view.id}/reconnect`, error: 'reconnect-refetched-settled-view', requests: observations.slice(reconnectBefore) });
-                for (const [index, slice] of warm.results.entries()) if (slice?.pending || slice?.errorCode) failures.push({ cell: `${view.id}/reconnect/${viewCases[index]?.period.id}`, error: 'reconnect-not-settled' });
             }
             const refusal = await request('/v2/usage/query', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ filters: { sessionIds: ['missing-usage-rig-session'] } }) });
             if (refusal.status !== 404) failures.push({ cell: 'typed-refusal/missing-session', error: `status:${refusal.status}` });
@@ -156,7 +133,9 @@ describe('Usage RIG: production-scale client/server data path', () => {
             const zeroResponse = await app.inject({ method: 'POST', url: '/v2/usage/query', headers: { 'x-test-user-id': zero.id }, payload: { includeSeries: true } });
             if (zeroResponse.statusCode !== 200 || UsageAnalyticsQueryResponseSchema.parse(zeroResponse.json()).totals.eventCount !== 0) failures.push({ cell: 'zero-summary-account', error: `status:${zeroResponse.statusCode}` });
         });
-        console.info(JSON.stringify({ command: './apps/stack/bin/hstack-exec --target=nl3 -- pnpm --dir apps/ui exec vitest run --config vitest.integration.config.ts sources/dev/usageRig.composed.integration.spec.ts', fixture: { usageEvents: rows.length, claudeEvents: 8_500, claudeDays: 13, codexEvents: 36_500, codexDays: 22, providers: ['anthropic', 'openai'], needsReauth: 'typed 404 refusal probe', zeroSummary: 'empty account probe' }, table, failures }));
+        console.info(JSON.stringify({ scope: 'six original single-cell model-category failures plus six requested-model controls',
+            excludes: ['mounted preset matrix', 'provider quota history', 'reconnect lifecycle'],
+            fixture: { usageEvents: rows.length, claudeEvents: 8500, claudeDays: 13, codexEvents: 36500, codexDays: 22 }, table, failures }));
         expect(failures, JSON.stringify({ table, failures })).toEqual([]);
     }, 600_000);
 });

@@ -2,8 +2,15 @@ import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { readBuiltinWidgetDescriptorV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import type { WidgetAreaPort } from '@/components/widgets/area/useWidgetAreaLayout';
+
+/** The page toolbar edits the metric on each eligible placement. */
+export function usageWidgetAcceptsMetric(definition: WidgetInstanceV1['definition']): boolean {
+    return definition.kind === 'builtin' && definition.id.startsWith('usage_')
+        && readBuiltinWidgetDescriptorV1(definition)?.inputs?.fields.some(field => field.path === 'metric') === true;
+}
 
 /** Receipts are per instance: the existing layout owner does not promise a multi-write transaction. */
 export type UsageWidgetMetricWrite = Readonly<{ instanceId: string; result: PluginUiWidgetAreaResultV1 }>;

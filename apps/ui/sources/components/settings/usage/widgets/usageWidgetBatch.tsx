@@ -81,8 +81,18 @@ const USAGE_WIDGET_DEMAND = {
   'includeAccounting' | 'includeCoach' | 'includeQuota' | 'includeQuotaHistory' | 'includeTranscriptEvidence' | 'includeSeries' | 'includeInsights' | 'includeActivity' | 'includeComparison'
   | 'includeLeaders' | 'includeModelTimeline' | 'includeMessageStats' | 'workProjection'>>>>;
 
-export function isUsageQueryWidget(id: string): boolean {
+export function isUsageQueryWidget(id: string): id is UsageQueryWidgetId {
   return Object.hasOwn(USAGE_WIDGET_DEMAND, id);
+}
+
+/** Filter choices consume accounting membership without private work detail. */
+export function resolveUsageWidgetInventoryQuery(query: UsageQuery): UsageQuery {
+  return normalizeUsageQuery({ ...query,
+    includeContributions: false,
+    includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
+    includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
+    includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeQuota: false,
+  });
 }
 type UsageWidgetBatch = Readonly<{
   clauses: UsageWidgetQueryOverrides;
@@ -197,14 +207,8 @@ export function UsageWidgetBatchProvider(
         : null,
     [viewer?.serverId, viewer?.accountId],
   );
-  // Filter choices consume accounting membership, never private work detail.
   const inventoryQuery = React.useMemo(() => props.inventoryQuery
-    ? normalizeUsageQuery({ ...props.inventoryQuery,
-      includeContributions: false,
-      includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
-      includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
-      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeQuota: false,
-    }) : undefined, [props.inventoryQuery]);
+    ? resolveUsageWidgetInventoryQuery(props.inventoryQuery) : undefined, [props.inventoryQuery]);
   // A visible frame can still be binding its inputs after its neighbours mount.
   // Admit their complete cohort, using the frame and binder owners' facts, once.
   const collecting = props.queryWidgetIds?.some(id => !placements.has(id)) === true
@@ -298,7 +302,7 @@ const projectIntervalCalendarFacts: UsageWidgetSliceProjection = (slice, previou
     intervals: intervals ? retainShallow(previous?.howYouWork?.intervals ?? undefined, { ...intervals, night: null }) : null });
 };
 
-function resolveQuery(
+export function resolveUsageWidgetQuery(
   clauses: UsageWidgetQueryOverrides,
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
@@ -393,7 +397,7 @@ export function useUsageWidgetModel(
   }, []);
   const includeQuotaExactHistory = exactReaders > 0;
   const registration = React.useMemo(
-    () => resolveQuery(clauses, input, widgetId, includeQuotaExactHistory),
+    () => resolveUsageWidgetQuery(clauses, input, widgetId, includeQuotaExactHistory),
     [clauses, inputKey, widgetId, includeQuotaExactHistory],
   );
   const register = batch?.register;
