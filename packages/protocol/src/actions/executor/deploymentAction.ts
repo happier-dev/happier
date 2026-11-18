@@ -1,7 +1,9 @@
-import { DeploymentEnvironmentListResultV1Schema, projectDeploymentTargetLinkFailureV1, type DeploymentActionInputV1, type DeploymentEnvironmentCreationReviewV1 } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentEnvironmentListResultV1Schema, projectDeploymentTargetLinkFailureV1, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreationReviewV1, type DeploymentReceiptHeaderV1 } from '../../deployments/deploymentActionsV1.js';
 import { readDeploymentArtifactHeaderV1 } from '../../deployments/deploymentArtifactContentReferenceV1.js';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '../../artifacts/deploymentArtifactKindsV1.js';
-import type { DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, type DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { projectDeploymentFailureRecoveryV1 } from '../../deployments/deploymentFailureRecoveryV1.js';
+import { readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 
@@ -26,6 +28,15 @@ export async function executeDeploymentAction(
   if (actionId === 'deployments.environments.delete'
     || (actionId === 'deployments.teardown' && 'environmentRemoved' in result && result.environmentRemoved === true)) {
     if ('environmentId' in input && input.environmentId) await retireRemovedEnvironmentApprovals?.(input.environmentId);
+  }
+  if (actionId === DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 && 'items' in result) {
+    // The Action's transport validates the page; the aggregate result union loses that correlation.
+    const page = result as Extract<DeploymentActionOutputV1, { ok: true; items: DeploymentReceiptHeaderV1[] }>;
+    const items = page.items.map(receipt => {
+      const code = readDeploymentReceiptFailureCodeV1(receipt.state);
+      return code ? projectDeploymentFailureRecoveryV1(receipt, code) : receipt;
+    });
+    return { ok: true, result: { ...page, items } };
   }
   if (actionId === 'deployments.environments.list' && deps.deploymentReadArtifactHeaders) {
     const page = DeploymentEnvironmentListResultV1Schema.parse(result);

@@ -431,7 +431,10 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ids => account.readArtifactContents(ids, { signal: options.signal }));
             const items = [];
             let coverage: DeploymentEnvironmentCollectionV1['coverage'];
-            for (const [index, receipt] of page.items.entries()) {
+            for (const [index, row] of page.items.entries()) {
+                // The History view projects the recorded Artifact failure.
+                const { requiredFact: _requiredFact, remedy: _remedy, ...receipt }:
+                    typeof row & { requiredFact?: string; remedy?: string } = row;
                 const read = contents[index];
                 if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const opened = readDeploymentReceiptArtifactV1(receipt, read.value);
