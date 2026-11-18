@@ -10,6 +10,8 @@ import { machinePageHref, machineVitalsNoticeHref } from '@/components/machines/
 import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
 import type { InboxItemView } from './inboxItemProjection';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
+import { artifactResourceRoute } from '@/utils/url/resourceRoute';
+import { readReviewTriageRouteV1 } from '@happier-dev/triage-protocol';
 
 /** The selected Inbox view travels with its destination, including phone Back. */
 export function readInboxView(raw: string | string[] | undefined): InboxItemView | null {
@@ -101,6 +103,8 @@ export function resolveInboxNoticeOwnPageRoute(notice?: InboxNoticePageSource | 
         return buildDeploymentEnvironmentHref({ ...notice.page.environment, deploymentId });
     }
     if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'plugin' && notice.page && !('kind' in notice.page)) {
+        const reviewId = readReviewTriageRouteV1(notice.source.pluginId, notice.page.pageId, notice.page.subPath);
+        if (reviewId !== null) return artifactResourceRoute({ kind: 'artifact', artifactId: reviewId }, serverId);
         return buildPluginAppPageRoutePath({ pluginId: notice.source.pluginId, localId: notice.page.pageId,
             ...(notice.page.subPath === undefined ? {} : { subPath: notice.page.subPath }) });
     }

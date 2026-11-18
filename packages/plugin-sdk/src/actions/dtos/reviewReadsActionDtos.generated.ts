@@ -31,6 +31,15 @@ export type ReviewReadsActionInputById = {
 export type ReviewReadsActionResultById = {
     readonly "reviews.list": {
         items: {
+            needsYou: {
+                reviewId: string;
+                roundOrdinal: number;
+                reason: 'review_needs_you';
+                needsYou: boolean;
+                requestedVerdict: boolean;
+                pendingDecisions: boolean;
+                canSubmitVerdict: boolean;
+            };
             reviewId: string;
             createdAt: number;
             updatedAt: number;

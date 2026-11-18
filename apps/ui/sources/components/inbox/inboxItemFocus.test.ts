@@ -4,10 +4,21 @@ import { buildInboxSessionPresentation } from '@/activity/presentation/buildInbo
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { reviewTriageRouteV1 } from '@happier-dev/triage-protocol/v1';
 
 import { createInboxItemRoute, findInboxDeploymentNotice, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute, resolveInboxNoticeSubjectRoute } from './inboxItemFocus';
 
 describe('Home-qualified Inbox focus', () => {
+    it('opens Review attention on the canonical Review Artifact in the notice Home', () => {
+        const { header } = createAccountNoticeArtifactFixture({ header: {
+            source: { kind: 'plugin', pluginId: 'happier.triage', itemId: 'review-notice' },
+            page: { pageId: 'triage', subPath: reviewTriageRouteV1('review/one') },
+        } });
+        const route = resolveInboxItemPageRoute({ kind: 'notice', serverId: 'home', id: 'notice' }, { notice: header });
+        const url = new URL(route, 'https://happier.test');
+        expect(url.pathname).toBe('/artifacts/review%2Fone');
+        expect(url.searchParams.get('serverId')).toBe('home');
+    });
     it('links the affected Environment from its service-health notice', () => {
         const { header } = createAccountNoticeArtifactFixture({ header: {
             source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',

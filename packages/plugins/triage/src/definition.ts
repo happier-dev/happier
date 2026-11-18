@@ -181,6 +181,7 @@ import {
 
 import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS } from './targetedContributions.js';
 import { INTERNAL_TASK_ACTIONS_V1, INTERNAL_TASK_CONTRIBUTION_V1 } from './internalTasks/contribution.js';
+import { REVIEW_ACTIONS_V1, REVIEW_CONTRIBUTION_V1 } from './reviews/contribution.js';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 
 export { TRIAGE_DISPLAY_NAME };
@@ -220,7 +221,7 @@ type TriageActionDeclarations = {
     readonly inputSchema: TriageActionSchemas[TLocalId][0];
     readonly resultSchema: TriageActionSchemas[TLocalId][1];
   };
-} & typeof INTERNAL_TASK_ACTIONS_V1;
+} & typeof INTERNAL_TASK_ACTIONS_V1 & typeof REVIEW_ACTIONS_V1;
 
 type TriagePlugin = DefinedPlugin<
   typeof TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -277,7 +278,7 @@ function createTriagePlugin(): TriagePlugin {
     notifications: { 'source-attention': { kind: 'plugin', title: 'Source attention', eventIds: [] } },
     backgroundServices: [{ declaration: { id: 'attention', title: 'Triage source attention' }, runner: runTriageAttention }],
     contributesTo: {
-      'happier.triage': { sources: { internal: INTERNAL_TASK_CONTRIBUTION_V1 } },
+      'happier.triage': { sources: { internal: INTERNAL_TASK_CONTRIBUTION_V1, reviews: REVIEW_CONTRIBUTION_V1 } },
       'happier.channels': { [SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_ID_V1]: {
         'session-pull-request-companion': SessionPullRequestLinkCompletionsContributionProtocolV1.contribute({
           descriptor: {}, operations: { complete: SessionPullRequestLinkCompletionsContributionProtocolV1.operations.complete.bind(
@@ -597,6 +598,8 @@ function createTriagePlugin(): TriagePlugin {
         instancePolicy: 'multiple', title: TRIAGE_DISPLAY_NAME, icon: 'change-open',
       }],
       renderers: [{
+        id: 'review-detail', kind: 'reactNative', artifact: 'triage-list-page-native', requiredHostMethods: ['openResource'],
+      }, {
         id: 'internal-task-detail', kind: 'reactNative', artifact: 'triage-internal-task-detail-native', requiredHostMethods: ['executeAction'],
       }, {
         id: 'internal-task-settings', kind: 'reactNative', artifact: 'triage-internal-task-settings-native', requiredHostMethods: ['executeAction'],

@@ -11,6 +11,7 @@ import { readTriageResourceIntent } from './contributions.js';
 import { useTriageTaskDraftLaunch } from './taskDraftLaunch.js';
 import { openTriageEntryDetails } from '../composer/openEntryDetails.js';
 import { TriageTaskDraftLaunchV1Schema } from '../actions/tasksProtocol.js';
+import { readReviewDetailInput, ReviewDetail } from '../reviews/detail.js';
 
 /**
  * The PRs & Issues app-page artifact entry.
@@ -124,4 +125,7 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
   );
 }
 
-export const renderSurface: RenderSurface = defineUiSurface(TriageListSurface);
+export const renderSurface: RenderSurface = defineUiSurface(context => {
+  const review = readReviewDetailInput(context.launchInput);
+  return review === null ? <TriageListSurface {...context} /> : <ReviewDetail context={context} input={review} />;
+});

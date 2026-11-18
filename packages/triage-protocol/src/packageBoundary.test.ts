@@ -63,7 +63,6 @@ function publishedDeclarationNames(declarationText: string): Readonly<{
 describe('Triage protocol public barrel', () => {
     it('projects the explicit V1 contribution contract from the root entry point', () => {
         expect(protocol.TriageSourcesContributionPointV1).toMatchObject({
-            maxContributionsPerContributor: 1,
             protocols: [{
                 id: 'happier.triage/sources',
                 version: 1,

@@ -9,6 +9,8 @@ import { CORPUS_SOURCE_INSTANCES_INDEX_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } fr
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { REVIEW_TRIAGE_SOURCE_V1 } from '@happier-dev/triage-protocol/v1';
+import { REVIEW_ACCOUNT_DATA_INSTANCE_V1, readOneReviewAttentionV1 } from '../reviews/source.js';
 
 type Operation = NonNullable<TriageAdmittedSourceV1['operations']['readAttention']>;
 type Feed = {
@@ -94,14 +96,39 @@ export async function runTriageAttention(context: BackgroundServiceContext): Pro
   });
   const configuration = rows.watch({ index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
     prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active], order: 'asc' }, () => reconcile.trigger());
+  const reviewIds = new Set<string>();
+  const reviewChanges = createCoalescedScheduler({
+    onError: () => { if (!context.signal.aborted) context.services.logger.warn('Review attention unavailable'); },
+    drain: async () => {
+      const ids = [...reviewIds]; reviewIds.clear();
+      for (const reviewId of ids) {
+        const item = await readOneReviewAttentionV1(reviewId, context);
+        await publishTriageAttentionV1(context, { entryRef: { source: REVIEW_TRIAGE_SOURCE_V1, ...item.localRef }, reason: item.reason,
+          notice: { clientRequestId: globalThis.crypto.randomUUID(), categoryId: 'source-attention', title: item.title,
+            type: item.type, resolved: item.resolved,
+            page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1({ source: REVIEW_TRIAGE_SOURCE_V1, ...item.localRef }) } } });
+      }
+    },
+  });
+  const changed = context.services.events.host.subscribe({ eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' } }, event => {
+    if (!feeds.has(REVIEW_ACCOUNT_DATA_INSTANCE_V1.sourceInstanceId)) return;
+    for (const id of event.payload.reviewIds ?? []) reviewIds.add(id);
+    if (reviewIds.size > 0) reviewChanges.trigger();
+  });
+  const reconnected = context.services.events.host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, event => {
+    if (event.payload.reason === 'reconnect') reconcile.trigger();
+  });
   context.signal.addEventListener('abort', stop, { once: true });
   try {
     await reconcile.flush();
     if (!context.signal.aborted) await new Promise<void>(resolve => context.signal.addEventListener('abort', () => resolve(), { once: true }));
   } finally {
+    changed.dispose(); reconnected.dispose();
+    const reviewing = reviewChanges.flush({ ifRunning: 'join' }); reviewChanges.dispose();
     stop(); const draining = reconcile.flush({ ifRunning: 'join' }); reconcile.dispose(); observation.dispose(); configuration.dispose();
     context.signal.removeEventListener('abort', stop);
     await draining.catch(() => {});
+    await reviewing.catch(() => {});
     await Promise.all([...feeds.values()].map(feed => feed.running));
   }
 }

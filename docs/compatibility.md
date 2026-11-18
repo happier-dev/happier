@@ -9672,6 +9672,13 @@ instead of broadening them. Matching development Protocol and CLI consumers
 reload together; earlier strict scope readers reject `repository`. This changes
 no persisted selection or wire epoch.
 
+Unreleased 0.3 `openResource` accepts an Artifact identity alongside its existing
+provider URL intents. The composed `PluginUiOpenResourceIntentV1` contract keeps
+provider URL lookups unchanged; the host opens the Artifact in the mounted
+Account's Home through the canonical viewer. Matching SDK and UI readers reload
+together; earlier strict readers reject the Artifact branch. No persisted
+format, migration, wire epoch or mixed-development adapter is added.
+
 Unreleased 0.3 bundled Action declarations optionally carry `personOnly: true`
 for a UI Action whose author omits agent access. The bundled parity test
 recognizes this exception. The declared surfaces continue to drive invocation

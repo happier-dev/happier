@@ -62,9 +62,8 @@ describe('Triage sources contribution protocol', () => {
 });
 
 describe('Triage sources contribution point', () => {
-    it('admits one V1 contribution per source plugin', () => {
+    it('admits sources using the V1 protocol', () => {
         expect(TriageSourcesContributionPointV1).toMatchObject({
-            maxContributionsPerContributor: 1,
             protocols: [{
                 id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
                 version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,

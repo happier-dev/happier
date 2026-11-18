@@ -11995,7 +11995,10 @@ while the current SDK requests `^1.2.0`. The Protocol-owned method introduction
 facts project each reply's method set; 1.1 adds `actionControl`,
 `openManagedMachineConfiguration`, `openDeployment` and `openResource`. The latter submits a typed
 resource intent to core's Account preference, contributed-handler selection and
-external-URL fallback; plugins do not choose that opening policy. The method-free pre-negotiation bootstrap
+external-URL fallback; plugins do not choose that opening policy. Its development
+Artifact target uses the same method and opens the canonical Artifact viewer in
+the mounted Account's Home. Provider URL intent schemas remain unchanged.
+The method-free pre-negotiation bootstrap
 retains its 1.0.0 shape. Semantic version is a per-client representation and
 advertisement fact, never a dispatch grant. The document's installed methods
 intersected with transport support and its mounting ceiling remain the one

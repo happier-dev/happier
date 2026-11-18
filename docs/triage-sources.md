@@ -216,6 +216,15 @@ source-owned exact reads decide PR terminal state. Review requests create a
 `decision` item; a later closed or merged PR resolves that same review item even
 when GitHub changed the notification reason.
 
+The built-in Account-data Review source consumes the Review owner's typed
+`needsYou` facts. Requested verdicts and pending finding decisions share one
+`review_needs_you` identity per recipient and Review; settling every cause
+resolves it, and a new round renews the same item. Titles are opened locally
+through the recipient's Artifact Action. Review invalidations reread only the
+hinted Reviews; reconnects replay the finite list through the existing feed
+lifecycle. Inbox opens these items at the Review's canonical Artifact route
+on the notice's Home.
+
 [`publishTriageAttentionV1`](../packages/triage-sources/src/observations/attention.ts)
 owns the shared C1 envelope and stable identity: a domain-separated hash of the
 complete entry reference plus attention reason. The invocation request id is
@@ -273,7 +282,7 @@ targets, mutable locators and source access remain feature-owned.
 
 ## Contributions and caller-bound administration
 
-[`contribution.ts`](../packages/triage-protocol/src/v1/contribution.ts) declares `happier.triage/sources` V1 and the target-owned point, with at most one contribution per source plugin. It defines the required list/scan/get operations and detail surface plus optional PR-status/workspace and task roles. Operation roles reference ordinary source Actions; they are not implementation imports, convention-derived Action ids or a source-specific host registry.
+[`contribution.ts`](../packages/triage-protocol/src/v1/contribution.ts) declares `happier.triage/sources` V1 and the target-owned point. A plugin can contribute distinct sources, including Triage's built-in tasks and Reviews. It defines the required list/scan/get operations and detail surface plus optional PR-status/workspace and task roles. Operation roles reference ordinary source Actions; they are not implementation imports, convention-derived Action ids or a source-specific host registry.
 
 The public [source conformance check](../packages/triage-protocol/src/testing/v1/conformance.ts) reads requiredness from those canonical declarations. An optional role may be omitted; when supplied, its binding must still satisfy the declared Action or surface contract. Conformance maintains no separate list of optional role names.
 

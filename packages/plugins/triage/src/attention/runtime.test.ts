@@ -31,6 +31,7 @@ describe('registered Triage attention producer', () => {
       const context = { signal: controller.signal, surface: 'background',
         plugin: { id: 'happier.triage', version: '0.0.0' },
         services: {
+          events: { host: { subscribe: () => ({ dispose() {} }) } },
           storage: { account: { collection: () => watchableCollections.sourceInstances } },
           targetedContributions: { observeForSelf: () => ({
             readCurrent: async () => ({ contributions: [{ descriptor: fixture.descriptor,
@@ -110,6 +111,7 @@ describe('attention feed recovery', () => {
     // Substituted boundaries: host contribution transport, persistent collections and notification sink.
     const context = { signal: controller.signal, surface: 'background', plugin: { id: 'happier.triage', version: '0.0.0' },
       services: {
+        events: { host: { subscribe: () => ({ dispose() {} }) } },
         storage: { account: { collection: () => watchableCollections.sourceInstances } },
         targetedContributions: { observeForSelf: (_point: unknown, options: { onInvalidated: () => void }) => {
           invalidate = options.onInvalidated;

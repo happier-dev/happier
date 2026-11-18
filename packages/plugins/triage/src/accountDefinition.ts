@@ -44,6 +44,7 @@ import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1, TRIAGE_READ_SAVED_VIEW
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { mintTriageOpaqueIdV1 } from './opaqueId.js';
 import { INTERNAL_TASK_ACTIONS_V1 } from './internalTasks/contribution.js';
+import { REVIEW_ACTIONS_V1 } from './reviews/contribution.js';
 
 /** Named canonical schemas keep portable declaration emission finite. */
 export type TriageAccountActionSchemas = {
@@ -90,7 +91,7 @@ export type TriageAccountActionDeclarations = {
     readonly inputSchema: TriageAccountActionSchemas[TLocalId][0];
     readonly resultSchema: TriageAccountActionSchemas[TLocalId][1];
   };
-} & typeof INTERNAL_TASK_ACTIONS_V1;
+} & typeof INTERNAL_TASK_ACTIONS_V1 & typeof REVIEW_ACTIONS_V1;
 export type TriageAccountActions = NonNullable<DefinePluginInput<TriageAccountActionDeclarations>['actions']>;
 
 /** Account registrations shared by the full declaration and portable activation. */
@@ -126,6 +127,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: transitionTriageWorkItem,
       },
 ...INTERNAL_TASK_ACTIONS_V1,
+...REVIEW_ACTIONS_V1,
 [TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1]: {
         readOnly: true,
         title: 'List tasks',

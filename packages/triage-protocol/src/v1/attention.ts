@@ -13,7 +13,7 @@ export const TriageReadAttentionConnectedAccountInputV1Schema = readInput(Triage
 export const TriageReadAttentionCredentialInputV1Schema = readInput(TriageConfiguredSourceCredentialInstanceV1Schema);
 const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
 const attentionFields = {
-  reason: defineProtocolUnion([defineProtocolLiteral('reviewRequested'), defineProtocolLiteral('assignment'), defineProtocolLiteral('watchedAlert')]),
+  reason: defineProtocolUnion([defineProtocolLiteral('reviewRequested'), defineProtocolLiteral('assignment'), defineProtocolLiteral('watchedAlert'), defineProtocolLiteral('review_needs_you')]),
   type: defineProtocolUnion([defineProtocolLiteral('decision'), defineProtocolLiteral('update'), defineProtocolLiteral('mention')]),
   title: TriageTextV1ProtocolSchema,
   resolved: boolean,

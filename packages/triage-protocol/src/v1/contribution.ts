@@ -368,8 +368,7 @@ export const TriageSourceCredentialInputsV1 = {
     verifyReviewWorkspace: TriageVerifyReviewWorkspaceCredentialInputV1Schema,
 } as const satisfies Record<keyof typeof TriageSourcesContributionProtocolV1.operations, unknown>;
 
-/** The target-owned `sources` point admits one V1 contribution per source plugin. */
+/** One plugin can supply distinct sources, including built-in tasks and Reviews. */
 export const TriageSourcesContributionPointV1 = defineContributionPoint(
     [TriageSourcesContributionProtocolV1],
-    { maxContributionsPerContributor: 1 },
 );

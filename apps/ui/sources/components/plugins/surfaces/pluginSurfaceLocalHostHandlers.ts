@@ -6,7 +6,7 @@ import {
     PluginUiHostApiDiagnosticV1Schema,
     PluginUiHostApiOpenExternalLinkRequestV1Schema,
     PluginUiHostApiWriteClipboardRequestV1Schema,
-    PluginUiResourceIntentV1Schema,
+    PluginUiOpenResourceIntentV1Schema,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiJsonValueV1,
     type PluginUiSurfaceContextV1,
@@ -82,13 +82,14 @@ export function createPluginSurfaceLocalHostHandlers(
             catch { return { status: 'unavailable', reason: 'storage_unavailable' }; }
         },
         openResource: async (request: PluginUiHostApiRequestEnvelopeV1, options?: PluginSurfaceHostApiRequestOptions): Promise<PluginUiJsonValueV1> => {
-            const parsed = PluginUiResourceIntentV1Schema.safeParse(request.payload);
+            const parsed = PluginUiOpenResourceIntentV1Schema.safeParse(request.payload);
             if (!parsed.success) return invalidPayload('plugin_surface_resource_payload_invalid');
             const refusal = preflight(input, options, 'plugin_surface_resource_open_cancelled');
             if (refusal) return refusal;
             let failure: PluginUiJsonValueV1 = unavailable('plugin_surface_resource_open_unavailable');
             const opened = await requestOpenResource(parsed.data, {
                 ...input.resourceContext,
+                serverId: input.deviceScope?.serverId,
                 openExternal: async url => {
                     if (!input.executeAction) return false;
                     const result = await input.executeAction({ ...request, method: 'executeAction',

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiResourceIntentV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiResourceIntentV1, PluginUiOpenResourceIntentV1 } from '@happier-dev/protocol/plugins/ui';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import {
   usePluginSurfaceDestinationNavigationBinding,
@@ -15,6 +15,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell/address';
 import { selectChatLinkEngineOverride } from '@/sync/domains/browser/adapters/selection';
 import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { artifactResourceRoute } from './resourceRoute';
 
 const execute = createFrontDoorActionExecute();
 let chatLinkSequence = 0;
@@ -113,12 +114,17 @@ export async function requestOpenResourceUrl(url: string, context?: OpenResource
   return (await openResourceUrl(url, undefined, context)).status !== 'unavailable';
 }
 
-export async function requestOpenResource(resource: PluginUiResourceIntentV1, context?: OpenResourceContext): Promise<boolean> {
+export async function requestOpenResource(resource: PluginUiOpenResourceIntentV1, context?: OpenResourceContext): Promise<boolean> {
   return (await requestOpenResourceOutcome(resource, context)).status !== 'unavailable';
 }
 
 /** Preserve the actual destination for Actions; an external recovery did not open a workspace tab. */
-export function requestOpenResourceOutcome(resource: PluginUiResourceIntentV1, context?: OpenResourceContext): Promise<OpenResourceOutcome> {
+export async function requestOpenResourceOutcome(resource: PluginUiOpenResourceIntentV1, context?: OpenResourceContext): Promise<OpenResourceOutcome> {
+  if (resource.kind === 'artifact') {
+    const { router } = await import('expo-router');
+    router.push(artifactResourceRoute(resource, context?.serverId) as never);
+    return { status: 'inApp' };
+  }
   return openResourceUrl(resource.url, resource.kind, context);
 }
 
@@ -129,7 +135,7 @@ export function useOpenResource(context?: Readonly<{ sessionId?: string; serverI
   const chatLink = context?.chatLink;
   const instanceKey = useDestinationInstanceKey();
   const scopeId = sessionId ? createSessionPaneScopeId(sessionId, serverId, instanceKey) : undefined;
-  const openResource = React.useCallback((resource: PluginUiResourceIntentV1) => (
+  const openResource = React.useCallback((resource: PluginUiOpenResourceIntentV1) => (
     requestOpenResource(resource, { navigation, sessionId, serverId })
   ), [navigation, serverId, sessionId]);
   const openResourceUrl = React.useCallback((url: string) => (

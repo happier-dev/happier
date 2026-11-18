@@ -1,7 +1,10 @@
 import { createWorkspaceActionAdapter } from '@/components/appShell/workspace/workspaceActions';
 import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { router } from 'expo-router';
+import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginSurfaceLocalHostHandlers } from '@/components/plugins/surfaces/pluginSurfaceLocalHostHandlers';
 import { PLUGIN_MANIFEST as AUTHORED_TRIAGE_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectPluginUiDeclarationEntriesV1, projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
@@ -12,6 +15,8 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { storage } from '@/sync/domains/state/storageStore';
 import { hasInAppResourceHandler, requestOpenResource, requestOpenResourceUrl } from './openResource';
+
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 // Normalized like a daemon-admitted manifest, so `contributes.ui` carries its parsed defaults.
 const PLUGIN_MANIFEST = PluginManifestV2Schema.parse(AUTHORED_TRIAGE_MANIFEST);
@@ -42,6 +47,14 @@ function triageResourceProjection() {
 }
 
 describe('open resource intent', () => {
+  it('opens an Artifact in the bound Home through the canonical Artifact viewer', async () => {
+    const surface = createSurfaceContextFixture();
+    const host = createPluginSurfaceLocalHostHandlers({ surfaceContext: surface,
+      deviceScope: { serverId: 'home', accountId: 'person' } });
+    expect(await host.openResource({ version: 1, requestId: 'open-review', surface, method: 'openResource',
+      payload: { kind: 'artifact', artifactId: 'review/one' } })).toBeNull();
+    expect(router.push).toHaveBeenCalledWith('/artifacts/review%2Fone?serverId=home');
+  });
   it.each(['happier', 'github', 'unavailable'] as const)('phone person and agent report the %s destination outcome', async scenario => {
     const preference = scenario === 'github' ? 'github' : 'happier';
     storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: preference } });
