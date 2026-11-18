@@ -17,6 +17,7 @@ type Props = Readonly<{
     source: ContextualStartSource;
     choices: readonly ExecutionRunLauncherBackendChoice[];
     transcriptAvailable: boolean;
+    walkthrough: boolean;
     disabled: boolean;
     details?: ReadonlyMap<string, () => React.ReactNode>;
     whoAccessory?: React.ComponentProps<typeof ContextualStartComposerBody>['whoAccessory'];
@@ -45,7 +46,7 @@ export function ReviewStartBody(props: Props) {
         {props.children}
         <ReviewStartOptions then={props.input.then === 'fix' ? 'fix' : 'report'}
             onThenChange={then => props.onChange({ ...props.input, then })}
-            walkthrough={Array.isArray(props.input.outputs) && props.input.outputs.includes('walkthrough')}
+            walkthrough={props.walkthrough}
             onWalkthroughChange={walkthrough => props.onChange({ ...props.input, outputs: walkthrough ? ['walkthrough'] : [] })}
             narrator={props.narrator} credentials={props.credentials} cost={props.cost ?? null} disabled={props.disabled} />
     </View>;

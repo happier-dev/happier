@@ -1242,7 +1242,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             ) : null}
             {intent === 'review' && !props.credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
-                transcriptAvailable={props.sessionId !== null} disabled={!editable} details={agentDetails}
+                transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
+                disabled={!editable} details={agentDetails}
                 whoAccessory={{ label: roleItem?.name ?? roleValue ?? t('roles.rail.title'),
                     render: close => rolesRail.renderDetailContent?.({ onRequestClose: close }) ?? null }}
                 credentials={reviewOptions.controls}
