@@ -89,7 +89,10 @@ beforeEach(async () => {
   await waitFor(() => client!.isMachineControlReady(machineId), { timeoutMs: 60_000 });
 });
 
-it('exits the cancelled CLI while the real Machine read still waits for GitHub and allows a fresh read afterward', async () => {
+// Node's Windows kill('SIGINT') forcibly terminates the child rather than
+// delivering an interrupt to its handler. Native Windows console cancellation
+// remains a release check; this journey exercises POSIX signal delivery.
+it.skipIf(process.platform === 'win32')('exits the cancelled CLI while the real Machine read still waits for GitHub and allows a fresh read afterward', async () => {
   // With no Account binding, this public read delegates to its declared native
   // Machine Action. The real gh login materializer sees only the synthetic token.
   const args = ['actions', 'invoke', formatQualifiedPluginActionId({ pluginId: GITHUB_PLUGIN_ID,
