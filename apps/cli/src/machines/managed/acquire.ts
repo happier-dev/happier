@@ -26,7 +26,7 @@ import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/mana
 import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { projectActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1,
     ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -280,9 +280,11 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             code: details.code ?? null,
             requestId: options.requestId,
         });
-        const error = new ManagedMachineControllerError(details.code ?? 'managed_controller_request_failed', status, details);
-        return new ManagedMachineControllerError(error.code, status, details,
-            projectActionFailureCauseV1(error, `managed.controller.${path.slice(path.lastIndexOf('/') + 1).replaceAll('-', '_')}`));
+        const code = details.code ?? 'managed_controller_request_failed';
+        return new ManagedMachineControllerError(code, status, details, readActionFailureCauseV1({
+            phase: `managed.controller.${path.slice(path.lastIndexOf('/') + 1).replaceAll('-', '_')}`,
+            errorClass: 'ManagedMachineControllerError', errorCode: code, httpStatus: status ?? null,
+        }));
     }
     async function request<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
         const run = () => requestOnce(path, body, headers, schema, signal);
@@ -1001,7 +1003,11 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const request = ManagedControlAdmissionInputV1Schema.parse({ action, requestId: options.requestId, input: parsed });
                 const unconfirmed = (error: ManagedMachineControllerError, committed: true | null) => {
                     const failure = projectUnexpectedActionFailureV1(committed, options.requestId);
-                    return { ...failure, failureCause: error.failureCause ?? projectActionFailureCauseV1(error, action),
+                    const failureCause = error.failureCause ?? readActionFailureCauseV1({
+                        phase: action, errorClass: 'ManagedMachineControllerError',
+                        errorCode: error.code, httpStatus: error.status ?? null,
+                    });
+                    return { ...failure, failureCause,
                         details: { ...(options.requestId ? { requestId: options.requestId } : {}), ...error.details } };
                 };
                 let rawAdmission: ReturnType<typeof ManagedAdmissionOutputV1Schema.parse>;
