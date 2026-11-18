@@ -189,6 +189,20 @@ describe('CodeBlockView (web)', () => {
         await screen.unmount();
     });
 
+    it('mounts each Shiki token as an inherited span, not another app text component', async () => {
+        // The block's one app Text owns typography, scaling and selectability; a token only paints its color.
+        const { CodeBlockView } = await import('./CodeBlockView.web');
+        const code = Array.from({ length: 6 }, (_, index) => `const line${index} = ${index};`).join('\n');
+        const screen = await renderScreen(<CodeBlockView code={code} language={'typescript'} showHeaderRow={false} />);
+        await flushReactAsyncWork();
+        const tokens = screen.findAllByType('Text').filter((n) => (Array.isArray(n.props?.style) ? n.props.style.flat() : [n.props?.style])
+            .some((s: any) => s?.color === '#f00'));
+        expect(tokens).toHaveLength(6);
+        expect(tokens.every((token) => token.props.selectable === undefined)).toBe(true);
+        expect(screen.tree.root.findAll((n) => (n.type as { render?: { name?: string } } | null)?.render?.name === 'AppText')).toHaveLength(1);
+        await screen.unmount();
+    });
+
     it('does not invoke Shiki when highlighting is off', async () => {
         storage.setState({ settings: { ...storage.getState().settings, filesDiffSyntaxHighlightingMode: 'off' } });
         createHighlighterSpy.mockClear();

@@ -5,6 +5,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxText } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
 import { Text } from '@/components/ui/text/Text';
+import { TextSpan } from '@/components/ui/text/TextSpan';
+import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
@@ -44,6 +46,8 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   lineHeight = 20,
 }) => {
   const { theme } = useUnistyles();
+  // Tokens are spans of the line's one app Text: resolve their ink here, once, as that Text resolves its own.
+  const ink = useGlassBackedInk();
   const fallback = theme.colors.text.primary ?? '#111';
   const webTextWrapStyle: TextStyle | null = Platform.OS === 'web'
     ? wrap
@@ -72,17 +76,15 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
           const ranges = sliceFindRanges(findRanges, offset, token.text.length);
           offset += token.text.length;
           return (
-          <Text
+          <TextSpan
             key={index}
-            selectable={selectable}
             style={{
-              color: resolveTokenColor(theme, token.type, fallback),
-              fontFamily: Typography.mono().fontFamily,
+              color: ink(resolveTokenColor(theme, token.type, fallback)),
               fontWeight: token.type === 'keyword' ? '600' : '400',
             }}
           >
             {ranges?.length ? <FindHighlightedText text={token.text} ranges={ranges} selectable={selectable} /> : token.text}
-          </Text>
+          </TextSpan>
         ); })}
       </Text>
     </View>

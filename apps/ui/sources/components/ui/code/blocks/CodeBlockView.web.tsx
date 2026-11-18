@@ -4,6 +4,8 @@ import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { TextSpan } from '@/components/ui/text/TextSpan';
+import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
 import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlighting/evaluateCodeHighlightingBudget';
@@ -46,6 +48,8 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
 }) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
+    // Tokens are spans of the block's one app Text: resolve their ink here, once, as that Text resolves its own.
+    const ink = useGlassBackedInk();
 
     const syntax = useCodeSyntaxHighlighting({ language });
 
@@ -151,9 +155,9 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                                 const ranges = sliceFindRanges(findRanges, offset, token.text.length);
                                 offset += token.text.length;
                                 return (
-                                    <Text key={tokenIndex} useDefaultTypography={false} selectable={selectable} style={{ color: token.color }}>
+                                    <TextSpan key={tokenIndex} style={{ color: ink(token.color) }}>
                                         {ranges?.length ? <FindHighlightedText text={token.text} ranges={ranges} selectable={selectable} /> : token.text}
-                                    </Text>
+                                    </TextSpan>
                                 );
                             })}
                             {rowIndex < tokensByLine.length - 1 ? '\n' : null}

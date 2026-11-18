@@ -588,7 +588,7 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
   // active at first evaluation.
   const messageContentMaxWidthStyle = useLayoutMaxWidthStyle();
   const messageContentStyle = React.useMemo(
-    () => [styles.messageContent, messageContentMaxWidthStyle],
+    () => [styles.messageContainer, messageContentMaxWidthStyle],
     [messageContentMaxWidthStyle],
   );
   // Recognized returns use the quote even when the host delivered the input.
@@ -608,8 +608,7 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
     && readHostFollowInputMeta(props.message.meta) && !props.hostWakeCount
     && props.message.localId && props.toolRouteCommon.followWorkerCardsByInputLocalId?.has(props.message.localId)) return null;
   return (
-    <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
-      <View style={messageContentStyle}>
+    <View style={messageContentStyle} renderToHardwareTextureAndroid={true}>
         <RecoveredHistoryIndicator message={props.message} />
         {/* A relayed Discussion message is written by the host's Account; its Discussion names the origin. */}
         {props.message.kind === 'user-text' && !isHostFollowInput && !readHostDiscussionInputMeta(props.message.meta) && (
@@ -654,7 +653,6 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
           toolChromeCommon={props.toolChromeCommon}
           toolRouteCommon={props.toolRouteCommon}
         />
-      </View>
     </View>
   );
 });
@@ -2036,14 +2034,11 @@ const styles = StyleSheet.create((theme) => ({
   hostOnboardingTask: { alignItems: 'flex-start', paddingHorizontal: theme.space.s16 },
   // A long example task wraps inside the column; it is offered whole, never clipped at a phone's edge.
   hostOnboardingTaskChip: { maxWidth: '100%' },
+  // One centered column per message: the full row width up to the layout's max width.
   messageContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  messageContent: {
     flexDirection: 'column',
-    flexGrow: 1,
-    flexBasis: 0,
+    width: '100%',
+    alignSelf: 'center',
     minWidth: 0,
   },
   recoveredHistoryIndicator: {

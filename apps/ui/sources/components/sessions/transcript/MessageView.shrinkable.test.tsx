@@ -113,13 +113,13 @@ describe('MessageView (shrinkable transcript layout)', () => {
 
         const markdown = screen.tree.root.findByType('MarkdownView');
         const messageContent = findAncestorWithStyle(markdown, (style) => {
-            return style != null && typeof style === 'object' && 'maxWidth' in style && 'flexGrow' in style;
+            return style != null && typeof style === 'object' && 'maxWidth' in style && 'minWidth' in style;
         });
 
+        // The one message column takes the pane's width (capped by the layout's max width), never its content's.
         expect(flattenTestStyle(messageContent?.props?.style)).toEqual(
             expect.objectContaining({
-                flexGrow: 1,
-                flexBasis: 0,
+                width: '100%',
                 minWidth: 0,
             }),
         );

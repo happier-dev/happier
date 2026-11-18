@@ -20,6 +20,8 @@ import { ReviewCommentLineAffordance } from '@/components/ui/code/reviewComments
 import { CodeGutter } from './CodeGutter';
 import { resolveCodeActiveLineColor } from '../editor/editorTheme';
 import { Text } from '@/components/ui/text/Text';
+import { TextSpan } from '@/components/ui/text/TextSpan';
+import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import {
   FindHighlightedText,
   sliceFindRanges,
@@ -254,6 +256,8 @@ export function CodeLineRow(props: {
   onLongPressLine?: (line: CodeLine) => void;
 }) {
   const { theme } = useUnistyles();
+  // Token runs are spans of the line's app Text: resolve their ink here, once, as that Text resolves its own.
+  const ink = useGlassBackedInk();
   const diagnostics = props.diagnostics;
   const semanticColors = theme.colors.syntax;
   const renderCodeText = (text: string, offset = 0) =>
@@ -699,14 +703,9 @@ export function CodeLineRow(props: {
                   props.advancedTokens,
                   (token) => token.text,
                   (token, idx, offset) => (
-                    <Text
-                      key={idx}
-                      useDefaultTypography={false}
-                      selectable={textSelectable}
-                      style={{ color: token.color }}
-                    >
+                    <TextSpan key={idx} style={{ color: ink(token.color) }}>
                       {renderCodeText(token.text, offset)}
-                    </Text>
+                    </TextSpan>
                   ),
                 )
               : intraLineTokensBySegment
@@ -752,14 +751,14 @@ export function CodeLineRow(props: {
                               tokens,
                               (token) => token.text,
                               (tok, tokIndex, offset) => (
-                                <Text
+                                <TextSpan
                                   key={tokIndex}
-                                  useDefaultTypography={false}
-                                  selectable={textSelectable}
                                   style={{
-                                    color: resolveTokenColorWithFallback(
-                                      segmentFg,
-                                      tok.type,
+                                    color: ink(
+                                      resolveTokenColorWithFallback(
+                                        segmentFg,
+                                        tok.type,
+                                      ),
                                     ),
                                     fontWeight:
                                       tok.type === 'keyword' ? '600' : '400',
@@ -780,7 +779,7 @@ export function CodeLineRow(props: {
                                     ),
                                     squiggles,
                                   )}
-                                </Text>
+                                </TextSpan>
                               ),
                             )
                           ) : (
@@ -815,18 +814,16 @@ export function CodeLineRow(props: {
                       simpleTokens,
                       (token) => token.text,
                       (token, idx, offset) => (
-                        <Text
+                        <TextSpan
                           key={idx}
-                          useDefaultTypography={false}
-                          selectable={textSelectable}
                           style={{
-                            color: renderTokenColor(token.type),
+                            color: ink(renderTokenColor(token.type)),
                             fontWeight:
                               token.type === 'keyword' ? '600' : '400',
                           }}
                         >
                           {renderCodeText(token.text, offset)}
-                        </Text>
+                        </TextSpan>
                       ),
                     )
                   : renderCodeText(line.renderCodeText || ' ')}

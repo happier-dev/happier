@@ -24,6 +24,11 @@ afterEach(() => {
     storage.setState(storage.getInitialState(), true);
 });
 
+function countAppTextInstances(node: { findAll: (predicate: (candidate: { type: unknown }) => boolean) => unknown[] }): number {
+    // The app Text adapter is a memoized forwardRef whose render function is `AppText`.
+    return node.findAll((candidate) => (candidate.type as { render?: { name?: string } } | null)?.render?.name === 'AppText').length;
+}
+
 describe('transcript message row mount cost', () => {
     // A Session switch mounts every visible row at once on the thread the user is waiting on, so the
     // per-row component count and per-row work are the cost of the switch.
@@ -70,5 +75,46 @@ describe('transcript message row mount cost', () => {
         // Without fork visual context the row inherits the transcript's (absent) context: no provider, no parse.
         expect(originParses.mock.calls.length).toBe(0);
         expect(screen.tree.root.findAllByType(TranscriptVisualContextProvider)).toHaveLength(0);
+        // One container View per message (centered column), not a row plus a column.
+        expect(rowInstances / rows.length).toBeLessThanOrEqual(36);
+    });
+
+    it('mounts a code block with one text component per line; its token runs are inherited spans', async () => {
+        // Code blocks dominate a short Session's switch mounts: every token used to mount the app Text adapter
+        // (two layers and its own setting, theme and selectability subscriptions) only to paint a color.
+        const session = createSessionFixture({ id: 'row-mount-code' });
+        const block = (lines: number) => 'Change:\n\n```ts\n' + Array.from({ length: lines }, (_, index) =>
+            `const value${index} = compute(${index}, 'text');`).join('\n') + '\n```\n';
+        const committed: NormalizedMessage[] = [2, 8].map((lines, index) => ({ id: `code-${lines}`, seq: index + 1, localId: null,
+            createdAt: index + 1, isSidechain: false, role: 'agent', content: [{ type: 'text', text: block(lines), uuid: `code-${lines}`, parentUUID: null }] }));
+        storage.getState().applySessions([session]);
+        storage.getState().applyMessages(session.id, committed);
+        storage.getState().applyMessagesLoaded(session.id);
+        const ids = storage.getState().sessionMessages[session.id]!.messageIdsOldestFirst;
+        function Transcript() {
+            const currentSession = useSession(session.id) ?? session;
+            const { internalProps: props, boundary, pluginMessageActionHost } = useChatListRootState({ session: currentSession, sessionSurfaceKey: session.id });
+            return <PluginMessageActionHostProvider host={pluginMessageActionHost}>
+                <TranscriptMessageSelectionBoundary key={boundary.key} sessionId={boundary.sessionId}
+                    eligibleMessageIdsInOrder={boundary.eligibleMessageIdsInOrder} enabled={boundary.selectionEnabled}>
+                    {ids.map(id => <ChatListMessageRow key={id} messageId={id}
+                        sessionId={props.sessionId} metadata={props.metadata} activeThinkingMessageId={props.activeThinkingMessageId}
+                        interaction={props.interaction} rollbackRanges={props.rollbackRanges}
+                        messagePins={props.messagePins} onToggleMessagePin={props.onToggleMessagePin}
+                        forkCommon={props.forkCommon} messageDisplayCommon={props.messageDisplayCommon}
+                        toolChromeCommon={props.toolChromeCommon} toolRouteCommon={props.toolRouteCommon}
+                        resolveThinkingExpanded={() => false} setThinkingExpanded={() => {}} />)}
+                </TranscriptMessageSelectionBoundary>
+            </PluginMessageActionHostProvider>;
+        }
+        const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={session.id}>
+            <PluginContextualResourceStoreProvider><Transcript /></PluginContextualResourceStoreProvider>
+        </AppSessionTranscriptSourceProvider>);
+        await flushHookEffects({ cycles: 5, turns: 2 });
+
+        const [short, long] = ids.map(id => screen.findHostByTestId(`transcript-message-${id}`)!);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('value7');
+        // Six more lines (each several tokens) cost six more text components: one per line, none per token.
+        expect(countAppTextInstances(long) - countAppTextInstances(short)).toBe(6);
     });
 });
