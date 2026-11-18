@@ -1,4 +1,5 @@
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
+import type { CliReceivingMachineSetupPlan } from './cliActionDeps/types';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { awaitCliActionResult } from './awaitCliActionResult';
@@ -94,7 +95,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     deploymentRestore?: ActionExecutorDeps['deploymentRestore'];
     projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
-    machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
+    receivingMachineSetupPlan?: CliReceivingMachineSetupPlan;
     machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
     /** Receiving daemon's native Stop effect, after requester policy and scope admission. */
     sessionStop?: ActionExecutorDeps['sessionStop'];
@@ -305,7 +306,6 @@ export function createCliActionHost(params: CliActionExecutorParams):
         return await params.routeHostChildAction?.(request) ?? null;
       },
       ...(managedMachineAction ? { managedMachineAction } : {}),
-      ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
       ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...(params.hostActionApprovalLifetime ? { hostActionApprovalLifetime: params.hostActionApprovalLifetime } : {}),

@@ -120,6 +120,9 @@ export type SessionActionRpcTransport = (request: Readonly<{
 }> & (Readonly<{ origin: SessionActionRpcOriginV1; executionAuthorization?: never }>
   | Readonly<{ origin?: never; executionAuthorization: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']> }>)) => Promise<unknown>;
 
+/** One Machine's own setup plan, answered natively on that Machine. */
+export type CliReceivingMachineSetupPlan = Readonly<{ machineId: string; plan: NonNullable<ActionExecutorDeps['machineSetupPlan']> }>;
+
 export type MachineServiceActionDirectTargetInvocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & Readonly<{
   /** Captured requester read fact; never a serialized Action operand. */
   canReadEnvironments(environmentIds: readonly string[]): Promise<ReadonlySet<string>>;
@@ -323,6 +326,9 @@ export type CliActionDepsParams = Readonly<{
   acquireSessionIsolationSandbox?: AcquireSessionIsolationSandbox;
   acquireWorkflowPlacement?: ActionExecutorDeps['acquireWorkflowPlacement'];
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+  /** The receiving daemon's native setup plan for its own Machine. The combined setup owner
+   * routes that Machine's targets here and every other target through the Machine transport. */
+  receivingMachineSetupPlan?: CliReceivingMachineSetupPlan;
   /** The CLI's explicit `--machine-id`; the one Machine an Account-owned read goes through when the host has no Session or daemon of its own. */
   explicitMachineId?: string;
   sessionActionRpcTransport?: SessionActionRpcTransport;

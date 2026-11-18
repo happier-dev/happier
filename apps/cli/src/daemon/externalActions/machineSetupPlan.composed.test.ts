@@ -26,10 +26,10 @@ it('keeps the receiving current-copy plan owner through the actual credentialed 
     machineId: 'guest', serverId: 'profile', serverApiUrl: 'https://saved-setup.test', serverIdentityId: 'home',
     pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
     machineActionDirectTargetTransport: { machineId: 'guest', invoke: async () => { selfRpc++; throw new Error('The receiver cannot self-RPC'); } },
-    machineSetupPlan: createMachineSetupPlanAction({ machineId: 'guest', homeId: 'home',
+    receivingMachineSetupPlan: { machineId: 'guest', plan: createMachineSetupPlanAction({ machineId: 'guest', homeId: 'home',
       apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1(port) },
       acquirePluginRuntimeRegistryLease: async () => { catalogReads++; throw new Error('Saved copies need no catalog'); },
-    }),
+    }) },
   });
   const result = await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'guest' },
     { surface: 'rpc', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'guest' } });
@@ -38,4 +38,35 @@ it('keeps the receiving current-copy plan owner through the actual credentialed 
     support: [{ sourceIndex: 1, itemIndex: 0, status: 'unverifiable', reason: 'required_fact_unavailable' }],
   } });
   expect({ metadataReads, writes, selfRpc, catalogReads }).toEqual({ metadataReads: 1, writes: 0, selfRpc: 0, catalogReads: 0 });
+});
+
+it('answers a multi-Machine setup check through the combined owner, using the receiving plan for its own target', async () => {
+  // A nested readiness check (a deploy suggestion catalog under another outer Action) sends the
+  // multi-Machine form. The receiver's native plan answers only its own target, never the root.
+  const desired: MachineSetupDesiredV1 = { version: 1, revision: 4, exclusions: [], sources: [
+    { kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+      ref: { pluginId: 'example.retired-software', recipeId: 'fonts', revision: '1' }, inputs: {},
+    } }] } },
+  ] };
+  let selfRpc = 0;
+  const port: MachineMetadataFieldPortV1 = {
+    read: async () => ({ status: 'ready', metadata: { setup: desired }, metadataVersion: 1 }),
+    compareAndSwap: async () => { throw new Error('A plan cannot publish'); },
+  };
+  const executor = createCliActionExecutorFromCredentials({ credentials: { token: 'fixture-token', encryption: null },
+    machineId: 'guest', serverId: 'profile', serverApiUrl: 'https://saved-setup.test', serverIdentityId: 'home',
+    pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
+    machineActionDirectTargetTransport: { machineId: 'guest', invoke: async () => { selfRpc++; throw new Error('The receiver cannot self-RPC'); } },
+    receivingMachineSetupPlan: { machineId: 'guest', plan: createMachineSetupPlanAction({ machineId: 'guest', homeId: 'home',
+      apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1(port) },
+      acquirePluginRuntimeRegistryLease: async () => { throw new Error('No catalog for saved copies'); },
+    }) },
+  });
+  const result = await executor.execute('machines.setup.plan',
+    { homeId: 'home', machineId: 'guest', selectedMachineId: 'guest', targets: [{ homeId: 'home', machineId: 'guest' }] },
+    { surface: 'rpc', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'guest' } });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+    targets: [{ homeId: 'home', machineId: 'guest', plan: { desiredRevision: 4 } }],
+  } });
+  expect(selfRpc).toBe(0);
 });

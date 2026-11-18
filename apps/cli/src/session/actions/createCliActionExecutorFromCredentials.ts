@@ -1,4 +1,5 @@
 import { isMachineManagedInstallationActionIdV1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import type { CliReceivingMachineSetupPlan } from './cliActionDeps/types';
 import { createCliManagedInstallationRespond } from '@/machines/managed/installationResponse';
 import { BotTemplateInstantiateInputV1Schema, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentReadReceiver';
@@ -858,7 +859,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   machinePresetPrepare?: ActionExecutorDeps['machinePresetPrepare'];
   acquireSessionIsolationSandbox?: Parameters<typeof createCliActionDeps>[0]['acquireSessionIsolationSandbox'];
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
-  machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
+  /** The receiving daemon's native plan for its own Machine; see `CliActionDepsParams`. */
+  receivingMachineSetupPlan?: CliReceivingMachineSetupPlan;
   machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
   sessionStop?: ActionExecutorDeps['sessionStop'];
   hostActionApprovalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'];
@@ -1170,7 +1172,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
       ...(params.machinePresetPrepare ? { machinePresetPrepare: params.machinePresetPrepare } : {}),
       ...(params.machineRecipesRead ? { machineRecipesRead: params.machineRecipesRead } : {}),
-      ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
+      ...(params.receivingMachineSetupPlan ? { receivingMachineSetupPlan: params.receivingMachineSetupPlan } : {}),
       ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...((approvalLifetime ?? params.hostActionApprovalLifetime) ? { hostActionApprovalLifetime: approvalLifetime ?? params.hostActionApprovalLifetime } : {}),

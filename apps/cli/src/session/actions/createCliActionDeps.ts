@@ -943,7 +943,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
     startCombined: startCombinedWorkflow, waitForRun: request => waitForCombinedWorkflow(request, request.start.runId) });
   const setupDeps = createCombinedMachineSetupActionDeps({
     readDeps: () => readEffectiveDeps?.() ?? actionDeps,
-    targetPlan: machineDeps.machineSetupPlan!,
+    targetPlan: request => params.receivingMachineSetupPlan && !('targets' in request.input)
+      && request.input.machineId === params.receivingMachineSetupPlan.machineId
+      ? params.receivingMachineSetupPlan.plan(request) : machineDeps.machineSetupPlan!(request),
     orchestrationDirectory: configuration.happyHomeDir,
     startCombined: startCombinedWorkflow,
     waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),

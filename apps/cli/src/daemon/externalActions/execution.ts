@@ -1185,11 +1185,10 @@ resolveServerFeaturesSnapshot?: () =>
             return reachabilityHost.executeMachineReachabilityAction(request, ingress);
           },
         } : {}),
-        // The native dependency is also needed when approval replay is the
-        // enclosing invocation. Ordinary remote targets retain their transport.
-        ...(apiMachineForSessions && (actionId !== 'machines.setup.apply' && actionId !== 'machines.setup.plan' || (input && typeof input === 'object'
-          && !('targets' in input) && 'machineId' in input && input.machineId === params.machineId)) ? {
-          machineSetupPlan: async request => {
+        // This Machine's own setup plan. The combined setup owner routes each
+        // target to it or to the Machine transport, for every enclosing Action.
+        ...(apiMachineForSessions ? {
+          receivingMachineSetupPlan: { machineId: params.machineId, plan: async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
             if (!origin || origin.machineId !== params.machineId) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
             const ingress = resolveRequesterIngress(request.context, 'manage');
@@ -1212,7 +1211,7 @@ resolveServerFeaturesSnapshot?: () =>
               homeId: origin.serverIdentityId, acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease })({ ...request,
                 context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
                   verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
-          },
+          } },
         } : {}),
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext } : {}),
         ...(providerProjectionAccount && providerProjectionAccount.custodianAccountId
