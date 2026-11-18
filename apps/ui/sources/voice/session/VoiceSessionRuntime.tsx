@@ -64,6 +64,8 @@ import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceCon
 import { VoiceSetupFirstSuccessRuntime } from '@/voice/settings/setup/VoiceSetupFirstSuccessRuntime';
 import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useVoiceConfiguredAgentRecovery } from './useVoiceConfiguredAgentRecovery';
+import { isSessionRetiredForServer } from '@/sync/store/domains/sessions';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -230,7 +232,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       ? createNativeAudioSessionLifecycleBridge({ coordinator: audioSessionCoordinator, controller })
       : null;
     controllerRef.current = controller;
-    let boundCarrierSessionId: string | null = null;
+    let boundCarrier: VoiceSessionBinding | null = null;
     let unsubscribeCarrier: (() => void) | undefined;
     const syncPublishedSnapshot = () => {
       const snapshot = controller.getSnapshot();
@@ -239,20 +241,36 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       const binding = snapshot.sessionId ? voiceConversationBindingResolver.resolveByControlSessionId({
         controlSessionId: snapshot.sessionId, adapterId: snapshot.adapterId,
       }) : null;
-      const nextCarrierSessionId = binding?.conversationSessionId ?? null;
-      if (nextCarrierSessionId !== boundCarrierSessionId) {
+      // Losing a hydrated/presentable binding does not retire its adapter.
+      // Keep this admitted attempt's deletion demand until its owner changes.
+      const nextCarrier = binding ?? (boundCarrier?.controlSessionId === snapshot.sessionId
+        && boundCarrier?.adapterId === snapshot.adapterId ? boundCarrier : null);
+      if (nextCarrier?.conversationSessionId !== boundCarrier?.conversationSessionId
+        || nextCarrier?.conversationSessionAddress.serverId !== boundCarrier?.conversationSessionAddress.serverId) {
         unsubscribeCarrier?.();
-        boundCarrierSessionId = nextCarrierSessionId;
+        boundCarrier = nextCarrier;
+        const carrierLifetime = captureActiveServerAccountScopeLifetime();
         // Binding changes move demand before publishing the new presentation.
         // No bound conversation means no carrier delivery.
-        unsubscribeCarrier = nextCarrierSessionId ? storage.subscribe((state, previous) => {
+        const nextCarrierSessionId = nextCarrier?.conversationSessionId;
+        unsubscribeCarrier = nextCarrier && nextCarrierSessionId ? storage.subscribe((state, previous) => {
+          const serverId = nextCarrier.conversationSessionAddress.serverId;
+          const retired = isSessionRetiredForServer(state.deletedSessionIds, nextCarrierSessionId, serverId);
+          if (retired && !isSessionRetiredForServer(previous.deletedSessionIds, nextCarrierSessionId, serverId)
+            && carrierLifetime?.isCurrent()) {
+            const current = controller.getSnapshot();
+            if (current.adapterId === nextCarrier.adapterId && current.sessionId === nextCarrier.controlSessionId) {
+              fireAndForget(controller.stop(nextCarrier.controlSessionId), { tag: 'VoiceSessionRuntime.deletedConversation' });
+            }
+          }
           const session = state.sessions[nextCarrierSessionId];
           const previousSession = previous.sessions[nextCarrierSessionId];
           if (session?.metadata === previousSession?.metadata
             && session?.seq === previousSession?.seq
-            && session?.serverId === previousSession?.serverId) return;
+            && session?.serverId === previousSession?.serverId
+            && state.deletedSessionIds[nextCarrierSessionId] === previous.deletedSessionIds[nextCarrierSessionId]) return;
           syncPublishedSnapshot();
-        }, { sessions: [nextCarrierSessionId] }) : undefined;
+        }, { sessions: [nextCarrierSessionId], deletedSessionIds: [nextCarrierSessionId] }) : undefined;
       }
       const session = binding ? storage.getState().sessions[binding.conversationSessionId] : null;
       const lifetime = captureActiveServerAccountScopeLifetime();

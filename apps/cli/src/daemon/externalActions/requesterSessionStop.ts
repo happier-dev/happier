@@ -4,7 +4,7 @@ import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import type { ExternalActionRequesterAccountContextPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { isSessionStopChildRootV1, isSessionStopPhaseRootV1, readSessionStopChildTargetV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -30,6 +30,11 @@ export function createRequesterSessionStopEffect(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['sessionStop']> {
   const { requester, purpose, installation } = params;
   const rootActionId = requester.authorization.binding.actionId;
+  const stopContext = (context: ActionExecutorContext | undefined, sessionId: string): ActionExecutorContext | undefined => {
+    if (!context || !isSessionStopChildRootV1(rootActionId)) return context;
+    const target = readSessionStopChildTargetV1({ sessionId });
+    return target ? { ...context, externalActionTarget: target } : context;
+  };
   const headersFor = (context: ActionExecutorContext | undefined, effectActionId = rootActionId) =>
     (request: Readonly<{ method: string; path: string; body?: unknown }>) => {
       const signed = resolveExternalActionServerRequestHeaders({ context, effectActionId,
@@ -44,7 +49,8 @@ export function createRequesterSessionStopEffect(params: Readonly<{
   // Archive, Delete and Section Archive admit their native Stop as the `session.stop`
   // phase; Home's Stop-phase purposes read and retire that exact Session.
   const stopPhysical = async (sessionId: string, context: ActionExecutorContext | undefined) => {
-    const resolveAuthorizationHeaders = headersFor(context, isSessionStopPhaseRootV1(rootActionId) ? 'session.stop' : rootActionId);
+    const projectedContext = stopContext(context, sessionId);
+    const resolveAuthorizationHeaders = headersFor(projectedContext, isSessionStopPhaseRootV1(rootActionId) ? 'session.stop' : rootActionId);
     return await params.stopSession(sessionId, { source: readSessionStopRequestSource(context),
       transport: purpose.kind === 'machine_rpc' ? 'machine_rpc' : 'external_action', metadataContext: { credentials: requester.credentials,
       resolveAuthorizationHeaders, currentness: { verifyCurrent: () => requester.isCurrent(),
@@ -90,7 +96,7 @@ export function createRequesterSessionStopEffect(params: Readonly<{
     // owner; redispatching to the requester registrar recursively restarts it.
     return await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => requestSessionStop({
       credentials: requester.credentials, idOrPrefix: sessionId, stopIntent,
-      actionContext: context, ...(signal ? { signal } : {}), resolveAuthorizationHeaders: headersFor(context),
+      actionContext: stopContext(context, sessionId), ...(signal ? { signal } : {}), resolveAuthorizationHeaders: headersFor(stopContext(context, sessionId), 'session.stop'),
       ...(context ? { externalAction: { context, effectActionId: 'session.stop',
         privateKey: installation.privateKey, installationId: installation.installationId } } : {}),
       invokeMachineRpc: request => {

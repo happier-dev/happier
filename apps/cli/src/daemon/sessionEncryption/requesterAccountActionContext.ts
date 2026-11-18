@@ -56,6 +56,24 @@ export type RequesterAccountActionContext = Readonly<{
 
 export const requesterActionContext = Symbol('admittedRequesterAccountActionContext');
 
+/** Session issuers already own Account custody without an ingress settings lifetime. */
+export type RequesterAccountActionTransportContext = Pick<RequesterAccountActionContext,
+  'authorization' | 'credentials' | 'isCurrent' | 'resolveEncryption'>;
+
+function readRequesterAccountCarrierContext(authorization?: ExternalActionExecutionAuthorizationV1):
+  RequesterAccountActionContext | RequesterAccountActionTransportContext | null {
+  const projection: (ExternalActionRequesterAccountProjectionV1 & {
+    [requesterActionContext]?: RequesterAccountActionContext | RequesterAccountActionTransportContext;
+  }) | undefined = authorization?.requesterAccountProjection;
+  return projection?.[requesterActionContext] ?? null;
+}
+
+/** Both issuer and installed ingress expose the same admitted transport custody. */
+export function readRequesterAccountActionTransportContext(authorization?: ExternalActionExecutionAuthorizationV1):
+  RequesterAccountActionTransportContext | null {
+  return readRequesterAccountCarrierContext(authorization);
+}
+
 /** Enumerable only for host-local object spread; HTTP header enumeration omits Symbols. */
 export const requesterAccountEncryptionMode = Symbol('admittedRequesterAccountEncryptionMode');
 export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, string>> & Readonly<{

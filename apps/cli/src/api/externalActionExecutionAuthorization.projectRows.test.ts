@@ -3,7 +3,8 @@ import fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema,
     bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
+import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
+import { ACTION_IDS, isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -13,7 +14,7 @@ import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
 
-it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1])(
+it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, ...ACTION_IDS.filter(isProjectCheckoutRemovalActionIdV1)])(
     'reads the admitted requester source association through its own Account HTTP custody for %s', async actionId => {
     const app = fastify();
     const channel = await createRequesterCurrentnessSocketHarness();

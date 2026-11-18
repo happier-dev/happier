@@ -259,6 +259,7 @@ await loadSyncSingletonForTests();
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolean; startGate?: Promise<void>; selectedProviderId?: string; local?: boolean; localPlatform?: 'ios' | 'web'; codex?: boolean;
+  nativeAgent?: boolean;
   coldShell?: boolean;
   coldSavedCredential?: boolean;
   transcriptResponse?: (body: Readonly<{ localId: string }>) => Promise<Response | null>;
@@ -288,6 +289,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   } : {}) });
   const agentRequests: Array<Readonly<{ method: string; targetId: string; params: unknown; timeoutMs: number | null }>> = [];
   const agentRequestListeners = new Set<() => void>();
+  const { createRetainedVoiceAgentRpcBoundary, createRetainedVoiceAgentActionHttpBoundaries } = await import('@/dev/testkit/harness/voiceAgentRpcBoundary');
+  const nativeAgentRpc = input.nativeAgent ? await createRetainedVoiceAgentRpcBoundary() : null;
+  const deletedServerSessionIds = new Set<string>();
   const watches = new Map<string, ReturnType<typeof createDeferred<ReturnType<typeof agentProtocol.AgentSessionRealtimeWatchResultV1Schema.parse>>>>();
   const daemonSessions: Record<string, ReturnType<typeof createSessionFixture>> = {};
   const { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } = await import('@/voice/persistence/voiceTranscriptHistorySession');
@@ -352,6 +356,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl, initialAccounts: [{ accountId: 'account-a',
     snapshot: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }),
   }] });
+  const nativeAgentActions = nativeAgentRpc ? await createRetainedVoiceAgentActionHttpBoundaries({ serverUrl,
+    serverIdentityId: 'srv_voice-mounted-runtime', accountId: 'account-a', machineId,
+    dispatch: (method, request) => nativeAgentRpc.dispatch(method, request),
+  }) : [];
   const configureSocket: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['configureSocket']> = (socket, capturedServerUrl) => {
     if (!capturedServerUrl) throw new Error('Captured daemon Home unavailable');
     expect(new URL(capturedServerUrl).origin).toBe(new URL(serverUrl).origin);
@@ -382,6 +390,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       expect(typeof token).toBe('string');
       if (typeof token !== 'string') throw new Error('Captured daemon Account credential unavailable');
       expect(parseToken(token)).toBe('account-a');
+      if (nativeAgentRpc && method.startsWith('execution.run.')) {
+        if (deletedServerSessionIds.has(targetId)) return { ok: false, error: 'Session was deleted', errorCode: 'session_not_found' };
+        return { ok: true, result: await nativeAgentRpc.dispatch(method, raw.params) };
+      }
       if (method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT) {
         agentProtocol.AgentSessionRealtimeInspectRequestV1Schema.parse(raw.params);
         return { ok: true, result: agentProtocol.AgentSessionRealtimeInspectResultV1Schema.parse({ ok: true, status: 'available', transport: 'webrtc' }) };
@@ -429,6 +441,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       credentials: { token: createServedHomeAccountToken('account-a', true) } } : {}),
     request: createSessionReadBatchFetchBoundary(async (url, init) => {
       const path = new URL(String(url)).pathname;
+      if (input.nativeAgent && (path === '/v1/features' || path === '/v1/features/authenticated')) {
+        return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true }, execution: { runs: { enabled: true } } } }));
+      }
       if (input.coldShell && path === '/v1/features') {
         return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }));
       }
@@ -445,6 +460,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         };
       }
       httpRequests.push({ path, method: init?.method ?? 'GET', ...(settingsPost ? { settingsPost } : {}) });
+      const exactSession = /^\/v2\/sessions\/([^/]+)(?:\/|$)/.exec(path);
+      if (exactSession && deletedServerSessionIds.has(decodeURIComponent(exactSession[1]!))) return Response.json({ error: 'Session not found' }, { status: 404 });
       if (input.coldSavedCredential && path === '/v1/account/saved-secrets/resources') return Response.json({
         resources: coldCredentialMaterials.resources.map(resource => resource.entry),
       });
@@ -465,6 +482,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       });
       const actionResponse = await actionHttp?.handle(new URL(String(url)), init);
       if (actionResponse) return actionResponse;
+      for (const boundary of nativeAgentActions) {
+        const response = await boundary.handle(new URL(String(url)), init);
+        if (response) return response;
+      }
       if (preparation) return preparation;
       if (path === '/v1/account/profile') return Response.json(profile);
       if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' })]);
@@ -478,6 +499,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       if (path === '/health') return Response.json({ status: 'ok' });
       if (path === '/v1/voice/token') return Response.json({ allowed: true, token: 'mounted-token', leaseId: `mounted-lease-${++hostedLeaseIndex}`, bindingNonce: 'mounted-nonce', expiresAtMs: Date.now() + 60_000 });
       if (path === '/v1/voice/session/complete' || path === '/v1/voice/session/release') return Response.json({ ok: true });
+      if (input.nativeAgent && /^\/v[12]\/sessions\/[^/]+\/messages$/.test(path) && (!init?.method || init.method === 'GET')) {
+        const { SessionMessagesPageV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1');
+        return Response.json(SessionMessagesPageV1Schema.parse({ messages: [], hasMore: false }));
+      }
       const transcriptWrite = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(path);
       if (transcriptWrite && init?.method === 'POST') {
         const { z } = await import('zod/mini');
@@ -534,7 +559,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const voice = input.local
     ? writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: localProviderId }), localProviderId,
       localProviderId === 'local_conversation'
-        ? VoiceLocalConversationSchema.parse({ tts: { autoSpeakReplies: false } })
+        ? VoiceLocalConversationSchema.parse({ tts: { autoSpeakReplies: false }, ...(input.nativeAgent ? {
+          conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex',
+            agentTargetKey: 'agent:happier.agent.codex/codex', agentIdentity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        } : {}) })
         : VoiceLocalDirectSchema.parse({ tts: { autoSpeakReplies: false } }))
     : input.codex
       ? writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: CODEX_PROVIDER_ID, executionMachine: { mode: 'fixed', machineId } }), CODEX_PROVIDER_ID,
@@ -544,8 +572,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         input.coldSavedCredential ? { ...elevenLabsEntry?.providerSettings?.defaultConfig, billingMode: 'byo', agentId: 'agent-cold-start' } : ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
   const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
   storage.getState().applySettingsLocal({
-    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
-    ...(input.currentUi || input.coldShell ? { featureToggles: { ...storage.getState().settings.featureToggles, voice: true } } : {}),
+    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, ...(input.nativeAgent ? { executionMachine: { mode: 'fixed', machineId } } : {}), providerId: input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
+    ...(input.currentUi || input.coldShell || input.nativeAgent ? { featureToggles: { ...storage.getState().settings.featureToggles, voice: true,
+      ...(input.nativeAgent ? { 'voice.agent': true, 'execution.runs': true } : {}),
+    } } : {}),
   });
   if (input.coldSavedCredential) {
     const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
@@ -648,8 +678,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   }
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
-  expect(lifecycle.getConfiguredProviderId()).toBe(input.codex ? CODEX_PROVIDER_ID : input.local ? localProviderId : ELEVENLABS_PROVIDER_ID);
-  return { screen, lifecycle, runtime, httpRequests, agentRequests, sessionHttp, machineId,
+  expect(lifecycle.getConfiguredProviderId()).toBe(input.local ? localProviderId : input.codex ? CODEX_PROVIDER_ID : ELEVENLABS_PROVIDER_ID);
+  return { screen, lifecycle, runtime, httpRequests, agentRequests, sessionHttp, machineId, nativeAgentRpc, deletedServerSessionIds,
     waitForAgentRequests(predicate: (requests: typeof agentRequests) => boolean) {
       return waitForTestEvent(notify => {
         agentRequestListeners.add(notify);
@@ -2027,6 +2057,41 @@ describe('VoiceSessionRuntime', () => {
       await Promise.all([start, switching]);
       unsubscribe();
     }
+  });
+
+  it('retires a failed native conversation after its exact Home deletes the carrier and permits normal Start', async () => {
+    const mounted = await prepareGeneratedVoiceRuntime({ local: true, codex: true, nativeAgent: true, selectedProviderId: 'local_conversation' });
+    const { voiceSessionManager } = await import('./voiceSession');
+    const { getVoiceSessionPresentedBinding } = await import('./voiceSessionStore');
+    const { getVoiceAdapterRegistry } = await import('./voiceAdapterRegistry');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    await act(async () => { await voiceSessionManager.toggle(null); });
+    await vi.waitFor(() => expect(mounted.nativeAgentRpc?.readRetainedRun(), JSON.stringify({ snapshot: mounted.lifecycle.getSnapshot(), requests: mounted.httpRequests, rpc: mounted.nativeAgentRpc?.requests })).not.toBeNull());
+    await vi.waitFor(() => expect(mounted.lifecycle.getSnapshot().agentRuntime?.ready).toBe(true));
+    const binding = getVoiceSessionPresentedBinding();
+    expect(binding).toMatchObject({ adapterId: 'local_conversation', transcriptMode: 'native_session' });
+    if (!binding) throw new Error('Native conversation binding unavailable');
+    // The native SDK can end capture while its real adapter still owns the Run.
+    await act(async () => {
+      for (const listener of recognizer.listeners.get('error') ?? []) {
+        Reflect.apply(listener, undefined, [{ error: 'network', message: 'Capture ended' }]);
+      }
+    });
+    expect(mounted.lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+    expect(mounted.nativeAgentRpc?.readRetainedRun()).not.toBeNull();
+    // A same-id deletion on a different Home cannot retire this attempt.
+    await act(async () => { storage.getState().deleteSession(binding.conversationSessionId, 'another-home'); });
+    expect(getVoiceAdapterRegistry().get('local_conversation')?.getSnapshot().sessionId).toBe(binding.controlSessionId);
+    expect(mounted.nativeAgentRpc?.readRetainedRun()).not.toBeNull();
+    // Model Home's successful Session deletion, then consume Sync's existing
+    // authoritative local-retirement signal, exactly as History Clear does.
+    mounted.deletedServerSessionIds.add(binding.conversationSessionId);
+    await act(async () => { sync.retireLocalSession(binding.conversationSessionId, binding.conversationSessionAddress.serverId); });
+    await act(async () => { await voiceSessionManager.toggle(null); });
+    await vi.waitFor(() => expect(mounted.nativeAgentRpc?.readRetainedRun(), JSON.stringify({ snapshot: mounted.lifecycle.getSnapshot(), binding: getVoiceSessionPresentedBinding(), requests: mounted.httpRequests, rpc: mounted.nativeAgentRpc?.requests })).not.toBeNull());
+    expect(mounted.lifecycle.getSnapshot().adapterId).toBe('local_conversation');
+    expect(getVoiceSessionPresentedBinding()?.conversationSessionId).not.toBe(binding.conversationSessionId);
   });
 
   it('prefers the selected provider adapter snapshot when multiple adapters are active', async () => {

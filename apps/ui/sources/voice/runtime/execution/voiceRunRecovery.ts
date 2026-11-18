@@ -1,4 +1,6 @@
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { storage } from '@/sync/domains/state/storage';
+import { isSessionRetiredForServer } from '@/sync/store/domains/sessions';
 import { resolveVoiceAgentRunBackendId } from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
 import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
@@ -160,6 +162,12 @@ export function createVoiceRunRecovery(
 
       const accountLifetime = handle?.accountLifetime ?? admittedLifetime;
       if (!accountLifetime) return;
+      // Authoritative Session retirement removed this client's exact carrier.
+      // Settle local custody without reopening its encrypted RPC.
+      const carrierSessionId = handle?.rpcSessionId ?? metadataSessionId ?? sessionId;
+      if (accountLifetime.isCurrent() && isSessionRetiredForServer(
+        storage.getState().deletedSessionIds, carrierSessionId, accountLifetime.scope.serverId,
+      )) return;
       const runOptions = { scope: accountLifetime.scope, signal };
       let unconfirmedStop: VoiceRunStopUnconfirmedError | null = null;
       // Unavailability must retain its exact recovery fact even for an
