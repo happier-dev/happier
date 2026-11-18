@@ -289,7 +289,8 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         if (admitted.selected) for (const target of admitted.link.members) {
             const observed = await dispatch(target, 'observe', admitted.selected.deployment.id);
             if (!current()) return finishChild(observed);
-            if (!observed.ok && observed.errorCode === 'outcome_unknown') return await write('outcome_unknown');
+            if (!observed.ok && observed.errorCode === 'outcome_unknown') return await write('outcome_unknown',
+                { ...receipt.content, failure: projectFailure('restore', observed.errorCode, observed) });
             if (!observed.ok && observed.errorCode === 'rollback_image_unavailable' && receipt.content.onFailure === 'rollbackAll') {
                 return rejectBeforeEffects('rollback_image_unavailable');
             }

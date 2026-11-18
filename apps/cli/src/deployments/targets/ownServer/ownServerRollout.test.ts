@@ -848,7 +848,7 @@ it.each(['action_forbidden', 'outcome_unknown'] as const)(
     expect(receipt.content.machineResults[0]).toMatchObject({ activation: 'succeeded', currentDeploymentId: receipt.deployment.id });
 });
 
-it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningStored', 'joiningStoredEdited', 'joiningChangedRepository', 'joiningChangedStored', 'joiningChangedConfiguration', 'joiningMixed', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
+it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'baselineObserveLostAck', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningStored', 'joiningStoredEdited', 'joiningChangedRepository', 'joiningChangedStored', 'joiningChangedConfiguration', 'joiningMixed', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
     const enrollJoining = mode.startsWith('joining') && mode !== 'joiningNoRoute' && mode !== 'joiningWriteRejected';
     const changedSource = mode === 'joiningChangedRepository' || mode === 'joiningChangedStored';
     const environment = createDeploymentEnvironmentDetailV1();
@@ -1006,6 +1006,11 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         // the actual ordered controller and receipt admission remain real.
         async dispatchMember(input) {
             dispatched.push(`${input.phase}:${input.machineId}`);
+            if (mode === 'baselineObserveLostAck' && input.phase === 'observe' && input.machineId === 'machine-c') {
+                return projectDeploymentTransitionOutcomeUnknownForHost({ response: {
+                    status: 503, data: { error: 'database_transaction_conflict_exhausted' },
+                } });
+            }
             if ((mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve') && input.phase === 'observe' && input.machineId === 'machine-c') {
                 return { ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' };
             }
@@ -1097,6 +1102,15 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         expect(link.members[2].state).toBe('joining');
         expect(link.activeDeploymentId).toBe('uniform-v1');
         expect(receipt.deployment.state).toBe('failed');
+        return;
+    }
+    if (mode === 'baselineObserveLostAck') {
+        expect(await target.execute(request)).toMatchObject({ ok: true, state: 'outcome_unknown' });
+        expect(receipt.content.failure).toMatchObject({ phase: 'restore', code: 'outcome_unknown', failureCause: {
+            errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
+        } });
+        expect(dispatched).toEqual(['observe:machine-a', 'observe:machine-b', 'observe:machine-c']);
+        expect(buildDispatches).toBe(0);
         return;
     }
     if (mode === 'incompleteBuild') {
