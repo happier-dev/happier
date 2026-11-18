@@ -36,57 +36,62 @@ export async function prepareUiMachinePresetArchive(request: Parameters<NonNulla
 /** Common owns native absence, retained references and CAS; the UI owns Account transport and custody. */
 export async function executeUiMachinePresetArchive(request: ArchiveRequest, account: LazyActionAccountContext) {
     const { input, context, signal } = request;
-    return await withOpenedPreset(account, input, signal, async (preset, content, custody, read) => {
-        if (preset.revision !== input.expectedRevision) return { kind: 'conflict' as const, currentRevision: preset.revision };
-        let revision = preset.revision;
-        const prepared = content.prepared;
-        const client = createMachinePresetActionClient({ request: account.request });
-        if (prepared) {
-            let invoke: ManagedNativeInvocation = async () => { throw new ManagedMachineControllerError('invalid_request'); };
-            let cleanupUnavailable: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable'];
-            if (managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
-                const launch = prepared.binding.configuration.launch;
-                const selected = readPluginAccountAvailability(account.accountLifetime.scope).readCurrentAccountExecution(launch.provider.pluginId);
-                if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
-                const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
-                const destroyId = provisioner.preparation!.actions.destroy;
-                const destroy = selected.manifest.contributes.actions?.find(action => action.id === destroyId);
-                if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
-                if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
-                    const machineId = prepared.binding.machineId;
-                    const rows = await readMachineRows({ readTransport: account.readTransport, request: account.request,
-                        machineIds: [machineId], signal });
-                    const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId,
-                        machine: rows.get(machineId), machineReachable: false });
-                    if (readiness.status === 'revoked') cleanupUnavailable = 'machine_revoked';
-                    if (readiness.status === 'replaced') cleanupUnavailable = 'machine_replaced';
+    try {
+        return await withOpenedPreset(account, input, signal, async (preset, content, custody, read) => {
+            if (preset.revision !== input.expectedRevision) return { kind: 'conflict' as const, currentRevision: preset.revision };
+            let revision = preset.revision;
+            const prepared = content.prepared;
+            const client = createMachinePresetActionClient({ request: account.request });
+            if (prepared) {
+                let invoke: ManagedNativeInvocation = async () => { throw new ManagedMachineControllerError('invalid_request'); };
+                let cleanupUnavailable: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable'];
+                if (managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
+                    const launch = prepared.binding.configuration.launch;
+                    const selected = readPluginAccountAvailability(account.accountLifetime.scope).readCurrentAccountExecution(launch.provider.pluginId);
+                    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
+                    const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
+                    const destroyId = provisioner.preparation!.actions.destroy;
+                    const destroy = selected.manifest.contributes.actions?.find(action => action.id === destroyId);
+                    if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+                    if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
+                        const machineId = prepared.binding.machineId;
+                        const rows = await readMachineRows({ readTransport: account.readTransport, request: account.request,
+                            machineIds: [machineId], signal });
+                        const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId,
+                            machine: rows.get(machineId), machineReachable: false });
+                        if (readiness.status === 'revoked') cleanupUnavailable = 'machine_revoked';
+                        if (readiness.status === 'replaced') cleanupUnavailable = 'machine_replaced';
+                    }
+                    if (!cleanupUnavailable) invoke = createUiManagedAccountNativeInvocationForLaunch({ account, launch,
+                        credentialConfigurations: prepared.binding.credentialConfigurations, provisioner, selected,
+                        originalMachineId: prepared.binding.machineId, context, signal,
+                        requestId: context.actionRequestId ?? prepared.operationId });
                 }
-                if (!cleanupUnavailable) invoke = createUiManagedAccountNativeInvocationForLaunch({ account, launch,
-                    credentialConfigurations: prepared.binding.credentialConfigurations, provisioner, selected,
-                    originalMachineId: prepared.binding.machineId, context, signal,
-                    requestId: context.actionRequestId ?? prepared.operationId });
+                let first = true;
+                const cleanup = await settleManagedMachinePresetPreparationOperationV1({ cleanupOnly: true,
+                    cleanupUnavailable,
+                    operationId: prepared.operationId, expectedRevision: input.expectedRevision, custody,
+                    credentialConfigurations: prepared.binding.credentialConfigurations,
+                    storage: { read: async () => { if (first) { first = false; return preset; } return await read(); },
+                        compareAndSwap: async update => await client.execute('machines.presets.update', {
+                            homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
+                            patch: { content: update.content, recipients: update.recipients },
+                        }, { signal }) },
+                    native: {
+                        build: async () => { throw new ManagedMachineControllerError('invalid_request'); },
+                        inspect: async body => MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke('preparationInspect', body, {})),
+                        destroy: async body => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke('preparationDestroy', body, {})),
+                    } });
+                if (cleanup.kind === 'conflict' || cleanup.kind === 'refused') return cleanup;
+                if (cleanup.kind !== 'cancelled') throw new ManagedMachineControllerError(cleanup.prepared.code ?? 'native_intent_unconfirmed');
+                revision = cleanup.revision;
             }
-            let first = true;
-            const cleanup = await settleManagedMachinePresetPreparationOperationV1({ cleanupOnly: true,
-                cleanupUnavailable,
-                operationId: prepared.operationId, expectedRevision: input.expectedRevision, custody,
-                credentialConfigurations: prepared.binding.credentialConfigurations,
-                storage: { read: async () => { if (first) { first = false; return preset; } return await read(); },
-                    compareAndSwap: async update => await client.execute('machines.presets.update', {
-                        homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
-                        patch: { content: update.content, recipients: update.recipients },
-                    }, { signal }) },
-                native: {
-                    build: async () => { throw new ManagedMachineControllerError('invalid_request'); },
-                    inspect: async body => MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke('preparationInspect', body, {})),
-                    destroy: async body => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke('preparationDestroy', body, {})),
-                } });
-            if (cleanup.kind === 'conflict' || cleanup.kind === 'refused') return cleanup;
-            if (cleanup.kind !== 'cancelled') throw new ManagedMachineControllerError(cleanup.prepared.code ?? 'native_intent_unconfirmed');
-            revision = cleanup.revision;
-        }
-        return await client.execute('machines.presets.archive', { ...input, expectedRevision: revision }, { signal });
-    });
+            return await client.execute('machines.presets.archive', { ...input, expectedRevision: revision }, { signal });
+        });
+    } catch (error) {
+        if (error instanceof ManagedMachineControllerError) return error.toActionFailure('machines.presets.archive');
+        throw error;
+    }
 }
 
 function readProvisioner(declarations: readonly MachineProvisionerContributionV1[], launch: NonNullable<ManagedMachinePresetContentV1['prepared']>['binding']['configuration']['launch']) {
