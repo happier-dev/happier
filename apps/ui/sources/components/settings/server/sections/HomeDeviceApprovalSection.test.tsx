@@ -30,6 +30,7 @@ import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { HOME_LOGIN_APPROVALS_HTTP_PATH_V1, buildHomeLoginApprovalDecisionHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { t } from '@/text';
 
 type TextNode = Readonly<{ children?: ReadonlyArray<TextNode | string> }>;
 function collectText(node: TextNode | string | null | undefined): string {
@@ -187,7 +188,7 @@ describe('Home approval visible continuation', () => {
         await vi.waitFor(() => expect(screen?.findByTestId('settings.server.homeApprovals.approval-b')).toBeNull());
     });
 
-    it('uses a neutral device fallback and leaves the real decision actions as recovery after a failure', async () => {
+    it.each([503, 401, 403] as const)('shows the decision failure for HTTP %s at the affected Home', async (status) => {
         const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: fixture.home.homeServerIdentityId }, { token: fixture.token });
         let decisionAttempts = 0;
@@ -196,7 +197,7 @@ describe('Home approval visible continuation', () => {
             if (path === HOME_LOGIN_APPROVALS_HTTP_PATH_V1) return new Response(JSON.stringify([homeDeviceApprovalRequestFixture({ approvalId: 'approval-unlabeled', issuerServerIdentityId: fixture.service.serverIdentityId, deviceLabel: '   ', expiresAtMs: Date.now() + 60_000 })]));
             if (path === buildHomeLoginApprovalDecisionHttpPathV1('approval-unlabeled')) {
                 decisionAttempts += 1;
-                if (decisionAttempts === 1) return new Response('{}', { status: 503 });
+                if (decisionAttempts === 1) return new Response('{}', { status });
                 expect(JSON.parse(String(init?.body))).toEqual({ decision: 'approve' });
                 return new Response(JSON.stringify({ status: 'approved' }));
             }
@@ -209,7 +210,15 @@ describe('Home approval visible continuation', () => {
 
         await screen.pressByTestIdAsync('settings.server.homeApprovals.approval-unlabeled.approve');
         await vi.waitFor(() => expect(screen?.findByTestId('settings.server.homeApprovals.approval-unlabeled.error')).not.toBeNull());
-        expect(screen.getTextContent()).toContain('Choose Approve or Reject to try again.');
+        if (status === 503) {
+            expect(screen.getTextContent()).toContain(t('homeDeviceApproval.decisionRecovery'));
+        } else {
+            const reason = status === 401
+                ? t('server.homes.signInAgainTitle', { name: resolveHomeDisplayLabel(home) })
+                : t('errors.permissionDenied');
+            expect(screen.getTextContent()).toContain(reason);
+            expect(liveRegionText(screen)).toContain(reason);
+        }
         expect(screen.getTextContent()).not.toContain('Retry');
 
         await screen.pressByTestIdAsync('settings.server.homeApprovals.approval-unlabeled.approve');

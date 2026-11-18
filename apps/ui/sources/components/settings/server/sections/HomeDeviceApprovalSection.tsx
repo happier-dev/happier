@@ -11,6 +11,7 @@ import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/syn
 import {
     decideHomeDeviceApproval,
     listHomeDeviceApprovals,
+    type HomeDeviceApprovalDecisionResult,
     type HomeDeviceApprovalDecision,
     type HomeDeviceApprovalListItem,
     type HomeDeviceApprovalTarget,
@@ -68,9 +69,20 @@ type StatusAnnouncement = Readonly<{
 }>;
 
 type ApprovalLoadMode = 'interactive' | 'background';
+type ApprovalDecisionFailure = Extract<HomeDeviceApprovalDecisionResult, { ok: false }>;
 
 function homeLabel(home: ServerProfile): string {
     return resolveHomeDisplayLabel(home, home.id);
+}
+
+function describeApprovalDecisionFailure(failure: ApprovalDecisionFailure, home: ServerProfile): string | null {
+    if (failure.reason === 'unauthorized') {
+        return failure.status === 401
+            ? t('server.homes.signInAgainTitle', { name: homeLabel(home) })
+            : t('errors.permissionDenied');
+    }
+    if (failure.reason === 'not_found') return t('common.unavailable');
+    return null;
 }
 
 /** Why the list could not load, naming the Homes that failed: unreachable ones, else erroring ones. */
@@ -150,7 +162,7 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
     const invokingPath = usePathname();
     const [state, setState] = React.useState<LoadState>({ kind: 'loading', items: [] });
     const [busyKeys, setBusyKeys] = React.useState<readonly string[]>([]);
-    const [decisionErrorKeys, setDecisionErrorKeys] = React.useState<readonly string[]>([]);
+    const [decisionFailures, setDecisionFailures] = React.useState<ReadonlyMap<string, ApprovalDecisionFailure>>(() => new Map());
     const [expandedRequestKeys, setExpandedRequestKeys] = React.useState<readonly string[]>([]);
     const [continuation, setContinuation] = React.useState<Readonly<{ input: AccountPostAuthInput; result: AccountPostAuthResult }> | null>(null);
     const [homeAuthentication, setHomeAuthentication] = React.useState<Readonly<{
@@ -310,7 +322,12 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
     const decide = React.useCallback(async (item: PendingApproval, decision: HomeDeviceApprovalDecision) => {
         const key = `${item.home.id}:${item.approval.approvalId}`;
         setBusyKeys((current) => current.includes(key) ? current : [...current, key]);
-        setDecisionErrorKeys((current) => current.filter((candidate) => candidate !== key));
+        setDecisionFailures((current) => {
+            if (!current.has(key)) return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+        });
         const unavailable = { ok: false, reason: 'request_failed', status: 0 } as const;
         let result: Awaited<ReturnType<typeof decideHomeDeviceApproval>>;
         try {
@@ -326,15 +343,15 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         }
         if (!result.ok) {
             if (result.reason === 'already_decided') {
-                setDecisionErrorKeys((current) => current.filter((candidate) => candidate !== key));
                 await load();
                 return;
             }
-            setDecisionErrorKeys((current) => current.includes(key) ? current : [...current, key]);
-            publishAnnouncement(`${t('homeDeviceApproval.decisionError')}: ${homeLabel(item.home)}`);
+            const failure = result;
+            setDecisionFailures((current) => new Map(current).set(key, failure));
+            const reason = describeApprovalDecisionFailure(failure, item.home);
+            publishAnnouncement(reason ?? `${t('homeDeviceApproval.decisionError')}: ${homeLabel(item.home)}`);
             return;
         }
-        setDecisionErrorKeys((current) => current.filter((candidate) => candidate !== key));
         setExpandedRequestKeys((current) => current.filter((candidate) => candidate !== key));
         const remainingItems = approvalItemsRef.current.filter((candidate) => (
             candidate.approval.approvalId !== item.approval.approvalId
@@ -500,7 +517,7 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
             {state.items.map((item) => {
                 const key = `${item.home.id}:${item.approval.approvalId}`;
                 const busy = busyKeys.includes(key);
-                const decisionFailed = decisionErrorKeys.includes(key);
+                const decisionFailure = decisionFailures.get(key);
                 const requestDetailsExpanded = expandedRequestKeys.includes(key);
                 const requesterFingerprint = createHomeLoginRequesterFingerprintV1(
                     item.approval.requesterBoxPublicKeyBase64,
@@ -542,11 +559,11 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
                                 </Text>
                             </View>
                         ) : null}
-                        {decisionFailed ? (
+                        {decisionFailure ? (
                             <Item
                                 testID={`settings.server.homeApprovals.${item.approval.approvalId}.error`}
                                 title={t('homeDeviceApproval.decisionError')}
-                                subtitle={t('homeDeviceApproval.decisionRecovery')}
+                                subtitle={describeApprovalDecisionFailure(decisionFailure, item.home) ?? t('homeDeviceApproval.decisionRecovery')}
                                 mode="info"
                                 showChevron={false}
                             />
