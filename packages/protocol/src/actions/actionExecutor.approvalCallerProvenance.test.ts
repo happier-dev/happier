@@ -12,6 +12,7 @@ import {
 } from '../approvals/approvalRequestV1.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
+import { ActionDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './executor/workflowRunActions.js';
 import { WorkflowRunSummaryV1Schema } from '../workflows/workflowProgressV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../workflows/workflowStoredContentV1.js';
@@ -1147,6 +1148,43 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       action: { pluginId: 'acme.notes', localId: 'save-note' },
       input: { title: 'Quarterly notes' },
     }));
+  });
+
+  it('routes a contributed operation through the shared operation owner', async () => {
+    const operation = {
+      version: 1 as const,
+      visibility: 'activity' as const,
+      progress: 'indeterminate' as const,
+      cancellation: 'supported' as const,
+      presentation: { onStart: 'activity' as const },
+    };
+    const definition = ActionDefinitionSummaryV1Schema.parse({
+      id: 'acme.notes/actions/slow-save', title: 'Slow save', description: null, safety: 'safe',
+      placements: [], slash: null, bindings: null, examples: null, surfaces: { api: true },
+      inputHints: null, operation,
+    });
+    const invokeContributedAction = vi.fn(async ({ context }: { context: ActionExecutorContext }) => ({
+      ok: true as const, result: { status: 'executed', accepted: context.operationAcceptance?.operationId },
+    }));
+    const runActionOperation = vi.fn(async (request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]) =>
+      request.execute({ ...request.context, operationAcceptance: {
+        operationId: 'operation-1', actionId: request.actionId, accept: () => undefined,
+      } }));
+    const executor = createActionExecutor({
+      listContributedActionDefinitions: () => [definition],
+      invokeContributedAction,
+      runActionOperation,
+    });
+
+    const result = await executor.execute('action.invoke', {
+      action: { pluginId: 'acme.notes', localId: 'slow-save' },
+      input: { title: 'Quarterly notes' },
+    }, { surface: 'api', authority: 'account_automation' });
+    expect(result).toEqual({ ok: true, result: { status: 'executed', accepted: 'operation-1' } });
+    expect(runActionOperation).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'action.invoke', operation,
+    }));
+    expect(invokeContributedAction).toHaveBeenCalledTimes(1);
   });
 
   it('projects contributed failures onto the public Action failure envelope', async () => {

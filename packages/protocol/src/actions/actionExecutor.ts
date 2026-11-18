@@ -6134,17 +6134,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             context: ctx,
             targetSessionId: normalizeId(ctx.defaultSessionId) || null,
           });
-          const invoked = await deps.invokeContributedAction({
+          const qualifiedActionId = formatQualifiedPluginActionId(invocation.action);
+          const contributedDefinition = getContributedActionDefinition(qualifiedActionId, ctx);
+          const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
+          const invoke = (executionContext: ActionExecutorContext) => deps.invokeContributedAction!({
             action: invocation.action,
             input: invocation.input,
             ...(invocation.clientId === undefined ? {} : { clientId: invocation.clientId }),
             ...(invocation.messageActionReference ? { messageActionReference: invocation.messageActionReference } : {}),
-            context: ctx,
+            context: executionContext,
             ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
             ...(ctx.requiredContributedActionDangerLevel ? { requiredDangerLevel: ctx.requiredContributedActionDangerLevel } : {}),
             ...(deps.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope } : {}),
-            ...(ctx.signal ? { signal: ctx.signal } : {}),
+            ...(executionContext.signal ? { signal: executionContext.signal } : {}),
           });
+          const invoked = contributedDefinition?.operation && runActionOperation && !ctx.operationAcceptance
+            ? await runActionOperation({ actionId: 'action.invoke', input: data, context: ctx,
+              operation: contributedDefinition.operation, execute: invoke })
+            : await invoke(ctx);
           // Another Action this press reached needs the person's review before any
           // effect. Carry this press's own review back; its digest-bound re-press
           // admits the whole press once (owner 2026-11-15, option A).

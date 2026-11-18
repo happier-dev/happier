@@ -426,6 +426,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || (request.rpcContext?.externalActionExecutionAuthorization
           ? request.rpcContext.externalActionExecutionAuthorization.binding.deploymentChildRoot === true
           : isDeploymentChildEffectActionIdV1(request.actionId))
+        || request.operation?.cancellation === 'supported'
         || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
         ? 'supported'
         : 'unsupported',

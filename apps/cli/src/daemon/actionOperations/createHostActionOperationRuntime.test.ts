@@ -964,6 +964,22 @@ describe('finite host operation custody', () => {
         .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { status: 'completed' } } });
     } finally { acknowledge(); finish(); }
   });
+  it('publishes contributed operation cancellation from its dynamic declaration', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'contributed-operation' });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const execution = runtime.runActionOperation({ actionId: 'action.invoke', input: { value: 1 },
+      operation: { version: 1, visibility: 'activity', progress: 'indeterminate', cancellation: 'supported',
+        presentation: { onStart: 'activity' } }, context: {},
+      execute: async ({ signal }) => { await held; return { ok: true, result: { cancelled: signal.aborted } }; } });
+    await expect(runtime.handlers.getV2({ operationId: 'contributed-operation' })).resolves.toMatchObject({
+      kind: 'found', operation: { state: 'running', cancellation: 'supported' },
+    });
+    expect(await runtime.handlers.cancel({ operationId: 'contributed-operation' })).toEqual({ kind: 'accepted' });
+    release();
+    await expect(execution).resolves.toMatchObject({ ok: true, result: { cancelled: true } });
+  });
   // Open's native registrar owns observation across direct and relay calls;
   // its composed settlement keeper exercises this same outer adapter.
   it.each(listActionSpecs().filter(spec => spec.operation && spec.id !== 'projects.open' && spec.id !== 'localServices.launcher.start').map(spec => spec.id))(
