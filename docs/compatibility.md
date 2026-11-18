@@ -8541,6 +8541,9 @@ The feature's integrated and live evidence is tracked in its existing execution 
 
 ### Workspace-sync handoff rollout
 
+Workspace Sync Actions return `workspace_sync_update_required` when the
+selected controller explicitly lacks the requested RPC method.
+
 Workspace handoff is operation-scoped across UI, daemon, and Machine RPC versions. A current
 client may send the canonical `none`, `copy_once`, `create_relationship`, or existing
 `relationship`, or `linked_workspace` action only to a daemon that understands that exact action. A predecessor daemon

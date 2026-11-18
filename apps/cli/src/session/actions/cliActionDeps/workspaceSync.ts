@@ -5,7 +5,8 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceSyncReadControllerV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 export function createCliWorkspaceSyncActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverIdentityId'>,
@@ -182,9 +183,12 @@ export function createCliWorkspaceSyncActionDeps(
           ...(signal ? { signal } : {}),
         }));
       } catch (error) {
-        if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
-          throw Object.assign(new Error('Controller must be updated for workspace conflict resolution'), {
-            code: 'workspace_sync_update_required',
+        // Preserve the conflict-resolution bridge's older controller refusal.
+        if (isRpcMethodNotAvailableError(error)) {
+          throw createActionExecuteFailureError({
+            ok: false,
+            errorCode: 'workspace_sync_update_required',
+            error: 'Controller must be updated for workspace conflict resolution',
           });
         }
         throw error;

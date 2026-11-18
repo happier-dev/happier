@@ -1,4 +1,5 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from '../../actionIds.js';
+import { isRpcMethodNotFoundError } from '../../../rpc/errors.js';
 import type { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { completeActionResult } from '../resultProjection.js';
 import { normalizeId } from '../inputReading.js';
@@ -9,6 +10,15 @@ import type { z } from '../../../zodRuntimePolicy.js';
 
 
 export async function dispatchWorkspaceSync(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'ctx' | 'parsed'>): Promise<ActionExecuteResult | null> {
+  try {
+    return await executeWorkspaceSync(inv);
+  } catch (error) {
+    if (!isRpcMethodNotFoundError(error)) throw error;
+    return { ok: false, errorCode: 'workspace_sync_update_required', error: 'workspace_sync_update_required', effectAttempted: false };
+  }
+}
+
+async function executeWorkspaceSync(inv: Parameters<typeof dispatchWorkspaceSync>[0]): Promise<ActionExecuteResult | null> {
   const { actionId, deps, ctx, parsed } = inv;
 
         if (actionId === 'workspace.sync.conflict.resolve') {

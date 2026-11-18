@@ -2,7 +2,7 @@ import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   createActionExecutor,
   createRoleSourceReaderV1,
@@ -173,6 +173,8 @@ afterEach(() => {
 
 describe('workspace sync read Action transport', () => {
   it('routes a clean spoke to its current hub for all three reads', async () => {
+    readSettings.mockResolvedValue({ servers: {} });
+    onTestFinished(() => { readSettings.mockReset(); });
     const credentials = { token: 'token', encryption: null };
     const contentPolicy = {
       v: 1 as const, selection: 'all_files' as const,
@@ -266,6 +268,14 @@ describe('workspace sync read Action transport', () => {
       ['machine-a', RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST],
       ['machine-a', RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST],
     ]);
+    callMachineRpc.mockRejectedValueOnce(Object.assign(new Error('Method not found'), {
+      rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    }));
+    await expect(createActionToolExecutorBridge({ surface: 'cli', executor }).executeActionByToolName(
+      'workspace_sync_relationships_list',
+      { workspaceRefId: 'workspace-c' },
+      'session-c',
+    )).resolves.toMatchObject({ ok: false, errorCode: 'workspace_sync_update_required' });
   });
 });
 
