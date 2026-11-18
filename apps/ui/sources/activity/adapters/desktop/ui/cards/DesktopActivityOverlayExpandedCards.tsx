@@ -84,10 +84,10 @@ function ConversationRow(props: React.ComponentProps<typeof DesktopActivityOverl
     conversationHandlers?: NotchConversationHandlers;
 }>): React.ReactElement {
     const { target, conversationHandlers, ...row } = props;
-    if (!conversationHandlers) return <DesktopActivityOverlaySessionRow {...row} />;
+    if (!conversationHandlers) return <DesktopActivityOverlaySessionRow {...row} liftKey={target.sessionId} />;
     return <NotchConversationMenu target={target} handlers={conversationHandlers}
         testID={`desktop-activity-overlay-session-menu-${target.sessionId}`}
-        trigger={menu => <DesktopActivityOverlaySessionRow {...row}
+        trigger={menu => <DesktopActivityOverlaySessionRow {...row} liftKey={target.sessionId}
             onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} />} />;
 }
 

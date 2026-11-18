@@ -4,7 +4,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { collectNodeText, createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 import type {
     DesktopActivityOverlayPointer,
@@ -423,6 +423,25 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(screen.findByTestId('desktop-activity-overlay-pin')).toBeTruthy();
     });
 
+    it('heads a pinned plain Session with its own row and shows its recent turns, yours in your bubble', async () => {
+        const base = createWindowState();
+        const screen = await renderRoute({ ...base, model: { ...base.model, conversation: {
+            serverId: 'server-1', accountId: 'account-1', sessionId: 'session-1', refreshing: false, reachable: true,
+            reply: { state: 'ready', messages: [
+                { id: 'm1', role: 'user', text: 'Rerun the flaky suite.' },
+                { id: 'm2', role: 'agent', text: 'Passed 40 of 40.' },
+            ] },
+        } } as unknown as OverlayModel });
+        await act(async () => { presentation.handler?.({ state: 'pinned', focus: false }); });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('desktop-activity-overlay-conversation-name')?.props.children).toBe('Session One');
+        expect(collectNodeText(screen.findByTestId('desktop-activity-overlay-conversation-state')!).join(' ')).toContain('Repo');
+        expect(screen.findByTestId('desktop-activity-overlay-conversation-yours')!.findAllByType('Text')
+            .flatMap((node) => collectNodeText(node)).join(' ')).toContain('Rerun the flaky suite.');
+        expect(screen.findByTestId('desktop-activity-overlay-conversation-reply')?.props.children).toBe('Passed 40 of 40.');
+    });
+
     it('keeps the opened list open while its pin is on, and lets it collapse again once unpinned', async () => {
         vi.useFakeTimers();
         const screen = await renderRoute(createWindowState());
@@ -761,6 +780,15 @@ describe('DesktopActivityOverlayRoute', () => {
             return emitDesktopActivityOverlayInteractionMock.mock.calls.map(([call]) => call)
                 .filter((call) => call.actionIdentifier === actionIdentifier).map((call) => call.data);
         }
+
+        it('focuses the first conversation in reading order when keyboard opens the list', async () => {
+            const focus = createFocusRecorder();
+            const screen = await renderRoute(withBots({}, null), { createNodeMock: focus.createNodeMock });
+
+            await openFromKeyboard(screen);
+
+            expect(focus.focusedTestIds.at(-1)).toBe('desktop-activity-overlay-bot-row-bot-flake');
+        });
 
         it('pins the island on a face, asks main for that Bot in the overlay, and releases it on Back', async () => {
             const screen = await renderRoute(withBots());

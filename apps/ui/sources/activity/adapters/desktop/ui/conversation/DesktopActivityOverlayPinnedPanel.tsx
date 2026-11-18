@@ -117,14 +117,12 @@ export function DesktopActivityOverlayPinnedPanel(
   const row = listDetail?.rows.find(
     (entry) => entry.sessionId === conversation.sessionId && entry.serverId === conversation.serverId,
   );
-  const fallbackName = row?.title ?? '';
 
   return (
     <DesktopActivityOverlayConversation
       conversation={conversation}
       face={face}
-      fallbackName={fallbackName}
-      context={row?.subtitle ?? null}
+      row={row ?? null}
       cards={cards}
       phrases={props.phrases}
       draft={draft.text}

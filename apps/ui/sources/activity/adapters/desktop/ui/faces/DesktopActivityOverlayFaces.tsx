@@ -411,6 +411,7 @@ export const DesktopActivityOverlayBotRow = React.memo(function DesktopActivityO
                             planeColor={theme.colors.overlay.notch}
                         />
                     )}
+                    liftKey={face.sessionId}
                     onPress={() => props.handlers.onOpen(face)}
                     onContextMenu={menu.onContextMenu}
                     onKeyDown={menu.onKeyDown}

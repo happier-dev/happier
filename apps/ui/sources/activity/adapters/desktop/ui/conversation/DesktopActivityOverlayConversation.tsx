@@ -1,19 +1,27 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
+import { ScrollView, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { UserMessageBubble } from '@/components/sessions/transcript/UserMessageBubble';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { playElementRectFlight } from '@/components/ui/motion/rectFlight';
+import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { t } from '@/text';
 import {
   formatRelativeTimeShort,
@@ -26,17 +34,25 @@ import type {
 } from '../../presentation/notchBotTypes';
 import { DesktopActivityOverlayExpandedCards } from '../cards/DesktopActivityOverlayExpandedCards';
 import { DesktopActivityOverlayPinButton } from '../DesktopActivityOverlayPinButton';
-import { DesktopActivityOverlayContextLine } from '../DesktopActivityOverlaySessionRow';
+import {
+  DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE,
+  DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE,
+  DesktopActivityOverlayContextLine,
+} from '../DesktopActivityOverlaySessionRow';
 import { NOTCH_FACE_PANEL_SIZE } from '../faces/DesktopActivityOverlayFaces';
+import { DesktopActivityOverlayConversationLiftContext } from './conversationLift';
 import { DesktopActivityOverlayQuickReplyComposer } from '../quickReply/DesktopActivityOverlayQuickReplyComposer';
 import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type {
     DesktopActivityOverlayActionHandler,
   DesktopActivityOverlayExpandedCard,
+  DesktopActivityOverlaySessionRowModel,
 } from '../shared/desktopActivityOverlayUiModel';
 
 /** Each recent message is shown as a short excerpt. */
 const REPLY_MAX_LINES = 4;
+/** The turns area stays short (lab `ntshape` C): two excerpts at their full glance, then it scrolls. */
+const TURNS_MAX_HEIGHT = HAPPIER_TYPE_SCALE.body.lineHeight * REPLY_MAX_LINES * 2;
 
 /** "Needs you · 6 min": the Bot's state word in the attention owner's words, then its age, ticking in this leaf only. */
 function BotStateLine(
@@ -66,7 +82,7 @@ function BotStateLine(
   return (
     <Text
       testID="desktop-activity-overlay-conversation-state"
-      variant="body"
+      variant="meta"
       numberOfLines={1}
       style={face.activity === 'needsYou' ? styles.stateNeedsYou : styles.state}
     >
@@ -82,11 +98,13 @@ function BotStateLine(
 export function DesktopActivityOverlayConversation(
   props: Readonly<{
     conversation: PinnedDesktopOverlayConversation;
-    /** The pinned Bot's face entry; a Bot demoted while pinned keeps its last name through `fallbackName`. */
+    /** The pinned Bot's face entry; a plain Session (or a Bot demoted while pinned) has none. */
     face: BotFaceSnapshot | null;
-    fallbackName: string;
-    /** Where it runs (its Session's context line), shown instead of its state while it asks. */
-    context: string | null;
+    /**
+     * The pinned Session's row from the open list: its name, state and where it runs. The header is that row,
+     * lifted to the top, so it reads the same (lab `ntshape` C).
+     */
+    row: DesktopActivityOverlaySessionRowModel | null;
     cards: readonly DesktopActivityOverlayExpandedCard[];
     phrases: readonly string[];
     draft: string;
@@ -106,7 +124,9 @@ export function DesktopActivityOverlayConversation(
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
   const { conversation, face } = props;
-  const name = face?.name ?? props.fallbackName;
+  const row = props.row;
+  const name = face?.name ?? row?.title ?? '';
+  const context = row?.subtitle ?? null;
   const [extract, setExtract] = React.useState<'idle' | 'opening' | 'failed'>(
     'idle',
   );
@@ -127,6 +147,30 @@ export function DesktopActivityOverlayConversation(
     [props.cards],
   );
   const reply = conversation.reply;
+  // The pressed row lifts into this header: one flight from where it stood, once per opened Session.
+  const lift = React.useContext(DesktopActivityOverlayConversationLiftContext);
+  const liftRef = React.useRef<View | null>(null);
+  React.useLayoutEffect(() => {
+    const origin = lift?.take(conversation.sessionId) ?? null;
+    if (!origin || reducedMotion) return;
+    playElementRectFlight(liftRef.current as unknown as HTMLElement, origin, {
+      animationId: 'notch-conversation-lift',
+      durationMs: motionTokens.durationMs.base,
+      translateOnly: true,
+    });
+  }, [conversation.sessionId, lift, reducedMotion]);
+  const turnsRef = React.useRef<ScrollView | null>(null);
+  const turnFades = useScrollEdgeFades({ enabledEdges: { top: true, bottom: false }, overflowThreshold: 2, edgeThreshold: 2 });
+  const turnMask = React.useMemo(
+    () => resolveVerticalScrollEdgeMaskStyle(turnFades.visibility, { fadeSize: theme.space.s16 }),
+    [turnFades.visibility, theme.space.s16],
+  );
+  const onTurnsContentSizeChange = turnFades.onContentSizeChange;
+  // Newest at the bottom: the area opens on the latest turn and follows new ones.
+  const followLatest = React.useCallback((width: number, height: number) => {
+    onTurnsContentSizeChange(width, height);
+    turnsRef.current?.scrollToEnd({ animated: false });
+  }, [onTurnsContentSizeChange]);
 
   return (
     <View
@@ -145,36 +189,57 @@ export function DesktopActivityOverlayConversation(
           tooltip={t('settingsDesktop.overlay.notchBack')}
           onPress={props.onBack}
         />
-        {face ? (
-          <BotFaceMarker
-            facts={face.face}
-            size={NOTCH_FACE_PANEL_SIZE}
-            activity={face.activity}
-            monochrome={!face.live}
-            planeColor={theme.colors.overlay.stageImmersive}
-          />
-        ) : null}
-        <Text
-          testID="desktop-activity-overlay-conversation-name"
-          variant="label"
-          emphasis="semiBold"
-          numberOfLines={1}
-          style={styles.name}
-        >
-          {name}
-        </Text>
-        {asking && props.context ? (
-          <DesktopActivityOverlayContextLine
-            testID="desktop-activity-overlay-conversation-context"
-            agentId={face?.agentId}
-            machineId={face?.machineId}
-            serverId={conversation.serverId}
-            text={props.context}
-          />
-        ) : face ? (
-          <BotStateLine face={face} />
-        ) : null}
-        <View style={styles.grow} />
+        <View ref={liftRef} testID="desktop-activity-overlay-conversation-identity" style={styles.identity}>
+          <View style={styles.mark}>
+            {face ? (
+              <BotFaceMarker
+                facts={face.face}
+                size={NOTCH_FACE_PANEL_SIZE}
+                activity={face.activity}
+                monochrome={!face.live}
+                planeColor={theme.colors.overlay.stageImmersive}
+              />
+            ) : row?.botFace ? (
+              <SessionBotFace facts={row.botFace} size={NOTCH_FACE_PANEL_SIZE} />
+            ) : row?.agentId ? (
+              <SessionAgentCatalogIdentityIcon
+                agentId={row.agentId}
+                machineId={row.machineId ?? null}
+                serverId={conversation.serverId}
+                color={theme.colors.text.secondary}
+                size={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
+              />
+            ) : null}
+          </View>
+          <View style={styles.identityText}>
+            <Text
+              testID="desktop-activity-overlay-conversation-name"
+              variant="body"
+              emphasis="medium"
+              numberOfLines={1}
+              style={styles.name}
+            >
+              {name}
+            </Text>
+            {asking && context ? (
+              <DesktopActivityOverlayContextLine
+                testID="desktop-activity-overlay-conversation-context"
+                agentId={face ? face.agentId : null}
+                machineId={face?.machineId}
+                serverId={conversation.serverId}
+                text={context}
+              />
+            ) : face ? (
+              <BotStateLine face={face} />
+            ) : row?.statusText || context ? (
+              <Text testID="desktop-activity-overlay-conversation-state" variant="meta" numberOfLines={1} style={styles.state}>
+                {row?.statusText ? <Text variant="meta" style={workStatusWordStyle(row.tone ?? 'neutral')}>{row.statusText}</Text> : null}
+                {row?.statusText && context ? ' · ' : null}
+                {context}
+              </Text>
+            ) : null}
+          </View>
+        </View>
         <IconButton
           testID="desktop-activity-overlay-conversation-extract"
           variant="plain"
@@ -223,17 +288,38 @@ export function DesktopActivityOverlayConversation(
             size="line"
             title={t('common.loading')}
           />
-        ) : reply.state === 'ready' ? reply.messages.map(message => (
-          <Text
-            key={message.id}
-            testID="desktop-activity-overlay-conversation-reply"
-            variant="body"
-            numberOfLines={REPLY_MAX_LINES}
-            style={styles.reply}
+        ) : reply.state === 'ready' && reply.messages.length > 0 ? (
+          <ScrollView
+            ref={turnsRef}
+            testID="desktop-activity-overlay-conversation-turns"
+            style={[styles.turns, turnMask]}
+            contentContainerStyle={styles.turnsContent}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onLayout={turnFades.onViewportLayout}
+            onContentSizeChange={followLatest}
+            onScroll={turnFades.onScroll}
+            onMomentumScrollEnd={turnFades.onMomentumScrollEnd}
           >
-            {message.text}
-          </Text>
-        )) : (
+            {reply.messages.map((message) => message.role === 'user' ? (
+              <View key={message.id} style={styles.yourTurn}>
+                <UserMessageBubble testID="desktop-activity-overlay-conversation-yours">
+                  <Text variant="body" numberOfLines={REPLY_MAX_LINES} style={styles.reply}>{message.text}</Text>
+                </UserMessageBubble>
+              </View>
+            ) : (
+              <Text
+                key={message.id}
+                testID="desktop-activity-overlay-conversation-reply"
+                variant="body"
+                numberOfLines={REPLY_MAX_LINES}
+                style={[styles.reply, styles.agentTurn]}
+              >
+                {message.text}
+              </Text>
+            ))}
+          </ScrollView>
+        ) : (
           <Text variant="body" style={styles.secondary}>
             {t('settingsDesktop.overlay.notchNoReply')}
           </Text>
@@ -324,27 +410,56 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
     minHeight: PAGE_LIST_METRICS.smallControlHeightPx,
   },
+  // The list row's anatomy (`DesktopActivityOverlaySessionRow`): mark slot, then name over state · where.
+  identity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s10,
+    paddingHorizontal: theme.space.s8,
+  },
+  mark: {
+    width: DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  identityText: {
+    flex: 1,
+    minWidth: 0,
+  },
   name: {
     color: theme.colors.text.primary,
-    flexShrink: 1,
   },
   state: {
     color: theme.colors.text.secondary,
-    flexShrink: 0,
   },
   stateNeedsYou: {
     color: theme.colors.state.attention.textForeground,
     flexShrink: 0,
-  },
-  grow: {
-    flex: 1,
   },
   body: {
     gap: theme.space.s10,
   },
   reply: {
     color: theme.colors.text.primary,
+  },
+  turns: {
+    flexGrow: 0,
+    maxHeight: TURNS_MAX_HEIGHT,
+  },
+  turnsContent: {
+    gap: theme.space.s8,
     paddingHorizontal: theme.space.s4,
+  },
+  // Your turns stand right in the transcript's own bubble; the agent's read as plain text (lab `ntshape` C).
+  yourTurn: {
+    alignSelf: 'flex-end',
+    maxWidth: '85%',
+  },
+  agentTurn: {
+    alignSelf: 'stretch',
   },
   secondary: {
     color: theme.colors.text.secondary,

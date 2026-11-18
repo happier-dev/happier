@@ -31,6 +31,7 @@ import {
 } from './DesktopActivityOverlayCollapsed';
 import { DesktopActivityOverlayListPanel } from './DesktopActivityOverlayListPanel';
 import { DesktopActivityOverlayPinnedPanel } from './conversation/DesktopActivityOverlayPinnedPanel';
+import { DesktopActivityOverlayConversationLiftContext, useDesktopActivityOverlayConversationLift } from './conversation/conversationLift';
 import {
     DesktopActivityOverlayFaces,
     DesktopActivityOverlayRestMarks,
@@ -402,6 +403,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
     const word = readStatusWord(collapsed);
     const botSection = React.useMemo(() => (faces && faces.faces.length > 0 ? { faces: faces.faces, handlers: conversationHandlers } : null),
         [conversationHandlers, faces]);
+    const conversationLift = useDesktopActivityOverlayConversationLift();
     const faceList = faces?.faces ?? NO_FACES;
     // A row carries the faces wing; a side dock rests as the column of what needs you (lab `ntshape` R).
     const renderMarks = React.useCallback((orientation: 'row' | 'column') => orientation === 'row'
@@ -469,6 +471,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
     return (
         <ScopedTheme name="dark">
             <View ref={rootRef} style={styles.container}>
+                <DesktopActivityOverlayConversationLiftContext.Provider value={conversationLift}>
                 <NotchShape
                     testID="desktop-activity-overlay-notch"
                     dock={dock}
@@ -522,6 +525,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                         />
                     )}
                 />
+                </DesktopActivityOverlayConversationLiftContext.Provider>
                 {extractFlight.active && flight ? (
                     // The flying panel, positioned against the window origin it took off from: when native grows
                     // the envelope left or up, only this frame of reference moves.

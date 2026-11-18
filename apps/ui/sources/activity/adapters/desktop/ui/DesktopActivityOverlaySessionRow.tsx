@@ -15,6 +15,7 @@ import { composeDesktopActivityOverlayAccessibilityLabel } from './desktopActivi
 import type { DesktopActivityOverlayPressableInteractionState } from './DesktopActivityOverlayPressableInteractionState';
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from './shared/desktopActivityOverlaySelectors';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { DesktopActivityOverlayConversationLiftContext } from './conversation/conversationLift';
 
 /** A Bot face leading a row, at the Session list's compact row size. */
 const IDENTITY_MARK_SIZE = 16;
@@ -88,12 +89,21 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
      */
     asking?: Readonly<{ count: number }> | null;
     pressableRef?: React.Ref<View>;
-    onPress: () => void;
+    /** Absent, the row is a heading (the pinned conversation's): it reads the same and takes no press. */
+    onPress?: () => void;
+    /** The Session this row opens: a press records where the row stood, so its conversation lifts from here. */
+    liftKey?: string;
     onContextMenu?: (event: unknown) => void;
     onKeyDown?: (key: string, event: unknown) => boolean;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const clearance = React.useContext(DesktopActivityOverlayLeadRowClearance);
+    const lift = React.useContext(DesktopActivityOverlayConversationLiftContext);
+    const { liftKey, onPress } = props;
+    const press = React.useCallback((event?: { currentTarget?: unknown }) => {
+        if (liftKey) lift?.capture(liftKey, event?.currentTarget);
+        onPress?.();
+    }, [lift, liftKey, onPress]);
     const tone = props.tone ?? 'neutral';
     const asking = props.asking ?? null;
     const detail = props.previewText ?? props.subtitle;
@@ -108,9 +118,10 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
         <Pressable
             ref={props.pressableRef}
             testID={props.testID}
-            accessibilityRole="button"
+            accessibilityRole={onPress ? 'button' : undefined}
             accessibilityLabel={accessibilityLabel}
-            onPress={props.onPress}
+            disabled={!onPress}
+            onPress={onPress ? press : undefined}
             {...(props.onContextMenu || props.onKeyDown ? {
                 onContextMenu: props.onContextMenu,
                 onKeyDown: props.onKeyDown
@@ -127,7 +138,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                 return [
                     styles.container,
                     clearance > theme.space.s8 ? { paddingRight: clearance } : null,
-                    interaction.hovered === true ? styles.hovered : null,
+                    onPress && interaction.hovered === true ? styles.hovered : null,
                     pressed ? { opacity: motionTokens.press.opacitySubtle } : null,
                     createDesktopActivityOverlayFocusRingStyle(theme, interaction.focused),
                 ];
