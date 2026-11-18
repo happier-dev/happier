@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { IModal, ModalType } from '@/modal';
+import { ModalContentIdProvider, useModalContentId } from '@/modal/context/ModalContentIdContext';
 import type { CustomModalChromeConfig } from '@/modal/types';
 import { vi } from 'vitest';
 
@@ -30,7 +31,6 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     let modals: ReadonlyArray<Readonly<{ id: string; config: CustomModalConfig }>> = [];
     let nextModalId = 0;
     const VisibleModalKindContext = React.createContext<ModalType | null>(null);
-    const ModalContentIdContext = React.createContext<string | null>(null);
     const listeners = new Set<() => void>();
     const publish = () => { for (const listener of listeners) listener(); };
     const showImplementation = options.spies?.show ?? ((config: Parameters<IModal['show']>[0]) => {
@@ -117,9 +117,9 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         const content = React.useMemo(() =>
             React.createElement(config.component, { ...config.props, onClose, setChrome }),
         [config.component, config.props, onClose]);
-        return React.createElement(ModalContentIdContext.Provider, { value: id },
+        return React.createElement(ModalContentIdProvider, { id, children: React.createElement(React.Fragment, null,
             content,
-            chrome && 'footer' in chrome ? chrome.footer : null);
+            chrome && 'footer' in chrome ? chrome.footer : null) });
     }
 
     function CustomContentProvider({ active, children }: { active?: boolean; children?: React.ReactNode }) {
@@ -146,7 +146,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
             Modal: modal,
             ModalProvider,
             useVisibleModalKind: () => React.useContext(VisibleModalKindContext),
-            useModalContentId: () => React.useContext(ModalContentIdContext),
+            useModalContentId,
             useOptionalModal: () => ({
                 isKeyboardLiftSuppressedByModal: options.isKeyboardLiftSuppressedByModal ?? false,
                 state: { modals: [] },

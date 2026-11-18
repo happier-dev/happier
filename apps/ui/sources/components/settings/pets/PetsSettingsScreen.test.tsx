@@ -737,6 +737,7 @@ describe('PetsSettingsScreen', () => {
     it('cancels unanswered discovery through real scoped transport and retries after target replacement', async () => {
         tauriDesktopState.current = false;
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
         const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
@@ -782,7 +783,13 @@ describe('PetsSettingsScreen', () => {
             await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
             const address = http.address();
             if (!address || typeof address === 'string') throw new Error('Missing discovery Home address');
-            const home = await upsertServerProfile({ serverUrl: `http://127.0.0.1:${address.port}`, name: 'Pet discovery cancellation' });
+            const serverUrl = `http://127.0.0.1:${address.port}`;
+            // The surrounding Home harness has no socket server. Send this fixture's HTTP to the same listener as its relay.
+            setRuntimeFetch((input, init) => {
+                const url = new URL(input instanceof Request ? input.url : input);
+                return url.origin === serverUrl ? globalThis.fetch(input, init) : importHomes.request(input, init);
+            });
+            const home = await upsertServerProfile({ serverUrl, name: 'Pet discovery cancellation' });
             const target = { target: { serverIdentityId: 'pet-discovery-home', machineId: 'machine-pets' },
                 serverId: home.id, machine: { id: 'machine-pets' } };
             administrationTargetState.current = target;
@@ -814,6 +821,7 @@ describe('PetsSettingsScreen', () => {
             resetScopedMachineTransportCacheForTests();
             http.closeAllConnections();
             await new Promise<void>(resolve => relay.close(() => resolve()));
+            setRuntimeFetch(importHomes.request);
             credentialBoundary.mockRestore();
         }
     });
