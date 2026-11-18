@@ -2897,6 +2897,7 @@ const actionFamilyTranslations = { ru: translated({
             scm_diff_summary: 'Сводки изменений',
             home_governance: 'Администрирование Home',
             teams: 'Команды',
+            collection_space_membership: 'Принадлежность к пространствам коллекции',
             plugin_collection_sharing: "Общий доступ к коллекциям плагинов",
             saved_secret_sharing: 'Общие секреты',
             personal_saved_secrets: 'Сохранённые секреты',

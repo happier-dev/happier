@@ -2851,6 +2851,7 @@ const actionFamilyTranslations = { ja: translated({
             scm_diff_summary: '差分の概要',
             home_governance: 'Home の管理',
             teams: 'チーム',
+            collection_space_membership: 'コレクションスペースへの所属',
             plugin_collection_sharing: "プラグインコレクションの共有",
             saved_secret_sharing: '共有シークレット',
             personal_saved_secrets: '保存済みシークレット',

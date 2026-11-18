@@ -2797,6 +2797,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             scm_diff_summary: '差異摘要',
             home_governance: 'Home 管理',
             teams: '團隊',
+            collection_space_membership: '集合空間歸屬',
             plugin_collection_sharing: "外掛程式集合分享",
             saved_secret_sharing: '共用密鑰',
             personal_saved_secrets: '已儲存的密鑰',

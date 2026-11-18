@@ -2788,6 +2788,7 @@ const actionFamilyTranslations = { es: translated({
             scm_diff_summary: 'Resúmenes de cambios',
             home_governance: 'Administración del Home',
             teams: 'Equipos',
+            collection_space_membership: 'Pertenencia a espacios de la colección',
             plugin_collection_sharing: "Uso compartido de colecciones de plugins",
             saved_secret_sharing: 'Secretos compartidos',
             personal_saved_secrets: 'Secretos guardados',

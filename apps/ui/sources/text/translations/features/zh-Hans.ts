@@ -2796,6 +2796,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             scm_diff_summary: '差异摘要',
             home_governance: 'Home 管理',
             teams: '团队',
+            collection_space_membership: '集合空间归属',
             plugin_collection_sharing: "插件集合共享",
             saved_secret_sharing: '共享密钥',
             personal_saved_secrets: '已保存的密钥',
