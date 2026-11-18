@@ -89,13 +89,15 @@ export function resolveActionSettingsEntryStatusSummary(params: Readonly<{
         summary[key] += 1;
         const index = audiences.findIndex((entry) => entry.audience === audience);
         const previous = index === -1 ? { audience, allowedCount: 0, askFirstCount: 0, offCount: 0 } : audiences[index]!;
-        // A departure is a choice away from the target's declared default: an approval other than the
-        // inherited default, or a switch the person turned away from where it starts (opt-in placements start off).
-        const departs = params.settings.actions[params.actionId]?.enabled === false
-            || (controlState.kind === 'approval' ? controlState.value !== 'default'
-                : (controlState.value === 'on') !== getActionSettingsTargetDefaultSelected({
-                    settings: params.settings, actionId: params.actionId, targetId: target.id, target: target.definition,
-                }));
+        // A departure is a choice away from the target's own default: a target turned away from where it starts
+        // (opt-in placements start off), or an approval other than the inherited default. A target that can't
+        // skip review asks first by default, so that is no choice (WAVE-ACCEPT-1118D).
+        const startsOn = getActionSettingsTargetDefaultSelected({
+            settings: params.settings, actionId: params.actionId, targetId: target.id, target: target.definition,
+        });
+        const on = controlState.value !== 'off';
+        const departs = params.settings.actions[params.actionId]?.enabled === false || on !== startsOn
+            || (on && controlState.kind === 'approval' && controlState.approvalWaivable && controlState.value !== 'default');
         const next = { ...previous, [key]: previous[key] + 1, ...(departs || previous.departed ? { departed: true } : {}) };
         if (index === -1) audiences.push(next);
         else audiences[index] = next;

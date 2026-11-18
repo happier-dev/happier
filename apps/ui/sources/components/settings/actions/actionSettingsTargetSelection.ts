@@ -1,3 +1,4 @@
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { isActionEnabledByActionsSettings, isActionSettingsOptInPlacement, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
@@ -31,7 +32,10 @@ export function getActionSettingsTargetPreferenceSelected(params: Readonly<{
     return actionEntry?.disabledSurfaces.includes(target.surface) !== true;
 }
 
-/** The selection a target has when its Action carries no choice of its own (opt-in placements start off). */
+/**
+ * The selection a target has when its Action carries only the shipped default (opt-in placements start off; a few
+ * human-decision Actions ship with their agent target off).
+ */
 export function getActionSettingsTargetDefaultSelected(params: Readonly<{
     settings: ActionsSettingsV1;
     actionId: ActionSettingsActionId;
@@ -39,7 +43,10 @@ export function getActionSettingsTargetDefaultSelected(params: Readonly<{
     target?: ActionSettingsTargetDefinition;
 }>): boolean {
     const { [params.actionId]: _ownChoice, ...actions } = params.settings.actions;
-    return getActionSettingsTargetPreferenceSelected({ ...params, settings: { ...params.settings, actions } });
+    const shipped = (DEFAULT_ACTIONS_SETTINGS_V1.actions as ActionsSettingsV1['actions'])[params.actionId];
+    return getActionSettingsTargetPreferenceSelected({
+        ...params, settings: { ...params.settings, actions: shipped ? { ...actions, [params.actionId]: shipped } : actions },
+    });
 }
 
 export function getActionSettingsTargetSelected(params: Readonly<{

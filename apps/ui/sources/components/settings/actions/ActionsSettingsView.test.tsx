@@ -71,6 +71,9 @@ const daemonProjection = vi.hoisted(() => ({
   },
 }));
 
+// One test reads a row that departs from its defaults; every other test reads the shipped defaults.
+const seededActionsSettings = vi.hoisted(() => ({ value: null as unknown }));
+
 vi.mock('@legendapp/list/react-native', async (importOriginal) => {
   const { createCapturingLegendListMock } =
     await import('@/dev/testkit/mocks/legendList');
@@ -151,7 +154,8 @@ installSettingsViewCommonModuleMocks({
               privacy: { ...settingsDefaults.voice.privacy, shareDeviceInventory: true },
             },
           },
-          fallback: key => settingsDefaults[key],
+          fallback: key => key === 'actionsSettingsV1' && seededActionsSettings.value
+            ? seededActionsSettings.value : settingsDefaults[key],
         }),
       },
     });
@@ -511,34 +515,32 @@ describe('ActionsSettingsView', () => {
 
   it('keeps the switch and settings affordance beside each action and the status in its text column', async () => {
     capture.reset();
-    const { ActionsSettingsView } = await import('./ActionsSettingsView');
+    // An untouched row says nothing, so this row is turned off to give it a status.
+    seededActionsSettings.value = { v: 1, actions: { 'review.start': { enabled: false } } };
+    try {
+      const { ActionsSettingsView } = await import('./ActionsSettingsView');
 
-    const screen = await renderScreen(<ActionsSettingsView />);
+      const screen = await renderScreen(<ActionsSettingsView />);
 
-    const reviewRow = renderedProps(Item).find(
-      (item) => item.testID === 'settings-actions:action:review.start',
-    );
-    expect(reviewRow).toBeTruthy();
-    expect(reviewRow?.showChevron).toBe(false);
-    expect(reviewRow?.rightElementOutsidePressable).toBe(true);
-    // Status reads under the description at every width; a narrow column beside the switch
-    // wrapped one fact into four lines.
-    expect(reviewRow?.subtitleAccessory).toBeTruthy();
-    expect(
-      (await screen.findByTestId('settings-actions:action:review.start:status')).props.numberOfLines,
-    ).toBe(1);
-    expect(screen.findAllByTestId('settings-actions:action:review.start:status-container')).toHaveLength(0);
-    expect(
-      await screen.findByTestId(
-        'settings-actions:action:review.start:configure',
-      ),
-    ).toBeTruthy();
-    expect(
-      (
-        await screen.findByTestId(
-          'settings-actions:action:review.start:enabled',
-        )
-      )?.props.accessibilityLabel,
-    ).toBe(reviewRow?.title);
+      const reviewRow = renderedProps(Item).find(
+        (item) => item.testID === 'settings-actions:action:review.start',
+      );
+      expect(reviewRow).toBeTruthy();
+      expect(reviewRow?.showChevron).toBe(false);
+      expect(reviewRow?.rightElementOutsidePressable).toBe(true);
+      // Status reads under the description at every width; a narrow column beside the switch
+      // wrapped one fact into four lines.
+      expect(reviewRow?.subtitleAccessory).toBeTruthy();
+      expect(
+        (await screen.findByTestId('settings-actions:action:review.start:status')).props.numberOfLines,
+      ).toBe(1);
+      expect(screen.findAllByTestId('settings-actions:action:review.start:status-container')).toHaveLength(0);
+      expect(await screen.findByTestId('settings-actions:action:review.start:configure')).toBeTruthy();
+      expect(
+        (await screen.findByTestId('settings-actions:action:review.start:enabled'))?.props.accessibilityLabel,
+      ).toBe(reviewRow?.title);
+    } finally {
+      seededActionsSettings.value = null;
+    }
   });
 });

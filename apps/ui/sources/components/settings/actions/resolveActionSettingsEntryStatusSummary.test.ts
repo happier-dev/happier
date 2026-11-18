@@ -7,6 +7,8 @@ import {
 import { normalizeActionsSettings } from './normalizeActionsSettings';
 import { getActionSettingsTargetDefinition } from './actionSettingsTargets';
 import { listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
+import { buildActionSettingsEntries } from './buildActionSettingsEntries';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
 
 function target(
     id: ActionSettingsEntryStatusTarget['id'],
@@ -169,5 +171,17 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
         });
         expect(summary.audiences.every((audience) => audience.departed !== true)).toBe(true);
         expect(listActionSettingsEntryStatusParts(summary)).toEqual([]);
+    });
+
+    // WAVE-ACCEPT-1118D: a target that can't skip review asks first by default; an untouched row says nothing.
+    it('reports no change on any Action left on its defaults, including targets that always ask first', () => {
+        const entries = buildActionSettingsEntries({ query: '', settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: { executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,
+                sessionHandoffEnabled: true, voiceShareDeviceInventory: true } });
+        const changed = entries.filter((entry) => resolveActionSettingsEntryStatusSummary({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId: entry.actionId, targets: entry.targets,
+        }).audiences.some((audience) => audience.departed === true)).map((entry) => entry.actionId);
+        expect(entries.some((entry) => entry.actionId === 'browser.automation.answerDialog')).toBe(true);
+        expect(changed).toEqual([]);
     });
 });
