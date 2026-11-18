@@ -14,6 +14,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -40,8 +41,10 @@ export const MachinesNeedsYouList = React.memo(function MachinesNeedsYouList(pro
     const subjects = React.useMemo(() => selectFleetLookSubjects(props.entries), [props.entries]);
     if (subjects.length === 0) return null;
     return (
-        <View testID={props.testID ?? 'machines.needs-you'}>
-            <ItemGroup title={t('machineAttention.groups.needsYou')}>
+        // A titled section with its count, then the table (lab mIdx): content lists lie flat with no card (owner 11-15
+        // ~15:45Z), like the table's own sections and Monitoring's Needs you. The phone's list groups bring their own gap.
+        <View testID={props.testID ?? 'machines.needs-you'} style={props.compact ? undefined : stylesheet.root}>
+            <ItemGroup title={t('machineAttention.groups.needsYou')} titleAccessory={<ManagedSectionCount count={subjects.length} />} surface="none">
                 {subjects.map(entry => <MachineNeedsYouItem key={entry.key} entry={entry} nowMs={props.nowMs} onOpen={props.onOpen} compact={props.compact === true} />)}
             </ItemGroup>
         </View>
@@ -102,6 +105,9 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
 const SERVICES_TAB: MachinePageTabParams = Object.freeze({ id: 'services' });
 
 const stylesheet = StyleSheet.create((theme) => ({
+    root: {
+        paddingBottom: theme.space.s16,
+    },
     detail: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,

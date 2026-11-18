@@ -335,7 +335,8 @@ export function MachineFleetActivityView() {
           />
         )
       ) : (
-        <ItemGroup testID="machines.activity.card">
+        // The feed lies flat on the page (owner 11-15 ~15:45Z: content lists carry no card chrome), as the fleet tables do.
+        <ItemGroup testID="machines.activity.card" surface="none">
           {lifetime ? (
             <ActivityDays
               days={days}
@@ -623,7 +624,6 @@ function ActivitySecondary(props: RowProps) {
 
 const styles = StyleSheet.create((theme) => ({
   card: {
-    paddingHorizontal: theme.space.s16,
     paddingVertical: theme.space.s12,
     gap: theme.space.s16,
   },
