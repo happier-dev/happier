@@ -1,7 +1,7 @@
 /** @moduleRealm daemon */
 import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { z } from 'zod/mini';
-import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiResourceIntentV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiOpenResourceIntentV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiWatchLiveStreamRequestV1Schema, PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiApplyComposerResultV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiInspectComposerContentResultV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiMountedActionReferenceV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiFocusComposerResultV1Schema, PluginUiHostApiDiagnosticV1Schema, PluginUiHostApiOpenExternalLinkRequestV1Schema, PluginUiHostApiWriteClipboardRequestV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiHostApiWireIdentityV1Schema, PluginUiJsonValueV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiOpenSurfaceRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPickComposerMediaResultV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiReadComposerResultV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiSetComposerDecorationsResultV1Schema, PluginUiInstanceKeyV1Schema, PluginUiResourceSubscriptionTargetV1Schema, PluginUiSelectedActionInputCarrierV1Schema, pluginUiSelectedActionInputsEqual, pluginUiTargetedContributionOperationKey, PluginUiSubPathV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadSessionResultV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -665,7 +665,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: PluginUiTestkitRespondToSessionPermissionInput,
     ) => SessionPermissionResponseV1 | Promise<SessionPermissionResponseV1>;
     openSurface?: (input: PluginUiTestkitOpenSurfaceInput) => void | Promise<void>;
-    openResource?: (input: Readonly<{ resource: import('../protocol/resourceIntent.js').PluginUiResourceIntentV1; signal: AbortSignal }>) => void | Promise<void>;
+    openResource?: (input: Readonly<{ resource: import('../protocol/resourceIntent.js').PluginUiOpenResourceIntentV1; signal: AbortSignal }>) => void | Promise<void>;
     replacePageLocation?: (
         input: PluginUiTestkitReplacePageLocationInput,
     ) => string | Promise<string>;
@@ -1793,7 +1793,7 @@ async function createPluginUiTestkitInternal<TSurface>(
             }
             case 'openResource': {
                 if (!handlers.openResource) throw fixtureError('unsupported_method', 'openResource is not installed.');
-                const payload = PluginUiResourceIntentV1Schema.safeParse(message.payload);
+                const payload = PluginUiOpenResourceIntentV1Schema.safeParse(message.payload);
                 if (!payload.success) throw fixtureError('invalid_payload', 'openResource payload is invalid.');
                 await handlers.openResource({ resource: payload.data, signal });
                 return undefined;

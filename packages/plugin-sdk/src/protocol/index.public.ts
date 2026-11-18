@@ -99,7 +99,7 @@ export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositor
 export { ScmHostingProjectReadinessSourceFactV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 export { ScmHostingPullRequestLifecycleV1ProtocolSchema, ScmHostingPullRequestLifecycleActionV1ProtocolSchema } from './pullRequestLifecycle.js';
 export { ScmPullRequestSummaryProtocolSchema } from './scmPullRequest.js';
-export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';
+export { PluginUiResourceIntentV1Schema, PluginUiOpenResourceIntentV1Schema, type PluginUiResourceIntentV1, type PluginUiOpenResourceIntentV1 } from './resourceIntent.js';
 export { ProjectExecutionOperationRefV1ProtocolSchema } from './projectExecution.js';
 export { ActionOperationGetV1ResponseProtocolSchema } from './projectExecution.js';
 export { PluginUiActionOperationHostReadResultV1ProtocolSchema } from './projectExecution.js';

@@ -15,6 +15,13 @@ export const PluginUiResourceIntentV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type PluginUiResourceIntentV1 = ReturnType<typeof PluginUiResourceIntentV1Schema.parse>;
 
+/** Host navigation extends provider URL intents without widening provider lookup inputs. */
+export const PluginUiOpenResourceIntentV1Schema = defineProtocolUnion([
+  PluginUiResourceIntentV1Schema,
+  defineProtocolObject({ kind: defineProtocolLiteral('artifact'), artifactId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+]);
+export type PluginUiOpenResourceIntentV1 = ReturnType<typeof PluginUiOpenResourceIntentV1Schema.parse>;
+
 /** Integration-owned recognition and same-plugin destination, carried by its declared UI view. */
 export const PluginUiResourceLinkV1Schema = lazyZodSchema(() => z.strictObject({
   kind: PluginUiResourceKindV1Schema,

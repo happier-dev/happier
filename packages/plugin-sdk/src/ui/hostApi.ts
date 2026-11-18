@@ -876,7 +876,7 @@ export interface PluginUiHostApi {
     writeClipboard(value: string, options?: PluginCancellationOptions): Promise<void>;
     openExternalLink(url: string, options?: PluginCancellationOptions): Promise<void>;
     /** Open an exact integration resource using the Account's preferred destination. */
-    openResource(resource: import('../protocol/resourceIntent.js').PluginUiResourceIntentV1, options?: PluginCancellationOptions): Promise<void>;
+    openResource(resource: import('../protocol/resourceIntent.js').PluginUiOpenResourceIntentV1, options?: PluginCancellationOptions): Promise<void>;
 }
 
 export type PluginUiHostApiVersion = ReturnType<PluginUiHostApi['version']>;
