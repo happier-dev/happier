@@ -66,20 +66,37 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             mode: 'people', audience, ttlMs: 60_000, rateLimitProfileId: 'default', confirmation: { acknowledged: true } }))
             .resolves.toMatchObject({ exposure: { mode: 'people', audience }, snapshot: { exposures: [{ audience }] } });
     });
-    it.each(['create', 'later_status'] as const)('retains the positive create-refusal phase and code (%s)', async phase => {
+    it('retains the positive create-refusal phase and code', async () => {
         const refusal = { isAxiosError: true, response: { status: 503,
             data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } } };
         const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
-            async post(url) {
-                if (phase === 'later_status' && !url.endsWith('/status')) return { data: { exposure } };
-                throw refusal;
-            }, async delete() { return { data: {} }; },
+            async post() { throw refusal; }, async delete() { return { data: {} }; },
         } });
         let caught: unknown;
         try { await routes.createExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
             previewId: exposure.previewId, mode: 'secret_link', ttlMs: 60_000 }); } catch (error) { caught = error; }
         expect(caught).toMatchObject({ rpcErrorCode: 'audit_sink_unavailable' });
-        expect(caught instanceof LocalServicePublicPreviewCreateRefusal).toBe(phase === 'create');
+        expect(caught instanceof LocalServicePublicPreviewCreateRefusal).toBe(true);
+    });
+    // The Home has already minted the link: a failed confirming read must not tell the person it failed.
+    it.each([
+        ['typed refusal', () => { throw { isAxiosError: true, response: { status: 503,
+            data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } } }; }],
+        ['network drop', () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); }],
+        ['empty body', () => ({ data: '' })],
+    ] as const)('reports the created link when the confirming status read fails (%s)', async (_label, status) => {
+        const creates: unknown[] = [];
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post(url, body) {
+                if (url.endsWith('/status')) return status();
+                creates.push(body);
+                return { data: { exposure } };
+            }, async delete() { throw new Error('Unexpected revoke'); },
+        } });
+        const result = await routes.createExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
+            previewId: exposure.previewId, mode: 'secret_link', ttlMs: 60_000, confirmation: { acknowledged: true } });
+        expect(result).toEqual({ protocolVersion: 1, exposure });
+        expect(creates).toHaveLength(1);
     });
     it.each(['status', 'create', 'revoke', 'copy'] as const)('preserves typed disabled policy through the real RPC error envelope for %s', async operation => {
         const refusal = { isAxiosError: true, response: { status: 403,

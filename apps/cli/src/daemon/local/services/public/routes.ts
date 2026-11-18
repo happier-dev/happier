@@ -190,16 +190,19 @@ export function createLocalServicePublicPreviewServerRoutes(
                 : undefined;
             const exposure = LocalServicePublicExposureV1Schema.parse(rawExposure);
             assertExposureBinding(exposure, request);
+            // The Home has minted the link. The snapshot is optional context: a failed confirming
+            // read must not report a live link as a failed create (the person would retry and
+            // mint a second one). Its absence leaves the controls to their own status read.
             const snapshot = await getStatus({
                 machineId: request.machineId,
                 sessionId: request.sessionId,
                 ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
                 previewId: request.previewId,
-            }, context);
+            }, context).catch(() => undefined);
             return DaemonLocalServicePublicPreviewCreateResponseV1Schema.parse({
                 protocolVersion: 1,
                 exposure,
-                snapshot,
+                ...(snapshot ? { snapshot } : {}),
             });
         },
         async revokeExposure(request, context) {
