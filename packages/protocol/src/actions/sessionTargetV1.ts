@@ -8,10 +8,8 @@ export { ActionSessionAddressV1Schema, type ActionSessionAddressV1 } from './ses
 
 const ExactSessionReferenceV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
-/** Closed routing intent. `of` is an exact reference and never another selector. */
+/** Closed routing intent. `of` is exact; append disjoint arms to preserve Collection widening. */
 export const SessionTargetSelectorV1Schema = lazyZodSchema(() => z.discriminatedUnion('selector', [
-  z.strictObject({ selector: z.literal('sessions'), addresses: z.array(ActionSessionAddressV1Schema).check(z.minLength(1)).check(z.overwrite(addresses =>
-    [...new Map(addresses.map(address => [JSON.stringify([address.serverId, address.sessionId]), address])).values()])) }),
   z.strictObject({ selector: z.literal('self'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('manager'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('workers'), of: z.optional(ExactSessionReferenceV1Schema), recursive: z.optional(z.boolean()) }),
@@ -20,6 +18,8 @@ export const SessionTargetSelectorV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ selector: z.literal('following'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('discussion'), discussionId: ExactSessionReferenceV1Schema, of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('matching'), filter: SessionListFilterDaemonRuleV1Schema, of: z.optional(ExactSessionReferenceV1Schema) }),
+  z.strictObject({ selector: z.literal('sessions'), addresses: z.array(ActionSessionAddressV1Schema).check(z.minLength(1)).check(z.overwrite(addresses =>
+    [...new Map(addresses.map(address => [JSON.stringify([address.serverId, address.sessionId]), address])).values()])) }),
 ]));
 export type SessionTargetSelectorV1 = z.infer<typeof SessionTargetSelectorV1Schema>;
 

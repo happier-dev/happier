@@ -1,9 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
-import { normalizeSessionTargetV1, SessionTargetV1Schema, ActionResolvedSessionTargetsV1Schema } from './sessionTargetV1.js';
+import { normalizeSessionTargetV1, SessionTargetV1Schema, SessionTargetSelectorV1Schema, ActionResolvedSessionTargetsV1Schema } from './sessionTargetV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import {
+  PluginAccountCollectionContributionV1Schema,
+  normalizePluginAccountCollectionContractV1,
+  resolvePluginCollectionContractAccessV1,
+} from '../plugins/data/collectionsV1.js';
 
 describe('Session target routing contract', () => {
+  it('keeps retained collection targets readable when explicit addresses are added', () => {
+    const current = normalizePluginAccountCollectionContractV1({
+      pluginId: 'test.session-targets',
+      contribution: PluginAccountCollectionContributionV1Schema.parse({
+        id: 'targets', schemaVersion: 1,
+        schema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            target: projectZodProtocolSchema(SessionTargetSelectorV1Schema).jsonSchema,
+          },
+          required: ['id', 'target'], additionalProperties: false,
+        },
+        serverReadable: ['id'], indexes: [],
+      }),
+    });
+    const selector = current.schema.properties!.target!;
+    const arms = selector.oneOf ?? selector.anyOf!;
+    const retainedArms = arms.filter(arm => arm.properties?.selector?.const !== 'sessions');
+    expect(retainedArms.length).toBe(arms.length - 1);
+    const previous = normalizePluginAccountCollectionContractV1({
+      pluginId: current.pluginId,
+      contribution: PluginAccountCollectionContributionV1Schema.parse({
+        id: current.collectionId, schemaVersion: 1,
+        schema: {
+          ...current.schema,
+          properties: {
+            ...current.schema.properties,
+            target: { ...selector, ...(selector.oneOf ? { oneOf: retainedArms } : { anyOf: retainedArms }) },
+          },
+        },
+        serverReadable: ['id'], indexes: [],
+      }),
+    });
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: previous, requested: current })).toBe('readOnly');
+    expect(resolvePluginCollectionContractAccessV1({ currentWriter: current, requested: previous })).toBe('readOnly');
+  });
+
   it('accepts nonempty explicit addresses, dedupes by Home and Session, and keeps routing closed', () => {
     const a = { serverId: 'one', sessionId: 'a' };
     const b = { serverId: 'two', sessionId: 'a' };
