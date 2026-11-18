@@ -19373,8 +19373,6 @@ const fr: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Ajouter un déclencheur',
-        emptyTitle: "Aucun déclencheur pour l'instant",
-        emptyBody: 'Ajoutes-en un pour relire chaque tour ou avancer vers un objectif.',
         loadFailed: 'Impossible de charger les déclencheurs de cette session.',
         accountLoadFailed: 'Impossible de charger certains workflows.',
         automationsLoadFailed: "Impossible de charger les automatisations.",
@@ -19382,7 +19380,6 @@ const fr: WorkflowTriggersCopy = {
         startsUnavailable: "Impossible de lire ce qui peut lancer un workflow ici.",
         startsHere: "Démarre ici",
         title: "Automatisations",
-        countOn: ({ count }) => `${count} actifs`,
         info: 'Ce qui démarre depuis cette session et ce qui y écrit.',
         saveFailed: 'Impossible d\'enregistrer ce déclencheur. Tes modifications sont toujours là.',
         machineInfo: "Ce qui démarre depuis cette machine, et les workflows qui s’y exécutent.",

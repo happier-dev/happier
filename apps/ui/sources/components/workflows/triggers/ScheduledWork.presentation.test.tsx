@@ -123,9 +123,8 @@ function hostTree(node: ReactTestRendererJSON | ReactTestRendererJSON[] | string
 const { WorkflowTriggerSetV1Schema} = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
 const { lightTheme, darkTheme } = await import('@/theme');
 const { ScheduledWorkflowGroup, ScheduledWorkflowSectionView } = await import('./ScheduledWorkflowSection');
-const { SessionTriggersSectionView } = await import('./SessionTriggersSection');
 const { projectScheduledWorkflowRows } = await import('./scheduledWorkflowRows');
-const { projectSessionTriggerGroups } = await import('./sessionTriggerGroups');
+const { formatTriggerSetSummary } = await import('./formatTriggerSummary');
 const { WorkflowRunItemBody } = await import('@/components/sessions/shell/row/WorkflowRunItemBody');
 const { WorkSection } = await import('@/components/sessions/work/WorkSection');
 const { TriggerPopover } = await import('./TriggerPopover');
@@ -194,10 +193,6 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
             createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
             schedule: { kind: 'cron', everyMs: null, scheduleExpr: '0 9 * * *', timezone: 'Europe/Zurich' } }] });
     const rows = projectScheduledWorkflowRows([set]);
-    const groups = projectSessionTriggerGroups({ sets: [set],
-        lastRunAtByAutomationId: { daily: new Date(2026, 9, 7, 9).getTime() },
-        lastRunsByAutomationId: { daily: createWorkflowRunSummaryFixture({ state: 'succeeded' }) },
-        resolveWorkflowTitle: () => null, formatAge: () => 'yesterday' });
     const noop = () => {};
     const row = <WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId={home.id} />;
     const workRow = <WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId={home.id} presentation="work"
@@ -257,9 +252,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
         <header><h1>Scheduled work and event authoring</h1><p>DESIGN-SESSION · source-rendered components · {capture.dark ? 'dark' : 'light'} · {capture.width}px</p></header>
         <div className="comparison">
             <section><h2>Reference · existing R22 Run row</h2>{row}</section>
-            <section><h2>Session · habits and destination work</h2>
-                <SessionTriggersSectionView groups={groups}
-                    status="ready" pendingKeys={new Set()} onToggle={noop} onOpen={noop} onAdd={noop} onRetry={noop} onHistory={noop} />
+            <section><h2>Session · destination work</h2>
                 <WorkSection testID="capture-writes-here" title="Writes here" count={2} anatomy="page"><ScheduledWorkflowSectionView rows={rows} onOpen={noop} sessionId="destination" />{workRow}</WorkSection>
             </section>
             <section><h2>Session list · Scheduled group</h2><webHosts.View style={{ maxWidth: 380 }}>
@@ -310,7 +303,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
             <section><h2>Board · same next occurrence</h2><BoardCardView card={{ key: 'capture-workflow',
                 ref: { kind: 'workflow', qualifiedId: { serverId: home.id, id: 'daily' } }, picked: true,
                 availability: 'ready', title: 'Daily digest', status: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' },
-                body: { kind: 'workflow', triggerSummary: groups[0]!.title, nextRun: { kind: 'scheduled', at: Date.UTC(2026, 9, 9, 7) },
+                body: { kind: 'workflow', triggerSummary: formatTriggerSetSummary(set.triggers), nextRun: { kind: 'scheduled', at: Date.UTC(2026, 9, 9, 7) },
                     runSummaryAvailable: false, lastRunWord: null, lastRunAt: null, needsYouCount: null } }} /></section>
         </div>
     </main>);

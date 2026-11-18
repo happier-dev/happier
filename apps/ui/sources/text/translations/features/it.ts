@@ -19316,8 +19316,6 @@ const it: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Aggiungi un trigger',
-        emptyTitle: "Ancora nessun trigger",
-        emptyBody: 'Aggiungine uno per rivedere ogni turno o continuare verso un obiettivo.',
         loadFailed: 'Impossibile caricare i trigger di questa sessione.',
         accountLoadFailed: 'Impossibile caricare alcuni workflow.',
         automationsLoadFailed: "Impossibile caricare le automazioni.",
@@ -19325,7 +19323,6 @@ const it: WorkflowTriggersCopy = {
         startsUnavailable: "Impossibile leggere cosa può avviare un workflow qui.",
         startsHere: "Parte da qui",
         title: "Automazioni",
-        countOn: ({ count }) => `${count} attivi`,
         info: 'Ciò che parte da questa sessione e ciò che vi scrive.',
         saveFailed: 'Impossibile salvare questo trigger. Le tue modifiche sono ancora qui.',
         machineInfo: "Cosa parte da questa macchina e i workflow che vi girano.",

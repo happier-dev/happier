@@ -19330,8 +19330,6 @@ const ca: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Afegeix un activador',
-        emptyTitle: "Encara no hi ha disparadors",
-        emptyBody: 'Afegeix-ne un per revisar cada torn o continuar cap a un objectiu.',
         loadFailed: "No s'han pogut carregar els activadors d'aquesta sessió.",
         accountLoadFailed: "No s'han pogut carregar alguns fluxos.",
         automationsLoadFailed: "No s’han pogut carregar les automatitzacions.",
@@ -19339,7 +19337,6 @@ const ca: WorkflowTriggersCopy = {
         startsUnavailable: "No s’ha pogut llegir què pot iniciar un flux de treball aquí.",
         startsHere: "Comença aquí",
         title: "Automatitzacions",
-        countOn: ({ count }) => `${count} actius`,
         info: 'El que s’inicia des d’aquesta sessió i el que hi escriu.',
         saveFailed: 'No s\'ha pogut desar aquest activador. Els teus canvis encara hi són.',
         machineInfo: "El que s’inicia des d’aquesta màquina i els fluxos que s’hi executen.",

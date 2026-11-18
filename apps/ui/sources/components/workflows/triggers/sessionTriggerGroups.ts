@@ -5,48 +5,8 @@ import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/wo
 
 import { t } from '@/text';
 
-import type { TriggerRowOutcome } from './TriggerRow';
-import { isSpentOnceSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
-import { resolveTriggerEventGroup, type TriggerEventGroup } from './triggerEventGroups';
-import { formatTriggerSetSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatTriggerLastOutcome, type ScheduledRunQualifierTime } from './formatTriggerSummary';
+import { formatTriggerSetSummary, formatNextScheduledRun, type ScheduledRunQualifierTime } from './formatTriggerSummary';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { readWorkflowRunWorkStatusFacts, type WorkflowRunWorkStatusSummary } from '@/components/work/status/workflowWorkStatusFacts';
-
-export type SessionTriggerRowModel = Readonly<{
-    /** Row identity: the trigger set and the trigger. */
-    key: string;
-    automationId: string;
-    triggerId: WorkflowTriggerSetV1['triggers'][number]['id'];
-    /** The set revision a write to this trigger expects. */
-    revision: number;
-    title: string;
-    enabled: boolean;
-    outcome: TriggerRowOutcome | null;
-    /** The workflow it runs is gone: the row offers only Delete trigger (07 S16). */
-    sourceUnavailable: boolean;
-    legacy?: boolean;
-    qualifier?: string;
-    qualifierTime?: ScheduledRunQualifierTime;
-    qualifierAccessibilityLabel?: string;
-    sourceSavedBy?: WorkflowTriggerSetV1['sourceSavedBy'];
-    sourceSavedAt?: WorkflowTriggerSetV1['sourceSavedAt'];
-}>;
-
-export type SessionTriggerGroupModel = TriggerEventGroup & Readonly<{ rows: readonly SessionTriggerRowModel[] }>;
-
-/**
- * Where each event reads in the section (lab `convo-W9`): the turn and the session's own moments
- * first, then outside events, then schedules.
- */
-function groupRank(group: TriggerEventGroup): number {
-    if (group.id === 'lifecycle:turnEnds') return 0;
-    if (group.id === 'lifecycle:needsYou') return 1;
-    if (group.id === 'lifecycle:sessionStarts') return 2;
-    if (group.id.startsWith('event:')) return 3;
-    if (group.id.startsWith('schedule:')) return 4;
-    return 5;
-}
 
 /**
  * The one reading of the source-lookup result. The lookup answers the same not-found for a deleted Workflow
@@ -93,73 +53,4 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
         ].filter(Boolean).join('\n'),
         ...(next === null ? {} : { qualifierTime: { atMs: next, prefix, suffix } }),
     };
-}
-
-/**
- * A session's triggers (03 §5.4, §5.7) as the Workflow trigger list returns them: one row per trigger
- * under its event. A firing timestamp alone never supplies terminal lifecycle;
- * last-result status comes from the accepted Run summary when it is loaded.
- */
-export function projectSessionTriggerGroups(params: Readonly<{
-    sets: readonly WorkflowTriggerSetV1[];
-    lastRunAtByAutomationId: Readonly<Record<string, number | null>>;
-    lastRunsByAutomationId?: Readonly<Record<string, WorkflowRunWorkStatusSummary>>;
-    resolveWorkflowTitle: (ref: string) => string | null;
-    resolveMachineTitle?: (id: string) => string | null;
-    formatAge: (at: number) => string;
-}>): readonly SessionTriggerGroupModel[] {
-    const groups = new Map<string, TriggerEventGroup & { rows: SessionTriggerRowModel[] }>();
-    for (const set of params.sets) {
-        const legacy = describeLegacyTriggerSet(set, params.resolveMachineTitle);
-        const sourceUnavailable = isWorkflowTriggerSourceGone(set);
-        const title = legacy?.title ?? (sourceUnavailable
-            ? t('workflows.triggers.row.workflowUnavailable')
-            : describeTriggerTarget(set.target, params.resolveWorkflowTitle));
-        const lastRunAt = params.lastRunAtByAutomationId[set.automationId] ?? null;
-        const lastRun = params.lastRunsByAutomationId?.[set.automationId];
-        const lastStatus = lastRun ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(lastRun) }) : null;
-        for (const trigger of set.triggers) {
-            const group = resolveTriggerEventGroup(trigger);
-            const running = trigger.kind === 'sessionLifecycle'
-                && (trigger.status.state === 'running' || trigger.status.state === 'triggered');
-            const outcome: TriggerRowOutcome | null = running
-                ? { text: t('workflows.triggers.row.running'), tone: 'neutral' }
-                : lastStatus !== null
-                    ? { text: lastRunAt === null ? lastStatus.word : formatTriggerLastOutcome(params.formatAge(lastRunAt), lastStatus.word), tone: lastStatus.tone,
-                        ...(lastRunAt === null ? {} : { relativeAge: { atMs: lastRunAt, state: lastStatus.word } }) }
-                    : lastRunAt !== null
-                    ? { text: formatTriggerLastOutcome(params.formatAge(lastRunAt)), tone: 'neutral', relativeAge: { atMs: lastRunAt } }
-                    : null;
-            const row: SessionTriggerRowModel = {
-                key: `${set.automationId}:${trigger.id}`,
-                automationId: set.automationId,
-                triggerId: trigger.id,
-                revision: set.revision,
-                title,
-                enabled: set.enabled && trigger.enabled,
-                outcome,
-                sourceUnavailable,
-                ...(set.sourceSavedBy ? { sourceSavedBy: set.sourceSavedBy } : {}),
-                ...(set.sourceSavedAt === undefined ? {} : { sourceSavedAt: set.sourceSavedAt }),
-                ...(legacy ? { legacy: true, qualifier: legacy.qualifier,
-                    ...(legacy.qualifierTime ? { qualifierTime: legacy.qualifierTime } : {}) } : trigger.kind === 'schedule' ? {
-                    // A spent one-time schedule is Completed; Missed is its Run's own state, which the outcome already says.
-                    ...(readOnceScheduleState(trigger, lastRun?.state) === 'missed' ? {} : isSpentOnceSchedule(trigger) ? {
-                        qualifier: formatOnceScheduleStateLabel('done')!, qualifierAccessibilityLabel: formatOnceScheduleStateLabel('done')!,
-                    } : {
-                        qualifier: formatNextScheduledRun(trigger.nextRunAt, set.enabled && trigger.enabled),
-                        qualifierAccessibilityLabel: formatNextScheduledRunAccessibilityLabel(trigger.nextRunAt, set.enabled && trigger.enabled),
-                    }),
-                    ...(trigger.nextRunAt === null ? {} : { qualifierTime: { atMs: trigger.nextRunAt } }),
-                } : {}),
-            };
-            const existing = groups.get(group.id);
-            if (existing) existing.rows.push(row);
-            else groups.set(group.id, { ...group, rows: [row] });
-        }
-    }
-    return [...groups.values()]
-        .map((group, order) => ({ group, order }))
-        .sort((a, b) => groupRank(a.group) - groupRank(b.group) || a.order - b.order)
-        .map(({ group }) => group);
 }

@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema,
     AutomationDefinitionListResponseSchema, AutomationDefinitionDetailsRequestSchema, AutomationDefinitionReconcileRequestSchema, type AutomationDefinitionDetail} from '@happier-dev/protocol/automations/automationApiV3';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema,
-    AutomationStoredWorkflowDefinitionV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { WorkflowDefinitionArtifactHeaderV1Schema,
@@ -31,7 +30,6 @@ import { createWorkflowAutomationTriggerDetailFixture, selectWorkflowAutomationD
 import { createSessionFixture, createSessionListRenderableSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
 import { WorkflowRunAutomationSummariesResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 // Native confirmation is the user-input boundary; these Save/history cases accept it.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -57,13 +55,12 @@ const { useWorkflowTriggerEditing } = await import('./useWorkflowTriggerEditing'
 const { editWorkflowTriggerDraft } = await import('./workflowTriggerDraft');
 const { commitWorkflowTriggerWhen } = await import('./workflowTriggerStarts');
 const { useWorkflowTriggerSets } = await import('./useWorkflowTriggerSets');
-const { SessionTriggersSection: SessionTriggersContent } = await import('./SessionTriggersSection');
-const { useSessionTriggers } = await import('./useSessionTriggers');
+const { useSessionWorkflowContext } = await import('./useSessionWorkflowContext');
+const { SessionHabitsSection } = await import('@/components/sessions/work/SessionSetupSections');
 
-// Match the Info host: acquire the real Session read once, then render its section.
-function SessionTriggersSection(props: Omit<React.ComponentProps<typeof SessionTriggersContent>, 'read'>) {
-    const read = useSessionTriggers(props.sessionId);
-    return <SessionTriggersContent {...props} read={read} />;
+/** The Session read owner as the presented Info host demands it. */
+function useSessionTriggers(sessionId: string) {
+    return useSessionWorkflowContext(sessionId, { demanded: true });
 }
 
 const definitionId = '00000000-0000-4000-8000-000000000001';
@@ -821,78 +818,6 @@ describe('workflow trigger editing lifetime', () => {
             expect(hook.getCurrent().sets.map(value => value.automationId)).toEqual([set.automationId]);
         });
     });
-    it.each([null, 'session-b'])('edits a bound Habit schedule through its real form and Action without changing scope or admission (scope %s)', async (scopeSessionId) => {
-        const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
-        const selection = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'm1' } });
-        if (selection.status !== 'ready') throw new Error('Session-bound example required');
-        seed(set);
-        if (scopeSessionId) storage.setState(state => ({ sessions: { ...state.sessions,
-            [scopeSessionId]: createSessionFixture({ id: scopeSessionId, serverId, metadata: {
-                machineId: 'm1', path: '/repo', host: 'test' } }) } }));
-        rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, workflowDefinitionId: null, scopeSessionId,
-            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
-                workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: selection.example.definition,
-            } } } }));
-        home.answer(serverId, '/v1/plugins/data/query', { status: 503, body: { error: 'unavailable' } });
-        const { useSessionTriggers } = await import('./useSessionTriggers');
-        const hook = await renderHook(() => useSessionTriggers('session-a'));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
-        expect(hook.getCurrent().sets.map(value => value.automationId)).toEqual([set.automationId]);
-        expect(hook.getCurrent().sets[0]?.scopeSessionId).toBe(scopeSessionId);
-        expect(hook.getCurrent().sets[0]?.destinations?.targetSessionIds).toEqual(['session-a']);
-        expect(hook.getCurrent().pullRequestLinks).toMatchObject({ status: 'unavailable' });
-        const originalTarget = hook.getCurrent().sets[0]!.target;
-        const screen = await renderScreen(<SessionTriggersSection sessionId="session-a" serverId={serverId} />);
-        expect(screen.findByTestId('session-work-trigger:set-1:t1-switch')?.props.disabled).not.toBe(true);
-        await screen.pressByTestIdAsync('session-work-trigger:set-1:t1');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-work-trigger-popover-submit')).not.toBeNull());
-        expect.soft(screen.findByTestId('session-work-trigger-popover-runs-in') !== null).toBe(scopeSessionId === null);
-        const clock = screen.findAll(node => typeof node.props.onCommit === 'function' && node.props.testID === 'session-work-trigger-popover-at')[0];
-        expect(clock).toBeDefined();
-        await act(async () => { clock!.props.onCommit('10:30'); });
-        expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(false);
-        await screen.pressByTestIdAsync('session-work-trigger-popover-submit');
-        await waitForHomeGovernance(() => expect(rows[0]?.triggers[0]).toMatchObject({ schedule: { scheduleExpr: '30 10 * * *' } }));
-        expect(rows[0]?.scopeSessionId).toBe(scopeSessionId);
-        expect.soft(hook.getCurrent().sets[0]?.target).toEqual(originalTarget);
-        const recipe = rows[0]!.executionRecipe;
-        if (recipe?.v !== 2 || recipe.workflow.t !== 'plain') throw new Error('Expected saved plain recipe');
-        const savedWorkflow = AutomationStoredWorkflowDefinitionV2Schema.parse(recipe.workflow.v);
-        if (!savedWorkflow.inlineDefinition) throw new Error('Expected saved inline definition');
-        const { materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1');
-        const admission = await materializeWorkflowAcceptedSnapshotV1({ definition: savedWorkflow.inlineDefinition,
-            context: { source: { kind: 'inline' }, inputs: {}, machineId: 'm1', executionTarget: { kind: 'session' },
-                workspaceTarget: { project: { machineId: 'm1', directory: '/repo', checkoutRootPath: '/repo' } },
-                origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
-            admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
-        expect(admission).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ selection: {
-            conversation: { kind: 'existing_session', sessionId: 'session-a', machineId: 'm1' },
-        } }] } });
-        if (scopeSessionId === null) {
-            await screen.pressByTestIdAsync('session-work-trigger:set-1:t1');
-            const whenPicker = screen.findAll(node => node.props.testID === 'session-work-trigger-popover-when'
-                && typeof node.props.onSelect === 'function')[0];
-            expect(whenPicker).toBeDefined();
-            await act(async () => { whenPicker!.props.onSelect('turnEnds'); });
-            expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(false);
-            await screen.pressByTestIdAsync('session-work-trigger-popover-submit');
-            const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
-            await waitForHomeGovernance(() => expect(hook.getCurrent().sets[0]?.triggers[0]).toMatchObject({
-                kind: 'sessionLifecycle', subject: { kind: 'session',
-                    serverId: resolvePortableServerIdentityForRoutingId(serverId), sessionId: 'session-a' },
-                events: AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1.turnEnds, policy: { kind: 'everyMatch' },
-            }));
-            expect(rows[0]?.scopeSessionId).toBeNull();
-            expect(hook.getCurrent().sets[0]?.target).toEqual(originalTarget);
-        }
-        await act(async () => { await hook.getCurrent().update({ triggerId: AutomationTriggerIdSchema.parse('t1'),
-            expectedRevision: rows[0]!.templateVersion, patch: { enabled: false } }); });
-        expect(hook.getCurrent().sets[0]?.triggers[0]?.enabled).toBe(false);
-        expect(rows[0]?.scopeSessionId).toBe(scopeSessionId);
-        await act(async () => { await hook.getCurrent().remove('t1'); });
-        expect(hook.getCurrent().sets).toEqual([]);
-        expect(rows[0]?.triggers).toEqual([]);
-    });
     it.each(['prComment', 'ciFailed'] as const)('edits saved %s in the shared section using its saved lifetime without an intake context', async kind => {
         const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
         const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
@@ -1033,8 +958,7 @@ describe('workflow trigger editing lifetime', () => {
                 // The observer opens first. Ordinary PR metadata reads remain independent.
                 ...(collectionReads++ === 0 ? { respondAfter: attachment.promise } : {}),
             }) });
-            const { useSessionTriggers } = await import('./useSessionTriggers');
-            const hook = await renderHook(() => useSessionTriggers('session-a'));
+                const hook = await renderHook(() => useSessionTriggers('session-a'));
             unmount = hook.unmount;
             await waitForHomeGovernance(() => expect(collectionReads).toBeGreaterThan(0));
             await vi.waitFor(() => expect(hook.getCurrent().sets.map(value => value.automationId).sort())
@@ -1055,24 +979,7 @@ describe('workflow trigger editing lifetime', () => {
             await connection.dispose();
         }
     });
-    it('keeps ordinary Habits usable without a section-level band when the real pull-request read is unavailable', async () => {
-        seed(set);
-        home.answer(serverId, '/v1/plugins/data/query', { status: 503, body: { error: 'unavailable' } });
-        const { useSessionTriggers } = await import('./useSessionTriggers');
-        const hook = await renderHook(() => useSessionTriggers('session-a'));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().pullRequestLinks).toMatchObject({ status: 'unavailable' }));
-        // This saved Workflow is an Account set; bind it here through its actual scope.
-        rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, scopeSessionId: 'session-a' }));
-        await act(async () => hook.getCurrent().retry());
-        const screen = await renderScreen(<SessionTriggersSection sessionId="session-a" serverId={serverId} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-work-trigger:set-1:t1')).not.toBeNull());
-        expect(screen.findHostByTestId('session-work-trigger-links-unavailable')).toBeNull();
-        expect(screen.findByTestId('session-work-trigger:set-1:t1-switch')?.props.disabled).not.toBe(true);
-        await screen.pressByTestIdAsync('session-work-trigger:set-1:t1');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(false));
-    });
     it('keeps a Session trigger receipt when its pre-Save reads finish after the replacement read', async () => {
-        const { useSessionTriggers } = await import('./useSessionTriggers');
         const hook = await renderHook(() => useSessionTriggers('session-a'));
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
         const releaseReads = createDeferred<void>();
@@ -1084,10 +991,16 @@ describe('workflow trigger editing lifetime', () => {
         };
         await act(async () => hook.getCurrent().retry());
         await waitForHomeGovernance(() => expect(pendingReads).toBe(2));
-        await act(async () => { await hook.getCurrent().add({ target: { kind: 'inline',
-            definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait',
-                document: { text: 'Continue', references: [], attachments: [] } }] }) },
-            executionTarget: { kind: 'session' }, trigger }); });
+        // The shared editor writes a Session-lifetime trigger through the one Action, then reads the Session again.
+        const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        await act(async () => {
+            await addWorkflowTrigger({ target: { kind: 'inline',
+                definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait',
+                    document: { text: 'Continue', references: [], attachments: [] } }] }) },
+                executionTarget: { kind: 'session' }, trigger, lifetimeSession: { sessionId: 'session-a' } },
+                { context: { externalActionTarget: { kind: 'machine', machineId: projectTarget.machineId } } });
+            hook.getCurrent().read.retry();
+        });
         expect(hook.getCurrent().sets).toMatchObject([{ scopeSessionId: 'session-a', triggers: [{ kind: 'schedule' }] }]);
         const acknowledged = hook.getCurrent().sets;
         await act(async () => { releaseReads.resolve(); await releaseReads.promise; });
@@ -1099,7 +1012,6 @@ describe('workflow trigger editing lifetime', () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         // Reinstall the release for the native executable platform selected by this case.
         await seedChannels();
-        const { useSessionTriggers } = await import('./useSessionTriggers');
         const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -1163,7 +1075,6 @@ describe('workflow trigger editing lifetime', () => {
     });
 
     it('loads a new Account’s session triggers without claiming the previous Account’s settled status', async () => {
-        const { useSessionTriggers } = await import('./useSessionTriggers');
         const hook = await renderHook(() => useSessionTriggers('session-a'));
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
         const next = createDeferred<void>();
@@ -1440,7 +1351,6 @@ describe('workflow trigger editing lifetime', () => {
             }
             return { body: selectWorkflowAutomationDetailsFixture(rows, input) };
         } });
-        const { useSessionTriggers } = await import('./useSessionTriggers');
         const hook = await renderHook(() => useSessionTriggers('session-a'));
         try {
             const physicalSignal = await started.promise;
@@ -1500,6 +1410,9 @@ describe('workflow trigger editing lifetime', () => {
         const sessionRead = createDeferred<void>();
         let failAccountRead = true;
         home.answer(serverId, 'POST /v3/automations/query', { select: async input => {
+            if (input && typeof input === 'object' && 'subject' in input) {
+                return { body: { automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 } };
+            }
             if (input && typeof input === 'object' && 'scopeSessionId' in input) {
                 await sessionRead.promise;
                 return { body: selectWorkflowAutomationDetailsFixture([], input) };
@@ -1507,24 +1420,23 @@ describe('workflow trigger editing lifetime', () => {
             return failAccountRead ? { status: 503, body: { error: 'storage_unavailable' } }
                 : { body: selectWorkflowAutomationDetailsFixture(rows, input) };
         } });
-        // Once the census recovers, this composed section demands the row's public Run status.
-        home.answer(serverId, '/v3/automations/runs/workflow-storage', { body: WorkflowRunAutomationSummariesResultV1Schema.parse({
-            automationSummaries: [{ automationId: set.automationId, lastRun: null }], remainingAutomationIds: [],
-        }) });
+        // The composed Info section reads what wrote into this Session (none yet) and, once the census recovers,
+        // the row's public Run status.
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => ({ body:
+            input && typeof input === 'object' && 'operation' in input && input.operation === 'summaries'
+                ? WorkflowRunAutomationSummariesResultV1Schema.parse({
+                    automationSummaries: [{ automationId: set.automationId, lastRun: null }], remainingAutomationIds: [] })
+                : { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } }) });
         storage.setState({ endpointStatus: 'connecting', socketStatus: 'connecting' });
-        const screen = await renderScreen(<SessionTriggersSection sessionId="session-a" serverId={serverId} />);
+        const screen = await renderScreen(<SessionHabitsSection sessionId="session-a" serverId={serverId} />);
         try {
             await flushHookEffects();
-            expect(screen.findByTestId('session-work-triggers-failed')).not.toBeNull();
-            expect(screen.findByTestId('session-work-triggers-loading')).toBeNull();
-            expect(screen.findByTestId('session-work-triggers-empty')).toBeNull();
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
             failAccountRead = false;
-            const retry = screen.findAll(node => node.props.testID === 'session-work-triggers-failed'
-                && typeof node.props.action?.onPress === 'function')[0];
-            expect(retry).toBeDefined();
-            await act(async () => { retry!.props.action.onPress(); sessionRead.resolve(); });
-            await waitForHomeGovernance(() => expect(screen.findByTestId('session-work-trigger:set-1:t1')).not.toBeNull());
-            await waitForHomeGovernance(() => expect(screen.findByTestId('session-work-triggers-failed') === null).toBe(true));
+            await act(async () => { await screen.pressByTestIdAsync('subject-triggers-read-retry'); sessionRead.resolve(); });
+            // An Account Workflow that writes into this Session is listed under what writes here.
+            await waitForHomeGovernance(() => expect(screen.findByTestId('scheduled-workflow:set-1:t1')).not.toBeNull());
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read') === null).toBe(true));
             expect(storage.getState().workflowTriggerSetIdsByQuery).toMatchObject({ account_all: ['set-1'], 'session:session-a': [] });
         } finally { await act(async () => sessionRead.resolve()); }
     });

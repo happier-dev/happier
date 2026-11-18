@@ -19250,8 +19250,6 @@ const ja: WorkflowTriggersCopy = {
     },
     section: {
         add: 'トリガーを追加',
-        emptyTitle: "トリガーはまだありません",
-        emptyBody: '各ターンのレビューや、目標に向けた継続のために追加しましょう。',
         loadFailed: 'このセッションのトリガーを読み込めませんでした。',
         accountLoadFailed: '一部のワークフローを読み込めませんでした。',
         automationsLoadFailed: "オートメーションを読み込めませんでした。",
@@ -19259,7 +19257,6 @@ const ja: WorkflowTriggersCopy = {
         startsUnavailable: "ここでワークフローを開始できるものを読み込めませんでした。",
         startsHere: "ここから開始",
         title: "オートメーション",
-        countOn: ({ count }) => `${count} 件オン`,
         info: 'このセッションから始まるものと、ここに書き込むもの。',
         saveFailed: 'このトリガーを保存できませんでした。変更はそのまま残っています。',
         machineInfo: "このマシンから始まるものと、ここで実行されるワークフロー。",

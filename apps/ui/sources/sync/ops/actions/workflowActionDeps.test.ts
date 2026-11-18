@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import {
     createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -94,14 +95,14 @@ import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } f
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { SessionTriggersSection } from '@/components/workflows/triggers/SessionTriggersSection';
+import { WorkflowTriggerBlock } from '@/components/workflows/triggers/WorkflowTriggerBlock';
+import { buildTriggerDefinition, buildTriggerTarget, createDefaultWhen } from '@/components/workflows/triggers/sessionTriggerForm';
 import { ConversationBindingV1Schema, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { clearPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
-import { listWorkflowTriggerPage } from '@/sync/domains/workflows/workflowTriggerActions';
+import { addWorkflowTrigger, listWorkflowTriggerPage } from '@/sync/domains/workflows/workflowTriggerActions';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { useSessionTriggers } from '@/components/workflows/triggers/useSessionTriggers';
+import { useSessionWorkflowContext } from '@/components/workflows/triggers/useSessionWorkflowContext';
 import { publishActivePluginCollectionChanges } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -457,6 +458,7 @@ async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly
         if (target.pathname === '/v2/sessions' || target.pathname === '/v2/sessions/active') {
             return json({ sessions: [], nextCursor: null, hasNext: false });
         }
+        if (target.pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         if (target.pathname === '/v1/machines') return json([]);
         if (target.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => ({
             ...createPlainMachineRowFixture({ id, accountId: options.sharedMachine ? 'custodian' : accountId }),
@@ -608,6 +610,11 @@ function savedAutomationReceipt(automationId: string) {
                 replyHandoffAttempt: 0, replyHandoffDueAt: null, createdAt: 1, updatedAt: 1 },
             workflowRun: { recipeKind: 'workflow-v2' as const, workflowRunId: runId },
     };
+}
+
+/** The Session read owner as the presented Info host demands it. */
+function useSessionTriggers(sessionId: string) {
+    return useSessionWorkflowContext(sessionId, { demanded: true });
 }
 
 describe('UI Workflow Action front door', () => {
@@ -1729,13 +1736,13 @@ describe('UI Workflow Action front door', () => {
             // initial Sync's independent HTTP list is not this consumer's demand.
             const triggerActions = await import('@/sync/domains/workflows/workflowTriggerActions');
             const sessionLists = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
-            const accountLists = vi.spyOn(triggerActions, 'listWorkflowTriggerSets');
             const sessionListCount = () => sessionLists.mock.calls.filter(([request]) => 'lifetimeSession' in request).length;
+            const accountListCount = () => sessionLists.mock.calls.filter(([request]) => 'scope' in request && request.scope === 'account_all').length;
             hook = await renderHook(() => useSessionTriggers(sessionId), { wrapper: AppShell });
             // Neither Account read waits for Session metadata or the contributed observer.
             await waitForHomeGovernance(() => expect(hook!.getCurrent().status).toBe('ready'));
             expect(sessionListCount()).toBe(1);
-            expect(accountLists).toHaveBeenCalledTimes(1);
+            expect(accountListCount()).toBe(1);
             await act(async () => storage.getState().applySessions([createSessionFixture({ id: sessionId, active: false,
                 metadataLayoutVersion: 1, ownerMetadataView: { path: '/repo', host: 'host', homeDir: '/home', machineId: 'machine-a' },
             })]));
@@ -1745,7 +1752,7 @@ describe('UI Workflow Action front door', () => {
             await waitForHomeGovernance(() => expect(hook!.getCurrent().status).toBe('ready'));
             expect(hook.getCurrent().observationFailure).toBeNull();
             expect(sessionListCount()).toBe(1);
-            expect(accountLists).toHaveBeenCalledTimes(1);
+            expect(accountListCount()).toBe(1);
             // Sync hydration does not restart either settled trigger read.
             const { fetchAndApplyAutomations } = await import('@/sync/engine/automations/syncAutomations');
             await act(async () => { await fetchAndApplyAutomations({ credentials: h.account.credentials,
@@ -1764,11 +1771,11 @@ describe('UI Workflow Action front door', () => {
                 observationFailure: availability === 'installed' || availability === 'replaced' ? null
                     : { code: 'contributed_action_unavailable', phase: 'observe', retryable: false } }));
             expect(sessionListCount()).toBe(1);
-            expect(accountLists).toHaveBeenCalledTimes(1);
+            expect(accountListCount()).toBe(1);
             await hook.rerender();
             await act(async () => storage.setState({ endpointStatus: 'online' }));
             expect(sessionListCount()).toBe(1);
-            expect(accountLists).toHaveBeenCalledTimes(1);
+            expect(accountListCount()).toBe(1);
             if (availability === 'absent') {
                 // A later declaration does not silently retry a settled
                 // refusal. The existing Retry must attach and clear its band.
@@ -1895,7 +1902,7 @@ describe('UI Workflow Action front door', () => {
             await act(async () => { h.account.dispose(); await connection?.dispose(); storage.setState(previousState); });
         }
     });
-    it.each(['prComment', 'ciFailed'] as const)('creates a scoped %s trigger from the session form and selected pull request', async (kind) => {
+    it.each(['prComment', 'ciFailed'] as const)('creates a scoped %s trigger from the pull request chosen in the trigger editor', async (kind) => {
         const previousState = storage.getState();
         const h = await createHarness('plain', { identity: true, credentialKind: 'account' });
         const sessionId = 'session-pr-form';
@@ -1953,42 +1960,40 @@ describe('UI Workflow Action front door', () => {
             });
             const listed = await listWorkflowTriggerPage({ lifetimeSession: { sessionId } }, { context: { externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } });
             expect(listed.pullRequestLinks).toEqual(pullRequestLinks);
-            // Match Info's owner: acquire one real read, then pass it to the presenter.
-            function SessionTriggerForm() {
-                const read = useSessionTriggers(sessionId);
-                return React.createElement(SessionTriggersSection, { sessionId, read });
+            // The trigger editor's PR/CI row lists this Session's open pull requests through SCM while its menu is open.
+            const initial = createDefaultWhen(kind, Array.isArray(listed.pullRequestLinks) ? listed.pullRequestLinks : []);
+            let chosen = initial;
+            function PullRequestBlock() {
+                const [when, setWhen] = React.useState(initial);
+                chosen = when;
+                return React.createElement(WorkflowTriggerBlock, { testID: 'pr-block', title: kind, when, enabled: true,
+                    incomplete: false, startOptions: [], onSelectStart: () => {}, onChangeWhen: setWhen, onRemove: () => {},
+                    machineId: 'machine-a', serverId: h.account.serverId, sessionId });
             }
-            screen = await renderScreen(React.createElement(SessionTriggerForm));
-            await waitForHomeGovernance(() => expect(screen?.findByTestId('session-work-triggers-add')).not.toBeNull());
-            await screen.pressByTestIdAsync('session-work-triggers-add');
-            await screen.pressByTestIdAsync('session-work-trigger-examples-new');
-            const when = screen.findAllByType(DropdownMenu).find((node) => node.props.testID === 'session-work-trigger-popover-when');
-            expect(when).toBeDefined();
-            expect(when?.props.items.find((item: { id: string }) => item.id === kind)).not.toMatchObject({ disabled: true });
-            await act(async () => when?.props.onSelect(kind));
+            screen = await renderScreen(React.createElement(PullRequestBlock));
+            const picker = () => screen?.findAll((node) => node.props.testID === 'pr-block-pull-request'
+                && typeof node.props.onOpenChange === 'function')[0];
+            await waitForHomeGovernance(() => expect(picker()).toBeDefined());
             if (pullRequestLinks.length === 0) {
-                expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(true);
-                const picker = () => screen?.findAllByType(DropdownMenu).find((node) => node.props.testID === 'session-work-trigger-popover-pull-request');
+                expect(buildTriggerDefinition({ when: chosen, enabled: true, sessionId })).toBeNull();
                 await act(async () => picker()?.props.onOpenChange(true));
-                await flushHookEffects();
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(picker()?.props.items.map((item: { id: string }) => item.id)).toContain('happier-dev/happier#42');
+                });
                 await act(async () => picker()?.props.onSelect('happier-dev/happier#42'));
             }
             expect(screen.getTextContent()).toContain('#42');
-            await act(async () => screen?.changeTextByTestId('session-work-trigger-popover-prompt', 'Review this pull request'));
-            expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(false);
-            await screen.pressByTestIdAsync('session-work-trigger-popover-submit');
-            // The submit handler starts an asynchronous Action without returning
-            // its promise; closing the form is its observable success settlement.
-            await waitForHomeGovernance(async () => {
-                await flushHookEffects();
-                expect(screen?.findByTestId('session-work-trigger-popover')).toBeNull();
-            });
+            const trigger = buildTriggerDefinition({ when: chosen, enabled: true, sessionId });
+            const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review this pull request' });
+            if (!trigger || !target) throw new Error('Expected a complete PR trigger');
+            await act(async () => { await addWorkflowTrigger({ target, trigger, inputs: {}, lifetimeSession: { sessionId } },
+                { context: { externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } }); });
             expect([...h.automationRows.values()]).toEqual([expect.objectContaining({
                 scopeSessionId: sessionId, triggers: [expect.objectContaining({ kind, sourceSessionId: sessionId, enabled: true })],
             })]);
             expect(attachments).toEqual([expect.objectContaining({ kind: 'attach', sessionId, pullRequest,
                 target: expect.objectContaining({ triggerKind: kind }) })]);
-            expect(screen.findByTestId('session-work-trigger-popover')).toBeNull();
         } finally {
             await act(async () => { screen?.unmount(); h.account.dispose(); await connection?.dispose(); storage.setState(previousState); });
         }

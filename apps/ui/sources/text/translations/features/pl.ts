@@ -19340,8 +19340,6 @@ const pl: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Dodaj wyzwalacz',
-        emptyTitle: "Brak wyzwalaczy",
-        emptyBody: 'Dodaj jeden, aby przeglądać każdą turę lub dążyć do celu.',
         loadFailed: 'Nie udało się wczytać wyzwalaczy tej sesji.',
         accountLoadFailed: 'Nie udało się wczytać niektórych workflow.',
         automationsLoadFailed: "Nie udało się wczytać automatyzacji.",
@@ -19349,7 +19347,6 @@ const pl: WorkflowTriggersCopy = {
         startsUnavailable: "Nie udało się odczytać, co może tu uruchomić workflow.",
         startsHere: "Startuje tutaj",
         title: "Automatyzacje",
-        countOn: ({ count }) => `${count} włączone`,
         info: 'To, co startuje z tej sesji, i to, co w niej zapisuje.',
         saveFailed: 'Nie udało się zapisać tego wyzwalacza. Twoje zmiany nadal tu są.',
         machineInfo: "Co startuje z tej maszyny i jakie przepływy pracy na niej działają.",

@@ -88,8 +88,6 @@ export const en = {
     },
     section: {
         add: 'Add a trigger',
-        emptyTitle: 'No triggers',
-        emptyBody: 'Add one to review each turn or keep going toward a goal.',
         loadFailed: "Could not load this session's triggers.",
         accountLoadFailed: 'Some workflows couldn’t load.',
         automationsLoadFailed: "Couldn’t load automations.",
@@ -97,7 +95,6 @@ export const en = {
         startsUnavailable: "Couldn’t read what can start a workflow here.",
         title: "Automations",
         startsHere: 'Starts here',
-        countOn: ({ count }: Count) => `${count} on`,
         info: 'What starts from this session, and what writes into it.',
         saveFailed: 'Could not save this trigger. Your changes are still here.',
         machineInfo: "What starts from this Machine, and the workflows that run on it.",

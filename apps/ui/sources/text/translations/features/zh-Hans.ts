@@ -19190,8 +19190,6 @@ const zhHans: WorkflowTriggersCopy = {
     },
     section: {
         add: '添加触发器',
-        emptyTitle: "还没有触发器",
-        emptyBody: '添加一个，用于审查每一轮或持续推进目标。',
         loadFailed: '无法加载此会话的触发器。',
         accountLoadFailed: '部分工作流无法加载。',
         automationsLoadFailed: "无法加载自动化。",
@@ -19199,7 +19197,6 @@ const zhHans: WorkflowTriggersCopy = {
         startsUnavailable: "无法读取这里可以启动工作流的内容。",
         startsHere: "从此处开始",
         title: "自动化",
-        countOn: ({ count }) => `${count} 个已开启`,
         info: '从此会话启动的内容，以及写入此会话的内容。',
         saveFailed: '无法保存此触发器。你的更改仍在这里。',
         machineInfo: "从这台机器启动的内容，以及在其上运行的工作流。",

@@ -18810,8 +18810,6 @@ const de: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Auslöser hinzufügen',
-        emptyTitle: "Noch keine Auslöser",
-        emptyBody: 'Füge einen hinzu, um jeden Zug zu prüfen oder auf ein Ziel hinzuarbeiten.',
         loadFailed: 'Die Auslöser dieser Sitzung konnten nicht geladen werden.',
         accountLoadFailed: 'Einige Workflows konnten nicht geladen werden.',
         automationsLoadFailed: "Automatisierungen konnten nicht geladen werden.",
@@ -18819,7 +18817,6 @@ const de: WorkflowTriggersCopy = {
         startsUnavailable: "Konnte nicht lesen, was hier einen Workflow starten kann.",
         startsHere: "Startet hier",
         title: "Automatisierungen",
-        countOn: ({ count }) => `${count} an`,
         info: 'Was von dieser Sitzung aus startet und was hierhin schreibt.',
         saveFailed: 'Dieser Auslöser konnte nicht gespeichert werden. Deine Änderungen sind noch da.',
         machineInfo: "Was von dieser Maschine aus startet und welche Workflows auf ihr laufen.",

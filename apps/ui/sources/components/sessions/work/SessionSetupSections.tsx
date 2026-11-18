@@ -14,9 +14,15 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SessionTriggerHistoryScope } from '@/components/workflows/triggers/SessionTriggerHistoryScope';
-import { SessionTriggersSection, type SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
+import { SubjectTriggersSectionContent, type SubjectTriggersSectionActions } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
-import { useSessionTriggers } from '@/components/workflows/triggers/useSessionTriggers';
+import { useResourceAutomationsSection } from '@/components/workflows/triggers/useResourceAutomationsSection';
+import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
+import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
+import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
+import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { projectScheduledWorkflowRows } from '@/components/workflows/triggers/scheduledWorkflowRows';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
@@ -150,43 +156,80 @@ type SessionHabitsSectionProps = Readonly<{
     serverId: string;
     onOpenAllAutomations?: () => void;
     /** The Work tab's "+" › Add a trigger… opens the section's popover from outside it. */
-    actionsRef?: React.Ref<SessionTriggersSectionActions>;
+    actionsRef?: React.Ref<SubjectTriggersSectionActions>;
 }>;
 
 export const SessionHabitsSection = React.memo(function SessionHabitsSection(props: SessionHabitsSectionProps) {
   const scope = useActiveServerAccountScope(props.serverId);
-  return scope && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId)
-    ? <SessionHabitsContent {...props} /> : null;
+  // The section reads one Session of one Home: its canonical subject names that Home's portable identity.
+  const homeId = resolvePortableServerIdentityForRoutingId(props.serverId);
+  return scope && homeId && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId)
+    ? <SessionHabitsContent {...props} homeId={homeId} /> : null;
 });
 
-function SessionHabitsContent(props: SessionHabitsSectionProps) {
-  const read = useSessionTriggers(props.sessionId);
-  const destination = useWorkflowRunWindow(`destination:${props.sessionId}`);
-  // Scheduled and Starts here share the Session's admitted trigger projection.
-  const scheduledRows = React.useMemo(() => projectScheduledWorkflowRows(read.sets, props.sessionId)
-    .filter(row => row.set.scopeSessionId !== props.sessionId), [read.sets, props.sessionId]);
+const NO_SETS: readonly never[] = [];
+const NO_RETRY = () => {};
+
+function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ homeId: string }>) {
+  const { sessionId } = props;
+  const [title] = useSessionDisplayTitles([{ sessionId, serverId: props.serverId }]);
+  const subject = React.useMemo(() => ({ kind: 'session' as const, serverId: props.homeId, sessionId }), [props.homeId, sessionId]);
+  // One intake for the section and what writes here: the shared hook owns the Session watcher once.
+  const automations = useResourceAutomationsSection({ subject, subjectName: title ?? '' });
+  const session = automations.session;
+  const sessionSets = session?.sets ?? NO_SETS;
+  const destination = useWorkflowRunWindow(`destination:${sessionId}`);
+  // Scheduled work that writes here comes from Account-lifetime sets; a row the section already lists stays there.
+  const listed = React.useMemo(() => new Set([...automations.rows, ...automations.also].map(row => row.automationId)),
+    [automations.rows, automations.also]);
+  const scheduledRows = React.useMemo(() => projectScheduledWorkflowRows(sessionSets, sessionId)
+    .filter(row => row.set.scopeSessionId !== sessionId && !listed.has(row.set.automationId)), [sessionSets, sessionId, listed]);
+  const sessionStatus = session?.status ?? 'ready';
+  const sessionRetry = session?.retry;
   const scheduled = React.useMemo(() => ({
-    available: true, rows: scheduledRows, status: read.status, retry: read.retry, serverId: props.serverId,
-  }), [scheduledRows, read.status, read.retry, props.serverId]);
-  const writesHereKeys = React.useMemo(() => new Set(scheduledRows.map(row => row.key)), [scheduledRows]);
+    available: true, rows: scheduledRows, status: sessionStatus, retry: sessionRetry ?? NO_RETRY, serverId: props.serverId,
+  }), [scheduledRows, sessionStatus, sessionRetry, props.serverId]);
+  const read = automations.read;
   const retry = React.useCallback(() => {
     read.retry();
+    sessionRetry?.();
     if (destination.loadMoreFailed) destination.loadMore();
     else destination.retry();
-  }, [read.retry, destination.loadMoreFailed, destination.loadMore, destination.retry]);
-  const status = read.status === 'failed' || destination.status === 'failed' || destination.loadMoreFailed
-    ? 'failed' : read.status === 'loading' || destination.status === 'loading' ? 'loading' : 'ready';
+  }, [read.retry, sessionRetry, destination.loadMoreFailed, destination.loadMore, destination.retry]);
+  const status = read.status === 'failed' || sessionStatus === 'failed' || destination.status === 'failed' || destination.loadMoreFailed
+    ? 'failed' : read.status === 'loading' || sessionStatus === 'loading' || destination.status === 'loading' ? 'loading' : 'ready';
+  // A read that failed while the Machine was away is read again when it returns, without a Retry tap.
+  const { machineReachable } = useSessionMachineReachability(sessionId, props.serverId);
+  const retryRef = React.useRef({ status, retry });
+  retryRef.current = { status, retry };
+  React.useEffect(() => {
+    if (machineReachable && retryRef.current.status === 'failed') retryRef.current.retry();
+  }, [machineReachable]);
+  // Retry and the pending/failed treatment cover the section's own read and the readers of what writes here.
+  const combined = React.useMemo(() => ({ ...automations, read: { ...read, status, retry } }), [automations, read, status, retry]);
+  // Session Info folds an empty Habits into "Add to this session" from this read, without another.
+  const summaryScope = useActiveServerAccountScope(props.serverId);
+  useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
+    scope: summaryScope, sessionId, coverage: 'complete',
+    status: read.status === 'ready' ? 'ready' : read.status === 'failed' ? 'error' : 'loading',
+    count: automations.rows.length + automations.also.length,
+  } : null);
+  // "When this turn finishes…" and `?trigger=` deep links arrive on the Info route (`/session/[id]/triggers`).
+  const params = useLocalSearchParams();
+  const exactTurn = parseExactTurnAutomationPrefillRoute(params);
+  const exactTurnPrefill = exactTurn.kind === 'valid' && exactTurn.prefill.sourceSessionId === sessionId ? exactTurn.prefill : undefined;
   return (
-    // One Triggers section for Info and the Work tab (owner 0936 #16). Both hosts are side panes, so it always
+    // One Automations section for Info and the Work tab (owner 0936 #16). Both hosts are side panes, so it always
     // takes Session Info's inspector anatomy, never the grouped card a bare Work scroll would give it.
     <SidePaneInspectorSections>
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
-          <SessionTriggersSection sessionId={props.sessionId} serverId={props.serverId} actionsRef={props.actionsRef}
-            read={{ ...read, status, retry }} excludedTriggerKeys={writesHereKeys}
+          <SubjectTriggersSectionContent subject={subject} subjectName={title ?? ''} automations={combined}
+            actionsRef={props.actionsRef} exactTurnPrefill={exactTurnPrefill}
+            {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
             hasRetainedContent={scheduledRows.length > 0 || destination.runIds.length > 0}>
-            <SessionWritesHereSection sessionId={props.sessionId} serverId={props.serverId}
+            <SessionWritesHereSection sessionId={sessionId} serverId={props.serverId}
               scheduled={scheduled} read={destination} />
             {props.onOpenAllAutomations ? (
               <Item
@@ -195,7 +238,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps) {
                 onPress={props.onOpenAllAutomations}
               />
             ) : null}
-          </SessionTriggersSection>
+          </SubjectTriggersSectionContent>
         </View>
       </SessionTriggerHistoryScope>
     </WorkSectionPlacementProvider>

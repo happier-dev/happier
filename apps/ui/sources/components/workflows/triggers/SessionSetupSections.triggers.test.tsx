@@ -149,11 +149,30 @@ let failRunReads = false;
 let holdAutomationRead: (() => Promise<void>) | undefined;
 let finishRunRead: (() => Promise<void>) | undefined;
 let workflowInventoryReads = 0;
+let subjectQueries: unknown[] = [];
+
+/** What the Home attaches to a Session subject: each trigger of a set whose lifetime is that Session. */
+function attachedTo(sessionId: string) {
+  return rows.filter(row => row.scopeSessionId === sessionId).flatMap(row => row.triggers.map(trigger => ({
+    automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
+    relation: 'direct' as const, enabled: row.enabled && trigger.enabled, revision: trigger.revision,
+    summary: trigger.kind === 'schedule'
+      ? { kind: 'schedule' as const, schedule: trigger.schedule, remainingOccurrences: null }
+      : { kind: 'sessionLifecycle' as const, events: ['parentTurnCompleted' as const] },
+    setUpBy: { accountId: 'account-a', displayName: 'Owner' },
+  })));
+}
 const automationHttp = vi.fn(async (url: URL, init?: RequestInit): Promise<Response> => {
   await holdAutomationRead?.();
   const method = init?.method ?? 'GET';
-  const detailQuery = url.pathname === '/v3/automations/query' && method === 'POST'
-    ? AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init?.body))) : null;
+  const body = url.pathname === '/v3/automations/query' && method === 'POST' ? JSON.parse(String(init?.body)) : null;
+  if (body !== null && 'subject' in body) {
+    if (failAutomationReads) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+    subjectQueries.push(body.subject);
+    return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [],
+      attached: attachedTo(body.subject.sessionId), nextCursor: null, skippedNotSharedCount: 0 }));
+  }
+  const detailQuery = body === null ? null : AutomationDefinitionDetailsRequestSchema.parse(body);
   if ((method === 'GET' || detailQuery !== null) && failAutomationReads) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
   if (detailQuery) {
     const selected = rows.filter(row => detailQuery.scopeSessionId ? row.scopeSessionId === detailQuery.scopeSessionId
@@ -243,6 +262,7 @@ beforeEach(async () => {
   holdAutomationRead = undefined;
   finishRunRead = undefined;
   automationHttp.mockClear();
+  subjectQueries = [];
   machineRow = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' });
   workflowHttp = await installWorkflowActionHttpBoundary({ accountId: () => 'account-a', automationDefinitions: automationHttp,
     machineRows: () => [machineRow],
@@ -295,7 +315,9 @@ async function seedSessionMachine(machineActive: boolean) {
   return machine;
 }
 
-describe('the Session Info page Triggers section', () => {
+const ROW = 'subject-triggers:set-1:trig-1';
+
+describe('the Session Info page Automations section', () => {
   it('profiles an empty Session among Account Habits and publishes no work for unchanged read results', async () => {
     const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
     resetWorkflowLibraryReadsForTests();
@@ -342,18 +364,15 @@ describe('the Session Info page Triggers section', () => {
         runPublications: publications.read().filter(keys => keys.includes('workflowRunListWindows')).length };
       console.info('FIN_HABITS_PROFILE', JSON.stringify({ startup, unchanged, transport: transport.read() }));
       expect(unchanged).toEqual({ commits: 0, publications: 0, triggerPublications: 0, runPublications: 0 });
-      const set = WorkflowTriggerSetV1Schema.parse({ ...triggerSet([lifecycleTrigger('trig-1', true)]), scopeSessionId: 'session-1' });
-      await act(async () => getStorage().getState().applyWorkflowTriggerSetPage({ queryKey: 'session:session-1', sets: [set] }));
-      expect(screen.findHostByTestId('session-work-trigger:set-1:trig-1')).not.toBeNull();
-      expect(screen.findByTestId('info-habits-arrival')?.props.hidden).toBe(false);
-      expect(publications.read().filter(keys => keys.includes('workflowTriggerSetsById'))).toHaveLength(1);
+      // The section reads this Session as its selected subject, once.
+      expect(subjectQueries).toEqual([{ kind: 'session', serverId: 'srv_session_habit_home', sessionId: 'session-1' }]);
     } finally {
       publications.stop();
       setRuntimeFetch(workflowHttp.request);
     }
   });
 
-  it.each(['triggers', 'destination'] as const)('reserves no Habits body for a slow empty %s read, then proves it empty without a fold jump', async (slowRead) => {
+  it.each(['triggers', 'destination'] as const)('keeps the section loading through a slow empty %s read, then folds it once proven empty', async (slowRead) => {
     const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
     resetWorkflowLibraryReadsForTests();
     answer([]);
@@ -363,8 +382,8 @@ describe('the Session Info page Triggers section', () => {
     const screen = await renderScreen(<InfoHabitArrival />);
     try {
       await settle();
-      expect(screen.findHostByTestId('session-work-triggers')).toBeNull();
-      expect(screen.findByTestId('session-work-triggers-empty')).toBeNull();
+      // Unknown is not empty: the section keeps its header and loading rows, and Info does not fold it yet.
+      expect(screen.findHostByTestId('subject-triggers-read')).not.toBeNull();
       expect(screen.findByTestId('info-habits-arrival')?.props.hidden).toBe(false);
       await act(async () => { held.resolve(); });
       await vi.waitFor(() => expect(screen.findByTestId('info-habits-arrival')?.props.hidden).toBe(true));
@@ -378,17 +397,17 @@ describe('the Session Info page Triggers section', () => {
     }
   });
 
-  it('opens the blank trigger popover from outside the section through its actions (Work tab + › Add a trigger, 07 S16)', async () => {
-    const actionsRef = React.createRef<import('@/components/workflows/triggers/SessionTriggersSection').SessionTriggersSectionActions>();
+  it('opens the sentence builder from outside the section through its actions (Work tab + › Add a trigger)', async () => {
+    const actionsRef = React.createRef<import('@/components/workflows/triggers/SubjectTriggersSection').SubjectTriggersSectionActions>();
     const anchorRef = React.createRef<import('react-native').View>();
     const screen = await renderScreen(<InjectedAuthProvider credentials={workflowHttp?.credentials ?? null}>
       <AppPaneProvider><ItemList><SessionHabitsSection sessionId="session-1" serverId={home.serverId} actionsRef={actionsRef} /></ItemList></AppPaneProvider>
     </InjectedAuthProvider>);
     await settle();
-    expect(screen.findByTestId('session-work-trigger-popover')).toBeNull();
+    expect(screen.findByTestId('workflow-builder')).toBeNull();
     await act(async () => { actionsRef.current?.openNewTrigger(anchorRef); });
     await settle();
-    expect(screen.findByTestId('session-work-trigger-popover')).not.toBeNull();
+    expect(screen.findByTestId('workflow-builder')).not.toBeNull();
   });
 
   it('presents concurrent Habit read failures once and retries the section together', async () => {
@@ -396,23 +415,28 @@ describe('the Session Info page Triggers section', () => {
     failRunReads = true;
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
-    const failureIds = ['session-work-triggers-failed', 'scheduled-workflow-read', 'session-work-writes-here-failed'];
+    const failureIds = ['subject-triggers-read', 'scheduled-workflow-read', 'session-work-writes-here-failed'];
+    await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
     expect(failureIds.filter(id => screen.findHostByTestId(id) !== null)).toHaveLength(1);
-    expect(screen.findByTestId('session-work-triggers-failed-action')).not.toBeNull();
     answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
     failRunReads = false;
     automationHttp.mockClear();
-    await screen.pressByTestIdAsync('session-work-triggers-failed-action');
-    await vi.waitFor(() => expect(screen.findHostByTestId('session-work-trigger:set-1:trig-1')).not.toBeNull());
+    subjectQueries = [];
+    await screen.pressByTestIdAsync('subject-triggers-read-retry');
+    await vi.waitFor(() => expect(screen.findHostByTestId(ROW)).not.toBeNull());
     expect(failureIds.filter(id => screen.findHostByTestId(id) !== null)).toHaveLength(0);
-    const queries = automationHttp.mock.calls.flatMap(([url, init]) => url.pathname === '/v3/automations/query'
-      ? [AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init?.body)))] : []);
+    const queries = automationHttp.mock.calls.flatMap(([url, init]) => {
+      if (url.pathname !== '/v3/automations/query') return [];
+      const body = JSON.parse(String(init?.body));
+      return 'subject' in body ? [] : [AutomationDefinitionDetailsRequestSchema.parse(body)];
+    });
     // The Account-all Action maps to an unfiltered HTTP query, not a scope enum.
     expect(queries.filter(query => query.scopeSessionId === undefined && query.scope === undefined)).toHaveLength(1);
     expect(queries.filter(query => query.scopeSessionId === 'session-1')).toHaveLength(1);
+    expect(subjectQueries).toHaveLength(1);
   });
 
-  it('keeps destination-only Habit content mounted through a Machine flap and pending recovery', async () => {
+  it('keeps destination-only Habit content mounted through a Machine flap and recovers when the Machine returns', async () => {
     const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
     const selection = materializeWorkflowStarterExample(example, {
       session: { serverId: 'portable-home', sessionId: 'session-1', machineId: 'machine-a' },
@@ -427,47 +451,35 @@ describe('the Session Info page Triggers section', () => {
     rows = rows.map(row => ({ ...row, scopeSessionId: null }));
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
+    await vi.waitFor(() => expect(screen.findHostByTestId('scheduled-workflow:set-1:timer')).not.toBeNull());
     const row = screen.findHostByTestId('scheduled-workflow:set-1:timer');
-    expect(row).not.toBeNull();
-    const section = screen.findHostByTestId('session-work-triggers');
+    const section = screen.findHostByTestId('subject-triggers');
     const readsBeforeOffline = automationHttp.mock.calls.length;
     await seedSessionMachine(false);
     expect(automationHttp.mock.calls.length).toBe(readsBeforeOffline);
     expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row, 'offline keeps the scheduled row').toBe(true);
     failAutomationReads = true;
-    const { SessionTriggersSectionView } = await import('./SessionTriggersSection');
-    await act(async () => screen.findByType(SessionTriggersSectionView).props.onRetry());
-    await vi.waitFor(() => expect(screen.findHostByTestId('session-work-triggers-failed')).not.toBeNull());
-    expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') !== null, 'failed refresh retains the scheduled content').toBe(true);
-    expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row).toBe(true);
-    let release: () => void = () => {};
-    const held = new Promise<void>(resolve => { release = resolve; });
-    holdAutomationRead = () => held;
+    const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
+    await act(async () => screen.findByType(SubjectTriggersSectionContent).props.automations.read.retry());
+    await vi.waitFor(() => expect(screen.findHostByTestId('subject-triggers-read')).not.toBeNull());
+    expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row, 'failed refresh retains the scheduled content').toBe(true);
     failAutomationReads = false;
-    try {
-      await seedSessionMachine(true);
-      await settle();
-      expect(screen.findHostByTestId('session-work-triggers') === section).toBe(true);
-      expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row).toBe(true);
-      expect(screen.findHostByTestId('session-work-triggers-refreshing')).not.toBeNull();
-      release();
-      await settle();
-      await vi.waitFor(() => expect(screen.findHostByTestId('session-work-triggers-failed')).toBeNull());
-      expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row).toBe(true);
-    } finally {
-      holdAutomationRead = undefined;
-      release();
-    }
+    // The Machine's return reads again by itself, without a Retry tap.
+    await seedSessionMachine(true);
+    await settle();
+    await vi.waitFor(() => expect(screen.findHostByTestId('subject-triggers-read')).toBeNull());
+    expect(screen.findHostByTestId('subject-triggers') === section).toBe(true);
+    expect(screen.findHostByTestId('scheduled-workflow:set-1:timer') === row).toBe(true);
   });
 
-  it('reads workflow options only after a Habit picker opens', async () => {
+  it('reads workflow options only after a Habit editor opens', async () => {
     answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
     workflowInventoryReads = 0;
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
-    await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger:set-1:trig-1')).not.toBeNull());
+    await vi.waitFor(() => expect(screen.findByTestId(ROW)).not.toBeNull());
     expect(workflowInventoryReads).toBe(0);
-    await screen.pressByTestIdAsync('session-work-trigger:set-1:trig-1');
+    await screen.pressByTestIdAsync(ROW);
     await vi.waitFor(() => expect(workflowInventoryReads).toBeGreaterThan(0));
   });
   it.each(['starts-and-writes', 'account-writes', 'starts-only'] as const)(
@@ -490,7 +502,7 @@ describe('the Session Info page Triggers section', () => {
       if (relation === 'account-writes') rows = rows.map(row => ({ ...row, scopeSessionId: null }));
       const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
       await settle();
-      const startsId = 'session-work-trigger:set-1:timer';
+      const startsId = 'subject-triggers:set-1:timer';
       const writesId = 'scheduled-workflow:set-1:timer';
       const assertPlacement = () => {
         const starts = screen.findByTestId(startsId);
@@ -515,30 +527,15 @@ describe('the Session Info page Triggers section', () => {
     // No Channels Data collection is installed for this Account, so the real
     // PR-link reader refuses independently of the readable Automation rows.
     answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
-    const screen = await renderScreen(
-      <SessionInfoSetup sessionId="session-1" />,
-    );
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
-    expect(
-      screen.findByTestId('session-work-trigger:set-1:trig-1-switch')?.props
-        .value,
-    ).toBe(true);
-    await vi.waitFor(() => expect(screen.findByTestId('session-work-triggers-failed')).toBeNull());
-    expect(
-      screen.findByTestId('session-work-trigger-links-unavailable'),
-    ).toBeNull();
+    await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true));
+    expect(screen.findByTestId('subject-triggers-read')).toBeNull();
   });
   it('turns one trigger on or off through workflow.trigger.update, never by pausing its Automation', async () => {
     // trig-1 is off at trigger level inside an enabled set; trig-2 shares the set.
-    answer([
-      triggerSet([
-        lifecycleTrigger('trig-1', false),
-        lifecycleTrigger('trig-2', true),
-      ]),
-    ]);
-    const screen = await renderScreen(
-      <SessionInfoSetup sessionId="session-1" />,
-    );
+    answer([triggerSet([lifecycleTrigger('trig-1', false), lifecycleTrigger('trig-2', true)])]);
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
 
     // The real Session resolver chooses its placement. Account HTTP owns the
@@ -546,9 +543,8 @@ describe('the Session Info page Triggers section', () => {
     expect(automationHttp.mock.calls.some(([url, init]) => url.pathname === '/v3/automations/query'
       && JSON.parse(String(init?.body)).scopeSessionId === 'session-1'
       && new Headers(init?.headers).get('Authorization')?.startsWith('Bearer '))).toBe(true);
-    const offSwitch = screen.findByTestId(
-      'session-work-trigger:set-1:trig-1-switch',
-    );
+    await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)).not.toBeNull());
+    const offSwitch = screen.findByTestId(`${ROW}-switch`);
     const automationsBefore = getStorage().getState().automations;
     expect(offSwitch?.props.value).toBe(false);
     await act(async () => {
@@ -558,7 +554,7 @@ describe('the Session Info page Triggers section', () => {
 
     await vi.waitFor(() => expect(automationHttp.mock.calls.map(([url, init]) => ({ path: url.pathname, method: init?.method ?? 'GET' })))
       .toContainEqual({ path: '/v3/automations/set-1', method: 'PUT' }));
-    await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger:set-1:trig-1-switch')?.props.value).toBe(true));
+    await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true));
     const mutation = automationHttp.mock.calls.find(([url, init]) => url.pathname === '/v3/automations/set-1' && init?.method === 'PUT');
     expect(mutation).toBeDefined();
     expect(AutomationDefinitionReconcileRequestSchema.parse(JSON.parse(String(mutation?.[1]?.body)))).toMatchObject({
@@ -568,38 +564,28 @@ describe('the Session Info page Triggers section', () => {
     });
     expect(rows[0]?.assignments).toEqual([{ machineId: 'machine-a', enabled: true, priority: 0, updatedAt: 1 }]);
     expect(rows[0]?.enabled).toBe(true);
-    expect(screen.findByTestId('session-work-trigger:set-1:trig-1-switch')?.props.value).toBe(true);
     expect(getStorage().getState().automations).toBe(automationsBefore);
-    expect(screen.findByTestId('session-work-trigger:set-1:trig-2-switch')?.props.value).toBe(true);
+    expect(screen.findByTestId('subject-triggers:set-1:trig-2-switch')?.props.value).toBe(true);
   });
 
-  it('stays on the Info page with its empty state and a way to add the first trigger', async () => {
+  it('stays on the Info page with its section and a way to add the first automation', async () => {
     answer([]);
-    const screen = await renderScreen(
-      <SessionInfoSetup sessionId="session-1" />,
-    );
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
-
-    expect(screen.findByTestId('session-work-triggers')).not.toBeNull();
-    expect(screen.findByTestId('session-work-triggers-empty')).not.toBeNull();
-    expect(screen.findByTestId('session-work-triggers-add')).not.toBeNull();
+    await vi.waitFor(() => expect(screen.findByTestId('subject-triggers')).not.toBeNull());
+    expect(screen.findByTestId('subject-triggers-add')).not.toBeNull();
   });
 
   it('draws no "Writes here" heading while nothing writes into this session, loading or loaded', async () => {
-    const { resetWorkflowLibraryReadsForTests } = await import(
-      '@/components/workflows/library/workflowLibraryReads'
-    );
+    const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
     resetWorkflowLibraryReadsForTests();
     const runList: { finish: (() => void) | null } = { finish: null };
     answer([]);
     finishRunRead = () => new Promise<void>((resolve) => { runList.finish = resolve; });
-    const screen = await renderScreen(
-      <SessionInfoSetup sessionId="session-1" />,
-    );
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
     // Still reading: a section that may not exist holds no skeleton that later collapses.
     expect(screen.findByTestId('session-work-writes-here')).toBeNull();
-
     await act(async () => {
       runList.finish?.();
     });
@@ -607,7 +593,7 @@ describe('the Session Info page Triggers section', () => {
     expect(screen.findByTestId('session-work-writes-here')).toBeNull();
   });
 
-  it('opens "When this turn finishes…" bound to that turn and adds it through workflow.trigger.add', async () => {
+  it('opens "When this turn finishes…" in the sentence builder bound to that exact turn', async () => {
     answer([]);
     routeParams.current = {
       sourceSessionId: 'session-1',
@@ -615,51 +601,19 @@ describe('the Session Info page Triggers section', () => {
       sourceServerId: home.serverId,
       sessionLifecycleEvents: 'parentTurnCompleted',
     };
-    const screen = await renderScreen(
-      <SessionInfoSetup sessionId="session-1" />,
-    );
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
-
-    expect(screen.findByTestId('session-work-trigger-popover')).not.toBeNull();
-    await act(async () => {
-      screen.changeTextByTestId(
-        'session-work-trigger-popover-prompt',
-        'Review what changed',
-      );
-    });
-    await act(async () => {
-      screen.pressByTestId('session-work-trigger-popover-submit');
-    });
-    await settle();
-
-    const add = automationHttp.mock.calls.find(([url, init]) => url.pathname === '/v3/automations' && init?.method === 'POST');
-    expect(add).toBeDefined();
-    const created = AutomationDefinitionCreateRequestSchema.parse(JSON.parse(String(add?.[1]?.body)));
-    const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
-    expect(created).toMatchObject({
-      scopeSessionId: 'session-1',
-      assignments: [{ machineId: 'machine-a' }],
-      triggers: [{ trigger: {
-        kind: 'sessionLifecycle',
-        policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' },
-      } }],
-      executionRecipe: { v: 2, workflow: { t: 'plain', v: { inlineDefinition: {
-        blocks: [{ document: { text: 'Review what changed' } }],
-      } } } },
-    });
-    const row = created.triggers[0];
-    if (!row || row.trigger.kind !== 'sessionLifecycle' || !('triggerDefinitionEnvelope' in row.trigger)) {
-      throw new Error('Expected the sealed lifecycle write');
-    }
-    const { openAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
-    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
-      binding: { v: 1, automationId: created.automationId, triggerId: row.triggerId,
-        triggerRevision: 0, triggerKind: 'sessionLifecycle' }, envelope: row.trigger.triggerDefinitionEnvelope,
-    })).toMatchObject({ kind: 'available', definition: {
-      subject: { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.serverId), sessionId: 'session-1' },
-      policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' },
-    } });
-    await vi.waitFor(() => expect(getStorage().getState().workflowTriggerSetsById[created.automationId]?.target?.kind).toBe('inline'));
+    await vi.waitFor(() => expect(screen.findByTestId('workflow-builder')).not.toBeNull());
+    const { router } = await import('expo-router');
+    await screen.pressByTestIdAsync('workflow-builder-open-editor');
+    const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+    if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the sentence editor route');
+    const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+    const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId));
+    expect(seed).toMatchObject({ lifetimeSession: { sessionId: 'session-1' }, triggers: { rows: [expect.objectContaining({
+      trigger: expect.objectContaining({ kind: 'sessionLifecycle',
+        subject: { kind: 'session', serverId: 'srv_session_habit_home', sessionId: 'session-1' },
+        policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' } }) })] } });
   });
   describe('when the session Machine is offline', () => {
     function failReads() {
@@ -672,8 +626,8 @@ describe('the Session Info page Triggers section', () => {
       const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
       await settle();
       // DIAG-HABITS: Machine reachability does not turn a settled Account read failure into loading.
-      expect(screen.findByTestId('session-work-triggers-failed')).not.toBeNull();
-      expect(screen.findByTestId('session-work-triggers-failed-action')).not.toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
+      expect(screen.findByTestId('subject-triggers-read')).not.toBeNull();
     });
 
     it('still says a failed read when the Machine is reachable', async () => {
@@ -681,7 +635,7 @@ describe('the Session Info page Triggers section', () => {
       failReads();
       const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
       await settle();
-      expect(screen.findByTestId('session-work-triggers-failed')).not.toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read')).not.toBeNull());
     });
 
     it('reads again by itself when the offline Machine returns', async () => {
@@ -689,11 +643,12 @@ describe('the Session Info page Triggers section', () => {
       failReads();
       const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
       await settle();
-      expect(screen.findByTestId('session-work-trigger:set-1:trig-1-switch')).toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
+      expect(screen.findByTestId(`${ROW}-switch`)).toBeNull();
       answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
       await seedSessionMachine(true);
       await settle();
-      expect(screen.findByTestId('session-work-trigger:set-1:trig-1-switch')).not.toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)).not.toBeNull());
     });
   });
 

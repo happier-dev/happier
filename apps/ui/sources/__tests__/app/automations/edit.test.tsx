@@ -43,8 +43,7 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { SessionTriggersRoute } = await import('@/app/(app)/session/[id]/triggers');
 const { WorkflowsRoute } = await import('@/app/(app)/workflows');
-const { SessionTriggersSection } = await import('@/components/workflows/triggers/SessionTriggersSection');
-const { useSessionTriggers } = await import('@/components/workflows/triggers/useSessionTriggers');
+const { SessionHabitsSection } = await import('@/components/sessions/work/SessionSetupSections');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { ModalProvider } = await import('@/modal');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
@@ -425,9 +424,19 @@ describe('retired Automation routes', () => {
                 triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) });
         });
         homes.answer(serverA, 'GET /v3/automations', { body: { automations: listRows, nextCursor: null } });
+        // The Session section lists what is attached to this Session; the deep-linked row opens from its exact read.
+        const attachedRow = { automationId: 'automation-42', triggerId: 'automation-42-schedule', workflowDefinitionId: workflowId,
+            relation: 'direct' as const, enabled: true, revision: 1, summary: { kind: 'schedule' as const, schedule: { kind: 'cron' as const, scheduleExpr: '0 19 * * *', everyMs: null, timezone: null }, remainingOccurrences: null },
+            setUpBy: { accountId: 'account-a', displayName: 'Owner' } };
         homes.answer(serverA, 'POST /v3/automations/query', {
-            select: input => ({ body: selectWorkflowAutomationDetailsFixture(rows, input) }),
+            select: input => input !== null && typeof input === 'object' && 'subject' in input
+                ? { body: { automations: [], attached: [attachedRow], nextCursor: null, skippedNotSharedCount: 0 } }
+                : { body: selectWorkflowAutomationDetailsFixture(rows, input) },
         });
+        read.mockResolvedValue(selected);
+        // The Session section names its subject by the Home's portable identity.
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl('https://automation-route.test', 'srv_automation-route');
         const requestsBeforeMount = homes.requests.length;
         // Like the canonical Popover DOM tests, use the browser renderer for the
         // real sheet's composed refs rather than manufacturing host identities.
@@ -436,31 +445,25 @@ describe('retired Automation routes', () => {
         document.body.appendChild(container);
         const root = createRoot(container);
         try {
-            function SessionTriggerReadHost() {
-                const read = useSessionTriggers('session-1');
-                return <SessionTriggersSection sessionId="session-1" read={read} />;
-            }
-            await React.act(async () => root.render(<AccountBoundary><SessionTriggerReadHost /></AccountBoundary>));
+            await React.act(async () => root.render(<AccountBoundary><SessionHabitsSection sessionId="session-1" serverId={serverA} /></AccountBoundary>));
             await waitForHomeGovernance(async () => {
                 await React.act(async () => {});
-                expect(document.querySelector('[data-testid="session-work-trigger-popover"]')).not.toBeNull();
+                expect(document.querySelector('[data-testid="workflows-column-trigger-popover"]')).not.toBeNull();
             });
-            expect(document.querySelector('[data-testid="session-work-trigger-popover"]')).not.toBeNull();
             expect([...document.querySelectorAll<HTMLInputElement>('[aria-label="workflows.triggers.popover.at"]')]
                 .filter(node => node.value === '19:00').length).toBeGreaterThan(0);
             const automationRequests = homes.requests.slice(requestsBeforeMount)
                 .filter(request => request.path.startsWith('/v3/automations'));
             expect(automationRequests).toEqual(expect.arrayContaining([expect.objectContaining({
-                path: '/v3/automations/query', method: 'POST', input: expect.objectContaining({ details: true, scopeSessionId: 'session-1' }),
-            }), expect.objectContaining({
-                path: '/v3/automations/runs/workflow-storage', method: 'POST',
-                input: expect.objectContaining({ operation: 'summaries', request: { automationIds: ['other-automation', 'automation-42'] } }),
+                path: '/v3/automations/query', method: 'POST',
+                input: expect.objectContaining({ subject: expect.objectContaining({ kind: 'session', sessionId: 'session-1' }) }),
             })]));
-            // Both private detail pages and Run summaries are reads carried by POST.
+            // Private detail pages, Run summaries and the Runs that write into this Session are reads carried by POST.
             expect(automationRequests.filter(request => request.method !== 'GET'
                 && !(request.method === 'POST' && (request.path === '/v3/automations/query'
                     || (request.path === '/v3/automations/runs/workflow-storage' && request.input !== null
-                        && typeof request.input === 'object' && 'operation' in request.input && request.input.operation === 'summaries'))))).toEqual([]);
+                        && typeof request.input === 'object' && 'operation' in request.input
+                        && (request.input.operation === 'summaries' || request.input.operation === 'list')))))).toEqual([]);
             expect(rpcRequests.filter(request => /session\.trigger\.(add|update|remove)$/.test(request.method))).toEqual([]);
         } finally {
             await React.act(async () => root.unmount());

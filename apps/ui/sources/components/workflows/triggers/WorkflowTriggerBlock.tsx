@@ -57,6 +57,7 @@ import {
 } from './sessionTriggerForm';
 import { REPEAT_LABEL_KEYS, useStoredSessionItem } from './TriggerPopover';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
+import { useSessionPullRequestChoices } from './SessionTriggerPullRequestPicker';
 import {
   formatScheduleTimeInput,
   resolveOnceSchedule,
@@ -306,6 +307,16 @@ export function WorkflowTriggerBlock(
           onChange={props.onChangeWhen}
         />
       ) : null}
+      {(when?.kind === 'prComment' || when?.kind === 'ciFailed') && props.sessionId !== undefined ? (
+        <PullRequestTrackRow
+          testID={props.testID}
+          when={when}
+          sessionId={props.sessionId}
+          // The repository is the authored Session's, on the Home this editor is mounted for.
+          serverId={props.accountLifetime === undefined ? props.serverId : props.accountLifetime?.scope.serverId ?? null}
+          onChange={props.onChangeWhen}
+        />
+      ) : null}
       {when !== null && isSessionLifecycleWhen(when) ? (
         <SessionEventTrackRows
           testID={props.testID}
@@ -488,6 +499,53 @@ export function ActionWaitPolicyRows(
         </TrackRow>
       ) : null}
     </>
+  );
+}
+
+const PULL_REQUEST_RETRY = 'pull-request:retry';
+
+/** Which pull request a PR comment or CI trigger watches, from the Session's repository (read while open). */
+function PullRequestTrackRow(
+  props: Readonly<{
+    testID: string;
+    when: Extract<TriggerWhenValue, { kind: 'prComment' | 'ciFailed' }>;
+    sessionId: string;
+    serverId: string | null;
+    onChange: (next: TriggerWhenValue) => void;
+  }>,
+) {
+  const [open, setOpen] = React.useState(false);
+  const { when, onChange } = props;
+  const read = useSessionPullRequestChoices({ open, sessionId: props.sessionId, serverId: props.serverId,
+    selection: when.pullRequest ?? null });
+  const items = React.useMemo<ValueFieldSelectItem[]>(() => [
+    ...read.choices.map((choice) => ({ id: choice.id, title: choice.title, subtitle: choice.subtitle })),
+    ...(read.status === 'failed' ? [{ id: PULL_REQUEST_RETRY, title: t('common.retry'),
+      subtitle: t('workflows.triggers.pullRequest.loadFailed') }] : []),
+  ], [read.choices, read.status]);
+  const { retry, choices } = read;
+  const select = React.useCallback((id: string) => {
+    if (id === PULL_REQUEST_RETRY) { retry(); return; }
+    const chosen = choices.find((choice) => choice.id === id)?.selection;
+    if (chosen) onChange({ kind: when.kind, pullRequest: chosen });
+  }, [retry, choices, onChange, when.kind]);
+  return (
+    <TrackRow label={t('workflows.triggers.pullRequest.label')} trackKey={`${props.testID}-pull-request`}>
+      <View style={styles.selectBox}>
+        <ValueFieldSelect
+          testID={`${props.testID}-pull-request`}
+          label={t('workflows.triggers.pullRequest.label')}
+          items={items}
+          selectedId={read.selectedId}
+          placeholder={t('workflows.triggers.then.choose')}
+          emptyLabel={read.status === 'loading' ? t('common.loading') : t('workflows.triggers.pullRequest.empty')}
+          keepsOpen={(id) => id === PULL_REQUEST_RETRY}
+          onOpenChange={setOpen}
+          onSelect={select}
+        />
+      </View>
+      <Text style={styles.note}>{t('workflows.triggers.pullRequest.description')}</Text>
+    </TrackRow>
   );
 }
 

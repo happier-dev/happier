@@ -22,7 +22,10 @@ const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, p
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { resetWorkflowLibraryReadsForTests } = await import('./workflowLibraryReads');
 const { useWorkflowLibrarySummaries, useWorkflowAutomationSummaries } = await import('./useWorkflowLibrarySummaries');
-const { useSessionTriggerLastRuns } = await import('../triggers/useSessionTriggerLastRuns');
+/** Each answered Automation's last Run, as the summary owner reports it (null when it has none). */
+function lastRuns(read: Readonly<{ summaries: ReadonlyMap<string, Readonly<{ lastRun: unknown }>> | null | undefined }>) {
+    return Object.fromEntries([...(read.summaries ?? new Map())].map(([id, summary]) => [id, summary.lastRun]));
+}
 
 // These declarations script HTTP storage responses, never the Action executor.
 const executeMock = vi.fn();
@@ -77,21 +80,6 @@ describe('workflow library run summaries', () => {
             expect(executeMock).not.toHaveBeenCalled();
             expect(home.requests.filter(request => request.serverId === serverB && request.path.includes('workflow-storage'))).toHaveLength(1);
         } finally { account.dispose(); }
-    });
-
-    it('uses the started Run summary for Habit age without an Automation timestamp', async () => {
-        const startedAt = '2026-10-30T08:01:00.000Z';
-        const lastRun = lastRunSummary({ id: 'failed-started-run', state: 'failed',
-            createdAt: '2026-10-30T08:00:00.000Z', startedAt });
-        executeMock.mockResolvedValue({ ok: true, result: { automationSummaries: [
-            { automationId: 'habit-started', lastRun }, { automationId: 'habit-unstarted', lastRun: null },
-        ], remainingAutomationIds: [] } });
-        const hook = await renderHook(() => useSessionTriggerLastRuns(['habit-started', 'habit-unstarted']));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().lastRunsByAutomationId['habit-started']).toEqual(lastRun));
-        expect(hook.getCurrent()).toMatchObject({ lastRunAtByAutomationId: {
-            'habit-started': Date.parse(startedAt),
-        } });
-        expect(executeMock.mock.calls).toHaveLength(1);
     });
 
     it('Retry supersedes a held summary batch and the last borrower cancels its read', async () => {
@@ -153,13 +141,13 @@ describe('workflow library run summaries', () => {
             { automationId: 'habit-a', lastRun: succeeded }, { automationId: 'habit-b', lastRun: blocked },
             { automationId: 'habit-empty', lastRun: null },
         ], remainingAutomationIds: [] } });
-        const hook = await renderHook(() => useSessionTriggerLastRuns(automationIds));
+        const hook = await renderHook(() => useWorkflowAutomationSummaries(automationIds));
         await waitForHomeGovernance(() => expect(home.requestsFor('/v3/automations/runs/workflow-storage').length).toBeGreaterThan(0));
         expect(home.requestsFor('/v3/automations/runs/workflow-storage').map(({ input }) => input)).toMatchObject([
             { operation: 'summaries', request: { automationIds } },
         ]);
         expect(executeMock.mock.calls.map(([, input]) => input)).toEqual([{ automationIds }]);
-        await waitForHomeGovernance(() => expect(hook.getCurrent().lastRunsByAutomationId).toEqual({ 'habit-a': succeeded, 'habit-b': blocked }));
+        await waitForHomeGovernance(() => expect(lastRuns(hook.getCurrent())).toEqual({ 'habit-a': succeeded, 'habit-b': blocked, 'habit-empty': null }));
         expect(hook.getCurrent().failed).toBe(false);
         expect(home.requestsFor('/v3/automations/runs/workflow-storage').map(({ input }) => input)).toMatchObject([
             { operation: 'summaries', request: { automationIds } },
@@ -175,34 +163,34 @@ describe('workflow library run summaries', () => {
             : { summaries: input.sourceArtifactIds.map((id: string) => ({ ...item, sourceArtifactId: id })), remainingSourceArtifactIds: [] } }));
         const hook = await renderHook(() => ({
             source: useWorkflowLibrarySummaries([sourceArtifactId]),
-            first: useSessionTriggerLastRuns([sourceArtifactId, 'habit-b']),
-            second: useSessionTriggerLastRuns(['habit-b']),
+            first: useWorkflowAutomationSummaries([sourceArtifactId, 'habit-b']),
+            second: useWorkflowAutomationSummaries(['habit-b']),
         }));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().first.lastRunsByAutomationId['habit-b']).toEqual(lastRun));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().first.summaries?.get('habit-b')?.lastRun).toEqual(lastRun));
         expect(hook.getCurrent().source.summaries?.get(sourceArtifactId)).toEqual(item);
         expect(executeMock.mock.calls.map(([, input]) => input)).toHaveLength(2);
-        expect(hook.getCurrent().first.lastRunsByAutomationId['habit-b']).toBe(hook.getCurrent().second.lastRunsByAutomationId['habit-b']);
+        expect(hook.getCurrent().first.summaries?.get('habit-b')?.lastRun).toBe(hook.getCurrent().second.summaries?.get('habit-b')?.lastRun);
         const before = hook.getCurrent();
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:equal-refresh']); });
         await waitForHomeGovernance(() => expect(executeMock.mock.calls).toHaveLength(4));
         expect(hook.getCurrent().source).toBe(before.source);
-        expect(hook.getCurrent().first.lastRunsByAutomationId).toBe(before.first.lastRunsByAutomationId);
+        expect(hook.getCurrent().first.summaries).toBe(before.first.summaries);
     });
 
     it('shares Automation continuations with overlapping mounts and preserves a known empty answer', async () => {
         const continuation = createDeferred<unknown>();
         executeMock.mockResolvedValueOnce({ ok: true, result: { automationSummaries: [{ automationId: 'habit-a', lastRun: null }], remainingAutomationIds: ['habit-b'] } });
         executeMock.mockReturnValueOnce(continuation.promise);
-        const first = await renderHook(() => useSessionTriggerLastRuns(['habit-a', 'habit-b']));
-        const overlapping = await renderHook(() => useSessionTriggerLastRuns(['habit-b']));
+        const first = await renderHook(() => useWorkflowAutomationSummaries(['habit-a', 'habit-b']));
+        const overlapping = await renderHook(() => useWorkflowAutomationSummaries(['habit-b']));
         await waitForHomeGovernance(() => expect(executeMock.mock.calls.map(([, input]) => input)).toEqual([
             { automationIds: ['habit-a', 'habit-b'] }, { automationIds: ['habit-b'] },
         ]));
         const lastRun = lastRunSummary({ id: 'run-b', state: 'running', createdAt: '2026-10-21T03:00:00.000Z' });
         await act(async () => { continuation.resolve({ ok: true, result: { automationSummaries: [{ automationId: 'habit-b', lastRun }], remainingAutomationIds: [] } }); await continuation.promise; });
-        await waitForHomeGovernance(() => expect(first.getCurrent().lastRunsByAutomationId['habit-b']).toEqual(lastRun));
-        expect(first.getCurrent().lastRunsByAutomationId['habit-b']).toBe(overlapping.getCurrent().lastRunsByAutomationId['habit-b']);
-        await renderHook(() => useSessionTriggerLastRuns(['habit-a']));
+        await waitForHomeGovernance(() => expect(first.getCurrent().summaries?.get('habit-b')?.lastRun).toEqual(lastRun));
+        expect(first.getCurrent().summaries?.get('habit-b')?.lastRun).toBe(overlapping.getCurrent().summaries?.get('habit-b')?.lastRun);
+        await renderHook(() => useWorkflowAutomationSummaries(['habit-a']));
         expect(executeMock.mock.calls).toHaveLength(2);
     });
 
@@ -210,17 +198,17 @@ describe('workflow library run summaries', () => {
         const lastRun = lastRunSummary({ id: 'run-a', state: 'succeeded', createdAt: '2026-10-21T03:00:00.000Z' });
         const result = { automationSummaries: [{ automationId: 'habit-a', lastRun }], remainingAutomationIds: [] };
         executeMock.mockResolvedValueOnce({ ok: true, result });
-        const hook = await renderHook(() => useSessionTriggerLastRuns(['habit-a']));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().lastRunsByAutomationId['habit-a']).toEqual(lastRun));
-        const before = hook.getCurrent().lastRunsByAutomationId;
+        const hook = await renderHook(() => useWorkflowAutomationSummaries(['habit-a']));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get('habit-a')?.lastRun).toEqual(lastRun));
+        const before = hook.getCurrent().summaries;
         executeMock.mockRejectedValueOnce(new Error('offline'));
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:failed-refresh']); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().failed).toBe(true));
-        expect(hook.getCurrent().lastRunsByAutomationId).toBe(before);
+        expect(hook.getCurrent().summaries).toBe(before);
         executeMock.mockResolvedValueOnce({ ok: true, result });
         await act(async () => { hook.getCurrent().retry(); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().failed).toBe(false));
-        expect(hook.getCurrent().lastRunsByAutomationId).toBe(before);
+        expect(hook.getCurrent().summaries).toBe(before);
         const retired = createDeferred<unknown>();
         executeMock.mockReturnValueOnce(retired.promise);
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:late']); });
@@ -231,14 +219,14 @@ describe('workflow library run summaries', () => {
             storage.setState({ profileScope: { serverId, accountId: 'account-b' }, settingsScope: { serverId, accountId: 'account-b' } });
         });
         await act(async () => { retired.resolve({ ok: true, result }); await retired.promise; });
-        expect(hook.getCurrent().lastRunsByAutomationId).toEqual({});
+        expect(hook.getCurrent().summaries?.get('habit-a')?.lastRun ?? null).toBeNull();
     });
 
     it('reports initial refusal and a failed continuation without answering missing Automations as empty', async () => {
         executeMock.mockRejectedValueOnce(new Error('denied'));
-        const hook = await renderHook(() => useSessionTriggerLastRuns(['habit-a', 'habit-b']));
+        const hook = await renderHook(() => useWorkflowAutomationSummaries(['habit-a', 'habit-b']));
         await waitForHomeGovernance(() => expect(hook.getCurrent().failed).toBe(true));
-        expect(hook.getCurrent().lastRunsByAutomationId).toEqual({});
+        expect(hook.getCurrent().summaries ?? null).toBeNull();
         executeMock.mockResolvedValueOnce({ ok: true, result: { automationSummaries: [{ automationId: 'habit-a', lastRun: null }], remainingAutomationIds: ['habit-b'] } });
         executeMock.mockRejectedValueOnce(new Error('continuation offline'));
         await act(async () => { hook.getCurrent().retry(); });
@@ -250,7 +238,7 @@ describe('workflow library run summaries', () => {
         ], remainingAutomationIds: [] } });
         await act(async () => { hook.getCurrent().retry(); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().failed).toBe(false));
-        expect(hook.getCurrent().lastRunsByAutomationId).toEqual({ 'habit-b': lastRun });
+        expect(lastRuns(hook.getCurrent())).toEqual({ 'habit-a': null, 'habit-b': lastRun });
     });
 
     it('reports a non-progressing empty page as unavailable and distinguishes an answered null', async () => {

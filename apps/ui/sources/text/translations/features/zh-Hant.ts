@@ -19190,8 +19190,6 @@ const zhHant: WorkflowTriggersCopy = {
     },
     section: {
         add: '新增觸發器',
-        emptyTitle: "還沒有觸發器",
-        emptyBody: '新增一個，用於審查每一輪或持續推進目標。',
         loadFailed: '無法載入此工作階段的觸發器。',
         accountLoadFailed: '部分工作流程無法載入。',
         automationsLoadFailed: "無法載入自動化。",
@@ -19199,7 +19197,6 @@ const zhHant: WorkflowTriggersCopy = {
         startsUnavailable: "無法讀取這裡可以啟動工作流程的內容。",
         startsHere: "從此處開始",
         title: "自動化",
-        countOn: ({ count }) => `${count} 個已開啟`,
         info: '從此工作階段啟動的內容，以及寫入此工作階段的內容。',
         saveFailed: '無法儲存此觸發器。你的變更仍在這裡。',
         machineInfo: "從這台機器啟動的內容，以及在其上執行的工作流程。",

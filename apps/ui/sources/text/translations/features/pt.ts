@@ -19302,8 +19302,6 @@ const pt: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Adicionar um gatilho',
-        emptyTitle: "Ainda não há gatilhos",
-        emptyBody: 'Adicione um para revisar cada turno ou continuar em direção a um objetivo.',
         loadFailed: 'Não foi possível carregar os gatilhos desta sessão.',
         accountLoadFailed: 'Não foi possível carregar alguns fluxos.',
         automationsLoadFailed: "Não foi possível carregar as automações.",
@@ -19311,7 +19309,6 @@ const pt: WorkflowTriggersCopy = {
         startsUnavailable: "Não foi possível ler o que pode iniciar um fluxo de trabalho aqui.",
         startsHere: "Começa aqui",
         title: "Automações",
-        countOn: ({ count }) => `${count} ligados`,
         info: 'O que começa a partir desta sessão e o que escreve nela.',
         saveFailed: 'Não foi possível salvar este gatilho. Suas alterações ainda estão aqui.',
         machineInfo: "O que começa nesta máquina e os fluxos que rodam nela.",

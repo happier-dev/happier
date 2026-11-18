@@ -19252,8 +19252,6 @@ const es: WorkflowTriggersCopy = {
     },
     section: {
         add: 'Añadir un disparador',
-        emptyTitle: "Aún no hay disparadores",
-        emptyBody: 'Añade uno para revisar cada turno o seguir hacia un objetivo.',
         loadFailed: 'No se pudieron cargar los disparadores de esta sesión.',
         accountLoadFailed: 'No se pudieron cargar algunos flujos.',
         automationsLoadFailed: "No se pudieron cargar las automatizaciones.",
@@ -19261,7 +19259,6 @@ const es: WorkflowTriggersCopy = {
         startsUnavailable: "No se pudo leer qué puede iniciar un flujo de trabajo aquí.",
         startsHere: "Empieza aquí",
         title: "Automatizaciones",
-        countOn: ({ count }) => `${count} activos`,
         info: 'Lo que se inicia desde esta sesión y lo que escribe en ella.',
         saveFailed: 'No se pudo guardar este disparador. Tus cambios siguen aquí.',
         machineInfo: "Lo que se inicia desde esta máquina y los flujos que se ejecutan en ella.",

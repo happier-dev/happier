@@ -76,7 +76,7 @@ import { WorkFlatSheet, WorkSection } from './WorkSection';
 import { SessionHabitsSection } from './SessionSetupSections';
 import { useSessionWorkTriggersReveal } from './sessionWorkTriggersReveal';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import type { SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
+import type { SubjectTriggersSectionActions } from '@/components/workflows/triggers/SubjectTriggersSection';
 import {
     groupWorkByState, resolveWorkMachineNotices, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
     type WorkItem, type WorkStateGroups,
@@ -284,7 +284,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
         scrollRef.current?.scrollTo({ y: triggersOffsetY, animated: !revealReducedMotion });
         triggersReveal.consume();
     }, [triggersReveal.requested, triggersReveal.consume, triggersOffsetY, revealReducedMotion]);
-    const triggersActionsRef = React.useRef<SessionTriggersSectionActions>(null);
+    const triggersActionsRef = React.useRef<SubjectTriggersSectionActions>(null);
     const addMenuAnchorRef = React.useRef<View>(null);
     const openTriggers = React.useCallback(() => {
         triggersActionsRef.current?.openNewTrigger(addMenuAnchorRef);
