@@ -9,6 +9,7 @@ import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/ac
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, isPluginProvenanceOnlyActionId, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
 import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
@@ -517,26 +518,32 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     }),
                 });
             }
-            if (!result.ok || !rpcBinding) {
+            const isSessionSpawnRefusal = !result.ok
+                && typedActionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+                && readObjectValue(result.details, 'type') === 'error'
+                && readObjectValue(result.details, 'code') === result.errorCode;
+            if ((!result.ok && !isSessionSpawnRefusal) || !rpcBinding) {
                 return unwrapActionResultForRpc(typedActionId, result);
             }
-            if (spec.operation) {
-                const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
-                if (accepted.success) return accepted.data;
-            }
-            const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-            if (deferredApproval.success) {
-                return deferredApproval.data.actionId === typedActionId
-                    ? deferredApproval.data
-                    : unwrapActionResultForRpc(
-                        typedActionId,
-                        transportFailure(typedActionId, 'invalid_action_transport_output'),
-                    );
+            if (result.ok) {
+                if (spec.operation) {
+                    const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
+                    if (accepted.success) return accepted.data;
+                }
+                const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+                if (deferredApproval.success) {
+                    return deferredApproval.data.actionId === typedActionId
+                        ? deferredApproval.data
+                        : unwrapActionResultForRpc(
+                            typedActionId,
+                            transportFailure(typedActionId, 'invalid_action_transport_output'),
+                        );
+                }
             }
             let encoded: unknown;
             try {
                 encoded = await rpcBinding.encodeOutput(
-                    result.result,
+                    result.ok ? result.result : result.details,
                     buildRpcSurfaceBindingContext(
                         typedActionId,
                         semanticInput,
@@ -545,12 +552,14 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                     ),
                 );
             } catch {
-                return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_output'));
+                return unwrapActionResultForRpc(typedActionId, result.ok
+                    ? transportFailure(typedActionId, 'invalid_action_transport_output') : result);
             }
             const transportOutput = rpcBinding.outputSchema.safeParse(encoded);
             return transportOutput.success
                 ? transportOutput.data
-                : unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_output'));
+                : unwrapActionResultForRpc(typedActionId, result.ok
+                    ? transportFailure(typedActionId, 'invalid_action_transport_output') : result);
         };
 
         for (const method of collectRpcMethodsForSpec(declaration)) {
