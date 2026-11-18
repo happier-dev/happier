@@ -7,7 +7,7 @@ import { worktreeMigration, createCaptureWorktrees } from './worktrees.js';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import type { NormalizedMetricPoint } from '../otlp/types.js';
 import type { ExceptionApplicationOrigin } from '../exceptions/contracts.js';
-import { REQUEST_DATABASE_TIME_SQL_CTES } from '../analysis/requests.js';
+import { REQUEST_DATABASE_TIME_SQL_CTES, REQUEST_SPANS_SQL_CTES, REQUEST_ANCESTRY_SQL_CTE } from '../analysis/requests.js';
 
 export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version: 1, id: 'capture', async up(tx) {
  await tx.execute('CREATE TABLE captureSummaries (id TEXT NOT NULL, worktree TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, at INTEGER NOT NULL, shape TEXT, traceId TEXT, spanId TEXT, durationMs REAL, outcome TEXT, parentSpanId TEXT, spanKind INTEGER, serviceName TEXT, endpointMethod TEXT, endpointRoute TEXT, httpStatusCode INTEGER, statementKind TEXT, parameterIdentity TEXT, executionIdentity TEXT, callsite TEXT, transactionId TEXT, retryOf TEXT, connectionId TEXT, PRIMARY KEY(worktree,id))');
@@ -257,7 +257,22 @@ FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.po
    const predicates = ['worktree = ?', 'fingerprint = ?'];
    const params: DaemonDatabaseValue[] = [input.worktree, input.fingerprint];
    if (input.before) { predicates.push('(at < ? OR (at = ? AND id < ?))'); params.push(input.before.at, input.before.at, input.before.id); }
-   const { rows } = await queryPage(`SELECT ${exceptionFields.join(',')} FROM captureExceptions WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`, params, Math.min(input.limit, limits.maximumResultRows));
+   // Page first, then attribute only those traces through the one nearest-server SQL owner.
+   // No detail bodies or per-occurrence RPC/query; retained/missing requests stay nullable.
+   const { rows } = await queryPage(`WITH RECURSIVE
+capturePartition AS (SELECT ? AS worktree),
+selected AS MATERIALIZED (SELECT ${exceptionFields.join(',')} FROM captureExceptions WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?),
+captureEvidence AS MATERIALIZED (SELECT id,at,traceId,spanId,parentSpanId,spanKind,httpStatusCode,durationMs FROM captureSummaries
+ WHERE worktree = (SELECT worktree FROM capturePartition) AND traceId IN (SELECT traceId FROM selected)),
+${REQUEST_SPANS_SQL_CTES}
+logicalExecutions AS (SELECT id,traceId,spanId,NULL AS knownParentSpanId,0 AS durationMs FROM selected),
+${REQUEST_ANCESTRY_SQL_CTE}
+requestFacts AS (SELECT ancestry.executionId,evidence.httpStatusCode,evidence.durationMs FROM requestAncestry ancestry
+ JOIN requestSpanVersions version ON version.traceId = ancestry.traceId AND version.spanId = ancestry.spanId AND version.version = 1
+ JOIN captureEvidence evidence ON evidence.traceId = version.traceId AND evidence.spanId = version.spanId AND evidence.id = version.id
+ WHERE ancestry.spanKind = 2)
+SELECT selected.*,request.httpStatusCode,request.durationMs FROM selected LEFT JOIN requestFacts request ON request.executionId = selected.id
+ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.min(input.limit, limits.maximumResultRows));
    // SQLite scalar decoding is the genuine boundary; escaped is stored as 0/1/NULL.
    return rows.map(row => {
     const { escaped, ...rest } = row as unknown as Omit<CaptureExceptionOccurrence, 'escaped'> & { escaped: number | null };
@@ -296,6 +311,8 @@ export type CaptureExceptionOccurrence = Readonly<{
  applicationOrigin?: ExceptionApplicationOrigin;
  serviceName?: string | null; serviceVersion?: string | null; type?: string | null; message?: string | null; topFrame?: string | null;
  traceId?: string | null; spanId?: string | null; escaped?: boolean;
+ /** Facts of the nearest retained server span; null when uncorrelated/expired. */
+ httpStatusCode?: number | null; durationMs?: number | null;
 }>;
 export type CaptureExceptionEvent = CaptureExceptionOccurrence & Readonly<{ kind: 'exception'; detail: Readonly<Record<string, unknown>> }>;
 export type CaptureMetricEvent = Readonly<{id:string;worktree:string;kind:'metric';source:'otlp';at:number;metric:NormalizedMetricPoint}>;

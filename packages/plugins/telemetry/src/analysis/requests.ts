@@ -115,13 +115,30 @@ export function attributeDatabaseExecutions(spans: readonly RequestSpanEvidence[
  * parent. UNION terminates ancestry cycles just as requestResolver's seen set.
  * Materialize executions once so joining spans cannot rescan their window functions.
  * The store supplies captureEvidence; this projection never reads detail bodies. */
-export const REQUEST_DATABASE_TIME_SQL_CTES = `
+export const REQUEST_SPANS_SQL_CTES = `
 requestSpanVersions AS (
- SELECT traceId,spanId,parentSpanId,spanKind,
+ SELECT id,traceId,spanId,parentSpanId,spanKind,
  ROW_NUMBER() OVER (PARTITION BY traceId,spanId ORDER BY at,id) AS version
  FROM captureEvidence WHERE traceId IS NOT NULL AND traceId <> '' AND spanId IS NOT NULL AND spanId <> '' AND spanKind IS NOT NULL
 ),
 requestSpans AS (SELECT traceId,spanId,parentSpanId,spanKind FROM requestSpanVersions WHERE version = 1),
+`;
+
+/** Nearest server span for each logical execution; shared by queries and exception occurrences. */
+export const REQUEST_ANCESTRY_SQL_CTE = `requestAncestry(executionId,durationMs,traceId,spanId,parentSpanId,spanKind) AS (
+ SELECT execution.id,execution.durationMs,span.traceId,span.spanId,span.parentSpanId,span.spanKind
+ FROM logicalExecutions execution JOIN requestSpans span ON span.traceId = execution.traceId AND span.spanId =
+  CASE WHEN EXISTS (SELECT 1 FROM requestSpans own WHERE own.traceId = execution.traceId AND own.spanId = execution.spanId)
+   THEN execution.spanId ELSE execution.knownParentSpanId END
+ UNION
+ SELECT ancestry.executionId,ancestry.durationMs,parent.traceId,parent.spanId,parent.parentSpanId,parent.spanKind
+ FROM requestAncestry ancestry JOIN requestSpans parent ON parent.traceId = ancestry.traceId AND parent.spanId = ancestry.parentSpanId
+ WHERE ancestry.spanKind <> 2
+),
+`;
+
+export const REQUEST_DATABASE_TIME_SQL_CTES = `
+${REQUEST_SPANS_SQL_CTES}
 executionEvidence AS (
  SELECT *,CASE WHEN traceId IS NOT NULL AND traceId <> '' AND spanId IS NOT NULL AND spanId <> '' AND executionIdentity IS NOT NULL AND executionIdentity <> '' THEN 1 ELSE 0 END AS linked
  FROM captureEvidence WHERE kind = 'query' AND source IN ('wire','otlp')
@@ -141,16 +158,7 @@ orderedExecutions AS (
 logicalExecutions AS MATERIALIZED (
  SELECT id,traceId,spanId,knownParentSpanId,COALESCE(durationMs,0) AS durationMs FROM orderedExecutions WHERE timingOrder = 1
 ),
-requestAncestry(executionId,durationMs,traceId,spanId,parentSpanId,spanKind) AS (
- SELECT execution.id,execution.durationMs,span.traceId,span.spanId,span.parentSpanId,span.spanKind
- FROM logicalExecutions execution JOIN requestSpans span ON span.traceId = execution.traceId AND span.spanId =
-  CASE WHEN EXISTS (SELECT 1 FROM requestSpans own WHERE own.traceId = execution.traceId AND own.spanId = execution.spanId)
-   THEN execution.spanId ELSE execution.knownParentSpanId END
- UNION
- SELECT ancestry.executionId,ancestry.durationMs,parent.traceId,parent.spanId,parent.parentSpanId,parent.spanKind
- FROM requestAncestry ancestry JOIN requestSpans parent ON parent.traceId = ancestry.traceId AND parent.spanId = ancestry.parentSpanId
- WHERE ancestry.spanKind <> 2
-),
+${REQUEST_ANCESTRY_SQL_CTE}
 requestDatabaseTimes AS (
  SELECT traceId,spanId,SUM(durationMs) AS databaseTimeMs FROM requestAncestry WHERE spanKind = 2 GROUP BY traceId,spanId
 )`;

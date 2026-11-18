@@ -149,6 +149,7 @@ function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: s
     // OTel requires type or message on an exception record.
     if (type === undefined && message === undefined) return undefined;
     const stacktrace = attributeText(values, 'exception.stacktrace');
+    const sourceContext = attributeText(values, 'exception.source_context');
     const escaped = values['exception.escaped'];
     const suppliedFingerprint = values['exception.fingerprint'];
     const fingerprint = typeof suppliedFingerprint === 'string' ? suppliedFingerprint
@@ -160,6 +161,7 @@ function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: s
         ...(type !== undefined ? { type: redactBugReportSensitiveText(type) } : {}),
         ...(message !== undefined ? { message: redactBugReportSensitiveText(message) } : {}),
         ...(stacktrace !== undefined ? { stacktrace: redactBugReportSensitiveText(stacktrace) } : {}),
+        ...(sourceContext !== undefined ? { sourceContext: redactBugReportSensitiveText(sourceContext) } : {}),
         ...(typeof escaped === 'boolean' ? { escaped } : {}),
         ...(fingerprint !== undefined ? { fingerprint: redactBugReportSensitiveText(fingerprint) } : {}),
     };

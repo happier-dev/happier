@@ -164,6 +164,39 @@ async function fixture(exceptions: boolean) {
 }
 
 describe('backend exception capture through the authenticated collector receiver and real SQLite', () => {
+  it('projects enclosing request facts in one list read and retains only supplied, redacted source context in detail', async () => {
+    const f = await fixture(true);
+    try {
+      const body = spans('api', 'build-41', [
+        { spanId: '00000000000000a1', events: [] },
+        { spanId: '00000000000000a2', events: [exceptionEvent('failed', 12, [
+          { key: 'exception.source_context', value: text('before();\npassword=hunter2\nafter();') },
+        ])] },
+        { spanId: '00000000000000a3', events: [exceptionEvent('failed', 12)] },
+      ]);
+      const items = body.resourceSpans[0]!.scopeSpans[0]!.spans;
+      Object.assign(items[0]!, { endTimeUnixNano: '1700000000412000000', attributes: [
+        { key: 'http.response.status_code', value: { intValue: 500 } },
+      ] });
+      for (const child of items.slice(1)) Object.assign(child, { kind: 1, parentSpanId: '00000000000000a1' });
+      await f.post('traces', body);
+      const [group] = await f.runtime.store.exceptionGroups({ worktree: f.partition, limit: 10 });
+      f.sqlite.statements.length = 0;
+      const rows = await f.runtime.store.exceptionOccurrences({ worktree: f.partition, fingerprint: group!.fingerprint, limit: 10 });
+      expect(rows).toHaveLength(2);
+      expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({ httpStatusCode: 500, durationMs: 412 })]));
+      expect(rows.every(row => 'httpStatusCode' in row && row.httpStatusCode === 500 && 'durationMs' in row && row.durationMs === 412)).toBe(true);
+      expect(f.sqlite.statements).toHaveLength(1);
+      expect(JSON.stringify(rows)).not.toContain('sourceContext');
+      const details = await Promise.all(rows.map(row => f.runtime.store.detail(f.partition, row.id)));
+      expect(JSON.stringify(details)).toContain('sourceContext');
+      expect(JSON.stringify(details)).toContain('before();');
+      expect(JSON.stringify(details)).not.toContain('hunter2');
+      expect(details.filter(detail => JSON.stringify(detail).includes('sourceContext'))).toHaveLength(1);
+      expect(await f.runtime.store.exceptionOccurrences({ worktree: 'other', fingerprint: group!.fingerprint, limit: 10 })).toEqual([]);
+    } finally { await f.close(); }
+  });
+
   it('stores each redacted exception occurrence once, groups by type, normalized message and top frame, and keeps stacks out of span detail', async () => {
     const f = await fixture(true);
     try {

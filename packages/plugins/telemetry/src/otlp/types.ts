@@ -40,6 +40,8 @@ export interface NormalizedException {
     type?: string;
     message?: string;
     stacktrace?: string;
+    /** Exporter-supplied exception.source_context text for the top in-app frame; never fetched or synthesized. */
+    sourceContext?: string;
     /** `exception.escaped`, only when the emitter supplied it. */
     escaped?: boolean;
     /** Instrumentation-supplied grouping key; it wins over derived grouping. */

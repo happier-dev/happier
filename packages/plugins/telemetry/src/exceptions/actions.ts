@@ -122,6 +122,7 @@ export const exceptionActions = {
         }
         const trend = window ? await runtime.store.exceptionTrend({ worktree: selected.partition, fingerprint: input.fingerprint, ...window }) : undefined;
         let stacktrace: string | null | undefined;
+        let sourceContext: string | null | undefined;
         if (input.occurrenceId !== undefined) {
           const detail = await runtime.store.detail(
             selected.partition,
@@ -138,6 +139,8 @@ export const exceptionActions = {
             typeof exception.stacktrace === 'string'
               ? exception.stacktrace
               : null;
+          sourceContext = exception && typeof exception === 'object' && 'sourceContext' in exception
+            && typeof exception.sourceContext === 'string' ? exception.sourceContext : null;
         }
         return {
           status: 'ok' as const,
@@ -147,6 +150,7 @@ export const exceptionActions = {
             ? { nextCursor: { at: last.at, id: last.id } }
             : {}),
           ...(stacktrace === undefined ? {} : { stacktrace }),
+          ...(sourceContext === undefined ? {} : { sourceContext }),
           ...(trend ? { trend: [...trend.buckets], requestsAffected: trend.requestsAffected } : {}),
         };
       },

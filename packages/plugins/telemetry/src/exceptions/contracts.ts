@@ -60,6 +60,9 @@ const occurrenceSchema = defineProtocolObject(
     topFrame: maybe(defineProtocolString()),
     traceId: maybe(defineProtocolString()),
     spanId: maybe(defineProtocolString()),
+    /** Nearest retained server request, projected in the occurrence list query. */
+    httpStatusCode: defineProtocolUnion([time, defineProtocolLiteral(null)]).optional(),
+    durationMs: defineProtocolUnion([defineProtocolNumber({ minimum: 0 }), defineProtocolLiteral(null)]).optional(),
     escaped: defineProtocolUnion([
       defineProtocolLiteral(true),
       defineProtocolLiteral(false),
@@ -82,6 +85,8 @@ export const exceptionOccurrencesReadResultSchema = defineProtocolUnion([
       ).optional(),
       /** Redacted app text; consumers frame it as data, never as instructions. */
       stacktrace: maybe(defineProtocolString()),
+      /** Redacted exporter-supplied source excerpt. Null when missing/expired/truncated; omitted without detail demand. */
+      sourceContext: maybe(defineProtocolString()),
       /** Counts per bucket over retained occurrences; older history has expired, not fallen to zero. */
       trend: defineProtocolArray(defineProtocolObject({ since: time, until: time, count: time }, { policy: 'closed' })).optional(),
       /** Distinct traces the group reached in the window; occurrences without trace context are not counted. */

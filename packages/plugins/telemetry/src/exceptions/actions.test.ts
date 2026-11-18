@@ -137,7 +137,9 @@ describe('native exception Actions on the collector', () => {
     try {
       await lease.runtime.store.write([
         occurrence('exception:a', 1000, 'build-1'),
-        occurrence('exception:b', 2000, 'build-1'),
+        { ...occurrence('exception:b', 2000, 'build-1'), detail: { exception: {
+          stacktrace: 'at total (/srv/app/cart.js:4:9)', sourceContext: '3 before();\n4 throw error;\n5 after();',
+        } } },
       ]);
       const read = (extra: object = {}) =>
         host.invokeAction(
@@ -156,7 +158,11 @@ describe('native exception Actions on the collector', () => {
         items: [{ id: 'exception:b', serviceVersion: 'build-1' }],
         nextCursor: { at: 2000, id: 'exception:b' },
         stacktrace: expect.stringContaining('at total'),
+        sourceContext: '3 before();\n4 throw error;\n5 after();',
       });
+      expect(await read({ occurrenceId: 'exception:a' })).toMatchObject({ sourceContext: null });
+      expect(await read()).not.toHaveProperty('sourceContext');
+      expect(await read({ occurrenceId: 'not-retained' })).toMatchObject({ sourceContext: null, stacktrace: null });
       // J2 detail: the 7-day trend and Requests affected come from the same retained occurrences.
       expect(await read({ window: { since: 0, until: 3000, bucketMs: 1000 } })).toMatchObject({
         status: 'ok',
@@ -242,7 +248,7 @@ describe('native exception Actions on the collector', () => {
         code: 'deployment_access_denied',
       });
       expect(published).toHaveLength(2);
-      expect(admissions).toBe(9);
+      expect(admissions).toBe(12);
     } finally {
       projection?.stop();
       await lease.release();
