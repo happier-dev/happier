@@ -141,7 +141,7 @@ export function buildTerminalMetadataFromHostHandle(
   // The PTY terminal host: its Agent runs in the Session holder's terminal (POSIX pty or
   // Windows ConPTY) on every OS and is attached by Session id. Sessions written before keep
   // their `windows_console` metadata.
-  if (handle.kind === 'windows_console') {
+  if (handle.kind === 'pty') {
     return { ...binding, mode: 'pty', pty: { host: 'holder' } };
   }
 

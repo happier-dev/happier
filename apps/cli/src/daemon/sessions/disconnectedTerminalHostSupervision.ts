@@ -258,7 +258,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   }
   if (probe.status === 'inconclusive') return { state: 'unknown', reason: 'probe_inconclusive' };
 
-  const terminalMode = current.handle.kind === 'windows_console'
+  const terminalMode = current.handle.kind === 'pty'
     ? input.candidate.terminalMode
     : current.handle.kind;
   if (!terminalMode) return { state: 'unknown', reason: 'retirement_failed' };

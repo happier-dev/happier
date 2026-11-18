@@ -39,7 +39,7 @@ const scenarios = readdirSync(fixturesDirectory).filter(name => name.endsWith('.
 /** The decisions the Claude unified runtime takes from one capture, as the PTY host hands it over. */
 function decide(capture: TerminalScreenCapture, prompt: string | undefined): Record<string, unknown> {
   const control = buildTerminalControlCapture({ rawText: capture.styledText ?? capture.text, cursor: capture.cursor,
-    hostKind: 'windows_console', capturedAtMs: 0 });
+    hostKind: 'pty', capturedAtMs: 0 });
   const parserInput = control.styledText ?? control.text;
   const state = parseClaudeScreenState(parserInput, { cursor: control.cursor });
   const own = prompt ?? '';

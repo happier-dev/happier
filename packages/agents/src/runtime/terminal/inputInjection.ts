@@ -1,4 +1,5 @@
-export type TerminalHostKind = 'tmux' | 'zellij' | 'herdr' | 'windows_console';
+/** A terminal host adapter's kind. `pty`: the Session holder's terminal (POSIX pty or Windows ConPTY). */
+export type TerminalHostKind = 'tmux' | 'zellij' | 'herdr' | 'pty';
 
 export type TerminalInjectionFailurePhase =
     | 'liveness'

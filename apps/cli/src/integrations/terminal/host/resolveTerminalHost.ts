@@ -70,19 +70,19 @@ export function resolveTerminalHost(params: ResolveTerminalHostParams): Terminal
   }
 
   if (preference === 'windows_console') {
-    if (!adapters.windows_console) {
+    if (!adapters.pty) {
       return {
         status: 'disabled',
         reason: 'windows_console_unavailable',
         message: 'Windows console terminal host is unavailable.',
       };
     }
-    return { status: 'resolved', adapter: adapters.windows_console, reason: 'windows_console_forced' };
+    return { status: 'resolved', adapter: adapters.pty, reason: 'windows_console_forced' };
   }
 
   if (platform.os === 'win32') {
-    if (adapters.windows_console) {
-      return { status: 'resolved', adapter: adapters.windows_console, reason: 'windows_console_available' };
+    if (adapters.pty) {
+      return { status: 'resolved', adapter: adapters.pty, reason: 'windows_console_available' };
     }
     // No console host: ARM64 has no bundled zellij build either, so there is
     // nothing left to try. x64 falls through to the shared zellij tail below

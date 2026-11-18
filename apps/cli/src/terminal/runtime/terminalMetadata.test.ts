@@ -250,7 +250,7 @@ describe('buildTerminalMetadataFromHostHandle', () => {
     // The PTY terminal host (its selector kind stays `windows_console`) on every OS: the Agent
     // runs in its Session holder's terminal, attached by Session id.
     expect(buildTerminalMetadataFromHostHandle({
-      kind: 'windows_console',
+      kind: 'pty',
       sessionName: 'native-console',
       paneId: 'window-7',
       attachMetadata,

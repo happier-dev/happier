@@ -184,7 +184,7 @@ describe('disconnected terminal-host supervision', () => {
           observedAt: 1,
         },
       },
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       attachmentId: 'attachment-windows',
     })).toBe('windows_terminal');
     expect(resolveDisconnectedTerminalMode({
@@ -197,7 +197,7 @@ describe('disconnected terminal-host supervision', () => {
           observedAt: 1,
         },
       },
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       attachmentId: 'attachment-windows',
     })).toBeNull();
   });

@@ -221,7 +221,7 @@ describe('createPtyTerminalHostAdapter', () => {
     fake.processes[0]?.emitData('\u001b[2J\u001b[HWhat would you like to work on?\r\n> ');
 
     expect(handle).toMatchObject({
-      kind: 'windows_console',
+      kind: 'pty',
       sessionName: 'happier-claude-windows',
       paneId: 'happier-claude-windows',
       attachMetadata: {
@@ -250,7 +250,7 @@ describe('createPtyTerminalHostAdapter', () => {
       capture: {
         text: 'What would you like to work on?\n>',
         cursor: { x: 2, y: 1 },
-        hostKind: 'windows_console',
+        hostKind: 'pty',
       },
     });
   });
@@ -352,7 +352,7 @@ describe('createPtyTerminalHostAdapter', () => {
       status: 'injected',
       injectedAt: 456,
       bytesWritten: 17,
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       hostSessionName: 'happier-claude-windows',
       paneId: 'happier-claude-windows',
     });
@@ -592,7 +592,7 @@ describe('createPtyTerminalHostAdapter', () => {
       status: 'failed',
       reason: 'pane_dead',
       recoverable: false,
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       hostSessionName: 'happier-claude-windows',
     });
   });
@@ -673,7 +673,7 @@ describe('createPtyTerminalHostAdapter', () => {
       phase: 'after_enter_unknown',
       duplicateRisk: 'possible',
       recoverable: true,
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       hostSessionName: 'happier-claude-windows',
     });
     await expect(adapter.evaluateLiveness(handle)).resolves.toMatchObject({
@@ -711,7 +711,7 @@ describe('createPtyTerminalHostAdapter', () => {
       phase: 'after_enter_unknown',
       duplicateRisk: 'possible',
       recoverable: true,
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       hostSessionName: 'happier-claude-windows',
     });
   });

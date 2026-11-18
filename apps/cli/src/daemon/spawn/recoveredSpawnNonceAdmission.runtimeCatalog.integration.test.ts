@@ -75,7 +75,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
           respawn: { version: 1, directory: home, spawnNonce: state === 'marker-unbound' ? 'another-nonce' : nonce,
             terminal: { mode: plain ? 'plain' : 'herdr' } } });
         if (state.startsWith('windows-pty') || state === 'await-windows-pty-replacement') {
-          const handle = { attachmentId: createTerminalAttachmentId(), kind: 'windows_console' as const,
+          const handle = { attachmentId: createTerminalAttachmentId(), kind: 'pty' as const,
             sessionName: 'pty-session', paneId: 'pty-session', attachMetadata: { attachStrategy: 'terminal_host' as const,
               topology: 'shared' as const, locality: 'same_machine' as const, maxClients: null,
               requiresLocalAttachmentInfo: false, liveProbe: 'required' as const } };
@@ -148,7 +148,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
               } else if (state === 'await-tracked-nonce-rebound' && tracked.spawnOptions) {
                 tracked.spawnOptions = { ...tracked.spawnOptions, spawnNonce: 'another-nonce' };
               } else if (state === 'await-windows-pty-replacement') {
-                const replacement = { attachmentId: createTerminalAttachmentId(), kind: 'windows_console' as const,
+                const replacement = { attachmentId: createTerminalAttachmentId(), kind: 'pty' as const,
                   sessionName: 'replacement-pty', paneId: 'replacement-pty', attachMetadata: { attachStrategy: 'terminal_host' as const,
                     topology: 'shared' as const, locality: 'same_machine' as const, maxClients: null,
                     requiresLocalAttachmentInfo: false, liveProbe: 'required' as const } };

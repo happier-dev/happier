@@ -1,4 +1,4 @@
-import type { RuntimeDescriptorV1, TerminalHostKind } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { RuntimeDescriptorV1, TerminalHostPreference } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 export const CLAUDE_UNIFIED_TERMINAL_FEATURE_ID = 'agents.claude.unifiedTerminal';
@@ -58,7 +58,8 @@ export type ClaudeUnifiedTerminalSelectionReason =
 /** The selected Claude owner writes this intent; the opener and native host consume it. */
 export function readClaudeTerminalRuntimeSelection(descriptor: RuntimeDescriptorV1 | undefined): Readonly<{
   mode: 'agentSdk' | 'unifiedTerminal';
-  host?: TerminalHostKind;
+  /** The host the Session asked for (persisted in its descriptor), not the adapter's kind. */
+  host?: Exclude<TerminalHostPreference, 'auto'>;
 }> | null {
   if (descriptor?.v !== 1 || descriptor.agentId !== 'claude') return null;
   const mode = descriptor.agent.backendMode;

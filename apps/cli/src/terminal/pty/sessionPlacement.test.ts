@@ -77,7 +77,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath)('placed Session PTY
               mode: 'tmux', tmuxTarget: 'host-only:0.1', attachmentId: 'host-only-attachment',
             }) } });
           for (const preference of ['tmux', 'zellij', 'herdr'] as const) {
-            expect(await service.resolve({ preference })).toMatchObject({ status: 'resolved', hostKind: 'windows_console' });
+            expect(await service.resolve({ preference })).toMatchObject({ status: 'resolved', hostKind: 'pty' });
           }
           const adapter = createPtyTerminalHostAdapter({ ptyProvider: { spawn: localSpawn, prepare: localPrepare }, inputStabilityDelayMs: 0 });
           const handle = await adapter.createOrAttachHost({ sessionName: 'placed-native', workingDirectory,

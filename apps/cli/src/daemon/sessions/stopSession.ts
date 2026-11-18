@@ -87,7 +87,7 @@ function resolveRetiredTerminalMode(
   attachmentInfo: ExactTerminalHostAttachmentInfo,
   actualTerminalModes: readonly (TerminalMode | undefined)[],
 ): TerminalMode | null {
-  if (attachmentInfo.handle.kind === 'windows_console') {
+  if (attachmentInfo.handle.kind === 'pty') {
     const windowsModes = new Set(
       actualTerminalModes.filter(
         (mode): mode is 'windows_terminal' | 'windows_console' | 'pty' =>
@@ -465,7 +465,7 @@ export function createStopSession(params: Readonly<{
           return incompleteStopSession('missing_attachment_identity');
         }
       }
-      if (attachmentInfo?.version === 2 && attachmentInfo.handle.kind === 'windows_console' && !retiredTerminalMode) {
+      if (attachmentInfo?.version === 2 && attachmentInfo.handle.kind === 'pty' && !retiredTerminalMode) {
         logWarning(`[DAEMON RUN] Refusing to retire Windows terminal topology without a unique actual-mode proof for session ${normalizedSessionId}`);
         return incompleteStopSession('missing_topology_proof');
       }

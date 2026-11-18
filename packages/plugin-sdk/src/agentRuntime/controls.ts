@@ -9,7 +9,7 @@ import type {
 } from '../services/sessions.js';
 import type { JsonValue } from '../identity.js';
 import type { AgentNativeLaunchQualifier } from '../exec.js';
-import type { AgentRuntimeContext, AgentSessionHostServices, AgentSessionModel, AgentSessionRuntimeContext, AgentTranscriptIdentityCodec, TerminalHostKind } from './context.js';
+import type { AgentRuntimeContext, AgentSessionHostServices, AgentSessionModel, AgentSessionRuntimeContext, AgentTranscriptIdentityCodec, TerminalHostKind, TerminalHostPreference } from './context.js';
 import type {
   AgentSessionConnectedAccountSelection,
   AgentSessionConfigurationSnapshot,
@@ -226,7 +226,7 @@ export interface AgentSessionRuntimeFactory {
     Pick<AgentSessionOpenRequest, 'runtimeDescriptorV1' | 'launchEnvironment'>
     & {
       cwd?: string;
-      requestedHost?: TerminalHostKind | 'plain';
+      requestedHost?: Exclude<TerminalHostPreference, 'auto'> | 'plain';
       configuration?: Pick<AgentSessionConfigurationSnapshot, 'options'>;
     }
   >, context: Readonly<{

@@ -548,7 +548,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const attachmentId = 'attachment-exact-windows-terminal' as NonNullable<TerminalHostHandle['attachmentId']>;
     const handle: TerminalHostHandle & { attachmentId: NonNullable<TerminalHostHandle['attachmentId']> } = {
       attachmentId,
-      kind: 'windows_console',
+      kind: 'pty',
       sessionName: 'happier-exact-windows-terminal',
       attachMetadata: { attachStrategy: 'terminal_host', topology: 'exclusive', locality: 'same_machine', liveProbe: 'required' },
     };
@@ -598,7 +598,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const attachmentId = 'attachment-current-windows-terminal' as NonNullable<TerminalHostHandle['attachmentId']>;
     const handle: TerminalHostHandle & { attachmentId: NonNullable<TerminalHostHandle['attachmentId']> } = {
       attachmentId,
-      kind: 'windows_console',
+      kind: 'pty',
       sessionName: 'happier-stale-windows-terminal',
       attachMetadata: { attachStrategy: 'terminal_host', topology: 'exclusive', locality: 'same_machine', liveProbe: 'required' },
     };

@@ -129,7 +129,9 @@ export async function writeTerminalAttachmentInfo(params: {
 function parseTerminalHostHandle(value: unknown): TerminalHostHandle | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (record.kind !== 'tmux' && record.kind !== 'zellij' && record.kind !== 'herdr' && record.kind !== 'windows_console') return null;
+  // Released 0.2 wrote the in-runner console host as `windows_console`; it is the `pty` host's kind now.
+  if (record.kind === 'windows_console') return parseTerminalHostHandle({ ...record, kind: 'pty' });
+  if (record.kind !== 'tmux' && record.kind !== 'zellij' && record.kind !== 'herdr' && record.kind !== 'pty') return null;
   if (typeof record.sessionName !== 'string' || !record.sessionName.trim()) return null;
   if (record.kind === 'herdr' && (
     typeof record.socketPath !== 'string' || !record.socketPath.trim()
@@ -226,7 +228,7 @@ export function terminalMetadataMatchesHostHandle(
       && terminal.herdr?.socketPath === handle.socketPath?.trim()
       && terminal.herdr?.terminalId === handle.terminalId?.trim();
   }
-  if (handle.kind === 'windows_console') {
+  if (handle.kind === 'pty') {
     // PTY metadata has no reconstructible host geometry; its committed ID is the binding.
     const attachmentId = knownAttachmentId?.trim();
     return (terminal.mode === 'pty' ? terminal.pty?.host === 'holder'

@@ -29,7 +29,7 @@ describe('default terminal host adapter inventory', () => {
         resolveZellijSocketDir: () => '/tmp/happier/zellij',
         createTmuxTerminalHostAdapter: vi.fn(() => adapter('tmux')),
         createZellijTerminalHostAdapter: vi.fn(() => adapter('zellij')),
-        createPtyTerminalHostAdapter: vi.fn(() => adapter('windows_console')),
+        createPtyTerminalHostAdapter: vi.fn(() => adapter('pty')),
         resolveHerdrRuntimeBinary: vi.fn(async () => '/managed/herdr'),
         createHerdrTerminalHostAdapter: createHerdr,
       },
@@ -55,7 +55,7 @@ describe('default terminal host adapter inventory', () => {
         resolveZellijSocketDir: () => '/tmp/happier/zellij',
         createTmuxTerminalHostAdapter: createTmux,
         createZellijTerminalHostAdapter: createZellij,
-        createPtyTerminalHostAdapter: vi.fn(() => adapter('windows_console')),
+        createPtyTerminalHostAdapter: vi.fn(() => adapter('pty')),
         resolveHerdrRuntimeBinary: vi.fn(async () => null),
         createHerdrTerminalHostAdapter: vi.fn(() => adapter('herdr')),
       },
@@ -74,7 +74,7 @@ describe('default terminal host adapter inventory', () => {
   });
 
   it('uses the Windows console adapter and skips unrequested zellij discovery on Windows', async () => {
-    const windowsConsole = adapter('windows_console');
+    const windowsConsole = adapter('pty');
     const resolveZellijRuntimeBinary = vi.fn(async () => '/managed/zellij.exe');
     const createPtyTerminalHostAdapter = vi.fn(() => windowsConsole);
     const promptSubmitVerification = {
@@ -101,7 +101,7 @@ describe('default terminal host adapter inventory', () => {
     });
 
     expect(result).toEqual({
-      adapters: { windows_console: windowsConsole },
+      adapters: { pty: windowsConsole },
       tmuxAvailable: false,
       zellijAvailable: false,
     });

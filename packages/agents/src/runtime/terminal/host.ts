@@ -8,7 +8,8 @@ import type {
 } from './inputInjection.js';
 import type { TerminalHostLivenessV1 } from './inputReadiness.js';
 
-export type TerminalHostPreference = 'auto' | TerminalHostKind;
+/** The host a person asks for. `windows_console` (the Windows hidden console) is served by the `pty` host. */
+export type TerminalHostPreference = 'auto' | 'tmux' | 'zellij' | 'herdr' | 'windows_console';
 
 declare const terminalAttachmentIdBrand: unique symbol;
 

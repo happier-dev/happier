@@ -73,7 +73,7 @@ vi.mock('@/integrations/terminal/host/defaultAdapters', () => ({
   createDefaultTerminalHostAdapterInventory: vi.fn(async () => ({
     adapters: {
       zellij: { kind: 'zellij', dispose: disposeTerminalHostMock },
-      windows_console: { kind: 'windows_console', dispose: disposeTerminalHostMock },
+      pty: { kind: 'pty', dispose: disposeTerminalHostMock },
     },
   })),
 }));
@@ -468,7 +468,7 @@ describe('requestSessionStop', () => {
       sessionId: input.sessionId,
       handle: {
         attachmentId: input.attachmentId,
-        kind: 'windows_console',
+        kind: 'pty',
         sessionName: 'preserved-windows-host',
         attachMetadata: { attachStrategy: 'terminal_host', topology: 'exclusive', locality: 'same_machine', liveProbe: 'required' },
       },

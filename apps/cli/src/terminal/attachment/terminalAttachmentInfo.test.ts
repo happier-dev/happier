@@ -655,7 +655,7 @@ describe('terminalAttachmentInfo', () => {
         sessionId,
         handle: {
           attachmentId: 'attachment-windows' as NonNullable<TerminalHostHandle['attachmentId']>,
-          kind: 'windows_console',
+          kind: 'pty',
           sessionName: 'windows-console-session',
           paneId: 'console-1',
           attachMetadata: {
@@ -695,14 +695,35 @@ describe('terminalAttachmentInfo', () => {
         sessionId,
         handle: {
           attachmentId: 'attachment-pty' as NonNullable<TerminalHostHandle['attachmentId']>,
-          kind: 'windows_console',
+          kind: 'pty',
           sessionName: 'happier-claude-pty',
           paneId: 'happier-claude-pty',
           attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' },
         },
       });
       await expect(readTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId }))
-        .resolves.toMatchObject({ attachmentId: attachment.attachmentId, handle: { kind: 'windows_console', sessionName: 'happier-claude-pty' } });
+        .resolves.toMatchObject({ attachmentId: attachment.attachmentId, handle: { kind: 'pty', sessionName: 'happier-claude-pty' } });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('reads a released 0.2 console host record as the pty host', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    const sessionId = 'session-02-console';
+    try {
+      const attachment = await writeTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        handle: {
+          attachmentId: 'attachment-02' as NonNullable<TerminalHostHandle['attachmentId']>,
+          kind: 'windows_console' as TerminalHostHandle['kind'],
+          sessionName: 'happier-claude-02',
+          attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' },
+        },
+      });
+      await expect(readTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId }))
+        .resolves.toMatchObject({ attachmentId: attachment.attachmentId, handle: { kind: 'pty', sessionName: 'happier-claude-02' } });
     } finally {
       dir.removeCallback();
     }

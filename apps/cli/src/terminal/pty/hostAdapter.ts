@@ -206,7 +206,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
 
   function createControlPort(handle: TerminalHostHandle): TerminalControlPort {
     return {
-      hostKind: 'windows_console',
+      hostKind: 'pty',
       async sendLiteralText(text) {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
@@ -238,7 +238,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
             // The styled rows when any cell carries an attribute (SGR dim tells Claude's placeholder from a draft).
             rawText: screen.styledText ?? screen.text,
             cursor: screen.cursor,
-            hostKind: 'windows_console',
+            hostKind: 'pty',
             capturedAtMs: now(),
           }),
         };
@@ -247,13 +247,13 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   }
 
   return {
-    kind: 'windows_console',
+    kind: 'pty',
     nativePreambleTransport: 'pty',
     async createOrAttachHost(opts) {
       const existing = sessions.get(opts.sessionName);
       if (existing && !existing.ended) {
         return {
-          kind: 'windows_console',
+          kind: 'pty',
           sessionName: opts.sessionName,
           paneId: opts.sessionName,
           attachMetadata: {
@@ -322,7 +322,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       sessions.set(opts.sessionName, session);
 
       return {
-        kind: 'windows_console',
+        kind: 'pty',
         sessionName: opts.sessionName,
         paneId: opts.sessionName,
         attachMetadata: {

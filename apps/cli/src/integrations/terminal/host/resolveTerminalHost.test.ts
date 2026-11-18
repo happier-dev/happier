@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveTerminalHost } from './resolveTerminalHost';
 import type { TerminalHostAdapter, TerminalHostResolverPlatform } from './_types';
 
-function adapter(kind: 'tmux' | 'zellij' | 'herdr' | 'windows_console'): TerminalHostAdapter {
+function adapter(kind: 'tmux' | 'zellij' | 'herdr' | 'pty'): TerminalHostAdapter {
   return {
     kind,
     createOrAttachHost: async () => {
@@ -61,14 +61,14 @@ describe('resolveTerminalHost', () => {
     const result = resolveTerminalHost({
       preference: 'auto',
       platform: { os: 'win32', arch: 'x64' },
-      adapters: { windows_console: adapter('windows_console'), zellij: adapter('zellij') },
+      adapters: { pty: adapter('pty'), zellij: adapter('zellij') },
       tmuxAvailable: false,
       zellijAvailable: true,
     });
 
     expect(result).toMatchObject({
       status: 'resolved',
-      adapter: { kind: 'windows_console' },
+      adapter: { kind: 'pty' },
       reason: 'windows_console_available',
     });
   });
@@ -77,14 +77,14 @@ describe('resolveTerminalHost', () => {
     const result = resolveTerminalHost({
       preference: 'auto',
       platform: { os: 'win32', arch: 'arm64' },
-      adapters: { windows_console: adapter('windows_console'), zellij: adapter('zellij') },
+      adapters: { pty: adapter('pty'), zellij: adapter('zellij') },
       tmuxAvailable: false,
       zellijAvailable: true,
     });
 
     expect(result).toMatchObject({
       status: 'resolved',
-      adapter: { kind: 'windows_console' },
+      adapter: { kind: 'pty' },
       reason: 'windows_console_available',
     });
   });
@@ -93,14 +93,14 @@ describe('resolveTerminalHost', () => {
     const result = resolveTerminalHost({
       preference: 'windows_console',
       platform: { os: 'win32', arch: 'arm64' },
-      adapters: { windows_console: adapter('windows_console') },
+      adapters: { pty: adapter('pty') },
       tmuxAvailable: false,
       zellijAvailable: false,
     });
 
     expect(result).toMatchObject({
       status: 'resolved',
-      adapter: { kind: 'windows_console' },
+      adapter: { kind: 'pty' },
       reason: 'windows_console_forced',
     });
   });
