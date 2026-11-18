@@ -36,6 +36,7 @@ import type {
   WorkflowSessionLaunchFieldId,
 } from '@happier-dev/protocol/workflows';
 import { WORKFLOW_SESSION_LAUNCH_FIELD_IDS } from '@happier-dev/protocol/workflows';
+import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1, SessionOwnerModeCatalogV2, SessionRolesV1 } from '@happier-dev/protocol';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
@@ -86,14 +87,17 @@ import {
   type SessionSpawnNewActionInputV2,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
-function workflowSessionResumeOptions(selection: WorkflowStepExecutionSelection): NonNullable<Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions']> {
+function workflowSessionResumeOptions(
+  selection: WorkflowStepExecutionSelection,
+  modelSelection = readAuthoredSessionModelSelection(selection),
+): NonNullable<Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions']> {
   const terminal = projectSessionAuthoringTerminalForSpawn(selection.terminal);
   return {
     ...(selection.environmentVariables ? { environmentVariables: selection.environmentVariables } : {}),
     ...(selection.providerSessionResume ? { resume: selection.providerSessionResume.providerSessionId } : {}),
     ...(selection.permissionMode ? { permissionMode: parsePermissionIntentAlias(selection.permissionMode) ?? undefined } : {}),
     ...(selection.permissionModeUpdatedAt === undefined ? {} : { permissionModeUpdatedAt: selection.permissionModeUpdatedAt }),
-    ...(selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
     ...(selection.profileId ? { profileId: selection.profileId } : {}),
     ...(terminal ? { terminal } : {}),
     ...(selection.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: selection.windowsRemoteSessionLaunchMode } : {}),
@@ -941,10 +945,11 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       return { kind: 'completed', result: '' };
     }
     const runtime = prepared.existing?.runtimeSnapshot;
+    const modelSelection = readAuthoredSessionModelSelection(params.execution);
     const trackedTeamModelSelection = runtime?.teamModelSelection;
     const selectedControls = runtime ? resolveSessionRuntimeSnapshot({
       incomingOptions: { directory: params.workspace.directory, permissionMode: parsePermissionIntentAlias(requestedPermissionCeiling ?? 'default') ?? undefined,
-        permissionModeUpdatedAt: params.execution.permissionModeUpdatedAt, modelSelection: params.execution.modelSelection ?? undefined },
+        permissionModeUpdatedAt: params.execution.permissionModeUpdatedAt, modelSelection: modelSelection ?? undefined },
       trackedSpawnOptions: { directory: params.workspace.directory,
         ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.value, permissionModeUpdatedAt: runtime.permissionMode.updatedAt } : {}),
         ...(trackedTeamModelSelection
@@ -1009,7 +1014,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       attachments: params.input.attachments,
       machineAdmissionTransport: conversation.machineAdmissionTransport,
       permissionMode: params.execution.permissionMode === null ? null : selectedControls?.permissionMode?.value ?? requestedPermissionCeiling,
-      incomingResumeOptions: workflowSessionResumeOptions(params.execution),
+      incomingResumeOptions: workflowSessionResumeOptions(params.execution, modelSelection),
       ...(params.authorization.sourceAuthority
         ? { sourceAuthority: params.authorization.sourceAuthority }
         : {}),
@@ -1022,16 +1027,15 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
         throughSeq: discussionDestination.throughSeq,
         participantSessionId: conversation.sessionId,
       } } : {}),
-      ...(params.execution.modelSelection === undefined
+      ...(modelSelection === undefined
         ? {}
-        : { modelSelectionInput: params.execution.modelSelection === null ? { modelId: null }
+        : { modelSelectionInput: modelSelection === null ? { modelId: null }
             : selectedControls?.teamModelSelection?.ref
               ?? (selectedControls?.modelSelection
                 ? selectedControls.modelSelection.value ?? { modelId: null }
                 : undefined)
-              ?? params.execution.modelSelection.ref
-              ?? { modelId: null },
-          ...(params.execution.modelSelection === null ? {} : { modelSelectionUpdatedAt: selectedControls?.modelSelection?.updatedAt ?? params.execution.modelSelection.updatedAt }) }),
+              ?? modelSelection.ref,
+          ...(modelSelection === null ? {} : { modelSelectionUpdatedAt: selectedControls?.modelSelection?.updatedAt ?? modelSelection.updatedAt }) }),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     if (admission.status === 'rejected') return { kind: 'failed', code: admission.code };

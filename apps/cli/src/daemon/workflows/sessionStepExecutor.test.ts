@@ -1698,7 +1698,7 @@ describe('workflow Session step executor', () => {
     })]);
   });
 
-  it('admits input with the newer Team model retained by the existing Session', async () => {
+  it.each(['native', 'team-sidecar'] as const)('admits input with the newer Team model retained by the existing Session over %s', async authored => {
     const admitted: unknown[] = [];
     const credentials = { token: 'token', encryption: null };
     const retainedSessionId = 'c111111111111111111111111';
@@ -1745,9 +1745,13 @@ describe('workflow Session step executor', () => {
       input: { text: 'work', references: [], attachments: [], values: [] },
       execution: { conversation: { kind: 'shared_run' }, agentTarget: target,
         permissionMode: 'default', permissionModeUpdatedAt: 200,
-        modelSelection: { v: 2, updatedAt: 200, ref: {
+        ...(authored === 'native' ? { modelSelection: { v: 2 as const, updatedAt: 200, ref: {
           source: 'native', agentTargetKey: teamSelection.ref.agentTargetKey, modelId: 'authored-native-model',
-        } } },
+        } } } : { modelSelection: null, teamCredentialBindings: [{
+          v: 1, slot: { kind: 'provider_model' }, teamId: 'team-1', resourceId: 'team-resource',
+          expectedResourceRevision: 3, deliveryMode: 'brokered',
+          providerModelSelection: { agentTargetKey: teamSelection.ref.agentTargetKey, modelId: 'authored-team-model' },
+        }] }) },
       executionTarget: { kind: 'session' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
       beforeInputAdmission: async () => {}, onInputAccepted: async () => {},
