@@ -1018,6 +1018,44 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
+  it('returns actionable provider failures for recorded audio and accepts a fresh upload after recovery', async () => {
+    const { handlers, registrar } = manager();
+    let providerFailure: Error | undefined;
+    await admitSpeech({
+      kind: 'speech',
+      async transcribe(request) {
+        if (providerFailure) throw providerFailure;
+        return { requestId: request.requestId, text: 'recorded transcript' };
+      },
+    });
+    const registration = registerMachineVoiceSpeechRpcHandlers({ rpcHandlerManager: registrar });
+    const transcribe = async () => handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE)({
+      target, requestId: 'recorded-audio', mimeType: 'audio/wav', capturePurpose: 'conversation',
+      uploadId: await upload(handlers, new Uint8Array([1, 2, 3])),
+    });
+    const receipt = { ok: true, requestId: 'recorded-audio', text: 'recorded transcript' };
+    try {
+      await expect(transcribe()).resolves.toEqual(receipt);
+
+      // Undici's fetch rejects with a TypeError whose cause carries the socket code.
+      providerFailure = new TypeError('fetch failed', {
+        cause: Object.assign(new Error('fixture connection refused'), { code: 'ECONNREFUSED' }),
+      });
+      await expect.soft(transcribe()).resolves.toEqual({ ok: false, errorCode: 'provider_unavailable' });
+
+      providerFailure = Object.assign(new Error('fixture quota exceeded'), { code: 'rate_limited' });
+      await expect.soft(transcribe()).resolves.toEqual({ ok: false, errorCode: 'rate_limited' });
+
+      providerFailure = new TypeError('unexpected provider failure');
+      await expect(transcribe()).resolves.toEqual({ ok: false, errorCode: 'internal_error' });
+
+      providerFailure = undefined;
+      await expect(transcribe()).resolves.toEqual(receipt);
+    } finally {
+      await registration.dispose();
+    }
+  });
+
   it('passes host-owned bytes through the final transcribe ABI and enforces provider input limits', async () => {
     const { handlers, registrar } = manager();
     const transcribe = vi.fn<NonNullable<SpeechProviderRuntime['transcribe']>>(async (request, context) => {

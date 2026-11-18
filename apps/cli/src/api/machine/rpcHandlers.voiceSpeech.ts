@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import { DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES as VOICE_SPEECH_INPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES as VOICE_SPEECH_OUTPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES as VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES, DaemonVoiceSpeechCatalogRequestSchema, DaemonVoiceSpeechSettingsActionRequestSchema, DaemonVoiceSpeechSettingsActionResponseSchema, DaemonVoiceSpeechDownloadAbortRequestSchema, DaemonVoiceSpeechDownloadAbortResponseSchema, DaemonVoiceSpeechDownloadChunkRequestSchema, DaemonVoiceSpeechDownloadChunkResponseSchema, DaemonVoiceSpeechDownloadFinalizeRequestSchema, DaemonVoiceSpeechDownloadFinalizeResponseSchema, DaemonVoiceSpeechSynthesizeRequestSchema, DaemonVoiceSpeechSynthesizeResponseSchema, DaemonVoiceSpeechTranscribeUploadAbortRequestSchema, DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, DaemonVoiceSpeechTranscribeUploadChunkRequestSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, DaemonVoiceSpeechTranscribeUploadFinalizeRequestSchema, DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeUploadInitRequestSchema, DaemonVoiceSpeechTranscribeUploadInitResponseSchema, DaemonVoiceSpeechTranscribeRequestSchema, DaemonVoiceSpeechTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
-import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
+import { VoiceProviderCatalogResponseSchema, VoiceProviderOperationErrorCodeSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { VoiceProviderSettingsJsonValueV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { admitDeclaredSessionVoicePreferenceV1, readSessionVoiceSettingFieldV1,
@@ -50,6 +50,7 @@ import {
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import type { RegisteredSpeechProviderRuntime } from '@/plugins/runtime/lifecycle/contributions/targetVoiceSpeech';
+import { isProvenPreDispatchConnectionFailure } from '../client/classifyServerEndpointError';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import { createFinalizedUploadHold } from './finalizedUploadHold';
 import { readVoiceSpeechSettingsSnapshot } from './voiceSpeechSettings';
@@ -596,17 +597,17 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
   };
   const classify = (error: unknown) => {
     const code = (error as { code?: unknown } | null)?.code;
-    if (code === 'credential_unavailable' || code === 'plugin_voice_credential_access_unavailable') {
+    const providerCode = VoiceProviderOperationErrorCodeSchema.safeParse(code);
+    if (providerCode.success) return { ok: false as const, errorCode: providerCode.data };
+    if (code === 'plugin_voice_credential_access_unavailable') {
       return { ok: false as const, errorCode: 'credential_unavailable' as const };
     }
-    if (code === 'provider_unavailable' || code === 'plugin_final_generation_retired') {
+    if (code === 'plugin_final_generation_retired' || isProvenPreDispatchConnectionFailure(error)) {
       return { ok: false as const, errorCode: 'provider_unavailable' as const };
     }
     if (code === 'provider_settings_invalid') return { ok: false as const, errorCode: 'invalid_parameters' as const };
-    if (code === 'cancelled') return { ok: false as const, errorCode: 'cancelled' as const };
-    if (code === 'request_timeout') return { ok: false as const, errorCode: 'request_timeout' as const };
     if ((error as { name?: unknown } | null)?.name === 'AbortError') return { ok: false as const, errorCode: 'request_timeout' as const };
-    if (code === 'provider_response_invalid' || code === 'plugin_voice_provider_result_invalid') {
+    if (code === 'plugin_voice_provider_result_invalid') {
       return { ok: false as const, errorCode: 'provider_response_invalid' as const };
     }
     return { ok: false as const, errorCode: 'internal_error' as const };
