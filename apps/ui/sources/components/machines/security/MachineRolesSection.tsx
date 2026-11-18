@@ -6,6 +6,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { readSyncedMachineRolesList } from '@/sync/domains/machines/roles/machineRoles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -62,7 +63,8 @@ export const MachineRolesSection = React.memo(function MachineRolesSection(props
             return;
         }
         if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
-        Modal.alert(t('machineDetailPage.roles.saveFailed'), result.ok ? undefined : result.error);
+        Modal.alert(t('machineDetailPage.roles.saveFailed'), result.ok ? undefined
+            : resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
     }, [execute, list, machine.id, serverId]);
 
     if (list.status !== 'ready') return null;

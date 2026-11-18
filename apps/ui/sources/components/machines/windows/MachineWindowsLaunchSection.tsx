@@ -7,6 +7,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import {
     readMachineWindowsRemoteSessionLaunchMode,
     resolveEffectiveWindowsRemoteSessionLaunchMode,
@@ -51,7 +52,7 @@ export const MachineWindowsLaunchSection = React.memo(function MachineWindowsLau
                 serverId: machineServerId, machineId, expectedVersion: machine.metadataVersion,
                 patch: { windowsRemoteSessionLaunchMode: mode },
             });
-            if (!execution.ok) throw new Error(execution.error);
+            if (!execution.ok) throw new Error(resolveActionExecutionErrorMessage(execution, t('machine.windows.remoteSessionConsoleUpdateFailed')));
         } catch (error) {
             Modal.alert(
                 t('common.error'),

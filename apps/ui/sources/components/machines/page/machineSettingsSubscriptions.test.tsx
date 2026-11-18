@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -18,6 +18,9 @@ const { MachineWindowsLaunchSection } = await import('../windows/MachineWindowsL
 const { MachineTerminalSettingsSection } = await import('../terminal/MachineTerminalSettingsSection');
 const { MachineComputerUseSection } = await import('../computer/MachineComputerUseSection');
 const { MachineInstallablesSection } = await import('../installables/MachineInstallablesSection');
+const { MachineRolesSection } = await import('../security/MachineRolesSection');
+const { Modal } = await import('@/modal');
+const { t } = await import('@/text');
 const { MachineToolRow } = await import('../installables/MachineToolRow');
 const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
 const { getInstallablesRegistryEntries } = await import('@/capabilities/installablesRegistry');
@@ -29,6 +32,40 @@ const { HappierSwitchNative } = await import('@happier-dev/plugin-ui/presentatio
 afterEach(async () => { standardCleanup(); await account.reset(); });
 
 describe('Machine settings subscriptions', () => {
+    it.each([
+        { control: 'Windows launch', actionId: 'machines.metadata.update' },
+        { control: 'terminal', actionId: 'settings.set' },
+        { control: 'roles', actionId: 'machines.roles.set' },
+    ] as const)('explains the $control refusal and keeps the previous setting', async ({ control, actionId }) => {
+        const machine = createMachineFixture({ id: 'shop', isShared: false, active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, platform: 'win32' } });
+        await account.restore({ currentAccount: true, machines: [machine], settings: {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { enabled: false } } },
+        } });
+        const serverId = account.serverId;
+        const screen = await renderScreen(control === 'Windows launch'
+            ? <MachineWindowsLaunchSection serverId={serverId} machine={machine} windowsTerminalAvailable />
+            : control === 'terminal'
+                ? <MachineTerminalSettingsSection serverId={serverId} machineId={machine.id} tmuxAvailable />
+                : <MachineRolesSection serverId={serverId} machine={machine} machineName="shop" online />);
+        try {
+            await act(async () => { await resolveServerCredentialAccountScope(serverId); });
+            const findControl = () => {
+                const row = screen.findAllByType(Item).find(node => control === 'roles'
+                    ? node.props.testID === 'machine-roles-row-sessions'
+                    : node.props.title === t(control === 'Windows launch' ? 'machine.windows.remoteSessionModeOverrideTitle' : 'machine.tmux.overrideTitle'));
+                return (row?.props.rightElement as React.ReactElement<{
+                    value: boolean; onValueChange: (value: boolean) => void | Promise<void>;
+                }> | undefined)?.props;
+            };
+            const value = control === 'roles';
+            expect(findControl()?.value).toBe(value);
+            await act(async () => { await findControl()?.onValueChange(!value); });
+            await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), t('actionConfirmations.turnedOffUnnamedMessage')));
+            expect(findControl()?.value).toBe(value);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['summary', 'terminal', 'computer', 'installables'] as const)('%s ignores sibling Machine overrides and presents selected changes', async kind => {
         const machine = createMachineFixture({ active: false });
         const tool = getInstallablesRegistryEntries().find(entry => entry.enabledWhen())!;

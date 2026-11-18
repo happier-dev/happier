@@ -7,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
 import { useSettingsSelector } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -41,7 +42,7 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
         fireAndForget((async () => {
             const result = await stopExecution.execute('settings.set', { anchor: 'machines.terminal.host', key: machineId,
                 value: { host: enabled ? selectedGlobalTerminalHost : null } });
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
+            if (!result.ok) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
         })(), { tag: 'MachineTerminalSettingsSection.setTerminalHostOverride' });
     }, [machineId, stopExecution, selectedGlobalTerminalHost]);
 
@@ -51,7 +52,7 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
         try {
             const result = await stopExecution.execute('settings.set', { anchor: 'machines.terminal.host', key: machineId,
                 value: { tmux } });
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
+            if (!result.ok) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
             return result.ok;
         } catch {
             Modal.alert(t('common.error'), t('common.unavailable'));
@@ -68,7 +69,7 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
         fireAndForget((async () => {
             const result = await stopExecution.execute('settings.set', { anchor: 'machines.terminal.host', key: machineId,
                 value: { host: next } });
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
+            if (!result.ok) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
         })(), { tag: 'MachineTerminalSettingsSection.setTerminalHost' });
     }, [tmuxAvailable, machineId, stopExecution]);
 
