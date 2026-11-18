@@ -120,7 +120,7 @@ it.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
     },
 );
 
-it('wakes a configured receipt source before native completion admission settles', async () => {
+it('shares one exact receipt read with a configured source before native completion admission settles', async () => {
     const h = fixture();
     h.setReceipt({ settledAtMs: 900 });
     const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200, h.context);
@@ -136,6 +136,7 @@ it('wakes a configured receipt source before native completion admission settles
                 && Array.isArray(args[1].definitions) && args[1].definitions.length === 0) await completionBlocked;
             return await execute(...args);
         }) as typeof execute;
+        const beforeInvalidation = h.execute.mock.calls.length;
         h.settle();
         const wake = h.receiptChanged();
         await new Promise<void>(resolve => setImmediate(resolve));
@@ -143,6 +144,9 @@ it('wakes a configured receipt source before native completion admission settles
             && (input as { definitions: unknown[] }).definitions.length > 0)).toBe(true);
         release();
         await wake;
+        const exactReads = h.execute.mock.calls.slice(beforeInvalidation)
+            .filter(([id, input]) => id === 'deployments.receipts.get' && input.deploymentId === receipt.id);
+        expect(exactReads).toHaveLength(1);
     } finally {
         h.controller.abort();
         await running;

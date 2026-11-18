@@ -367,20 +367,22 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             wakeSources = wake;
             updateAccountSubscription();
             const receipts = host.subscribe({ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' } }, async event => {
-                const entries = new Map<string, PendingReceipt>();
+                const entry: PendingReceipt = { environmentId: event.payload.environmentId };
                 for (const [id, state] of states) if (state.config.serverId === event.payload.serverId
                     && (state.config.environmentId === undefined || state.config.environmentId === event.payload.environmentId || state.config.previewChildren)) {
-                    const entry = entries.get(state.config.serverId) ?? { environmentId: event.payload.environmentId };
-                    entries.set(state.config.serverId, entry);
                     state.pending.set(event.payload.deploymentId, entry); await wake(id);
                 }
                 if (!completionContext) return;
-                const read = await completionContext.services.actions.execute('deployments.receipts.get', event.payload,
-                    { signal: completionContext.signal });
-                if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({
-                    code: 'ok' in read ? read.error : 'deployment_unavailable',
-                }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
-                const nativeReceipt: Receipt = { ...read.deployment, failureSummary: read.failureSummary };
+                // A woken source may already have opened this invalidated receipt for the same Account and Environment.
+                let nativeReceipt = entry.receipt;
+                if (!nativeReceipt) {
+                    const read = await completionContext.services.actions.execute('deployments.receipts.get', event.payload,
+                        { signal: completionContext.signal });
+                    if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({
+                        code: 'ok' in read ? read.error : 'deployment_unavailable',
+                    }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
+                    nativeReceipt = { ...read.deployment, failureSummary: read.failureSummary };
+                }
                 if (nativeReceipt.operation !== 'deploy' || nativeReceipt.settledAtMs === undefined) return;
                 for (const candidate of Object.keys(outcomes) as EventId[]) {
                     if (!outcomes[candidate].completesActionIds || outcomes[candidate].state !== nativeReceipt.state
