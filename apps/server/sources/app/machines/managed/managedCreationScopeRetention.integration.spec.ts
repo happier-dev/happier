@@ -56,6 +56,29 @@ describe('creation scope retention at the real archive owner', () => {
         expect(await admit()).toBe(false);
     });
 
+    it('admits a Can-use member\'s bound birth on the custodian\'s controller and refuses everyone else', async () => {
+        // Machine-policy and explicit Session-preset acquisitions keep the controller's Account as custodian
+        // and record the member as the admitted requester; the member's Session is that guest's birth.
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(), metadata: '{}' } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: member.id, acquisitionMode: 'resource-bound' },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Member guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const birth = { homeId, managedId: row.id, controller: { machineId: controller.id, installationId: controller.installationId! } };
+        const admit = (accountId: string, executionMachineId?: string) =>
+            inTx(tx => validateManagedCreationBirthInTx(tx, { accountId, birth, ...(executionMachineId ? { executionMachineId } : {}) }));
+        expect(await admit(member.id)).not.toBe(false);
+        expect(await admit(member.id, controller.id)).not.toBe(false);
+        expect(await admit(member.id, 'another-machine')).toBe(false);
+        expect(await admit(owner.id)).toBe(false);
+        expect(await admit(other.id)).toBe(false);
+    });
+
     it('binds only the admitted creator choice and cannot attach Delete to a Keep acquisition', async () => {
         const creator = await db.account.create({ data: { encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });

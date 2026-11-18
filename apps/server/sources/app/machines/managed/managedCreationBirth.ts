@@ -43,7 +43,9 @@ export async function validateManagedCreationBirthInTx(tx: Tx, input: Readonly<{
         || resource.archivedAt !== null) return false;
     const creator = isManagedMachineCreator(resource, input.accountId);
     if (readManagedAdmissionState(resource.admittedInput).acquisitionMode === 'resource-bound') {
-        if (!creator || resource.custodianAccountId !== input.accountId || !resource.controllerMachineId
+        // Acquisition already admitted custody: a Can-use member's guest keeps the controller's Account
+        // as custodian and records the member as its requester, so the birth belongs to that requester.
+        if (!creator || !resource.controllerMachineId
             || input.executionMachineId !== undefined && resource.controllerMachineId !== input.executionMachineId) return false;
         if (await tx.session.findFirst({ where: { managedCreationId: resource.id, archivedAt: null }, select: { id: true } })) {
             throw new ManagedCreationBusyError();
