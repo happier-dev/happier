@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from './approvalRequestV1.js';
+import { createApprovalAutomaticChecksV1 } from '../actions/executor/automaticApprovalContinuation.js';
 import { decideApprovalRequestTransition, resolveApprovalRequestExecutionInput, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { PileApplyResultV1Schema } from '../storage/storageV1.js';
@@ -108,6 +109,20 @@ describe('Environment binding person selection approval transition', () => {
     expect(decideApprovalRequestTransition(approved, { ...approved, status: 'executing', updatedAtMs: 3,
       decision: { ...approved.decision!, narrowedInput: { ...chosen, expectedRevision: 8 } } }))
       .toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+  });
+});
+
+describe('open decision readability', () => {
+  it('refuses an Approve that the stored-request reader would reject, such as one claimed past pending checks', () => {
+    const existing = ApprovalRequestV2Schema.parse({ ...openRequest(),
+      automaticChecks: createApprovalAutomaticChecksV1({ status: 'ready', subjects: [], before: [], after: [] }, true) });
+    const decision = { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } as const;
+    const pastPendingChecks = { ...existing, status: 'approved', updatedAtMs: 2, decision } as const;
+    expect(ApprovalRequestV2Schema.safeParse(pastPendingChecks).success).toBe(false);
+    expect(decideApprovalRequestTransition(existing, pastPendingChecks)).toMatchObject({ ok: false, errorCode: 'invalid_transition' });
+    const settled = ApprovalRequestV2Schema.parse({ ...pastPendingChecks,
+      automaticChecks: { ...existing.automaticChecks!, phase: 'passed', humanDecision: decision } });
+    expect(decideApprovalRequestTransition(existing, settled)).toEqual({ ok: true, changed: true });
   });
 });
 

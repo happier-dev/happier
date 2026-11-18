@@ -801,6 +801,59 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const actionId = invocation?.success ? formatQualifiedPluginActionId(invocation.data.action) : request.actionId;
     return restoreApprovalAutomaticContextV1(request, actionId, context, deps.actionAutomations);
   };
+  /**
+   * One human Approve of an open Ask that carries automatic checks. The decide Action and the
+   * private confidential continuation both settle the checks here before any execution claim.
+   */
+  const approveApprovalAutomaticChecks = async (artifactId: string, existing: StoredApprovalRequestV2,
+    ctx: ActionExecutorContext, answer: Readonly<{
+      triggerConsent?: Parameters<typeof answerApprovalAutomaticConsentV1>[0]['answer'];
+      narrowedInput?: ReturnType<typeof projectNativeJsonValueForTransport>;
+    }> = {}): Promise<Readonly<{ request: StoredApprovalRequestV2; refused?: true }> | ActionExecuteFailure> => {
+    const checks = existing.automaticChecks;
+    if (!checks) return { request: existing };
+    const decidingActor = deriveActionActorV1(ctx, 'approval.request.decide');
+    const decidingAccountId = decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined;
+    let pending = existing;
+    const now = Math.max(Date.now(), existing.updatedAtMs);
+    if (checks.phase === 'consent') {
+      let nextChecks = checks;
+      if (answer.triggerConsent) {
+        const answered = await answerApprovalAutomaticConsentV1({ artifactId, checks, answer: answer.triggerConsent,
+          context: ctx, executionContext: automaticContinuationContext(pending, ctx), port: deps.actionAutomations });
+        if ('ok' in answered) return answered;
+        nextChecks = answered;
+      } else if (checks.humanApprovalRequired && !checks.humanDecision) {
+        nextChecks = { ...checks, humanDecision: { kind: 'approve', decidedAtMs: now,
+          ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
+            ...(decidingAccountId ? { decidingAccountId } : {}) } : {}),
+          ...(answer.narrowedInput !== undefined ? { narrowedInput: answer.narrowedInput } : {}) } };
+      } else return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const admitted = await automaticApproval.admit(artifactId,
+        { ...pending, updatedAtMs: now, automaticChecks: nextChecks },
+        automaticContinuationContext({ ...pending, automaticChecks: nextChecks }, ctx));
+      if (!('v' in admitted)) return admitted;
+      const failure = await automaticApproval.write(artifactId, admitted, ctx);
+      if (failure) return failure;
+      pending = admitted;
+    } else if (checks.phase === 'override') {
+      if (answer.triggerConsent) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      pending = { ...pending, status: 'approved', updatedAtMs: now,
+        decision: { kind: 'approve', decidedAtMs: now,
+          ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
+            ...(decidingAccountId ? { decidingAccountId } : {}) } : {}) },
+        automaticChecks: { ...checks, phase: 'passed' } };
+      const failure = await automaticApproval.write(artifactId, pending, ctx);
+      if (failure) return failure;
+    }
+    if (pending.automaticChecks?.phase === 'checking') {
+      const continued = await automaticApproval.resume(artifactId, pending, automaticContinuationContext(pending, ctx));
+      if ('ok' in continued) return continued;
+      if (continued.kind === 'refused') return { request: continued.request, refused: true };
+      pending = continued.request;
+    }
+    return { request: pending };
+  };
   const automaticChecksFor = (context: ActionExecutorContext, humanApprovalRequired: boolean) => {
     const selection = context.actionAutomationAdmission?.selection;
     if (!selection) return undefined;
@@ -7361,49 +7414,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           && !existing.requesterConfirmation ? deps.approvalRequestApproveRefusal?.({ request: existing }) : null;
         if (approveRefusal) return approveRefusal;
         if (decision === 'approve' && existing.v === 2 && existing.status === 'open' && existing.automaticChecks) {
-          const decidingActor = deriveActionActorV1(ctx, 'approval.request.decide');
-          const decidingAccountId = decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined;
-          let pending = existing;
-          const checks = existing.automaticChecks;
-          const now = Math.max(Date.now(), existing.updatedAtMs);
-          if (checks.phase === 'consent') {
-            let nextChecks = checks;
-            if (triggerConsent) {
-              const answered = await answerApprovalAutomaticConsentV1({ artifactId, checks, answer: triggerConsent,
-                context: ctx, executionContext: automaticContinuationContext(pending, ctx), port: deps.actionAutomations });
-              if ('ok' in answered) return answered;
-              nextChecks = answered;
-            } else if (checks.humanApprovalRequired && !checks.humanDecision) {
-              nextChecks = { ...checks, humanDecision: { kind: 'approve', decidedAtMs: now,
-                ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
-                  ...(decidingAccountId ? { decidingAccountId } : {}) } : {}),
-                ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(narrowedActionArgs) } : {}) } };
-            } else return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-            const admitted = await automaticApproval.admit(artifactId,
-              { ...pending, updatedAtMs: now, automaticChecks: nextChecks },
-              automaticContinuationContext({ ...pending, automaticChecks: nextChecks }, ctx));
-            if (!('v' in admitted)) return admitted;
-            const failure = await automaticApproval.write(artifactId, admitted, ctx);
-            if (failure) return failure;
-            pending = admitted;
-          } else if (checks.phase === 'override') {
-            if (triggerConsent) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-            pending = { ...pending, status: 'approved', updatedAtMs: now,
-              decision: { kind: 'approve', decidedAtMs: now,
-                ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
-                  ...(decidingAccountId ? { decidingAccountId } : {}) } : {}) },
-              automaticChecks: { ...checks, phase: 'passed' } };
-            const failure = await automaticApproval.write(artifactId, pending, ctx);
-            if (failure) return failure;
-          }
-          if (pending.automaticChecks?.phase === 'checking') {
-            const continued = await automaticApproval.resume(artifactId, pending, automaticContinuationContext(pending, ctx));
-            if ('ok' in continued) return continued;
-            if (continued.kind === 'refused') return buildApprovalDecisionResult(continued.request);
-            pending = continued.request;
-          }
-          if (pending.status === 'open') return buildApprovalDecisionResult(pending);
-          existing = pending;
+          const settled = await approveApprovalAutomaticChecks(artifactId, existing, ctx, {
+            ...(triggerConsent ? { triggerConsent } : {}),
+            ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(narrowedActionArgs) } : {}) });
+          if ('ok' in settled) return settled;
+          if (settled.refused || settled.request.status === 'open') return buildApprovalDecisionResult(settled.request);
+          existing = settled.request;
         }
         if (triggerConsent && (existing.v !== 2 || !existing.automaticChecks)) return { ok: false,
           errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -8191,6 +8207,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     isActionEnabled: (actionId, context) => isActionEnabled(getActionSpec(actionId), context),
     declaredInputPaths: (actionId, input) => readConfidentialActionInputPaths(actionId, input, deps.listContributedActionDefinitions, { includeInactive: true }),
     isOriginCurrent: (request, signal) => isApprovalExecutionOriginCurrentForRequest({ request, ...(signal ? { signal } : {}) }),
+    approveAutomaticChecks: approveApprovalAutomaticChecks,
     executeApproved: executeApprovedActionForRequest,
   });
 

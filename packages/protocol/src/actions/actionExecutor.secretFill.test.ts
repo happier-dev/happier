@@ -6,7 +6,8 @@ import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createApprovalRequestArtifact } from '../approvals/creation.js';
-import { approvalArtifactBodyMatchesHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
 
 const request = {
@@ -452,5 +453,47 @@ describe('confidential secret-fill approval continuation', () => {
       authority: 'present_user', serverId: 'local-home', serverIdentityId: 'verified-home',
     })).toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
     expect(delivered).toBe(1);
+  });
+
+  it('fills once through an Ask that carries the Account\'s automatic checks, and its Artifact stays readable', async () => {
+    const rows = new Map<string, { header: Record<string, unknown>; body: string }>();
+    const read = (artifactId: string) => {
+      const row = rows.get(artifactId);
+      const parsed = row && approvalArtifactBodyMatchesHeaderV1(row.header, row.body);
+      return parsed?.family === 'built_in' ? parsed.request : null;
+    };
+    let fills = 0;
+    // Only the Artifact storage port is substituted; it keeps the real body/header reader and CAS transition owner.
+    const executor = createActionExecutor({
+      approvalsCreate: async ({ request: created }) => createApprovalRequestArtifact({ request: created, accountId: 'account',
+        newId: () => 'unused', read: async id => rows.get(id) ? { ...rows.get(id)!, access: 'owner' } : null,
+        create: async (id, header, body) => { rows.set(id, { header, body }); } }),
+      approvalsGet: async ({ artifactId }) => read(artifactId),
+      approvalsUpdate: async ({ artifactId, request: next, expectedStatus }) => {
+        const existing = read(artifactId);
+        if (!existing) return { ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch', writeCommitted: false };
+        const transition = decideApprovalRequestTransition(existing, next, { expectedStatus });
+        if (!transition.ok) return { ...transition, writeCommitted: false };
+        rows.set(artifactId, { header: buildApprovalRequestArtifactHeaderV1(next), body: JSON.stringify(next) });
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      // Every daemon-admitted Action carries the Account's (here empty) automation selection.
+      actionAutomations: { select: async () => ({ status: 'ready', subjects: [], before: [], after: [] }) },
+      confidentialSecretFill: async () => { fills += 1; return { status: 'filled', code: 'filled' }; },
+    } as ActionExecutorDeps);
+    const created = await executor.execute('browser.automation.secret.fill', request, { ...context, runtimeAccountId: 'account' });
+    expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const [artifactId] = [...rows.keys()];
+    expect(read(artifactId!)).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent', humanApprovalRequired: true } });
+
+    const human = { authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' } as const;
+    expect(await executor.continueConfidentialApprovalRequest({ ...privateInput, artifactId: artifactId! }, human))
+      .toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
+    expect(fills).toBe(1);
+    expect(read(artifactId!)).toMatchObject({ status: 'executed', execution: { ok: true, result: { status: 'filled' } },
+      decision: { kind: 'approve', authority: 'present_user' },
+      automaticChecks: { phase: 'passed', humanDecision: { kind: 'approve', authority: 'present_user' } } });
+    expect(JSON.stringify([...rows.values()])).not.toContain(privateInput.choice.value);
   });
 });

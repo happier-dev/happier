@@ -209,8 +209,10 @@ export function decideApprovalRequestTransition(
   if (durablyEqual(existing, next)) {
     return existing.status === 'executing' ? INVALID_TRANSITION : { ok: true, changed: false };
   }
+  // A decision the stored-request reader would reject is refused here, never committed unreadable.
   const isOpenDecision = existing.status === 'open'
-    && (next.status === 'approved' || next.status === 'rejected' || next.status === 'canceled');
+    && (next.status === 'approved' || next.status === 'rejected' || next.status === 'canceled')
+    && (next.v !== 2 || ApprovalRequestV2Schema.safeParse(next).success);
   const isAutomaticPendingDecision = existing.v === 2 && next.v === 2
     && existing.status === 'open' && next.status === 'open'
     && existing.automaticChecks !== undefined && next.automaticChecks !== undefined

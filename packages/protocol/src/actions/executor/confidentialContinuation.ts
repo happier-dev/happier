@@ -1,4 +1,4 @@
-import { StoredApprovalRequestSchema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import { StoredApprovalRequestSchema, type ApprovalRequest, type StoredApprovalRequestV2 } from '../../approvals/approvalRequestV1.js';
 import { ConfidentialActionInputReviewV1Schema, PrivateConfidentialContinuationV1Schema, type PrivateConfidentialContinuationV1, type PrivateSecretContinuationV1, type PrivateActionInputContinuationV1 } from '../../approvals/privateSecretContinuationV1.js';
 import type { ActionId } from '../actionIds.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -24,6 +24,9 @@ export function createConfidentialApprovalContinuation(deps: Pick<ActionExecutor
   isActionEnabled(actionId: ActionId, context: ActionExecutorContext): boolean;
   declaredInputPaths(actionId: ActionId, input: unknown): readonly string[];
   isOriginCurrent(request: ApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** The Ask's automatic-check owner; the private answer is that Ask's human Approve. */
+  approveAutomaticChecks(artifactId: string, request: StoredApprovalRequestV2, ctx: ActionExecutorContext):
+    Promise<Readonly<{ request: StoredApprovalRequestV2; refused?: true }> | ActionExecuteFailure>;
   executeApproved(args: Readonly<{
     artifactId: string; request: ApprovalRequest; artifactServerId: string;
     ctx: ActionExecutorContext; privateSecretContinuation?: PrivateSecretContinuationV1;
@@ -94,12 +97,22 @@ export function createConfidentialApprovalContinuation(deps: Pick<ActionExecutor
       if (!await deps.isOriginCurrent(request, ctx.signal) || !await isDecidingHumanAdmissionCurrent(ctx)) {
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
       }
-      const now = Date.now();
-      request = { ...request, status: 'approved', updatedAtMs: Math.max(now, request.updatedAtMs),
-        decision: { kind: 'approve', decidedAtMs: now, authority: 'present_user' } };
-      const claimed = await deps.approvalsUpdate({ artifactId: continuation.artifactId, request, serverId: homeId });
-      const failure = readActionFailureEnvelope(claimed);
-      if (failure) return failure;
+      if (stored.data.automaticChecks) {
+        // Checks settle through their one owner, which records this Approve; never claim past them.
+        const settled = await deps.approveAutomaticChecks(continuation.artifactId, stored.data, ctx);
+        if ('ok' in settled) return settled;
+        const refusal = settled.refused ? buildActionExecuteResultFromRecordedApprovalExecution(settled.request) : null;
+        if (refusal) return refusal;
+        if (settled.request.status !== 'approved') return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
+        request = settled.request;
+      } else {
+        const now = Date.now();
+        request = { ...request, status: 'approved', updatedAtMs: Math.max(now, request.updatedAtMs),
+          decision: { kind: 'approve', decidedAtMs: now, authority: 'present_user' } };
+        const claimed = await deps.approvalsUpdate({ artifactId: continuation.artifactId, request, serverId: homeId });
+        const failure = readActionFailureEnvelope(claimed);
+        if (failure) return failure;
+      }
       const execution = await deps.executeApproved({ artifactId: continuation.artifactId, request,
         artifactServerId: homeId, ctx,
         ...('kind' in continuation ? { privateActionInputContinuation: continuation }
