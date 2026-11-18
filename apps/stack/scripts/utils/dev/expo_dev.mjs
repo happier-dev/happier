@@ -241,8 +241,6 @@ export function buildExpoDevEnv({
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }
   env.EXPO_PUBLIC_DEBUG = env.EXPO_PUBLIC_DEBUG ?? '1';
-  env.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED =
-    env.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED ?? '1';
   env.EXPO_UNSTABLE_WEB_MODAL = '1';
 
   // Optional: allow per-stack storage isolation inside a single dev-client build by
