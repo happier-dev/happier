@@ -158,6 +158,19 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(getActionSpec(MACHINE_CAPABILITIES_DETECT_ACTION_ID).sideEffectClass).toBe('read');
     expect(isReadOnlyMachineRpcMethod(RPC_METHODS.CAPABILITIES_DETECT)).toBe(true);
   });
+  it('keeps held Agent terminal attachment on the authenticated Session-owner route', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    for (const method of [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN,
+      SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ, SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT,
+      SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_DETACH]) {
+      expect(resolveSocketRpcSessionAuthorization(method)).toMatchObject({ authority: 'sessionOwner', routeToSessionOwnerDaemon: true });
+      const policy = resolveMachineRpcRoutePolicy(method);
+      expect(policy).toMatchObject({ routeClass: 'server_required', serverRequiredReason: 'auth',
+        sharedMachineAccess: 'custodian_only', scope: { accountRequired: true, machineRequired: true, serverRequired: true } });
+      expect(policy.ephemeralRunnerAuthority).toBeUndefined();
+    }
+  });
+
   it('preserves declared methods and effective access through declaration consolidation', async () => {
     const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     // Captured from the public table before removing access overlays, including

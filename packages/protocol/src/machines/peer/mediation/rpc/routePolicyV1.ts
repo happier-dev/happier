@@ -723,6 +723,13 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   serverRequired(SESSION_RPC_METHODS.SESSION_INPUT_CANCEL_EXACT_TURN_V1, 'durable_session_write', 'Exact-turn cancellation mutates the live Session runtime and remains bound to server-authoritative Session access.', 'use', SERVER_REQUIRED_SCOPE),
   serverRequired(SESSION_RPC_METHODS.SESSION_GUARD_NOTICE, 'durable_session_write', 'Guard notices commit Session metadata and transcript receipts through the current owner on the authenticated exact-Session route.', 'use', SERVER_REQUIRED_SCOPE),
   serverRequired(SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1, 'auth', 'Native Agent tool calls execute inside the live Session authority boundary and stay on the authenticated Session route.', 'use', SERVER_REQUIRED_SCOPE),
+  ...serverRequiredRows([
+    SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN,
+    SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ,
+    SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT,
+    SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_DETACH,
+  ], 'auth', 'Held Agent terminal attachment stays on the authenticated Session-owner route without shared Machine or Runner access.',
+  'custodian_only', SERVER_REQUIRED_SCOPE),
   serverRequired(SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1, 'auth',
       'Applied native child selection is private to the exact active Session owner and stays on the authenticated Session route.', 'custodian_only', SERVER_REQUIRED_SCOPE) satisfies MachineRpcRoutePolicyV1,
   actionSpecServerRequired(SESSION_RPC_METHODS.SESSION_MESSAGE_REPLY, 'durable_session_write', 'Explicit replies publish through the exact admitted receiving Session and its current publisher.', 'session.message.reply', 'custodian_only', SERVER_REQUIRED_SCOPE) satisfies MachineRpcRoutePolicyV1,
