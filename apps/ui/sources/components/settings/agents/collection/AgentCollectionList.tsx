@@ -586,7 +586,12 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             {customAcpRoute?.kind === 'draft' ? <CustomAcpDraftRow /> : null}
             {emptyRow}
             {groups.map((group) => group.rows.length > 0 ? (
-                <ItemGroup key={group.key} title={group.title}>
+                // The purpose line names the chosen Machine, so its sections don't repeat it (R6, p4).
+                <ItemGroup key={group.key}
+                    title={machineLabel && group.key === 'onMachine' ? t('capabilities.agentsHome.readyTitle')
+                        : machineLabel && group.key === 'available' ? t('capabilities.agentsHome.addMoreTitle') : group.title}
+                    description={machineLabel && group.key === 'available'
+                        ? t('capabilities.agentsHome.addMoreOnMachine', { machine: machineLabel }) : undefined}>
                     <CardGridSheet testID={`settings-agents-collection.grid.${group.key}`} cells={group.rows.map(gridCellOf)} />
                 </ItemGroup>
             ) : null)}
@@ -606,6 +611,9 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             testID="settings-agents-collection.page"
             headerTestID="settings.agents.index.header"
             count={total}
+            machineDescription={machineLabel
+                ? t('capabilities.agentsHome.purposeOnMachine', { machine: machineLabel })
+                : t('capabilities.agentsHome.purpose')}
             actions={(
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <MachineAdministrationTargetSelector

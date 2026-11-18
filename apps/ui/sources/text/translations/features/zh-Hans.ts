@@ -12545,6 +12545,7 @@ const zhHans: ProviderCollectionCopy = {
         description: '连接一次模型来源，即可在所有兼容的代理中使用其模型。',
         foundOn: ({ machine }: { machine: string }) => `在 ${machine} 上发现`,
         foundOnThisMachine: '在此机器上发现',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `你的智能体在 ${machine} 上可用的模型。`,
         connect: '连接',
         start: '启动',
         test: '测试',

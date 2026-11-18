@@ -576,6 +576,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
             testID="settings-providers-page"
             headerTestID="settings-providers-header"
             count={data ? shownCount : null}
+            machineDescription={localScopeShown ? presentProvidersPageDescription(providerTarget.selection.state) : undefined}
             actions={(
                 <View style={styles.headerActions}>
                     {localScopeShown ? (
@@ -611,6 +612,13 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
         </SettingsCollectionPage>
     );
 });
+
+/** The phone page's purpose line: the chosen Machine is named here while its header chip reads "Machine" (p4-provB). */
+function presentProvidersPageDescription(state: ReturnType<typeof useProviderSettingsTarget>['selection']['state']): string {
+    return state.kind === 'unselected' || state.kind === 'missing'
+        ? t('settingsProvidersCollection.description')
+        : t('settingsProvidersCollection.descriptionOnMachine', { machine: presentMachineAdministrationTargetState(state).title });
+}
 
 /** "On MacBook Pro" for the chosen computer, whatever its state; "On a computer" before one is chosen. */
 function presentLocalScopeTitle(state: ReturnType<typeof useProviderSettingsTarget>['selection']['state']): string {

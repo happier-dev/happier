@@ -214,6 +214,20 @@ describe('MachineAdministrationTargetSelector', () => {
         expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'Sign in on')).not.toHaveLength(0);
     });
 
+    it('reads "Machine" on a page that names its chosen Machine in its description, and still announces the Machine (p4-provB)', async () => {
+        const { MachineAdministrationTargetSelector, MachineScopeNamedByPageContext } = await import('./MachineAdministrationTargetSelector');
+        const { selection } = createSelection();
+        const screen = await renderScreen(<MachineScopeNamedByPageContext.Provider value>
+            <MachineAdministrationTargetSelector selection={selection} presentation="chip" testIDPrefix="page.target" />
+        </MachineScopeNamedByPageContext.Provider>);
+        try {
+            const chip = screen.findHostByTestId('page.target.chip');
+            expect(chip?.props.accessibilityLabel ?? chip?.props['aria-label']).toContain('Machine B');
+            expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'common.machine')).not.toHaveLength(0);
+            expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'Machine B')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the same-name distinguishing suffix in the selected chip and its machine choices', () => withPopoverWebGlobals(async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const { selection } = createSelection();

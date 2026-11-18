@@ -138,6 +138,7 @@ export const en = {
         connectedHiddenCountDescription: ({ provider, count }: { provider: string; count: number }) => `${count} models are ready. They’re hidden from the picker by default, because ${provider} lists many models you may already have. Pick one any time from Runs through, or show them all.`,
         connectedHiddenDescription: ({ provider }: { provider: string }) => `Its models are hidden from the picker by default, because ${provider} lists many models you may already have. Pick one any time from Runs through, or show them all.`,
         description: 'Connect a model source once and use its models with every compatible agent.',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Models your agents can use on ${machine}.`,
         foundOn: ({ machine }: { machine: string }) => `Found on ${machine}`,
         foundOnThisMachine: 'Found on this machine',
         addFoundGroup: 'Found on your machines',

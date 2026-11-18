@@ -12685,6 +12685,7 @@ const ru: ProviderCollectionCopy = {
         description: 'Подключите источник моделей один раз и используйте его модели со всеми совместимыми агентами.',
         foundOn: ({ machine }: { machine: string }) => `Найдено на ${machine}`,
         foundOnThisMachine: 'Найдено на этой машине',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Модели, которые ваши агенты могут использовать на ${machine}.`,
         connect: 'Подключить',
         start: 'Запустить',
         test: 'Проверить',

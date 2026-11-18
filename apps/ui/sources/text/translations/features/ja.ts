@@ -12605,6 +12605,7 @@ const ja: ProviderCollectionCopy = {
         description: 'モデルソースを一度接続すれば、そのモデルを対応するすべてのエージェントで使えます。',
         foundOn: ({ machine }: { machine: string }) => `${machine} で検出`,
         foundOnThisMachine: 'このマシンで検出',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `${machine} でエージェントが使えるモデル。`,
         connect: '接続',
         start: '起動',
         test: 'テスト',

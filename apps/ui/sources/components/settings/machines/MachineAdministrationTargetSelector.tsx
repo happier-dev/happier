@@ -378,6 +378,13 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
 const NO_PINNED_MACHINES: readonly MachineAdministrationPickerMachine[] = [];
 
 /**
+ * Set by a page whose description names its chosen Machine ("The coding agents on Studio Mac."): the header chip
+ * then reads "Machine" and opens the same chooser, so a phone's title line never truncates a name (owner
+ * 2026-11-17, lab phone-system p4-provB). A chip that says where one thing runs (`chipLabel`) keeps its value.
+ */
+export const MachineScopeNamedByPageContext = React.createContext(false);
+
+/**
  * The machine scope as a filter: its current machine (name and presence) and the canonical machine
  * list as its chooser. A page header shows it as a chip; a picker (external sessions) passes it to
  * `SelectionList` `filters`. One owner decides what the scope says and which machines it offers.
@@ -387,7 +394,8 @@ export function useMachineAdministrationTargetFilter(
 ): SelectionListFilter {
     const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'machine-administration-target';
-    const groupTitle = props.groupTitle ?? t('settingsProviders.detail.targetMachine');
+    const namedByPage = React.useContext(MachineScopeNamedByPageContext) && props.chipLabel === undefined;
+    const groupTitle = namedByPage ? t('common.machine') : props.groupTitle ?? t('settingsProviders.detail.targetMachine');
     const current = presentCurrentTarget(
         props.selection.state,
         props.unselectedTitle,
@@ -435,6 +443,7 @@ export function useMachineAdministrationTargetFilter(
         // A chip names the Machine only; the step it scopes says why a Machine can't be used and what to do.
         valueLabel: current.title,
         ...(props.chipLabel !== undefined ? { showLabel: true } : {}),
+        ...(namedByPage ? { nameOnly: true } : {}),
         icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
         ...(hasTarget && presence ? { presence } : {}),
         muted: !hasTarget,

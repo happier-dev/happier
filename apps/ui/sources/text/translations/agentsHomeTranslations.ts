@@ -5,6 +5,12 @@ type Machine = Readonly<{ machine: string }>;
 
 export type AgentsHomeTranslation = Readonly<{
   purpose: string;
+  /** The phone page's purpose line once a Machine is chosen; its header chip then reads "Machine" (p4-provB). */
+  purposeOnMachine: (params: Machine) => string;
+  /** The phone page's grid sections on a chosen Machine (R6): what it has, then what it could install. */
+  readyTitle: string;
+  addMoreTitle: string;
+  addMoreOnMachine: (params: Machine) => string;
   needsTitle: string;
   needsSignIn: (params: Machine) => string;
   tryTitle: string;
@@ -16,6 +22,10 @@ export type AgentsHomeTranslation = Readonly<{
 const en: AgentsHomeTranslation = {
   purpose:
     'The coding agents you start sessions with, where they’re installed and how they sign in.',
+  purposeOnMachine: ({ machine }) => `The coding agents on ${machine}.`,
+  readyTitle: 'Ready',
+  addMoreTitle: 'Add more',
+  addMoreOnMachine: ({ machine }) => `Install one on ${machine} to use it here.`,
   needsTitle: 'Needs you',
   needsSignIn: ({ machine }) =>
     `Sessions on ${machine} can’t start until you sign in`,

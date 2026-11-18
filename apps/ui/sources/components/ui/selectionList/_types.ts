@@ -238,6 +238,11 @@ export type SelectionListFilter = Readonly<{
      * name and the popover keep the whole value. A filter without a glyph keeps its text.
      */
     iconOnly?: boolean;
+    /**
+     * Draw the filter's name ("Machine") instead of its value where the page already names the value in its
+     * description (phone Settings collections, lab phone-system p4-provB). The accessible name keeps both.
+     */
+    nameOnly?: boolean;
     /** Draw the filter's name, quieter, before its value ("Agents  Claude, Codex"). */
     showLabel?: boolean;
     /**

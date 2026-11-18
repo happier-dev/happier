@@ -12648,6 +12648,7 @@ const pt: ProviderCollectionCopy = {
         description: 'Ligue uma fonte de modelos uma vez e use os seus modelos com todos os agentes compatíveis.',
         foundOn: ({ machine }: { machine: string }) => `Encontrado em ${machine}`,
         foundOnThisMachine: 'Encontrado nesta máquina',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Modelos que seus agentes podem usar em ${machine}.`,
         connect: 'Ligar',
         start: 'Iniciar',
         test: 'Testar',

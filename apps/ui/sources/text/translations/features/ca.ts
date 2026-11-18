@@ -12654,6 +12654,7 @@ const ca: ProviderCollectionCopy = {
         description: 'Connecta una font de models una vegada i fes servir els seus models amb tots els agents compatibles.',
         foundOn: ({ machine }: { machine: string }) => `Trobat a ${machine}`,
         foundOnThisMachine: 'Trobat en aquesta màquina',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Models que els teus agents poden fer servir a ${machine}.`,
         connect: 'Connecta',
         start: 'Inicia',
         test: 'Prova',

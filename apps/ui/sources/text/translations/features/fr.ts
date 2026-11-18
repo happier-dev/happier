@@ -12668,6 +12668,7 @@ const fr: ProviderCollectionCopy = {
         description: 'Connecte une source de modèles une fois et utilise ses modèles avec chaque agent compatible.',
         foundOn: ({ machine }: { machine: string }) => `Trouvé sur ${machine}`,
         foundOnThisMachine: 'Trouvé sur cette machine',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Les modèles que vos agents peuvent utiliser sur ${machine}.`,
         connect: 'Connecter',
         start: 'Démarrer',
         test: 'Tester',

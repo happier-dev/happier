@@ -12674,6 +12674,7 @@ const de: ProviderCollectionCopy = {
         description: 'Verbinde eine Modellquelle einmal und nutze ihre Modelle mit jedem kompatiblen Agenten.',
         foundOn: ({ machine }: { machine: string }) => `Gefunden auf ${machine}`,
         foundOnThisMachine: 'Auf diesem Gerät gefunden',
+        descriptionOnMachine: ({ machine }: { machine: string }) => `Modelle, die deine Agents auf ${machine} nutzen können.`,
         connect: 'Verbinden',
         start: 'Starten',
         test: 'Testen',
