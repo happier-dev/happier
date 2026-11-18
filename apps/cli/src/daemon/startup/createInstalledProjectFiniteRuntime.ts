@@ -6,6 +6,8 @@ import { readStoredCredentialsForServerId, sameStoredCredentials } from '@/persi
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
 import { readAdmittedRequesterAccountReadRuntime } from "../sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
 import { readProjectFiniteIngressRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createWorkspaceSyncWorkerPreparation } from '@/workspaces/sync/workspaceSyncPreparation';
 import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/workspaces/workspaceWorkerPreferences';
@@ -52,6 +54,10 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
   const nativeRuntime = (runtimeCurrent: () => Promise<boolean>, accountId: string) => ({
     ...(accountId === externalActionAccountId && params.publishSetupSettlement
       ? { publishSetupSettlement: params.publishSetupSettlement } : {}),
+    ...(accountId === externalActionAccountId ? {
+      publishMachineServiceObservation: (payload: Parameters<NonNullable<ProjectFiniteActionRuntime['publishMachineServiceObservation']>>[0]) =>
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload }, () => false),
+    } : {}),
     workerAdmission: admission, isCurrent: runtimeCurrent,
     nativeIo: params.nativeIo.commandIo, environmentIo: params.nativeIo.environmentIo,
     agentIsolation: params.agentIsolation,
@@ -147,7 +153,37 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
       accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
     if (!accountAccess) return refuse('account_access_unavailable');
+    // Load while the original ingress still owns requester custody; publication
+    // captures that context synchronously before its first network await.
+    const reportPublicationUnavailable = (error: unknown) => {
+      const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+      logger.warn('[DAEMON RUN] Requester Host Event projection unavailable (ignored)', {
+        code: typeof code === 'string' ? code : 'automation_event_host_evidence_unavailable',
+      });
+    };
+    const requesterPublisher = requester
+      ? await import('@/plugins/runtime/automations/requesterMachineServicePublication')
+        .then(module => module.publishRequesterMachineServiceObservation)
+        .catch(error => { reportPublicationUnavailable(error); return null; }) : null;
+    const publishRequesterObservation: ProjectFiniteActionRuntime['publishMachineServiceObservation'] = requester
+      ? observation => {
+        if (!requesterPublisher) return;
+        const operationId = observation.kind === 'worktreeCreated' ? observation.creation.operationId
+          : observation.kind === 'worktreeRemoved' ? observation.removal.operationId
+          : observation.kind === 'projectSetupSettled' ? observation.settlement.operationId
+          : observation.kind === 'backup' ? observation.operationId : undefined;
+        if (!operationId) return;
+        const operation = ports.operationRuntime.store.get({ accountId: accountAccess.accountId, machineId: registeredMachineId }, operationId);
+        // `action.invoke` is the signed root for a contributed Action routed
+        // to this native owner; the operation retains the nested effect id.
+        if (operation?.requestId !== requester.accountAuthorization.binding.requestId
+          || (operation.actionId !== requester.accountAuthorization.binding.actionId
+            && requester.accountAuthorization.binding.actionId !== 'action.invoke')) return;
+        void requesterPublisher({ publisherCredentials: credentials, authorization: requester.accountAuthorization, observation })
+          .catch(reportPublicationUnavailable);
+      } : undefined;
     return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent, accountAccess.accountId),
+      ...(publishRequesterObservation ? { publishMachineServiceObservation: publishRequesterObservation } : {}),
       ...(!requester ? { resolveSecretEnvironment: async (bindings, signal) => {
         if (!bindings) return undefined;
         return await runWithServerHttpBaseUrl(accountAccess.serverHttpBaseUrl, async () => {

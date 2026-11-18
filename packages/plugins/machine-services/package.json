@@ -23,6 +23,11 @@
       "happier-source": "./src/healthResultProjection.ts",
       "types": "./dist/healthResultProjection.d.ts",
       "default": "./dist/healthResultProjection.js"
+    },
+    "./native-events": {
+      "happier-source": "./src/machineOutcomeEvents.ts",
+      "types": "./dist/machineOutcomeEvents.d.ts",
+      "default": "./dist/machineOutcomeEvents.js"
     }
   },
   "files": [

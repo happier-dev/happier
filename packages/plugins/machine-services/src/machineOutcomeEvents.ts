@@ -1,9 +1,10 @@
 import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { admitNativeActionCompletionObservation } from './eventCompletion.js';
+export { projectNativeEventObservationAdmissionInput } from './eventCompletion.js';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineOutcomeSummaryReader } from './machineOutcomeSummaryReader.js';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema,
+import { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema, WorktreeCreatedEventV1ProtocolSchema,
     GuardStoppedEventV1ProtocolSchema, ConnectedServiceQuotaEventV1ProtocolSchema, ConnectedServiceCredentialHealthEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema,
     createPluginEventAutomationSetupResultV1JsonSchema, type MachineServiceObservationV1,
     machineOutcomeSummaryAddress, type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
@@ -23,6 +24,8 @@ const descriptors = {
     'backup-succeeded': { subjectKinds: ['backup', 'environment', 'machine'], scope: 'backup', completionOutcome: 'succeeded', completesActionIds: [DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1], key: 'backupSucceeded', title: 'Backup succeeded', description: 'A backup run settled successfully.', schema: BackupOutcomeEventV1ProtocolSchema },
     'machine-pressure-changed': { subjectKinds: ['machine'], scope: 'machine', key: 'machinePressureChanged', title: 'Machine pressure changed',
         description: 'An enabled memory, CPU or disk alert fired or recovered.', schema: MachinePressureEventV1ProtocolSchema },
+    'worktree-created': { subjectKinds: ['machine', 'project'], scope: 'machine', completionOutcome: 'succeeded', completesActionIds: [SCM_WORKTREE_CREATE_ACTION_ID_V1], key: 'worktreeCreated', title: 'Worktree created',
+        description: 'A new worktree was created from the source repository.', schema: WorktreeCreatedEventV1ProtocolSchema },
     'worktree-removed': { subjectKinds: ['machine', 'project'], scope: 'machine', completionOutcome: 'succeeded', completesActionIds: [SCM_WORKTREE_REMOVE_ACTION_ID_V1], key: 'worktreeRemoved', title: 'Worktree removed',
         description: 'An accepted worktree was deleted or retired.', schema: WorktreeRemovedEventV1ProtocolSchema },
     'guard-stopped': { subjectKinds: ['machine', 'session'], scope: 'machine', key: 'guardStopped', title: 'Guard stopped a Session',
@@ -49,6 +52,8 @@ function projectFact(fact: MachineServiceObservationV1) {
         case 'pressure': return { serverId: fact.serverId, machineId: fact.machineId,
             event: 'machine-pressure-changed' as const, occurredAt: fact.episode.at,
             identity: [fact.episode.rule, fact.episode.volumeId ?? '', fact.episode.state, String(fact.episode.at)], payload: fact };
+        case 'worktreeCreated': return { serverId: fact.serverId, machineId: fact.creation.machineId,
+            event: 'worktree-created' as const, occurredAt: fact.occurredAt, identity: [fact.creation.operationId], payload: fact.creation };
         case 'worktreeRemoved': return { serverId: fact.serverId, machineId: fact.removal.machineId,
             event: 'worktree-removed' as const, occurredAt: fact.occurredAt, identity: [fact.removal.operationId], payload: fact.removal };
         case 'guard_stop': return { serverId: fact.serverId, machineId: fact.machineId,
@@ -102,11 +107,13 @@ export const machineOutcomeEvents = Object.fromEntries(eventIds.map(event => {
 
 /** Producer associations become canonical contexts once, before admission. */
 function subjectContextsFor(fact: MachineServiceObservationV1): NonNullable<PluginEventObservationV1['subjectContexts']> {
-    const machineId = fact.kind === 'worktreeRemoved' ? fact.removal.machineId : fact.machineId;
+    const machineId = fact.kind === 'worktreeRemoved' ? fact.removal.machineId
+        : fact.kind === 'worktreeCreated' ? fact.creation.machineId : fact.machineId;
     const contexts: NonNullable<PluginEventObservationV1['subjectContexts']>[number][] = [
         { role: 'context', subject: { kind: 'machine', serverId: fact.serverId, machineId } },
     ];
     const project = fact.kind === 'worktreeRemoved' ? fact.removal.project
+        : fact.kind === 'worktreeCreated' ? fact.creation.project
         : fact.kind === 'projectSetupSettled' ? fact.settlement.project : null;
     if (project) contexts.push({ role: 'context', subject: {
         kind: 'project', serverId: project.serverId, projectKey: project.projectId,
@@ -122,12 +129,13 @@ function subjectContextsFor(fact: MachineServiceObservationV1): NonNullable<Plug
 }
 
 /** One projection for ordinary Event sources and finite host publication. */
-function projectMachineServiceObservation(payload: MachineServiceObservationV1,
+export function projectMachineServiceObservation(payload: MachineServiceObservationV1,
     observedAt: number): PluginEventObservationV1 | null {
     const fact = projectFact(payload);
     if (!fact) return null;
     const originRunId = payload.kind === 'projectSetupSettled' ? payload.settlement.originRunId
         : payload.kind === 'worktreeRemoved' ? payload.removal.originRunId
+        : payload.kind === 'worktreeCreated' ? payload.creation.originRunId
         : payload.kind === 'backup' ? payload.originRunId : undefined;
     return { eventRef: { pluginId, localId: fact.event },
         sourceInstanceId: 'machine-completion:' + computeCanonicalDomainSeparatedDigest('happier.machine.completion-source.v1',
@@ -154,6 +162,16 @@ function matchesSource(fact: NonNullable<ReturnType<typeof projectFact>>, source
     return fact.serverId === source.serverId && (source.machineId === undefined || fact.machineId === source.machineId) && fact.event === event
         && (descriptors[fact.event].scope !== 'backup' || source.environmentId === undefined
             || 'environmentId' in fact && fact.environmentId === source.environmentId);
+}
+
+/** Finite publication consumes the same declaration-owned source matching as the observer. */
+export function projectMachineServiceObservationForSource(payload: MachineServiceObservationV1,
+    definition: MachineEventSourceDefinition, observedAt: number): PluginEventObservationV1 | null {
+    const source = decodeSource(definition);
+    const fact = projectFact(payload);
+    if (!source || !fact || !matchesSource(fact, source, definition.eventRef.localId)) return null;
+    const observation = projectMachineServiceObservation(payload, observedAt);
+    return observation ? { ...observation, sourceInstanceId: definition.sourceInstanceId } : null;
 }
 
 type State = { source: Source; event: EventId; pending: PluginEventObservationV1[];

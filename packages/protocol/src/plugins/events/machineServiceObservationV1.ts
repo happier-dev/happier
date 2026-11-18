@@ -26,16 +26,18 @@ export const MachinePressureEventV1Schema = lazyZodSchema(() => z.strictObject({
   since: timestamp(),
 }));
 export type MachinePressureEventV1 = z.infer<typeof MachinePressureEventV1Schema>;
-/** Captured before deletion or retirement; paths remain in private host evidence. */
-export const WorktreeRemovedEventV1Schema = lazyZodSchema(() => z.strictObject({
+const worktreeEventFields = () => ({
   workspace: z.nullable(WorkspaceAddressV1Schema),
   project: z.nullable(QualifiedProjectTrustProjectV1Schema),
   machineId: WorkspaceAddressV1Schema.shape.machineId,
   operationId: ActionOperationIdentifierV1Schema,
   originRunId: z.optional(ActionOperationIdentifierV1Schema),
-  /** Canonical physical execution-root comparison identity, equal to the admitted
-   * service-launch physicalRootIdentity; retained verbatim after deletion. */
+  /** Canonical physical execution-root comparison identity. */
   worktreePath: WorkspaceAddressV1Schema.shape.rootPath,
+});
+/** Captured before deletion or retirement; retained verbatim after deletion. */
+export const WorktreeRemovedEventV1Schema = lazyZodSchema(() => z.strictObject({
+  ...worktreeEventFields(),
   outcome: z.literal('removed'),
   removalKind: z.enum(['deleted', 'retired']),
 }).check(z.superRefine((event, context) => {
@@ -44,6 +46,17 @@ export const WorktreeRemovedEventV1Schema = lazyZodSchema(() => z.strictObject({
 export type WorktreeRemovedEventV1 = z.infer<typeof WorktreeRemovedEventV1Schema>;
 const WorktreeRemovedObservationV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('worktreeRemoved'), serverId: id(), occurredAt: timestamp(), removal: WorktreeRemovedEventV1Schema,
+}));
+/** The association belongs to the source repository, not the newly created root. */
+export const WorktreeCreatedEventV1Schema = lazyZodSchema(() => z.strictObject({
+  ...worktreeEventFields(),
+  outcome: z.literal('created'),
+}).check(z.superRefine((event, context) => {
+  if (event.workspace === null && event.project !== null) context.addIssue({ code: 'custom', message: 'An unassociated creation has no Project' });
+})));
+export type WorktreeCreatedEventV1 = z.infer<typeof WorktreeCreatedEventV1Schema>;
+const WorktreeCreatedObservationV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('worktreeCreated'), serverId: id(), occurredAt: timestamp(), creation: WorktreeCreatedEventV1Schema,
 }));
 export const GuardStoppedEventV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('guard_stop'), serverId: id(), machineId: id(), sessionId: id(),
@@ -78,7 +91,7 @@ const ProjectSetupSettledObservationV1Schema = lazyZodSchema(() => z.strictObjec
   settlement: ProjectSetupSettledEventV1Schema,
 }));
 export const MachineServiceObservationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  BackupOutcomeEventV1Schema, MachinePressureEventV1Schema, WorktreeRemovedObservationV1Schema,
+  BackupOutcomeEventV1Schema, MachinePressureEventV1Schema, WorktreeRemovedObservationV1Schema, WorktreeCreatedObservationV1Schema,
   GuardStoppedEventV1Schema, ConnectedServiceQuotaEventV1Schema, ConnectedServiceCredentialHealthEventV1Schema, ProjectSetupSettledObservationV1Schema,
 ]));
 export type MachineServiceObservationV1 = z.infer<typeof MachineServiceObservationV1Schema>;
@@ -89,3 +102,5 @@ export const GuardStoppedEventV1ProtocolSchema = projectZodProtocolSchema(GuardS
 export const ConnectedServiceQuotaEventV1ProtocolSchema = projectZodProtocolSchema(ConnectedServiceQuotaEventV1Schema);
 export const ConnectedServiceCredentialHealthEventV1ProtocolSchema = projectZodProtocolSchema(ConnectedServiceCredentialHealthEventV1Schema);
 export const ProjectSetupSettledEventV1ProtocolSchema = projectZodProtocolSchema(ProjectSetupSettledEventV1Schema);
+
+export const WorktreeCreatedEventV1ProtocolSchema = projectZodProtocolSchema(WorktreeCreatedEventV1Schema);
