@@ -19,11 +19,11 @@ describe('preparation accepted workspace association', () => {
         const launch = { ...input, address: { serverId: 'home', machineId: 'teammate', rootPath: '/ordinary-folder' },
             allowUnassociated: true as const };
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).resolves.toBeNull();
-        await expect(resolveProjectSetupAcceptedWorkspace(input)).rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        await expect(resolveProjectSetupAcceptedWorkspace(input)).rejects.toMatchObject({ code: 'project_account_rows_unsupported' });
         post.mockResolvedValue({ status: 403, data: { error: 'forbidden' } });
-        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 403 } });
         post.mockResolvedValue({ status: 500, data: { error: 'internal' } });
-        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 500 } });
     });
 
     it('distinguishes an unassociated cold launch root from unavailable Account rows', async () => {
@@ -33,8 +33,21 @@ describe('preparation accepted workspace association', () => {
         const launch = { ...input, address: { serverId: 'home', machineId: 'teammate', rootPath: '/ordinary-folder' },
             allowUnassociated: true as const };
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).resolves.toBeNull();
-        post.mockRejectedValue(new Error('Home transport unavailable'));
-        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        const transportFailure = Object.assign(new Error('Home transport unavailable'), { code: 'ECONNREFUSED' });
+        post.mockRejectedValue(transportFailure);
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toBe(transportFailure);
+    });
+
+    it('keeps cancellation authoritative when an unsupported cold-root read settles after abort', async () => {
+        const controller = new AbortController();
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async () => {
+            controller.abort();
+            return { status: 404, data: { error: 'not_found' } };
+        });
+        await expect(resolveProjectSetupAcceptedWorkspace({ ...input,
+            address: { serverId: 'home', machineId: 'teammate', rootPath: '/ordinary-folder' },
+            allowUnassociated: true, signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' });
     });
 
     it('does not activate a Project for an accepted Workspace that has no Project association', async () => {

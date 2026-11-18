@@ -1392,7 +1392,7 @@ describe('authenticated finite Project Action owner', () => {
                     expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({ setupReadiness: { kind: 'notRequired' } });
                     retireOnProjectRowRead = true;
                     const refused = ActionExecuteFailureSchema.parse(await read());
-                    expect(refused).toMatchObject({ ok: false, errorCode: 'project_workspace_unavailable' });
+                    expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
                     expect(refused).not.toHaveProperty('effectiveDefinition');
                     expect(h.spawned).toEqual([]);
                     return;

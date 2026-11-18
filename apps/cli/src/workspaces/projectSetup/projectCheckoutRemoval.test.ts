@@ -36,7 +36,7 @@ it.each([
     const sibling = join(directory, 'sibling');
     await Promise.all([mkdir(physical), mkdir(sibling)]);
     await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir');
-    mockProjectAccountRowsHttpBoundary(associated ? [createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
+    const post = mockProjectAccountRowsHttpBoundary(associated ? [createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
         machineId: 'machine', rootPath: alias, projectKey: 'project', createdAtMs: 1 })] : []);
     const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
@@ -111,6 +111,15 @@ it.each([
                 worktreePath: alias, ...(externallyRemoved
                     ? { missingWorktree: { physicalRootPath: captured, alreadyAbsent: true as const } }
                     : { skipCleanup: true }) };
+            if (associated && !externallyRemoved) {
+                const transport = post.getMockImplementation()!;
+                post.mockResolvedValue({ status: 503, data: { error: 'private-response-sentinel' } });
+                const unavailable = await prepareProjectCheckoutRemoval(removalInput).then(() => null, (error: unknown) => error);
+                expect(unavailable).toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 503 } });
+                expect(JSON.stringify(unavailable)).not.toContain('private-response-sentinel');
+                expect(await realpath(alias)).toBe(await realpath(physical));
+                post.mockImplementation(transport);
+            }
             const refusal = await prepareProjectCheckoutRemoval(removalInput).then(() => null, (error: unknown) => error);
             // The live Action receiver classifies the original thrown exception.
             // Operation-store diagnostics alone do not reach that receiver.

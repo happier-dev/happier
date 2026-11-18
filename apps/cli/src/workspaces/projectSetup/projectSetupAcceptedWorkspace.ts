@@ -50,7 +50,8 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
     } catch (error) {
         if (!input.signal?.aborted && input.allowUnassociated && input.address.workspaceId === undefined
             && error instanceof Error && 'code' in error && error.code === 'project_account_rows_unsupported') return null;
-        return fail(input.signal?.aborted ? 'cancelled' : 'project_workspace_unavailable');
+        if (input.signal?.aborted) return fail('cancelled');
+        throw error;
     }
     const context = { normalizeServerId: (id: string) => id === input.serverId ? homeServerId : id };
     const resolved = resolveWorkspaceRefV1(workspaceRefs, input.address, context);
