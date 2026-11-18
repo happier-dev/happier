@@ -11,7 +11,7 @@ import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserP
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { getComputerSessionProjection, publishComputerStreamInputFailure } from '@/sync/domains/computer/computerControlClient';
+import { createComputerControlClient, getComputerSessionProjection, publishComputerStreamInputFailure } from '@/sync/domains/computer/computerControlClient';
 import { projectComputerCopresence } from '@/sync/domains/computer/presence';
 
 import {
@@ -92,6 +92,24 @@ function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('ComputerScreenViewer', () => {
+  it.each(['computer_element_stale', 'point_outside_capture'] as const)('routes native %s through the Action client to fresh capture', async code => {
+    // The remote daemon is the boundary; Action parsing, the client and viewer recovery stay real.
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: async () =>
+      ({ ok: false, errorCode: code, error: code }) }));
+    const client = createComputerControlClient({ machineId: 'native-failure-machine', sessionId: 'native-failure-session' }, executor.execute);
+    const result = await client.observe();
+    expect(result).toMatchObject({ ok: false, code });
+    if (result.ok) throw new Error('Expected the daemon refusal');
+    const onCheckAgain = vi.fn();
+    const onChooseWindow = vi.fn();
+    const onRefresh = vi.fn();
+    const screen = await renderScreen(<ComputerScreenViewer {...props({ failure: result.code, onCheckAgain, onChooseWindow, onRefresh })} />);
+    await screen.pressByTestIdAsync('v-recovery-action');
+    expect(onCheckAgain).toHaveBeenCalledTimes(1);
+    expect(onChooseWindow).not.toHaveBeenCalled();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
   it('retains the native background refusal through the input failure bus while control stays unconfirmed', async () => {
     const scope = { machineId: 'background-machine', sessionId: 'background-session' };
     const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
