@@ -1071,7 +1071,9 @@ and the local floor, including under CI; already-placed workers do not require i
 Test runs (Vitest, Jest, Playwright `test`, `node --test`, test package scripts, and shell batches
 whose phases run them) are refused under `--local` on a Linux host that routes commands to targets, and when a configured
 local fallback would run them there: run them routed by omitting `--local`, or pick a worker with
-`--target=<name>`. There is no override. A run that regenerates tracked files (`vitest -u`, or an
+`--target=<name>`. To debug one or two named test files locally, use
+`--local --allow-local-test=<reason> -- <command> <file> [<file>]`: the files must exist (no globs or
+directories), suites stay refused, and the reason and files are recorded in the execution provenance log. A run that regenerates tracked files (`vitest -u`, or an
 `env UPDATE_<NAME>=1` prefix after `--`) stays local, because a replica's writes never return; the
 launcher logs that reason. Already-placed workers, nested payloads and CI are unaffected. A private
 sibling worktree whose `node_modules` links to another checkout routes like any sibling: the

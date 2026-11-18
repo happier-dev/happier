@@ -834,12 +834,13 @@ projection_routes_commands() {
 }
 host_routes_commands() {
   if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
-    projection_routes_commands "$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh"
+    routing_stack_dir=$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")
+    projection_routes_commands "$routing_stack_dir/dev-target-exec-v1.sh"
     return
   fi
   resolve_execution_storage_root || return 1
   for routing_projection in "$storage_root"/repo-*/dev-target-exec-v1.sh; do
-    projection_routes_commands "$routing_projection" && return 0
+    projection_routes_commands "$routing_projection" && { routing_stack_dir=${routing_projection%/*}; return 0; }
   done
   return 1
 }
@@ -863,7 +864,38 @@ refuse_controller_local_tests() {
       "$controller_local_test_context" >&2
     return 0
   fi
-  printf '[preferred-execution] HSTACK_LOCAL_TEST_REFUSED: %s test runs are refused on the controller; run them routed: ./apps/stack/bin/hstack-exec -- <same command> (AUTO), or --target=nl3\n' \
+  if [ -n "${allow_local_test_reason-}" ] && [ "$controller_local_test_context" = --local ]; then
+    # The escape hatch names at most two existing test files; suites stay routed.
+    local_test_selection=$(run_dependency_free_node "$projection_command_policy" --output-fd=3 --local-test-selection \
+      "${command_repo_root:-$repo_root}" "$invoked_cwd" "$@" 3>&1 1>&2)
+    local_test_selection_status=$?
+    if [ "$local_test_selection_status" -eq 0 ]; then
+      local_test_files=$(printf '%s' "$local_test_selection" | tr '\n' ' ')
+      printf '[preferred-execution] controller-local test run allowed by --allow-local-test: %s; files: %s\n' \
+        "$allow_local_test_reason" "${local_test_files% }" >&2
+      # The audit row is the condition of the override: no record, no local run.
+      # One repository-relative file per line; split on newlines only.
+      local_test_ifs=$IFS
+      IFS='
+'
+      set -f
+      # shellcheck disable=SC2086
+      run_dependency_free_node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --record-local-test-override \
+        "$routing_stack_dir" "${policy_commandClass:-unclassified}" "$allow_local_test_reason" $local_test_selection
+      local_test_record_status=$?
+      set +f
+      IFS=$local_test_ifs
+      if [ "$local_test_record_status" -ne 0 ]; then
+        printf '%s\n' '[preferred-execution] --allow-local-test could not record its execution provenance; refusing the local run' >&2
+        exit 1
+      fi
+      return 0
+    fi
+    printf '[preferred-execution] HSTACK_LOCAL_TEST_REFUSED: --allow-local-test admits only 1-2 named existing test files (%s); run the rest routed: ./apps/stack/bin/hstack-exec -- <same command>\n' \
+      "$local_test_selection" >&2
+    exit 1
+  fi
+  printf '[preferred-execution] HSTACK_LOCAL_TEST_REFUSED: %s test runs are refused on the controller; run them routed: ./apps/stack/bin/hstack-exec -- <same command> (AUTO), or --target=nl3; to debug 1-2 named files locally: --local --allow-local-test=<reason> -- <command> <files>\n' \
     "$controller_local_test_context" >&2
   exit 1
 }
@@ -875,10 +907,20 @@ if [ "${1-}" = --local ]; then
   fi
   shift
   explicit_local_compilation_override=0
-  if [ "${1-}" = --allow-local-compilation ]; then
-    explicit_local_compilation_override=1
-    shift
-  fi
+  allow_local_test_reason=
+  while :; do
+    case "${1-}" in
+      --allow-local-compilation) explicit_local_compilation_override=1; shift ;;
+      --allow-local-test=*)
+        allow_local_test_reason=${1#--allow-local-test=}
+        [ -n "$allow_local_test_reason" ] || {
+          printf '%s\n' '[preferred-execution] --allow-local-test requires a reason: --allow-local-test=<reason>' >&2
+          exit 64
+        }
+        shift ;;
+      *) break ;;
+    esac
+  done
   validate_launcher_payload "$@"
   # Launcher syntax must be removed before policy and executable rewriting.
   if [ "${1-}" = -- ]; then shift; fi

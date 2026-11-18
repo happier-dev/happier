@@ -245,6 +245,11 @@ function normalizeRecord(record) {
     if (record.platform === 'linux' || record.platform === 'darwin') {
       normalized.platform = record.platform;
     }
+    // A controller-local test run admitted by --allow-local-test: why, and which files.
+    if (record.localTestOverride) {
+      normalized.localTestOverride = { reason: String(record.localTestOverride.reason ?? ''),
+        files: (record.localTestOverride.files ?? []).map(String) };
+    }
   } else {
     normalized.exitCode = finiteNumber(record.exitCode);
     normalized.signal = record.signal == null ? null : String(record.signal);
@@ -281,6 +286,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href &
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--record-duration') {
   await recordExecutionDuration(process.argv[3], { commandClass: process.argv[4], exitCode: Number(process.argv[5]),
     signal: null, durationMs: Number(process.argv[6]), target: process.argv[7] });
+}
+// hstack-exec --local --allow-local-test=<reason> audits its admitted selection here.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--record-local-test-override') {
+  const [stackBaseDir, commandClass, reason, ...files] = process.argv.slice(3);
+  await appendExecutionProvenance(stackBaseDir, { phase: 'admitted', executionId: `local-test-${process.pid}-${Date.now()}`,
+    timestamp: Date.now(), target: 'local', commandClass, syncStatus: 'local', localTestOverride: { reason, files } });
 }
 // hstack-exec's due check calls this once the active log's first row is from an earlier UTC day.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--rotate') {

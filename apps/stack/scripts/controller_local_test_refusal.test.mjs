@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -76,4 +76,34 @@ test('controller --local keeps a tracked-file regeneration run local and says wh
     { HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' });
   assert.doesNotMatch(result.stderr, /HSTACK_LOCAL_TEST_REFUSED/);
   assert.match(result.stderr, /regenerates tracked files/);
+});
+
+// Escape hatch (P03 ORCH 2026-11-18): a named reason and at most two existing
+// test files. The reason and files land in the execution-provenance audit log.
+test('--allow-local-test runs up to two named files locally and records why', { skip: process.platform === 'win32' }, async t => {
+  const { run, root } = await fixture(t);
+  const files = ['apps/stack/scripts/controller_local_test_refusal.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/remote_commands.focused.test.mjs'];
+  const allowed = run(['--allow-local-test=bisecting a hang', '--', 'vitest', 'run', ...files], { HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' });
+  assert.doesNotMatch(allowed.stderr, /HSTACK_LOCAL_TEST_REFUSED/);
+  assert.match(allowed.stderr, /allowed by --allow-local-test: bisecting a hang/);
+  const rows = (await readFile(join(root, 'stacks', 'repo-controller', 'dev-target-command-load-native', 'provenance.jsonl'), 'utf8'))
+    .trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.at(-1).localTestOverride, { reason: 'bisecting a hang', files });
+  assert.equal(rows.at(-1).target, 'local');
+});
+
+test('--allow-local-test still refuses suites, globs, directories and a third file', { skip: process.platform === 'win32' }, async t => {
+  const { run, started } = await fixture(t);
+  const file = 'apps/stack/scripts/controller_local_test_refusal.test.mjs';
+  for (const payload of [['vitest', 'run'], ['vitest', 'run', 'apps/stack/scripts'], ['vitest', 'run', 'apps/stack/scripts/*.test.mjs'],
+    ['vitest', 'run', file, 'apps/stack/scripts/heavyweight_reservations.test.mjs', 'apps/stack/scripts/utils/dev_targets/protocol_preparation.test.mjs'],
+    ['vitest', 'run', 'apps/stack/scripts/missing.test.mjs'], ['bash', '-c', `vitest run ${file}`]]) {
+    const refused = run(['--allow-local-test=why', '--', ...payload]);
+    assert.equal(refused.status, 1, payload.join(' ') + '\n' + refused.stderr);
+    assert.match(refused.stderr, /HSTACK_LOCAL_TEST_REFUSED/, payload.join(' '));
+  }
+  const empty = run(['--allow-local-test=', '--', 'vitest', 'run', file]);
+  assert.equal(empty.status, 64, empty.stderr);
+  assert.equal(await started(), false);
 });

@@ -2,7 +2,7 @@ import { projectRemoteGuestCliPayloadEnvironment } from '../../runtime/shared/so
 export { projectRemoteGuestCliPayloadEnvironment };
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, readdirSync, writeSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -850,6 +850,71 @@ async function shellBatchRunsTests(commandArgs, options) {
     repoRoot: resolve(options.repoRoot ?? COMMAND_REPO_ROOT), cwd: options.cwd ?? process.cwd(),
   });
   return phases.some(args => resolveRemoteCommandPolicy(args, options).testRunner === '1');
+}
+
+// The controller's local-test escape hatch (P03 ORCH 2026-11-18) admits only a
+// named selection: one or two existing test files, never a suite, directory or
+// glob. Runner options that take a value must not be mistaken for a file.
+const LOCAL_TEST_FILE_LIMIT = 2;
+const LOCAL_TEST_VALUE_OPTIONS = new Set(['-t', '--testNamePattern', '-c', '--config', '--project', '--root', '-r',
+  '--dir', '--reporter', '--pool', '--maxWorkers', '--minWorkers', '--environment', '--outputFile', '--shard',
+  '--exclude', '--test-name-pattern', '--test-reporter', '--test-reporter-destination', '--import', '--require',
+  '--grep', '-g', '--workers', '-j', '--timeout', '--retries', '--testTimeout', '--hookTimeout', '--mode',
+  '--conditions', '-C']);
+const LOCAL_TEST_SUBCOMMANDS = new Set(['run', 'watch', 'dev', 'related', 'test']);
+const LOCAL_TEST_RUNNER_ENTRIES = new Set(['vitest.mjs', 'run-vitest-with-heartbeat.mjs', 'run-playwright-with-heartbeat.mjs']);
+
+/** @returns {Promise<{ files: string[] } | { refusal: string }>} repo-relative files, or why the selection is not one. */
+export async function resolveLocalTestSelection(commandArgs, { repoRoot = COMMAND_REPO_ROOT, cwd = process.cwd() } = {}) {
+  let args = commandArgs.map(String);
+  if (args[0] === '--') args = args.slice(1);
+  if (args[0]?.startsWith('--script=')) args = ['pnpm', 'run', '--silent', args[0].slice(9), ...args.slice(1).filter((arg, index) => index || arg !== '--')];
+  if (commandBasename(args[0]) === 'env') {
+    let index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(args[index] ?? '')) index++;
+    args = args.slice(index);
+  }
+  const command = commandBasename(args[0]);
+  if (['sh', 'bash', 'hstack-exec'].includes(command)) return { refusal: 'name the test runner directly, not through a shell or launcher' };
+  const facts = normalizeCommandArguments(args, cwd, repoRoot);
+  if (facts.binaryContext) {
+    const directory = await resolveCommandPackageDirectory(facts.binaryContext, repoRoot);
+    return resolveLocalTestSelection(facts.binaryContext.args, { repoRoot, cwd: directory ?? resolve(repoRoot, facts.binaryContext.cwd) });
+  }
+  let base = resolve(repoRoot, cwd);
+  let tokens = args.slice(1);
+  if (facts.hasScript === '1') {
+    const manifest = await resolvePackageCommandManifest(args, { repoRoot, cwd });
+    if (manifest?.packageDir) base = resolve(repoRoot, manifest.packageDir);
+    tokens = facts.scriptArguments;
+  }
+  const positional = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === '--') continue;
+    if (token.startsWith('-')) {
+      if (!token.includes('=') && LOCAL_TEST_VALUE_OPTIONS.has(token)) index++;
+      continue;
+    }
+    if (LOCAL_TEST_RUNNER_ENTRIES.has(commandBasename(token))) continue;
+    if (!positional.length && LOCAL_TEST_SUBCOMMANDS.has(token)) continue;
+    positional.push(token);
+  }
+  if (!positional.length) return { refusal: 'a run without named test files is a suite' };
+  if (positional.length > LOCAL_TEST_FILE_LIMIT) return { refusal: `at most ${LOCAL_TEST_FILE_LIMIT} named test files` };
+  const root = resolve(repoRoot);
+  const files = [];
+  for (const value of positional) {
+    if (/[*?[\]{}]/u.test(value)) return { refusal: `globs are not named files: ${value}` };
+    const path = resolve(base, value);
+    let stat = null;
+    try { stat = statSync(path); } catch {}
+    if (!stat?.isFile()) return { refusal: `not an existing test file: ${value}` };
+    const fromRoot = relative(root, path);
+    if (!fromRoot || fromRoot.startsWith('..') || isAbsolute(fromRoot)) return { refusal: `outside the repository: ${value}` };
+    files.push(fromRoot.split(sep).join('/'));
+  }
+  return { files };
 }
 
 /** Finite work owns publication resources, not installed-tree consumption.
@@ -3090,6 +3155,11 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
     // injected count. Keep their prior conservative reservation instead.
     output(`${explicit || workers === null ? 'explicit' : 'managed'} ${workers ?? 0}\n`);
     return 0;
+  }
+  if (args[0] === '--local-test-selection') {
+    const selection = await resolveLocalTestSelection(args.slice(3), { repoRoot: args[1], cwd: args[2] });
+    output(selection.files ? selection.files.join('\n') + '\n' : selection.refusal + '\n');
+    return selection.files ? 0 : 1;
   }
   if (args[0] === '--workspace-locks') {
     output(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4], commandClass: args[5] }, args[1])));
