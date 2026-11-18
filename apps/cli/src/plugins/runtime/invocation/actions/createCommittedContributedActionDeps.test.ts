@@ -30,7 +30,7 @@ import { createCommittedContributedActionInvoker, createCommittedContributedActi
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
 afterEach(() => vi.unstubAllEnvs());
 
-it('keeps input-sensitive plugin effects discoverable and settles only mutation inputs', async () => {
+it.each([false, true])('keeps input-sensitive plugin effects discoverable and settles only mutation inputs (Session bound: %s)', async sessionBound => {
   vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
   vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
   const common = { title: 'Catalog effect fixture', dangerLevel: 'safe', scopes: ['global'],
@@ -86,6 +86,10 @@ it('keeps input-sensitive plugin effects discoverable and settles only mutation 
   try {
     const listDefinitions = (selection: Parameters<typeof listRuntimeContributedActionDefinitions>[1]) =>
       listRuntimeContributedActionDefinitions(fixture.registry, selection);
+    expect(listDefinitions({ id: actionId('health') })[0]).toMatchObject({ automation: {
+      before: true, after: true, subjectKinds: ['healthCheck', 'approvalProfile'],
+      primarySubject: { kind: 'healthCheck', field: 'checkId' },
+    } });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       actionAutomations: port,
       listContributedActionDefinitions: listDefinitions,
@@ -124,7 +128,8 @@ it('keeps input-sensitive plugin effects discoverable and settles only mutation 
     expect(undeclared).not.toHaveProperty('result.actionSpec.automation.primarySubject');
     const invoke = async (localId: string, mode: string) => {
       const result = await executor.execute('action.invoke', { action: { pluginId: authored.manifest.id, localId }, input: { mode } },
-        { surface: 'cli', authority: 'present_user', actionRequestId: `${localId}-${mode}`, serverId: 'home', serverIdentityId: 'home' });
+        { surface: 'cli', authority: 'present_user', actionRequestId: `${localId}-${mode}`, serverId: 'home', serverIdentityId: 'home',
+          ...(sessionBound ? { defaultSessionId: 'session' } : {}), defaultSessionMachineId: 'machine' });
       expect(result).toMatchObject({ ok: true });
       return result;
     };
@@ -143,7 +148,8 @@ it('keeps input-sensitive plugin effects discoverable and settles only mutation 
     const invokeHealth = (checkId: string) => executor.execute('action.invoke', {
       action: { pluginId: authored.manifest.id, localId: 'health' },
       input: { sourceInstanceId: 'saved-source', checkId, webhookEndpointId: 'private-endpoint' },
-    }, { surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', actionRequestId: `health-${checkId}` });
+    }, { surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', actionRequestId: `health-${checkId}`,
+      ...(sessionBound ? { defaultSessionId: 'session' } : {}), defaultSessionMachineId: 'machine' });
     expect(await invokeHealth('other-check')).toMatchObject({ ok: true });
     expect(events).toHaveLength(5);
     expect(await invokeHealth('heartbeat')).toMatchObject({ ok: true });
@@ -222,7 +228,8 @@ it.each([
     const result = await executor.execute('action.invoke', {
       action: { pluginId: authored.manifest.id, localId: 'effect' }, input: {},
     }, { surface: 'cli', authority: human ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
-      actionRequestId: 'contributed-before', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account' });
+      actionRequestId: 'contributed-before', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account',
+      defaultSessionMachineId: 'machine' });
     expect(effects).toBe(state === 'failed' ? 0 : 1);
     expect(result).toMatchObject(state === 'failed'
       ? { ok: false, errorCode: 'action_interception_rejected', effectAttempted: false }

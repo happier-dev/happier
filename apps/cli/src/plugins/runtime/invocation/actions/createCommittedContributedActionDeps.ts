@@ -9,6 +9,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { ActionDefinitionV1 } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { projectActionAutomationChoices } from '@happier-dev/protocol/actions/actionCatalog';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
@@ -40,7 +41,7 @@ function projectDefinition(definition: ResolvedActionDefinition, identity: NonNu
   subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[]): ActionDefinitionV1 {
   const kind = readPluginActionApprovalScopeSubjectKindV1({ declaration: definition.approvalScope, pluginId: identity.pluginId, subjectKinds });
   const execution = PluginActionExecutionV2Schema.safeParse(definition.execution);
-  return Object.freeze({
+  const projected = {
     kindVersion: definition.kindVersion,
     id: formatQualifiedPluginActionId(identity),
     title: definition.title,
@@ -66,7 +67,8 @@ function projectDefinition(definition: ResolvedActionDefinition, identity: NonNu
     ...(execution.success ? { executionPlacement: execution.data.target === 'daemon' ? 'machine' as const : execution.data.target } : {}),
     ...(definition.sideEffectClass === undefined ? {} : { sideEffectClass: definition.sideEffectClass }),
     ...(definition.operation === undefined ? {} : { operation: definition.operation }),
-  });
+  } satisfies ActionDefinitionV1;
+  return Object.freeze({ ...projected, automation: projectActionAutomationChoices(projected) });
 }
 
 function readSurface(surface: string | null | undefined): PluginActionSurface | null {

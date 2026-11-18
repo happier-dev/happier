@@ -32,6 +32,7 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { readActionSecretInputPaths } from './actionInputHintsRuntime.js';
 import type { InputHintsDescriptor } from '../inputs/inputFields.js';
 import type { WorkflowMaterializedLeafV1 } from '../workflows/workflowDefinitionV1.js';
+import { readDatabaseActionAutomationMetadataV1 } from './databaseActionMetadata.js';
 
 export { readCompleteActionSpecV1 } from './actionSpecSections.js';
 
@@ -201,23 +202,27 @@ function projectSerializedActionOutput(
   return { ...metadata, ...(outputSchema ? { outputSchema } : {}) };
 }
 
-type ActionAutomationSubjectDeclaration = Readonly<{
+export type ActionAutomationSubjectDeclaration = Readonly<{
   approvalScope?: ActionSpec['approvalScope'] | ActionDefinitionSummaryV1['approvalScope'];
   sessionTarget?: ActionSpec['sessionTarget'];
 }>;
 
-function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummaryV1,
+export function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummaryV1,
   'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement' | 'automation'>
   & ActionAutomationSubjectDeclaration & Readonly<{ completion?: unknown }>,
   declaredSubjects?: Pick<NonNullable<ActionDefinitionSummaryV1['automation']>, 'subjectKinds' | 'primarySubject'>) {
   const before = isActionEffectHookableV1(definition.sideEffectClass);
   const subjects = declaredSubjects ?? definition.automation;
-  const primarySubject = subjects ? subjects.primarySubject : projectContributedActionPrimarySubject(definition);
+  const databaseSubjects = declaredSubjects ? undefined : readDatabaseActionAutomationMetadataV1(definition.id);
+  const primarySubject = subjects?.primarySubject
+    ?? databaseSubjects?.primarySubject ?? projectContributedActionPrimarySubject(definition);
   return {
     before,
     after: before,
     workflowStep: isWorkflowStepActionSpecV1(definition),
-    subjectKinds: subjects?.subjectKinds ?? projectActionSubjectKinds(definition),
+    subjectKinds: subjects?.subjectKinds ?? [...new Set([
+      ...(databaseSubjects?.subjectKinds ?? []), ...projectActionSubjectKinds(definition),
+    ])],
     ...(primarySubject ? { primarySubject } : {}),
   };
 }

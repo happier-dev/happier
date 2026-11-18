@@ -575,6 +575,8 @@ export {
   serializeActionFieldOptions,
   searchSerializedActionSpecs,
   serializeActionSpec,
+  projectActionAutomationChoices,
+  type ActionAutomationSubjectDeclaration,
   type ResolvedActionOption,
   type SerializedActionSpec,
 } from './actionCatalog.js';

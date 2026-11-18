@@ -22,8 +22,32 @@ import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js'
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { ActionDiscoveryDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
+import {
+  DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1,
+  DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
+} from './actionIdsDatabaseV1.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it.each([
+    { id: DATABASE_STATEMENT_RUN_ACTION_ID_V1, scope: 'environment' as const, kinds: ['environment', 'database', 'approvalProfile'] },
+    { id: DATABASE_TARGETS_FORGET_ACTION_ID_V1, scope: undefined, kinds: ['database', 'approvalProfile'] },
+    { id: DATABASE_ACCESS_SET_ACTION_ID_V1, scope: undefined, kinds: ['database', 'approvalProfile'] },
+    { id: DATABASE_TARGETS_CONNECT_ACTION_ID_V1, scope: undefined, kinds: ['approvalProfile'] },
+    { id: DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1, scope: undefined, kinds: ['approvalProfile'] },
+  ])('publishes the canonical existing Database target operand for $id through public discovery', ({ id, scope, kinds }) => {
+    const definition: ActionDefinitionV1 = {
+      ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get')),
+      id, sideEffectClass: 'external', approvalScope: scope, automation: undefined,
+    };
+    const primary = kinds.includes('database') ? { kind: 'database', field: 'target' } : undefined;
+    const automation = projectActionDefinitionForExternalDiscovery(definition).automation;
+    expect(automation).toMatchObject({ subjectKinds: kinds });
+    expect(automation?.primarySubject).toEqual(primary);
+    const [summary] = searchSerializedActionSpecsForSurface({ surface: 'cli', query: definition.id,
+      purpose: 'automation', limit: null, additionalDefinitions: [definition], isActionEnabled: () => false });
+    expect(summary.automation).toEqual(automation);
+  });
+
   it.each([
     { scope: 'environment' as const, kinds: ['environment', 'approvalProfile'], primary: undefined },
     { scope: 'healthCheck' as const, kinds: ['healthCheck', 'approvalProfile'], primary: { kind: 'healthCheck', field: 'checkId' } },
@@ -41,6 +65,19 @@ describe('actionCatalog action-definition adapter', () => {
     const [summary] = searchSerializedActionSpecsForSurface({ surface: 'cli', query: definition.id,
       purpose: 'automation', limit: null, additionalDefinitions: [definition], isActionEnabled: () => false });
     expect(summary.automation).toEqual(publicDefinition.automation);
+  });
+
+  it('fills operand metadata when a prior catalog projection retained only hook flags', () => {
+    const definition: ActionDefinitionV1 = {
+      ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get')),
+      id: 'example.catalog/actions/partial', sideEffectClass: 'external', approvalScope: 'healthCheck',
+      automation: { before: true, after: true, workflowStep: false },
+    };
+    expect(projectActionDefinitionForExternalDiscovery(definition).automation).toMatchObject({
+      before: true, after: true, workflowStep: false,
+      subjectKinds: ['healthCheck', 'approvalProfile'],
+      primarySubject: { kind: 'healthCheck', field: 'checkId' },
+    });
   });
 
   it('validates the primary subject pair at the strict discovery boundary', () => {
