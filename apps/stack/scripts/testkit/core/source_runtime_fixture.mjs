@@ -2,10 +2,11 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { captureBuildInputFiles } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../../utils/fs/workspaceBuildInputs.mjs';
-import { chmod, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { chmod, copyFile, mkdir, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from './native_admission_fixture.mjs';
+import { readWorkspacePackages } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 /** Compiler/cache fixtures exercise the producer. QA fixtures name a separate
  * authority explicitly and retain the real consumer request path. */
@@ -51,16 +52,20 @@ export async function installSourceAdmissionFixture(root) {
   await mkdir(join(root,'bin'));
   await writeFile(join(root,'bin/awk'),`#!/bin/sh\ncase "$*" in\n  */proc/meminfo*) printf '16777216 16777216\\n' ;;\n  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n  *) exec /usr/bin/awk "$@" ;;\nesac\n`);
   await chmod(join(root,'bin/awk'),0o755);
-  // Minimal daemon fixtures exercise preparation/adoption, not native CLI
-  // compilation. Use the supported manual override; payload tests clear it.
-  const payloadRoot = join(root, 'manual-guest-payload');
-  await mkdir(payloadRoot);
-  await writeFile(join(payloadRoot, 'happier'), '#!/bin/sh\nexit 0\n');
   const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1',
-    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payloadRoot};
+    ...await installManualGuestPayloadEnv(root)};
   return {...native,runtimePath,build,prepareReload,runSourceCommand,env};
 }
 
+
+/** Minimal daemon fixtures exercise preparation/adoption, not native CLI
+ * compilation. Use the supported manual override; payload tests clear it. */
+export async function installManualGuestPayloadEnv(root) {
+  const payloadRoot = join(root, 'manual-guest-payload');
+  await mkdir(payloadRoot);
+  await writeFile(join(payloadRoot, 'happier'), '#!/bin/sh\nexit 0\n');
+  return { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payloadRoot };
+}
 
 export async function installSourcePreparationInputs(repoDir, component) {
   // Model the checkout inputs watched by the real preparation owner. Missing
@@ -83,13 +88,37 @@ export async function installSourcePreparationInputs(repoDir, component) {
     if (!sharedPackages) {
       await captureBuildInputFiles({ sourceDir: canonicalRoot, captureDir: join(repoDir, 'packages/cli-common'),
         readPaths: () => readWorkspaceBuildInputs(canonicalRoot) });
-      await mkdir(join(repoDir, 'packages/cli-common/node_modules'), { recursive: true });
       // This physical clone includes the real source registry, whose authored
       // tool dependencies must resolve just as they do in the owning checkout.
-      const requireFromSource = createRequire(join(canonicalRoot, 'package.json'));
-      for (const dependency of ['semver', 'tsx']) {
-        await symlink(dirname(requireFromSource.resolve(`${dependency}/package.json`)),
-          join(repoDir, 'packages/cli-common/node_modules', dependency), process.platform === 'win32' ? 'junction' : 'dir');
+      // Link each declared external through Node's own lookup from the owner.
+      const manifest = JSON.parse(await readFile(join(canonicalRoot, 'package.json'), 'utf8'));
+      await mkdir(join(repoDir, 'packages/cli-common/node_modules'), { recursive: true });
+      for (const dependency of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
+        if (dependency.startsWith('@happier-dev/')) continue;
+        let directory = canonicalRoot;
+        while (!existsSync(join(directory, 'node_modules', dependency)) && dirname(directory) !== directory) directory = dirname(directory);
+        const installed = join(directory, 'node_modules', dependency);
+        if (!existsSync(installed)) continue;
+        const target = join(repoDir, 'packages/cli-common/node_modules', dependency);
+        await mkdir(dirname(target), { recursive: true });
+        await symlink(await realpath(installed), target, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+      // That registry is also the authority for the Stack source worker's own
+      // workspace imports (for example Protocol's plugin failure projection), as
+      // in a real checkout. Provide each declared Stack workspace dependency the
+      // fixture does not author itself; linked directories keep its installation.
+      const canonicalRepo = dirname(dirname(canonicalRoot));
+      const canonicalPackages = await readWorkspacePackages(canonicalRepo);
+      const stackManifest = JSON.parse(await readFile(join(canonicalRepo, 'apps/stack/package.json'), 'utf8'));
+      for (const name of Object.keys(stackManifest.dependencies ?? {})) {
+        const owner = canonicalPackages.get(name);
+        const target = owner && join(repoDir, relative(canonicalRepo, owner.root));
+        if (!target || existsSync(target)) continue;
+        await mkdir(target, { recursive: true });
+        for (const entry of await readdir(owner.root, { withFileTypes: true })) {
+          if (entry.isFile()) await copyFile(join(owner.root, entry.name), join(target, entry.name));
+          else await symlink(join(owner.root, entry.name), join(target, entry.name), process.platform === 'win32' ? 'junction' : 'dir');
+        }
       }
     }
   }
