@@ -42,7 +42,7 @@ describe('Store received Bot templates', () => {
             }
         };
         const beforeDoc = listReads();
-        await publishPrimaryChange('unknown-doc', { title: 'A normal Doc has no header kind' });
+        await publishPrimaryChange('unknown-doc', { kind: 'prompt_doc.v2', title: 'A normal Doc' });
         expect.soft(listReads()).toBe(beforeDoc);
         const header = { v: 1, kind: BOT_TEMPLATE_ARTIFACT_KIND_V1, state: 'released', title: 'New share',
             description: '', version: '1.0.0', changelog: '' };

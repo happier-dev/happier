@@ -4,7 +4,6 @@ import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
@@ -14,7 +13,6 @@ import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScope
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { openAskHappierDraft, openBlankAskHappierDraft } from './happierGuideDraft';
 import { openNewBotDraft } from './newBotDraft';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { CurrentUiContextProvider, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
@@ -101,30 +99,23 @@ describe('Ask Happier ordinary authoring', () => {
         expect(navigation.push).not.toHaveBeenCalled();
     });
 
-    it('keeps the original guide invocation pending until its admitted approval creates the document, then opens the draft once', async () => {
-        const { home: f, lifetime, mounted: hook } = await prepare(async path => path === '/v2/account/settings'
+    it('waits for native guide confirmation, then creates one document and opens the draft', async () => {
+        const { home: f, lifetime, executeAction } = await prepare(async path => path === '/v2/account/settings'
             ? Response.json({ version: 1, content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
                 actions: { 'prompt_doc.create': { approvalRequiredSurfaces: ['ui'] } } } } } }) : null);
-        let settled = false;
-        let creationOutcome: ActionExecuteResult | undefined;
-        const pending = openAskHappierDraft({ lifetime, executeAction: async (actionId, input, options) => {
-            const outcome = await hook.getCurrent().execute(actionId, input, options);
-            if (actionId === 'prompt_doc.create') creationOutcome = outcome;
-            return outcome;
-        } })
-            .then(result => { settled = true; return result; });
-        await expect.poll(() => f.boundary.list().length).toBe(1);
-        const approval = f.boundary.list()[0]!;
-        expect(decodePlainArtifactStoredContent(approval.header)).toMatchObject({ approvalStatus: 'open' });
-        expect(settled).toBe(false);
+        const confirmation = createDeferred<boolean>();
+        userConfirmation.mockReturnValueOnce(confirmation.promise);
+        const pending = openAskHappierDraft({ lifetime, executeAction });
+        await expect.poll(() => userConfirmation.mock.calls.length).toBe(1);
+        expect(f.boundary.list()).toEqual([]);
         expect(navigation.push).not.toHaveBeenCalled();
-        expect(await decideApprovalAsInbox(lifetime.scope.serverId, approval.id, 'approve')).toMatchObject({ ok: true });
-        await act(async () => { await hook.getCurrent().approval.refresh(); });
+
+        await act(async () => { confirmation.resolve(true); });
         const result = await pending;
-        expect(creationOutcome).toEqual({ ok: true, result: { ok: true, artifactId: expect.any(String) } });
-        expect({ result, approval: JSON.parse(f.boundary.readPlainBody(approval.id)!) }).toMatchObject({ result: { kind: 'opened' } });
-        expect(result.guideRef?.artifactId).not.toBe(approval.id);
-        expect(f.boundary.list()).toHaveLength(2);
+        const rows = f.boundary.list();
+        expect(result.kind).toBe('opened');
+        expect(rows.map(row => row.id)).toEqual([result.guideRef?.artifactId]);
+        expect(decodePlainArtifactStoredContent(rows[0]!.header)).toMatchObject({ kind: 'prompt_doc.v2' });
         expect(navigation.push).toHaveBeenCalledTimes(1);
     });
 
@@ -140,17 +131,18 @@ describe('Ask Happier ordinary authoring', () => {
         expect((await openNewBotDraft(lifetime, executeAction)).kind).toBe(actionId === 'session.authoring.open' ? 'refused' : 'opened');
     });
 
-    it('cancels mounted interest in a pending guide approval without creating a document or substituting a blank draft', async () => {
-        const { home: f, lifetime, mounted: hook } = await prepare(async path => path === '/v2/account/settings'
+    it('cancels mounted interest during native guide confirmation without creating a document or draft', async () => {
+        const { home: f, lifetime, executeAction } = await prepare(async path => path === '/v2/account/settings'
             ? Response.json({ version: 1, content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
                 actions: { 'prompt_doc.create': { approvalRequiredSurfaces: ['ui'] } } } } } }) : null);
+        const confirmation = createDeferred<boolean>();
+        userConfirmation.mockReturnValueOnce(confirmation.promise);
         const controller = new AbortController();
-        const pending = openAskHappierDraft({ lifetime, signal: controller.signal, executeAction: hook.getCurrent().execute });
-        await expect.poll(() => hook.getCurrent().approval.approvalPending).toBe(true);
-        await act(async () => { controller.abort(); });
+        const pending = openAskHappierDraft({ lifetime, signal: controller.signal, executeAction });
+        await expect.poll(() => userConfirmation.mock.calls.length).toBe(1);
+        await act(async () => { controller.abort(); confirmation.resolve(true); });
         expect(await pending).toMatchObject({ kind: 'unavailable', reason: 'aborted', guideRef: null });
-        expect(f.boundary.list()).toHaveLength(1);
-        expect(decodePlainArtifactStoredContent(f.boundary.list()[0]!.header)).toMatchObject({ approvalStatus: 'open' });
+        expect(f.boundary.list()).toEqual([]);
         expect(navigation.push).not.toHaveBeenCalled();
     });
 
