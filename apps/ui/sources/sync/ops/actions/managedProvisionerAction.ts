@@ -142,7 +142,7 @@ export async function prepareUiManagedProvisionerAdmission(
                     return { ok: true, result };
                 } catch (error) {
                     if (!context.signal?.aborted && error instanceof ManagedMachineControllerError) {
-                        return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+                        return error.toActionFailure(actionId);
                     }
                     const code = context.signal?.aborted ? 'cancelled' : 'provider_unavailable';
                     return { ok: false, errorCode: code, error: code };

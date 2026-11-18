@@ -120,12 +120,13 @@ describe('managed Account credential admission', () => {
                 context: { serverId: target.id, surface: 'ui' } }, account);
             if (!admitted || !('children' in admitted) || !admitted.executeAdmittedAction) throw new Error('Expected admitted Team credential');
             const invocations: unknown[] = [];
-            await admitted.executeAdmittedAction({ actionId: 'machines.provisioners.check', input,
+            const refusal = await admitted.executeAdmittedAction({ actionId: 'machines.provisioners.check', input,
                 execute: async () => { throw new Error('Unexpected direct admitted execution'); },
                 context: { surface: 'ui', serverId: target.id, actionRequestId: 'team-check', hostReviewedChild: { invoke: async invocation => {
                     invocations.push(invocation.invocationServices?.connectedAccountPurposeBinding?.purposeBindings);
                     return { ok: false, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
                 } } } });
+            expect(refusal).toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
             expect(invocations).toEqual([{ v: 1, bindings: [], teamResourceSelections: [{
                 purpose: { consumer: { pluginId: CRABBOX_PLUGIN_ID, localId: 'coordinator-check' }, purpose: CRABBOX_CONNECTION_PURPOSE },
                 teamId: 'team-a', selection }] }]);
