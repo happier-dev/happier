@@ -257,7 +257,8 @@ describe('runDeepSecReview', () => {
   it('reports repository audit process failure as partial', async () => {
     const run = vi.fn()
       .mockResolvedValueOnce(processResult())
-      .mockResolvedValueOnce(processResult(2));
+      .mockResolvedValueOnce(processResult(2))
+      .mockResolvedValueOnce(processResult());
     const cleanup = vi.fn(async () => {});
 
     const result = await runDeepSecReview({
@@ -265,12 +266,13 @@ describe('runDeepSecReview', () => {
       mode: 'repository_security_audit',
       confirmedCostWarning: true,
       exec: { systemTools: { resolve: async () => resolvedTool }, run },
-      tempFiles: createTempFiles({ cleanup }),
+      tempFiles: createTempFiles({ cleanup, readText: async () => '[]' }),
     });
 
     expect(result).toMatchObject({
       status: 'partial',
       stage: 'process',
+      exportedEntries: [],
       diagnostics: [{
         code: 'deepsec_process_failed',
         detail: { exitCode: 2, signal: null },

@@ -552,7 +552,7 @@ function createRuntime(
       const findings = normalizeDeepSecFindings('exportedEntries' in runResult && runResult.exportedEntries
         ? runResult.exportedEntries : parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
       emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
-      return runResult.status === 'completed'
+      return runResult.status === 'completed' || runResult.status === 'partial'
         ? { status: 'complete' }
         : { status: 'failed', diagnostic: {
           code: runResult.status === 'readiness_failed' ? 'deepsec_readiness_failed' : 'deepsec_process_failed',

@@ -642,13 +642,20 @@ describe('activate', () => {
     expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
   });
 
-  it('publishes repository audit process failures as diagnosable partial findings', async () => {
-    let launchCount = 0;
+  it.each([false, true])('delivers repository audit partial findings to host normalization (findings present: %s)', async hasFindings => {
     const fixture = createRuntimeContext({
-      async run() {
-        launchCount += 1;
-        if (launchCount === 1) return processResult();
-        return processResult(2);
+      async run(request) {
+        if (request.args?.[0] === 'process') return processResult(2);
+        if (request.args?.[0] === 'export') {
+          const outIndex = request.args.indexOf('--out');
+          const outPath = request.args[outIndex + 1];
+          if (!outPath) throw new Error('Expected native export output path');
+          await writeFile(outPath, JSON.stringify(hasFindings ? [{
+            title: 'Validate redirects', description: 'Validate redirect destinations before use.', severity: 'CRITICAL',
+            metadata: { filePath: 'src/auth.ts', lineNumbers: [2] },
+          }] : []), 'utf8');
+        }
+        return processResult();
       },
     });
     const { runtime } = await createNativeDeepSecRuntime();
@@ -663,11 +670,10 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_process_failed' } });
+    expect(events.at(-1)?.kind).toBe('run-complete');
     expect(readStructuredOutput(events)).toMatchObject({
-      summary: 'DeepSec review partially completed with 0 finding(s).',
       reviewOutcome: 'partial',
-      findings: [],
+      findings: hasFindings ? [expect.objectContaining({ filePath: 'src/auth.ts', startLine: 2 })] : [],
       diagnostics: [{
         code: 'deepsec_process_failed',
         severity: 'warning',

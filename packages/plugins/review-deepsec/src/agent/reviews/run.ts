@@ -54,6 +54,7 @@ export type DeepSecReviewRunResult =
       diagnostics: readonly DeepSecRuntimeDiagnostic[];
       result: PluginProcessResult;
       commentOutMarkdown: string;
+      exportedEntries?: readonly ParsedDeepSecCommentOutEntry[];
     }>
   | Readonly<{
       status: 'requires_confirmation';
@@ -306,20 +307,22 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
         agentCli: params.agentCli,
         rootPath: params.cwd,
       }));
-      const commentOutMarkdown = await params.tempFiles.readText(commentOutPath);
+      // Successful batches are persisted even when another batch fails. The
+      // existing export reads those records independently of the process exit.
+      const exportPath = `${commentOutPath}.json`;
+      const exportResult = await run(buildDeepSecCommand({ mode: 'repository_security_audit_export', exportPath }));
+      if (commandFailed(exportResult)) return { status: 'failed', result: exportResult, commentOutMarkdown: '' };
+      const exportedEntries = parseDeepSecExport(await params.tempFiles.readText(exportPath));
       if (commandFailed(processResult)) {
         return {
           status: 'partial',
           stage: 'process',
           diagnostics: [processPartialDiagnostic(processResult)],
           result: processResult,
-          commentOutMarkdown,
+          commentOutMarkdown: '',
+          exportedEntries,
         };
       }
-      const exportPath = `${commentOutPath}.json`;
-      const exportResult = await run(buildDeepSecCommand({ mode: 'repository_security_audit_export', exportPath }));
-      if (commandFailed(exportResult)) return { status: 'failed', result: exportResult, commentOutMarkdown: '' };
-      const exportedEntries = parseDeepSecExport(await params.tempFiles.readText(exportPath));
       return { status: 'completed', result: exportResult, commentOutMarkdown: '', exportedEntries };
     }
     const commentOutMarkdown = commentOutPath ? await params.tempFiles.readText(commentOutPath) : '';
