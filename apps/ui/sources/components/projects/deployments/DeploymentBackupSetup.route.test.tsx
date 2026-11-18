@@ -435,7 +435,13 @@ it('keeps the descriptor name and same-disk warning visible for a configured loc
   const screen = await renderScreen(<DeploymentBackupDestinationRow detail={detail} configuration={configuration} actions={null} testID="backups" />);
   try {
     await vi.waitFor(() => expect(screen.findAllByType(Item).find(row => row.props.testID === 'backups.destination')?.props.title).toBe(destination.title));
-    expect(screen.findAllByType(Item).some(row => row.props.testID === 'backups.destination.localWarning')).toBe(true);
+    const warning = () => screen.findAllByType(Item).find(row => row.props.testID === 'backups.destination.localWarning');
+    expect(warning()?.props.subtitle).toBe(t('projects.deployments.settingsSections.setupLocalGrowth'));
     expect(homes.requests.filter(request => request.path.includes('/actions/'))).toEqual([]);
+    // Pruned counts do delete old backups: the disk-growth sentence would be false (PAGE-ACCEPT-176 round 3, live billing-db).
+    await act(async () => screen.update(<DeploymentBackupDestinationRow detail={detail} actions={null} testID="backups"
+      configuration={{ ...configuration, retention: { kind: 'keep', last: 3 } }} />));
+    expect(warning()).toBeDefined();
+    expect(warning()?.props.subtitle).toBeUndefined();
   } finally { await screen.unmount(); account.dispose(); }
 });

@@ -19,7 +19,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { DeploymentBackupSetupSheet } = await import('./DeploymentBackupControls');
+const { DeploymentBackupSetupSheet, preferredBackupDestination } = await import('./DeploymentBackupControls');
 afterEach(standardCleanup);
 /** Configure-mode props of the sheet (its props are a Configure | intent union). */
 type ConfigureProps = Extract<React.ComponentProps<typeof DeploymentBackupSetupSheet>, { mode?: 'configure' }>;
@@ -157,5 +157,35 @@ describe('Backup destination setup fields', () => {
         expect(configure).toHaveBeenCalledOnce();
         expect(onConfigured).toHaveBeenCalledTimes(2);
         expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('offers to initialize a repository only after Test found none there (PAGE-ACCEPT-176 D20)', async () => {
+        const detail = environmentDetail();
+        const configure = vi.fn<ConfigureProps['configure']>(async draft => draft.intent === 'test'
+            ? { kind: 'tested', test: { kind: 'failed', step: 'repository', reason: 'repository_missing', nativeExitCode: 10,
+                remedy: 'review_destination' } }
+            : { kind: 'configured', environmentId: detail.environment.id, revision: 2,
+                configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration) });
+        const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}
+            sourceChoices={[{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }]}
+            machine="Controller" review={{ pendingId: null, request() {}, open() {} }} configure={configure}
+            onChanged={() => {}} onClose={() => {}} testID="setup" />);
+        await act(async () => screen.findAllByType(HappierInputField).find(entry => entry.props.field.path === 'layout')!.props.onChange('modern'));
+        expect(screen.findByTestId('setup.initialize')).toBeNull();
+        // A bucket has no disk to read free space from.
+        expect(screen.findByTestId('setup.capacityReview')).toBeNull();
+        await screen.pressByTestIdAsync('setup.test');
+        await screen.pressByTestIdAsync('setup.initialize');
+        expect(configure).toHaveBeenLastCalledWith(expect.objectContaining({ intent: 'initializeAndSave' }));
+    });
+
+    it('opens on the destination last used, else this Machine, never simply the first plugin', () => {
+        const local: typeof destination = { ...destination, id: 'happier.backup.destinations/local', pluginId: 'happier.backup.destinations',
+            definition: { ...destination.definition, id: 'local', locality: 'local' } };
+        const sftp: typeof destination = { ...destination, id: 'happier.backup.destinations/sftp', pluginId: 'happier.backup.destinations',
+            definition: { ...destination.definition, id: 'sftp' } };
+        expect(preferredBackupDestination([destination, sftp, local], null)).toBe(local);
+        expect(preferredBackupDestination([destination, sftp, local], { pluginId: sftp.pluginId, localId: 'sftp' })).toBe(sftp);
+        expect(preferredBackupDestination([destination, sftp], undefined)).toBe(destination);
     });
 });

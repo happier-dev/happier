@@ -319,7 +319,8 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
       machine={pathCapacity.machineName} testID={`${props.testID}.destination`} />
     {destination?.definition.locality === 'local' ? <Item testID={`${props.testID}.destination.localWarning`}
       mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
-      subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}</>
+      // "Keep everything never deletes backups" is true only while nothing is pruned.
+      subtitle={props.configuration.retention.kind === 'keepEverything' ? t('projects.deployments.settingsSections.setupLocalGrowth') : undefined} /> : null}</>
   );
 }
 
@@ -453,6 +454,18 @@ type BackupConfigurePreparation = Exclude<DeploymentBackupConfigureInputV1, { in
 type BackupConfigureDraft = Omit<BackupConfigurePreparation, 'serverId' | 'environmentId' | 'expectedRevision'>;
 type BackupDefaults = Awaited<ReturnType<ActionsFactory['prepareConfigurationDefaults']>>;
 
+/**
+ * The destination the setup sheet opens on: the one the defaults name (last used), else this Machine's own disk
+ * (it needs nothing set up first), else the first offered. Never simply the first plugin's, a provider the person
+ * may not use (PAGE-ACCEPT-176 D20).
+ */
+export function preferredBackupDestination<T extends Readonly<{ pluginId: string; definition: Readonly<{ id: string; locality?: string }> }>>(
+  destinations: readonly T[], chosen: Readonly<{ pluginId: string; localId: string }> | null | undefined,
+): T {
+  return (chosen ? destinations.find(entry => entry.pluginId === chosen.pluginId && entry.definition.id === chosen.localId) : undefined)
+    ?? destinations.find(entry => entry.definition.locality === 'local') ?? destinations[0]!;
+}
+
 /** One captured defaults/source review opens the controller-owned Configure flow. */
 export function DeploymentBackupSetup(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1; serverId: string; review: DeploymentReviewHandle;
@@ -473,11 +486,11 @@ export function DeploymentBackupSetup(props: Readonly<{
   const change = useDeploymentChangePress(props.review, noop);
   const id = `${props.testID}.setup`;
   const open = React.useCallback(() => {
-    const destination = destinations[0];
-    if (!projection.interactionEnabled || !destination) return;
+    if (!projection.interactionEnabled || !destinations.length) return;
     void change.press(async () => {
       const defaults = await props.actions.prepareConfigurationDefaults(props.detail.environment, 'backups');
       if (!mounted.current || currentEnvironment.current !== props.detail.environment.id || !props.lifetime.isCurrent()) return { ok: false, error: 'action_account_scope_changed' };
+      const destination = preferredBackupDestination(destinations, defaults.values.backupDestination);
       showDeploymentSheet({ component: DeploymentBackupSetupSheet,
         props: { detail: props.detail, destinations, destination, defaults,
           sourceChoices: defaults.backupSourceChoices ?? [], projection: projection.pluginUiProjection,
@@ -669,14 +682,16 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
       purpose: 'backupDestination', configKey: 'destination', role,
       source: { kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision } }]); setResult(null); }
   };
+  const repositoryMissing = result?.kind === 'tested' && result.test.kind === 'failed' && result.test.reason === 'repository_missing';
   const footer = React.useMemo(() => <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}>
     {intent ? null : <SectionActionButton testID={`${id}.test`} title={t('projects.deployments.settingsSections.destinationTest')}
       disabled={!complete || locked} onPress={() => submit('test')} />}
-    {intent ? null : <SectionActionButton testID={`${id}.initialize`} title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
+    {/* Creating a repository is offered only once Test found none there, so a mistyped place is never initialized. */}
+    {intent || !repositoryMissing ? null : <SectionActionButton testID={`${id}.initialize`} title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
       disabled={!complete || locked} onPress={() => submit('initializeAndSave')} />}
     <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
       disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />
-  </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent]);
+  </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent, repositoryMissing]);
   const chrome = React.useMemo(() => ({ kind: 'card' as const, footer }), [footer]);
   useModalCardChrome(setChrome, chrome);
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
@@ -695,8 +710,9 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
           ...(!intent && receiverDestination ? [{ id: 'anotherMachine', title: t('projects.deployments.settingsSections.setupAnotherMachine') }] : [])]}
         selectedId={destinationId} disabled={locked} onSelect={chooseDestination} fill /></FieldItem> : null}
     {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
-      subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}
-    {!result?.review?.capacity ? <BackupPathCapacityReview
+      subtitle={retention?.kind === 'keepEverything' ? t('projects.deployments.settingsSections.setupLocalGrowth') : undefined} /> : null}
+    {/* Free space belongs to a disk (a Machine folder, an SFTP host); an object-storage bucket has none to read. */}
+    {!result?.review?.capacity && (anotherMachine || destination.definition.resticTransport !== 's3') ? <BackupPathCapacityReview
       capacity={pathCapacity.capacity} machine={pathCapacity.machineName || props.machine} testID={id} /> : null}
     {anotherMachine ? <>
       <SessionMachineField serverId={serverId} testID={`${id}.receiver`} machines={receiverMachines}
@@ -729,9 +745,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
             : current.filter(value => value !== choice.sourceId)); setResult(null); }} />} />)}
       </ItemGroup> : <Item title={t('projects.deployments.settingsSections.setupNoDatabaseTitle')}
         subtitle={t('projects.deployments.settingsSections.setupNoDatabaseBody')} mode="info" />}
-    <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')}>
-      <Item title={retention?.kind === 'keepEverything' ? t('projects.deployments.backupKeepEverything')
-        : t('projects.deployments.settingsSections.keepTitle')} subtitle={sourceWord(props.defaults?.sources.backupRetention)} mode="info" />
+    <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')} description={sourceWord(props.defaults?.sources.backupRetention)}>
+      {retention?.kind === 'keepEverything' ? <Item title={t('projects.deployments.backupKeepEverything')} mode="info" /> : null}
       {KEEP_FIELDS.map(field => <FieldValueItem key={field} testID={`${id}.keep.${field}`} fieldTestID={`${id}.keep.${field}.input`}
         title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)} kind="integer" allowEmpty value={keep[field]}
         stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }} compactStepper disabled={locked}
