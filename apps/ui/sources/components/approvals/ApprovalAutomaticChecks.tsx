@@ -13,12 +13,17 @@ import { Text } from '@/components/ui/text/Text';
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useApprovalAccountLabel } from '@/components/approvals/ApprovalRequesterConfirmationSection';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
-import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import type { ApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
 import { useApprovalAutomaticCheckDetails } from './useApprovalAutomaticCheckDetails';
+import { ApprovalCheckReviewSteps } from './ApprovalCheckReviewSteps';
+import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
+import { useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
+import { formatElapsedDuration } from '@/components/machines/durationWords';
+import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 
 /**
  * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
@@ -93,6 +98,12 @@ export function useApprovalAutomaticChecksControls(input: Readonly<{
   const cancelChecks = React.useCallback(() => run(() => decide('cancel')), [decide, run]);
   return { decision, answerConsent, cancelChecks };
 }
+
+/** The running check's elapsed time, ticking in this leaf only so the card above it never re-renders per second. */
+const CheckElapsed = React.memo(function CheckElapsed(props: Readonly<{ fromMs: number }>) {
+  const elapsedSeconds = useElapsedTime(props.fromMs);
+  return <Text variant="meta" style={stylesheet.secondary}>{formatElapsedDuration(elapsedSeconds * 1000)}</Text>;
+});
 
 const stylesheet = StyleSheet.create((theme) => ({
   block: {
@@ -193,9 +204,18 @@ export const ApprovalAutomaticChecks = React.memo(
     );
     const checkingRun = checks.phase === 'checking'
       ? (checks.selected.find((row) => runOf(row) !== null) ?? checks.selected[0] ?? null) : null;
-    const { progress: checkingProgress } = useApprovalAutomaticCheckDetails({
+    const pendingWorkflowId = pending ? selectedByKey.get(actionAutomationTriggerKeyV1(pending))?.workflowId ?? null : null;
+    // Review steps opens in place; a check that asks again because its steps changed opens with them shown.
+    const [reviewToggled, setReviewToggled] = React.useState<boolean | null>(null);
+    const reviewOpen = pendingWorkflowId !== null && (reviewToggled ?? pending?.review?.reason === 'steps');
+    const disclosure = useCoreDisclosureToggleBinding();
+    const changedBlockIds = React.useMemo(() => new Set(pending?.review?.changedSteps?.map((step) => step.blockId) ?? []),
+      [pending?.review?.changedSteps]);
+    const { progress: checkingProgress, runSummary: checkingRunSummary, review } = useApprovalAutomaticCheckDetails({
       runId: checkingRun ? runOf(checkingRun) : null, serverId: props.serverId,
+      reviewWorkflowId: reviewOpen ? pendingWorkflowId : null,
     });
+    const checkingStartedMs = checkingRunSummary?.state === 'running' ? Date.parse(checkingRunSummary.createdAt) : Number.NaN;
     const openRun = (runId: string | null) =>
       runId && props.onOpenRoute ? (
         <TextLinkButton
@@ -240,16 +260,20 @@ export const ApprovalAutomaticChecks = React.memo(
               {t('workflows.triggers.checks.consentReask')}
             </Text>
           ) : null}
-          {workflowId && props.onOpenRoute ? (
-            <View style={styles.line}>
-              <TextLinkButton
-                label={t('workflows.triggers.checks.reviewSteps')}
-                size="meta"
-                tone="strong"
-                testID={props.testID ? `${props.testID}:review` : undefined}
-                onPress={() => props.onOpenRoute?.(createWorkflowDefinitionRoute(workflowId, props.serverId))}
-              />
-            </View>
+          {workflowId ? (
+            <HappierDisclosureToggle
+              testID={props.testID ? `${props.testID}:review` : undefined}
+              label={t('workflows.triggers.checks.reviewSteps')}
+              open={reviewOpen}
+              onPress={() => setReviewToggled(!reviewOpen)}
+              caret={disclosure.renderCaret(reviewOpen)}
+              renderLabel={disclosure.renderLabel}
+              focusColor={disclosure.focusColor}
+            />
+          ) : null}
+          {reviewOpen ? (
+            <ApprovalCheckReviewSteps review={review} changedBlockIds={changedBlockIds}
+              testID={props.testID ? `${props.testID}:review-steps` : undefined} />
           ) : null}
           <Text variant="meta" style={styles.secondary}>
             {t('workflows.triggers.checks.consentOnlyYou')}
@@ -275,6 +299,7 @@ export const ApprovalAutomaticChecks = React.memo(
             <View style={styles.line}>
               <Text variant="meta" style={styles.secondary}>
                 {checkingProgress ? `${nameOf(running)} · ${checkingProgress}` : nameOf(running)}
+                {Number.isFinite(checkingStartedMs) ? <>{' · '}<CheckElapsed fromMs={checkingStartedMs} /></> : null}
               </Text>
               {openRun(runOf(running))}
             </View>

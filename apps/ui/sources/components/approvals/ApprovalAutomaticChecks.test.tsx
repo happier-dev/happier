@@ -69,8 +69,6 @@ describe('Action before checks on the approval card', () => {
     const approvalHome = 'approval-home';
     const runId = '971fe48e-43ac-49da-b01c-ed30f5d9a6f7';
     const cases = [
-      { value: checks({ consents: [{ ...ref, decision: 'pending' }] }), label: 'reviewSteps',
-        route: `/workflows/${selected.workflowId}?serverId=${approvalHome}` },
       { value: checks({ phase: 'checking', runs: [{ ...ref, runId }] }), label: 'openRun',
         route: `/workflows/runs/${runId}?serverId=${approvalHome}` },
       { value: checks({ phase: 'override', runs: [{ ...ref, runId }], results: [{ ...ref, runId, outcome: 'failed' }] }), label: 'openRun',
@@ -116,7 +114,22 @@ describe('Action before checks on the approval card', () => {
     expect(screen.getTextContent()).toContain(
       'workflows.triggers.checks.consentOnlyYou',
     );
-    expect(screen.findByTestId('checks:review')).not.toBeNull();
+    // A check that asks again because its steps changed opens them in place.
+    expect(screen.findByTestId('checks:review-steps')).not.toBeNull();
+    await screen.unmount();
+  });
+
+  // 05 S8: Review steps opens the shared check's steps inside the card; it never leaves the decision.
+  it('opens Review steps in place on the consent card', async () => {
+    const navigation = createExpoRouterMock({ params: {} });
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={checks({ consents: [{ ...ref, decision: 'pending' }] })}
+      actionTitle="Deploy" serverId="approval-home" onOpenRoute={href => navigation.module.router.push(href)} testID="checks" />);
+    expect(screen.findByTestId('checks:review-steps')).toBeNull();
+    const toggle = screen.findByTestId('checks:review');
+    expect(toggle).not.toBeNull();
+    await act(async () => { toggle!.props.onPress(); });
+    expect(screen.findByTestId('checks:review-steps')).not.toBeNull();
+    expect(navigation.spies.push).not.toHaveBeenCalled();
     await screen.unmount();
   });
 
