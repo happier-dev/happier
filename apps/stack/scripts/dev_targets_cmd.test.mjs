@@ -383,6 +383,27 @@ fs.writeFileSync(path,JSON.stringify(config)); process.stdout.write('__HAPPIER_W
   assert.deepEqual(current.commandExecution.targets, ['worker']);
 });
 
+// KEYLESS-BED-1118: re-pinning a fresh QA stack's server before any data exists
+// must not turn the creation pin into data authority on the new host.
+test('server re-pin keeps a creation pin awaiting data', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-awaiting-repin-'));
+  try {
+    for (const name of ['qa1', 'qa2']) await run(['add', name, '--stack=qa-fresh', '--platform=posix', `--ssh=${name}`, `--repo-dir=/repo/${name}`, `--cli-home-dir=/state/${name}`], root);
+    const path = join(root, 'qa-fresh', 'dev-targets.json');
+    const created = JSON.parse(await readFile(path, 'utf8'));
+    created.runtimePlacement.server = { mode: 'prefer-target', target: 'qa1', fallback: 'error', awaitingData: true };
+    await writeFile(path, JSON.stringify(created));
+    await run(['placement', 'set', 'server', 'qa2', '--stack=qa-fresh'], root);
+    const repinned = (await loadDevTargetsConfig({ stackName: 'qa-fresh', path })).config.runtimePlacement.server;
+    assert.equal(repinned.target, 'qa2');
+    assert.equal(repinned.awaitingData, true, 'no host holds data yet, so the new pin still awaits it');
+    await run(['placement', 'set', 'server', 'local', '--stack=qa-fresh'], root);
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).runtimePlacement.server.awaitingData, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('explicit server handoff leaves an already remote stack on its authoritative target', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-retained-move-'));
   try {

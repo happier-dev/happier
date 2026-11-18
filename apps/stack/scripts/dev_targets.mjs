@@ -210,9 +210,14 @@ function setPlacement(config, surface, destination, options = {}) {
   if (normalizedDestination === 'auto') {
     throw new Error('[dev-targets] automatic least-load placement is supported only for commands');
   }
+  const previous = upgraded.runtimePlacement?.[normalizedSurface];
   const placement = normalizedDestination === 'local'
     ? { mode: 'local' }
-    : { mode: 'prefer-target', target: normalizedDestination, fallback: 'local' };
+    : { mode: 'prefer-target', target: normalizedDestination, fallback: 'local',
+      // A creation pin that still awaits data names no data authority; re-pinning
+      // it before any data exists keeps the new host awaiting data too.
+      ...(normalizedSurface === 'server' && previous?.mode === 'prefer-target' && previous.awaitingData === true
+        ? { awaitingData: true } : {}) };
   return parseDevTargetsConfig({
     ...upgraded,
     runtimePlacement: {
