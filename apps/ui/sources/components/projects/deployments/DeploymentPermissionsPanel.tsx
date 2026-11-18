@@ -66,7 +66,6 @@ export const DeploymentPermissionsPanel = React.memo(
       lifetime?: ServerAccountScopeLifetime | null;
       machineName: (machineId: string) => string;
       onOpenController: () => void;
-      onOpenPreviews?: () => void;
       /** The Action owner's manager edits; absent where this viewer cannot change who may deploy. */
       editing?: DeploymentEnvironmentEditing | null;
     }>,
@@ -125,25 +124,22 @@ export const DeploymentPermissionsPanel = React.memo(
             }}
             onChangePrincipals={writePrincipals}
           />
+          {/* dPerm KEEP: what you can do here closes the deployer sheet ("You · Can manage"). */}
+          <Item
+            testID="project-deployments.environment.permissions.role"
+            title={t('projects.deployments.yourAccess')}
+            detail={roleLabel(environment.capabilities.role)}
+            mode="info"
+          />
         </ItemGroup>
         <DeploymentPlatformAccess detail={props.detail} scope={accountScope} lifetime={props.lifetime ?? null} />
         <EnvironmentApprovals environment={environment} environmentName={props.detail.content.name} />
-        {props.onOpenPreviews ? <ItemGroup>
-          <Item testID="project-deployments.environment.permissions.previews"
-            title={t('projects.deployments.settingsSections.previewEditor.configure')}
-            showChevron onPress={props.onOpenPreviews} />
-        </ItemGroup> : null}
-        {/* Last (lab envPerm): what you can do here, and the Machine that runs its jobs and alerts. */}
+        {/* Last: the Machine that runs its jobs and alerts, edited in Settings → Controller (P40-R54). */}
         <ItemGroup
           testID="project-deployments.environment.permissions.controller"
-          title={t('projects.deployments.editors.yourAccessTitle')}
+          title={t('projects.deployments.sectionController')}
+          description={t('projects.deployments.sectionControllerDescription')}
         >
-          <Item
-            testID="project-deployments.environment.permissions.role"
-            title={roleLabel(environment.capabilities.role)}
-            subtitle={roleHint(environment.capabilities.role)}
-            mode="info"
-          />
           <Item
             testID="project-deployments.environment.permissions.controller.link"
             icon={
@@ -273,14 +269,6 @@ function approvalLabel(actionId: ActionId): Readonly<{ title: string; hint: stri
   return actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     ? { title: t('projects.deployments.editors.approveVariables'), hint: t('projects.deployments.editors.approveVariablesHint') }
     : { title: t('projects.deployments.editors.approveSettings'), hint: t('projects.deployments.editors.approveSettingsHint') };
-}
-
-function roleHint(role: DeploymentEnvironmentReadDetailV1['environment']['capabilities']['role']): string {
-  switch (role) {
-    case 'reader': return t('projects.deployments.editors.roleReaderHint');
-    case 'deployer': return t('projects.deployments.editors.roleDeployerHint');
-    case 'manager': return t('projects.deployments.editors.roleManagerHint');
-  }
 }
 
 function roleLabel(

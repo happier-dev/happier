@@ -1314,7 +1314,6 @@ export const DeploymentEnvironmentDetail = React.memo(
               lifetime={props.lifetime ?? null}
               machineName={machineName}
               onOpenController={() => openTab('settings', 'controller')}
-              onOpenPreviews={() => openTab('settings', 'previews')}
               editing={environmentEditing}
             />
           ) : (

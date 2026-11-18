@@ -79,6 +79,23 @@ function editing(
   };
 }
 
+describe('Environment → Permissions: layout (dPerm KEEP, R2-D6)', () => {
+  it('closes the deployer sheet with your role, offers no previews entry, and ends with the controller', async () => {
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<DeploymentPermissionsPanel detail={manager() as never}
+      machineName={() => 'vps-1'} onOpenController={() => {}} editing={editing().value as never} />);
+    try {
+      const text = screen.getTextContent();
+      const role = text.indexOf(t('projects.deployments.roleManager'));
+      expect(role).toBeGreaterThan(text.indexOf(t('projects.deployments.whoMayDeploy')));
+      expect(role).toBeLessThan(text.indexOf(t('projects.deployments.editors.approvalsTitle')));
+      expect(text.lastIndexOf(t('projects.deployments.sectionController')))
+        .toBeGreaterThan(text.indexOf(t('projects.deployments.editors.approvalsTitle')));
+      expect(text).not.toContain(t('projects.deployments.settingsSections.previewEditor.configure'));
+    } finally { await screen.unmount(); }
+  });
+});
+
 describe('Environment → Permissions: approvals', () => {
   it.each([
     { parent: 'required' as const, child: 'waived' as const },
