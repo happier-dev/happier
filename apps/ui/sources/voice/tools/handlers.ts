@@ -1,4 +1,5 @@
 import { CurrentUiContextCommandInvokeInputSchema, getActionSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -414,7 +415,7 @@ export function createVoiceToolHandlers(
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
     }
-    if (actionId === 'settings.list' && input) {
+    if (actionId === SETTINGS_LIST_ACTION_ID_V1 && input) {
       const budget = voiceToolDiscoveryResultByteBudget(ctx?.callId);
       actionInput = { ...input, maxBytes: input.maxBytes === undefined ? budget
         : typeof input.maxBytes === 'number' ? Math.min(input.maxBytes, budget) : input.maxBytes };

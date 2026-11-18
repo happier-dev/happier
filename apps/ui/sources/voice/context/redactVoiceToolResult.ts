@@ -1,5 +1,6 @@
 import { redactVoicePathLikeData } from '@/voice/shared/redactVoicePathLikeData';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
@@ -48,7 +49,7 @@ const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'na
 const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
-const SETTINGS_LIST_TOOL_NAME = String(getActionSpec('settings.list').bindings?.voiceClientToolName ?? '').trim();
+const SETTINGS_LIST_TOOL_NAME = String(getActionSpec(SETTINGS_LIST_ACTION_ID_V1).bindings?.voiceClientToolName ?? '').trim();
 const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
   (['agents.backends.list', 'agents.models.list', 'settings.list'] as const).flatMap(id => [
     id, getActionSpec(id).bindings?.voiceClientToolName ?? '',
@@ -297,7 +298,7 @@ export function redactVoiceToolResultForProvider(
     toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
       || ACTION_CATALOG_TOOL_NAMES.has(toolName) || ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName),
     ACTION_CATALOG_TOOL_NAMES.has(toolName),
-    toolName === SETTINGS_LIST_TOOL_NAME || toolName === 'settings.list',
+    toolName === SETTINGS_LIST_TOOL_NAME || toolName === SETTINGS_LIST_ACTION_ID_V1,
   );
 }
 
