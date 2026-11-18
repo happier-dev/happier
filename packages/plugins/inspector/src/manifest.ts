@@ -135,7 +135,7 @@ export const INSPECTOR_PLUGIN = definePlugin({
         key: 'plugins.inspector.surface.selfCheckDescription',
         fallback: 'Verify the Inspector action bridge.',
       },
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['toolbar'],
       resultSchema: {
         type: 'object',
