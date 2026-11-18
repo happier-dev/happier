@@ -95,6 +95,70 @@ type HealthPublisher = Parameters<NonNullable<DeploymentReadTransportV1['observe
 type HealthBorrower = Readonly<{ collection: boolean; publish: HealthPublisher }>;
 const healthObservations = new WeakMap<ServerAccountScopeLifetime, Map<string, ReturnType<typeof createEnvironmentHealthObservation>>>();
 
+type NativeServiceRows = Extract<MachineServicesList, { kind: 'snapshot' }>['services'];
+const NO_NATIVE_ROWS: NativeServiceRows = [];
+const machineWatches = new WeakMap<ServerAccountScopeLifetime, Map<string, ReturnType<typeof createMachineHealthWatch>>>();
+
+function createMachineHealthWatch(lifetime: ServerAccountScopeLifetime, machineId: string, environmentId?: string) {
+    const { selection } = createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+        hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId, machineId,
+            ...(environmentId === undefined ? {} : { environmentId }) },
+    }, projection: machineServicesListProjection });
+    const listeners = new Set<() => void>();
+    let stop: (() => void) | undefined;
+    let indexedRows: NativeServiceRows | undefined;
+    let byEnvironment = new Map<string, NativeServiceRows[number][]>();
+
+    return {
+        read(id: string) {
+            const snapshot = selection.getSnapshot();
+            const rows = snapshot.value?.kind === 'snapshot' ? snapshot.value.services : NO_NATIVE_ROWS;
+            if (rows !== indexedRows) {
+                indexedRows = rows;
+                byEnvironment = new Map();
+                for (const row of rows) {
+                    if (!row.environmentId) continue;
+                    const group = byEnvironment.get(row.environmentId);
+                    if (group) group.push(row);
+                    else byEnvironment.set(row.environmentId, [row]);
+                }
+            }
+            return { snapshot, rows: byEnvironment.get(id) ?? NO_NATIVE_ROWS };
+        },
+        subscribe(listener: () => void) {
+            listeners.add(listener);
+            stop ??= selection.subscribe(() => { for (const notify of listeners) notify(); }, true);
+        },
+        unsubscribe(listener: () => void) {
+            listeners.delete(listener);
+            if (listeners.size > 0) return false;
+            stop?.();
+            stop = undefined;
+            return true;
+        },
+    };
+}
+
+/** The collection attaches once per Machine; only selected detail demands an Environment-scoped read. */
+function nativeHealthWatch(lifetime: ServerAccountScopeLifetime, machineId: string, environmentId?: string) {
+    if (environmentId !== undefined) return createMachineHealthWatch(lifetime, machineId, environmentId);
+    let machines = machineWatches.get(lifetime);
+    if (!machines) {
+        machines = new Map();
+        machineWatches.set(lifetime, machines);
+    }
+    const active = machines;
+    const watch = active.get(machineId) ?? createMachineHealthWatch(lifetime, machineId);
+    active.set(machineId, watch);
+    return {
+        read: watch.read,
+        subscribe: watch.subscribe,
+        unsubscribe(listener: () => void) {
+            if (watch.unsubscribe(listener)) active.delete(machineId);
+        },
+    };
+}
+
 function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime, environment: DeploymentEnvironmentHeaderV1,
     link: DeploymentTargetLinkHeaderV1, activeMembers: readonly DeploymentTargetLinkHeaderV1['members'][number][]) {
     const serverId = lifetime.scope.serverId;
@@ -106,8 +170,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         }, projection: currentEdgeProjection }) : null;
     const borrowers = new Set<HealthBorrower>();
     let nativeEnvironmentId: string | undefined;
-    let bindings: { member: typeof activeMembers[number]; owner: ReturnType<typeof createMachineServiceResourceBinding<MachineServicesList>> }[] = [];
-    let stopNative: (() => void)[] = [];
+    let bindings: { member: typeof activeMembers[number]; owner: ReturnType<typeof nativeHealthWatch> }[] = [];
     let stopEdge: (() => void) | undefined;
     let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
     let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
@@ -116,9 +179,8 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         if (borrowers.size === 0) return;
         const observations: DeploymentHealthServicesObservationV1[] = [];
         const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
-            const snapshot = owner.selection.getSnapshot();
+            const { snapshot, rows } = owner.read(environment.id);
             const value = snapshot.value;
-            const rows = value?.kind === 'snapshot' ? value.services.filter(row => row.environmentId === environment.id) : [];
             // A currently reachable Machine may have replaced the installation the Environment names.
             const services = rows.flatMap(row => row.deployment?.installationId !== member.installationId ? [] : [{ serviceId: row.serviceId,
                 name: row.name, state: row.health?.status ?? 'unknown', observedAt: row.health?.observedAtMs ?? null,
@@ -178,13 +240,10 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         // the existing Machine-wide Resource across all covered rows on that Machine.
         const environmentId = [...borrowers].some(borrower => !borrower.collection) ? environment.id : undefined;
         if (bindings.length === activeMembers.length && nativeEnvironmentId === environmentId) return false;
-        for (const stop of stopNative) stop();
+        for (const { owner } of bindings) owner.unsubscribe(update);
         nativeEnvironmentId = environmentId;
-        bindings = activeMembers.map(member => ({ member, owner: createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
-            hostRead: 'machines.services.list', input: { serverId, machineId: member.machineId,
-                ...(environmentId === undefined ? {} : { environmentId }) },
-        }, projection: machineServicesListProjection }) }));
-        stopNative = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
+        bindings = activeMembers.map(member => ({ member, owner: nativeHealthWatch(lifetime, member.machineId, environmentId) }));
+        for (const { owner } of bindings) owner.subscribe(update);
         return true;
     }
 
@@ -204,7 +263,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
                 return false;
             }
             stopEdge?.();
-            for (const stop of stopNative) stop();
+            for (const { owner } of bindings) owner.unsubscribe(update);
             return true;
         },
     };

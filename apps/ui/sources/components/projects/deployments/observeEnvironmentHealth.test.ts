@@ -8,7 +8,7 @@ import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deploy
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
+import * as machineServiceResource from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -71,7 +71,7 @@ it('settles a refused Machine Services watch without idle Action requests and re
     const scope = { serverId, accountId: 'account' };
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const transport = createDeploymentReadTransport(lifetime);
-    const resource = createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+    const resource = machineServiceResource.createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
         hostRead: actionId, input: { serverId, machineId },
     }, projection: machineServicesListProjection });
     const rows = ['apps-a', 'apps-b'].map(id => {
@@ -81,10 +81,27 @@ it('settles a refused Machine Services watch without idle Action requests and re
             runtimeTargetLink: link };
     });
     const abort = new AbortController();
+    const createBinding = machineServiceResource.createMachineServiceResourceBinding;
+    const attachments: string[] = [];
+    // Count local attachments at the Resource boundary while keeping the real selection and transport.
+    const measureBinding: typeof createBinding = input => {
+        const binding = createBinding(input);
+        if (input.reference.hostRead === 'machines.services.list') {
+            const subscribe = binding.selection.subscribe;
+            binding.selection.subscribe = (listener, live) => {
+                attachments.push(input.reference.input.machineId);
+                return subscribe(listener, live);
+            };
+        }
+        return binding;
+    };
+    const measureBindings = vi.spyOn(machineServiceResource, 'createMachineServiceResourceBinding')
+        .mockImplementation(measureBinding);
     vi.useFakeTimers();
     const stop = transport.observeEnvironmentCollectionHealth!(scope, rows, () => {}, { signal: abort.signal });
     try {
         await vi.waitFor(() => expect(requests).toContain(next));
+        expect(attachments).toEqual([machineId]);
         expect(requests.filter(method => method === read)).toHaveLength(1);
         expect(requests.filter(method => method === open)).toHaveLength(1);
         const openCount = requests.length;
@@ -107,6 +124,7 @@ it('settles a refused Machine Services watch without idle Action requests and re
     } finally {
         abort.abort();
         stop();
+        measureBindings.mockRestore();
         vi.useRealTimers();
     }
 });
