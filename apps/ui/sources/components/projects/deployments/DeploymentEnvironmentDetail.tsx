@@ -1296,7 +1296,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 actions: props.domainActions,
                 environmentRevision: detail.environment.revision,
                 deployedServices: services.map((service) => service.name),
-                recordedIngress: detail.content.ingress,
+                content: detail.content,
                 targetLink: runtime ? { id: runtime.id, revision: runtime.revision,
                   ...(runtime.source.kind === 'plugin' ? { provider: detail.targetLinks.find(row => row.targetLink.id === runtime.id)?.content ?? null } : {}) } : null,
                 review,

@@ -39,7 +39,7 @@ import {
 import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
 import { DeploymentTabState } from './DeploymentTabState';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
-import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -66,7 +66,7 @@ const credentialKey = (domainId: string, role: DomainCredentialRole) => JSON.str
 export type DeploymentDomainEditing = Readonly<{
   actions: DomainActions;
   environmentRevision: number;
-  recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
+  content: DeploymentEnvironmentContentV1;
   /** The Compose services the serving receipt runs, by name: what Service starts on when the definition lists none. */
   deployedServices?: readonly string[];
   /** The runtime target the addresses route to; Add domain needs one. */
@@ -124,11 +124,7 @@ export function DeploymentDomainsPanel(
   }, [editing, refresh]);
   const change = useDeploymentChangePress(editing?.review ?? null, onSettled);
   const { running, outcome, press } = change;
-  // The Environment record (one shared lease with the page) names its services, their declared ports and which
-  // Domain credentials are already bound; it is read only where this viewer can edit.
-  const record = useDeploymentEnvironmentRecord(props.controller, editing ? props.environmentId : null, props.demand);
-  const environment = record.snapshot.value;
-  const content: EnvironmentContent | null = environment?.content ?? null;
+  const content = editing?.content ?? null;
   // A recorded export names a service's port; otherwise the port its stored Compose service declares fills Port.
   const explicitExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
   const storedDocument = content?.definition.kind === 'stored' ? content.definition.document : null;
@@ -161,7 +157,7 @@ export function DeploymentDomainsPanel(
   const setBindings = editing?.actions.setBindings;
   const serverId = props.controller.scope.serverId;
   const chooseCredential = React.useCallback(async (item: DomainItem, role: DomainCredentialRole) => {
-    if (!setBindings || !environment) return;
+    if (!setBindings || !editing) return;
     const controller = new AbortController();
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const account = await captureLazyActionAccountContext(serverId, controller.signal);
@@ -171,11 +167,11 @@ export function DeploymentDomainsPanel(
         signal: controller.signal, isCurrent: () => account.accountLifetime.isCurrent() });
       if (!selected) return;
       // One `deployments.bindings.set` write, the same Action an agent uses (with `person_selects` at its review).
-      await press(() => setBindings({ environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+      await press(() => setBindings({ environmentId: props.environmentId, expectedRevision: editing.environmentRevision,
         set: [{ purpose: 'domainCredential', domainId: item.domain.id, role,
           source: { kind: 'secret', ref: selected.ref, resourceRevision: selected.resourceRevision } }], remove: [] }));
     } finally { account.dispose(); }
-  }, [environment, press, serverId, setBindings]);
+  }, [editing, press, props.environmentId, serverId, setBindings]);
   // Row actions keep one identity across renders, so the list's rows re-render only for their own facts.
   const verify = useEventCallback((item: DomainItem) => {
     if (editing) void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item)));
@@ -266,7 +262,7 @@ export function DeploymentDomainsPanel(
           phone={props.phone === true}
           busy={running}
           taken={items.map((item) => item.content.hostname)}
-          recordedIngress={editing.recordedIngress}
+          recordedIngress={content?.ingress}
           provider={editing.targetLink.provider}
           inspect={editing.actions.inspectPlatformTarget}
           services={services}
@@ -440,13 +436,17 @@ function DomainAddForm(
   }>,
 ) {
   const [hostname, setHostname] = React.useState('');
-  const [service, setService] = React.useState(() => props.services.length === 0 || props.services.includes(props.initialService ?? '')
-    ? props.initialService ?? '' : '');
-  // The starting service's one declared port fills Port, as choosing that service does.
-  const [port, setPort] = React.useState(() => {
-    const ports = props.routeExports.filter(item => item.service === service);
-    return ports.length === 1 ? String(ports[0]!.containerPort) : '';
-  });
+  const [selectedService, setSelectedService] = React.useState<string | null>(null);
+  const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
+    ? props.initialService ?? '' : '';
+  const service = selectedService ?? initialService;
+  const [enteredPort, setEnteredPort] = React.useState<Readonly<{ service: string; value: string }> | null>(null);
+  const changeService = (next: string) => {
+    if (next === service) return;
+    setSelectedService(next);
+    setEnteredPort(null);
+  };
+  const setPort = (value: string) => setEnteredPort({ service, value });
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('');
   const [checkStatus, setCheckStatus] = React.useState('');
@@ -456,15 +456,9 @@ function DomainAddForm(
   const [basicAuthUser, setBasicAuthUser] = React.useState('');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
-  // Declared services can arrive after the form opens; an empty Service then takes the starting one.
-  React.useEffect(() => {
-    if (props.initialService && props.services.includes(props.initialService))
-      setService(current => current === '' ? props.initialService! : current);
-  }, [props.initialService, props.services]);
-  // Declared ports can arrive after the form opens; an empty Port then takes the service's one port.
-  React.useEffect(() => {
-    if (servicePorts.length === 1) setPort(current => current === '' ? String(servicePorts[0]) : current);
-  }, [servicePorts]);
+  // Port is either an entry for this Service or its one declared container port.
+  const port = enteredPort?.service === service ? enteredPort.value
+    : servicePorts.length === 1 ? String(servicePorts[0]) : '';
   const [ingressMode, setIngressMode] = React.useState<IngressMode>(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
   const needsZone = props.provider?.providerEnvironment?.kind === 'script';
@@ -580,16 +574,12 @@ function DomainAddForm(
                 label={t('projects.deployments.domainFieldService')}
                 items={props.services.map(name => ({ id: name, title: name }))}
                 selectedId={service || null}
-                onSelect={(next) => {
-                  setService(next);
-                  const ports = props.routeExports.filter(item => item.service === next);
-                  if (ports.length === 1) setPort(String(ports[0]!.containerPort));
-                }}
+                onSelect={changeService}
                 disabled={props.busy} />
             ) : <FieldTextInput
               testID="project-deployments.environment.domains.add.service"
               value={service}
-              onChangeText={setService}
+              onChangeText={changeService}
               monospace
               autoCapitalize="none"
               accessibilityLabel={t('projects.deployments.domainFieldService')}

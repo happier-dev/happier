@@ -680,21 +680,25 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('prefills Port from the port the stored Compose service exposes (SOS-SURFACES-1112)', async () => {
+  it('prefills the database container port from stored PostgreSQL Compose and never carries it to another service (R2-D16)', async () => {
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
-      document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n',
-      profiles: [], services: ['app'], primaryService: 'app' });
+      document: 'services:\n  database:\n    image: postgres:17\n    ports:\n      - target: 5432\n        published: "15432"\n        host_ip: 127.0.0.1\n        protocol: tcp\n  worker:\n    image: alpine\n',
+      profiles: [], services: ['database', 'worker'], primaryService: 'database' });
     const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
     try {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+      expect(select(`${id}.service`)?.props.selectedId).toBe('worker');
+      await act(async () => { select(`${id}.service`)!.props.onSelect('database'); });
       await act(async () => {
-        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('80'));
+        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432'));
       });
       expect(select(`${id}.port`)).toBeUndefined();
-      expect(select(`${id}.service`)?.props.selectedId).toBe('app');
+      expect(select(`${id}.service`)?.props.selectedId).toBe('database');
+      await act(async () => { select(`${id}.service`)!.props.onSelect('worker'); });
+      expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('');
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
