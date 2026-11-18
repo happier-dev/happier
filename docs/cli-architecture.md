@@ -5316,6 +5316,18 @@ outcome; a completed success that wins the race remains success.
 
 ### Review verdict ownership (0.3 development)
 
+The canonical review start input distinguishes default `scope: 'changes'` from
+`scope: 'repository'`. Repository scope resolves the repository root without a
+changed-path selection, and the generic review prompt includes unchanged files.
+It cannot be combined with a captured comparison or selected pull-request scope.
+The development built-in `builtin:repository-review` binds this scope to one
+`review.start` Action with the saved reviewer roster, instructions and optional
+steps. A Hunt uses ordinary workflow placement, schedules and run controls;
+the engine owns scan progress, usage and partial-result evidence. Matching
+development Protocol and CLI readers reload together; older readers cannot
+establish this scope. No Hunt entity, scheduler or host-side per-file fan-out
+is added.
+
 The start composer's “Report to this session” choice uses the existing optional boolean `notifyParentOnCompletion`. Review/Plan/Delegate Action starts and the rowless first-Send start preserve explicit `true` and `false`; malformed values are refused rather than silently dropped. When omitted, `resolveExecutionRunNotifyParentDefaultV1` defaults bounded work to On and long-lived conversations to the existing Account preference (Off unless enabled). The runtime uses that one resolved value for state and the daemon marker. `review.start` requests `retentionPolicy: 'resumable'`, but continuation still depends on the Agent's retained resume support.
 
 `review.follow_up` admits a successful review only when the runtime lifecycle owner proves that its exact retained provider session can resume. It never substitutes a fresh reviewer. Running or retiring reviews return `execution_run_busy`; cancelled, failed or timed-out reviews return `review_follow_up_ended`; ephemeral reviews return `review_follow_up_not_resumable`; missing or mismatched resume handles return `review_follow_up_resume_unavailable`. The card's retention pre-check is advisory; runtime admission remains authoritative. `execution.run.cancel_turn` uses the existing `execution.run.cancelTurn.v1` RPC and cancellation owner, addressing an exact Run occurrence and turn without stopping the Run.
