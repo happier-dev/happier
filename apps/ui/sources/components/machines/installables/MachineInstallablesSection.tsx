@@ -10,6 +10,7 @@ import { useMachine } from '@/sync/domains/state/storage';
 import { useSettingsSelector } from '@/sync/store/hooks';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, INSTALLABLES_PROJECTION_SECTIONS, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
@@ -44,7 +45,7 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
 
     const machinePolicy = useSettingsSelector(settings => Object.hasOwn(settings.installablesPolicyByMachineId, machineId)
         ? settings.installablesPolicyByMachineId[machineId] : undefined, ['installablesPolicyByMachineId']);
-    const policyAction = useMountedActionExecution(serverId);
+    const { executeForPresentation } = useMountedActionExecution(serverId);
     const accountBindings = useServerCredentialAccountScopeBindings([serverId]);
     const accountLifetime = accountBindings.values().next().value ?? null;
 
@@ -117,15 +118,21 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
         });
     }, [capabilitiesSnapshot, installables, isOnline, machineId, refreshDetectedCapabilities]);
 
+    const runToolAction = React.useCallback(async (...args: Parameters<typeof executeForPresentation>) => {
+        try {
+            const result = await executeForPresentation(...args);
+            if (result && !result.ok) {
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
+            }
+        } catch (error) {
+            Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
+        }
+    }, [executeForPresentation]);
     const setPolicyPatch = React.useCallback((installableKey: string, patch: { autoInstallWhenNeeded?: boolean; autoUpdateMode?: InstallableAutoUpdateMode }) => {
         if (!machineId || !canManage) return;
-        void policyAction.execute('settings.set', { anchor: 'machines.installables.policy', key: machineId,
-            value: { installableKey, patch } }).then(result => {
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
-        }).catch(error => {
-            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));
-        });
-    }, [canManage, machineId, policyAction.execute]);
+        void runToolAction('settings.set', { anchor: 'machines.installables.policy', key: machineId,
+            value: { installableKey, patch } });
+    }, [canManage, machineId, runToolAction]);
 
     // Labels come from `t()`, so the options are rebuilt when the language changes.
     const preferredLanguage = getPreferredLanguage();
@@ -135,10 +142,8 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
     const capabilitiesStatus = isOnline ? detectedCapabilities.status : 'idle';
     const refreshStatus = React.useCallback(() => {
         if (!canManage) return;
-        void policyAction.execute('machines.capabilities.detect', { serverId, machineId }).then(result => {
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
-        }).catch(error => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed')));
-    }, [canManage, machineId, policyAction.execute, serverId]);
+        void runToolAction('machines.capabilities.detect', { serverId, machineId });
+    }, [canManage, machineId, runToolAction, serverId]);
     const checking = isOnline && detectedCapabilities.status === 'loading';
     // Like the machine's Agents: what is here, then what can be added. Only a finished answer makes a tool one
     // "to install"; a tool still being checked stays with the machine's tools and says so.

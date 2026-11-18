@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
@@ -27,6 +28,7 @@ const { getInstallablesRegistryEntries } = await import('@/capabilities/installa
 const { holdSettingWrite } = await import('@/sync/store/settingsPreview');
 const { buildMachineTerminalSettingsPatch } = await import('@/sync/domains/settings/terminalSettings');
 const { Item } = await import('@/components/ui/lists/Item');
+const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
 const { HappierSwitchNative } = await import('@happier-dev/plugin-ui/presentation');
 
 afterEach(async () => { standardCleanup(); await account.reset(); });
@@ -63,6 +65,39 @@ describe('Machine settings subscriptions', () => {
             await act(async () => { await findControl()?.onValueChange(!value); });
             await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), t('actionConfirmations.turnedOffUnnamedMessage')));
             expect(findControl()?.value).toBe(value);
+        } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        { intent: 'auto-install policy', actionId: 'settings.set' },
+        { intent: 'check again', actionId: 'machines.capabilities.detect' },
+    ] as const)('explains a refused Tools $intent', async ({ intent, actionId }) => {
+        const machine = createMachineFixture({ id: 'tools', isShared: false, active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const tool = getInstallablesRegistryEntries().find(entry => entry.enabledWhen())!;
+        const scope = await account.restore({ currentAccount: true, machines: [machine], settings: {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { enabled: false } } },
+            installablesPolicyByMachineId: { [machine.id]: { [tool.key]: { autoInstallWhenNeeded: false } } },
+        } });
+        if (intent === 'check again') await publishMachineInventoryForTest(scope, [machine]);
+        const screen = await renderScreen(<ListPresentationProvider value="page">
+            <MachineInstallablesSection
+                serverId={account.serverId} machineId={machine.id} machineSentenceName="Tools Machine" canManage />
+        </ListPresentationProvider>);
+        try {
+            await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
+            vi.mocked(Modal.alert).mockClear();
+            if (intent === 'check again') {
+                await vi.waitFor(() => expect(screen.findByTestId('machine-tools-check-again')).not.toBeNull());
+                await screen.pressByTestIdAsync('machine-tools-check-again');
+            } else {
+                const toolId = `machine-tool-${tool.key}`;
+                await screen.pressByTestIdAsync(toolId);
+                await screen.pressByTestIdAsync(`${toolId}.autoInstall`);
+            }
+            await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), t('actionConfirmations.turnedOffUnnamedMessage')));
+            if (intent === 'auto-install policy') {
+                expect(storage.getState().settings.installablesPolicyByMachineId[machine.id]?.[tool.key]?.autoInstallWhenNeeded).toBe(false);
+            }
         } finally { await screen.unmount(); }
     });
 
