@@ -291,6 +291,12 @@ describe('deployment failure recovery', () => {
         expect(projected.remedy).toBe(placement);
     });
 
+    it('explains which Home owns a server-scope mismatch', () => {
+        const recovery = readDeploymentFailureRecoveryV1('server_scope_mismatch');
+        expect(recovery.remedy).toBe('This Machine is connected to a different Home than the one this request names. Open the Environment in that Home and review the change there.');
+        expect(recovery.nextAction).toEqual({ kind: 'navigate', destination: 'review', label: 'Open matching Home' });
+    });
+
     it.each([undefined, null, [], 'opaque', { providerPayload: 'private-sentinel' }])('keeps a safe unknown-code fallback for %j', details => {
         const projected = readDeploymentFailureRecoveryV1('future_failure', details);
         expect(projected).toEqual(readDeploymentFailureRecoveryV1('future_failure'));

@@ -96,7 +96,7 @@ const recoveries = {
     home_unreachable: recovery('Happier cannot reach this Home. Reconnect to the Home, then reload the Environment.', 'machines', 'Check Home connection'),
     host_retired: recovery('The machine connection changed while this review was open. Reconnect it and open a fresh review.', 'machines', 'Reconnect machine'),
     action_account_scope_changed: recovery('The active Account changed. Reopen this Environment in the Account that owns the review.', 'review', 'Reopen deployment review'),
-    server_scope_mismatch: recovery('This review belongs to another Home. Open the Environment in that Home and review the change there.', 'review', 'Check review Home'),
+    server_scope_mismatch: recovery('This Machine is connected to a different Home than the one this request names. Open the Environment in that Home and review the change there.', 'review', 'Open matching Home'),
     notice_account_scope_mismatch: recovery('This notification belongs to another Account. Switch to that Account before opening the deployment.', 'review', 'Open deployment review'),
     action_forbidden: recovery('This change is not permitted with your current access. Ask the Environment or machine owner for the needed permission.', 'permissions', 'Check access'),
     action_not_allowed: recovery('Your approval settings do not allow this deployment action. Review the permissions with the owner before continuing.', 'permissions', 'Review action permissions'),
