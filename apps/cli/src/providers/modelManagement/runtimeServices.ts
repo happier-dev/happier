@@ -104,7 +104,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc/providers';
 import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog, readConnectedAccountCatalogSources, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
 import { qualifySessionTeamCredentialProviderModels, selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
-import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog, projectProviderConnectionSourceModels } from './providerConnectionSourceCatalog';
+import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog, projectCurrentProviderConnectionBrokerCatalogs } from './providerConnectionSourceCatalog';
 import type { ProviderSourceModelCatalogRequest, ProviderSourceModelCatalogResult } from './sourceCatalog';
 import { createProviderSourceCatalogRevision, projectCurrentProviderSourceModelCatalogs } from './sourceCatalog';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -429,8 +429,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         }
         if (!observation.context.connection.authorization.authorized) return { status: 'error',
           error: createProviderErrorV1(observation.context.connection.authorization.errorCode) };
-        return projectCurrentProviderSourceModelCatalogs(projectProviderConnectionSourceModels({ observation, registry, delivery: 'brokered',
-          application: request.application, agentTargetKey: request.application?.agentTargetKey, includeDirectMaterialization: true }));
+        return projectCurrentProviderConnectionBrokerCatalogs({ observation, registry, application: request.application });
       }
       const resolveSelection = input.resolveManagedPurposeBindingIntentSelection;
       if (!resolveSelection) return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') };
@@ -1356,7 +1355,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
                 source: { connectionId: request.source.connectionId, expectedConnectionSecurityFingerprint: request.source.connectionSecurityFingerprint },
                 snapshot: snapshot!, registry, runtime: sharedRuntime, lifetime: createProviderOperationLifetime({ signal }),
                 resolveAddresses: input.resolveAddresses, refreshPolicy: 'current_only' });
-              return observation.status === 'success' && observation.presentation.rows.some(row => !row.catalog.stale)
+              return observation.status === 'success' && projectCurrentProviderConnectionBrokerCatalogs({ observation, registry }).catalogs.length > 0
                 ? { status: 'eligible' as const }
                 : { status: 'unavailable' as const, reason: 'source_unavailable' as const };
             }
@@ -1403,24 +1402,15 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       snapshot, registry, runtime: sharedRuntime, lifetime: createProviderOperationLifetime({ signal: request.signal }),
       resolveAddresses: input.resolveAddresses, refreshPolicy: 'current_only' });
     if (observation.status !== 'success') return null;
-    const catalogs = projectProviderConnectionSourceModels({ observation, registry, delivery: 'brokered',
-      agentTargetKey: request.application.agentTargetKey, application: request.application, includeDirectMaterialization: true });
+    const { catalogs } = projectCurrentProviderConnectionBrokerCatalogs({ observation, registry, application: request.application });
     request.signal.throwIfAborted();
     const candidates = catalogs.flatMap((catalog) => {
       if (catalog.sourceRevision !== request.sourceRevision) return [];
       return catalog.rows.flatMap((row) => {
         if (
           row.descriptor.id !== request.modelId
-          || row.catalog.stale
           || !row.directMaterialization
         ) return [];
-        const brokerApplication = projectProviderConnectionBrokerApplication({
-          registry,
-          agentTargetKey: request.application.agentTargetKey,
-          protocol: row.application.protocol,
-          expectedApplication: request.application,
-        });
-        if (!brokerApplication || !pluginJsonValuesEqual(brokerApplication, request.application)) return [];
         return [{
           endpointTemplateId: row.directMaterialization.endpoint.endpointTemplateId,
           protocol: row.directMaterialization.endpoint.protocol,

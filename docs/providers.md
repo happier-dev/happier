@@ -3203,6 +3203,9 @@ In development, broker resource reads and Home admissions follow the containing
 request's cancellation rather than a separate ten-second HTTP cutoff. Runner
 broker readiness likewise follows its caller's signal without an independent
 thirty-second Axios deadline.
+For a saved Provider connection, source-level broker readiness requires a
+current, usable model in a broker application. It uses the same source catalog
+as an exact model read with no application or model selected.
 In 0.3 development, the Test
 result's optional, closed `code` preserves the
 exact admitted application refusal or the carrier's public failure classification;

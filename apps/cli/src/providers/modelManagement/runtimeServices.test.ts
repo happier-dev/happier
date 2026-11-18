@@ -1515,6 +1515,24 @@ describe('runtime provider model-management composition', () => {
       protocol: 'openai-chat',
       credentialTransport: { destination: { kind: 'httpHeader' } },
     });
+    const sourceEligibility = {
+      machineId: 'machine-a', teamId: 'team-1', resourceId: 'resource-1',
+      expectedResourceRevision: 3, scope: 'source_any' as const, source: teamProviderSource,
+    };
+    await expect(services.resolveTeamCredentialBrokerEligibility(sourceEligibility))
+      .resolves.toEqual({ status: 'eligible' });
+    // The Provider and its fresh static model remain installed after the broker application is withdrawn.
+    currentLease = {
+      ...lease,
+      registry: {
+        ...executable,
+        contributes: { ...executable.contributes, providersByContributionKey: new Map([[contributionKey, contribution]]) },
+      },
+    };
+    await expect(services.readSourceModelCatalogs({ machineId: 'machine-a', source: teamProviderSource,
+      refreshPolicy: 'current_only' })).resolves.toEqual({ status: 'success', catalogs: [] });
+    await expect(services.resolveTeamCredentialBrokerEligibility(sourceEligibility))
+      .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
     // A prepared projection exists concurrently, but the held lease is the
     // operation's authority. The next operation observes that prepared lease.
     currentLease = preparedLease;

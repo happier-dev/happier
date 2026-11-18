@@ -17,7 +17,7 @@ import { projectProviderCatalogContextRuntimeState, type RuntimeProviderServices
 import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
 import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionCpxBridge';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { createProviderSourceCatalogRevision, type ProviderSourceModelCatalog } from './sourceCatalog';
+import { createProviderSourceCatalogRevision, projectCurrentProviderSourceModelCatalogs, type ProviderSourceModelCatalog } from './sourceCatalog';
 import { projectProviderCatalogGatewaySlots } from '@/providers/catalog/assemble';
 
 type SourceInput = Readonly<{
@@ -183,4 +183,13 @@ export function projectProviderConnectionSourceModels(input: Readonly<{
     });
     return [{ application, sourceRevision, rows }];
   });
+}
+
+/** The catalog used for both broker source readiness and exact model membership. */
+export function projectCurrentProviderConnectionBrokerCatalogs(input: Pick<
+  Parameters<typeof projectProviderConnectionSourceModels>[0], 'observation' | 'registry' | 'application'
+>) {
+  return projectCurrentProviderSourceModelCatalogs(projectProviderConnectionSourceModels({
+    ...input, delivery: 'brokered', agentTargetKey: input.application?.agentTargetKey, includeDirectMaterialization: true,
+  }));
 }
