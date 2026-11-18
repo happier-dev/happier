@@ -859,6 +859,9 @@ const NO_ROW_ACTIONS: CollectionRowActions = Object.freeze({});
 const RULED_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true });
 /** A ruled group's last row with another group's band under it: the band parts them. */
 const RULED_ROW_BEFORE_BAND: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, beforeBand: true });
+/** A table row: the ⋯ keeps the cell the header reserves after the last column (`HappierCollectionTableRowFacts.table`). */
+const TABLE_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, table: true });
+const TABLE_ROW_BEFORE_BAND: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, beforeBand: true, table: true });
 const RESTING_LIST_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: false });
 /** A list row beside the detail: its content draws the one list-row rule from its text column (owner 2026-11-15). */
 const RULED_LIST_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, listRule: true });
@@ -2027,6 +2030,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
     <HappierCollectionTableRowContext.Provider value={stage.directoryRow !== null && geometry === 'list' ? stage.directoryRow
       : stage.wrapTitles && !stage.restingRuled ? RESTING_LIST_ROW
       : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW
+      : geometry === 'table' ? (props.beforeBand ? TABLE_ROW_BEFORE_BAND : TABLE_ROW)
       : props.beforeBand ? RULED_ROW_BEFORE_BAND
       : geometry === 'list' && stage.dividedKeys === null ? RULED_LIST_ROW : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>

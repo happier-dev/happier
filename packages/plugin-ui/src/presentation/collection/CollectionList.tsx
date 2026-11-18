@@ -444,6 +444,11 @@ export type HappierCollectionTableRowFacts = Readonly<{
   beforeBand?: boolean;
   /** A list row: its content draws the one list-row rule from its text column, so the frame draws no full-bleed line. */
   listRule?: boolean;
+  /**
+   * A table row: its header reserves the row-actions cell after the last column, so the row's ⋯ stands in that cell
+   * on every pointer (out of sight at rest) and never overlays the last column's figures.
+   */
+  table?: boolean;
 }>;
 export const HappierCollectionTableRowContext = createContext<HappierCollectionTableRowFacts | null>(null);
 

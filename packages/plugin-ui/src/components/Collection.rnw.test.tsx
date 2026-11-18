@@ -1862,6 +1862,51 @@ describe('Collection table', () => {
     },
   );
 
+  // DESIGN-1118-B M1: on touch a table row's actions overlaid its last column (the cells kept the row's full width).
+  // A table keeps the ⋯ in the cell its header reserves, out of sight at rest, on every pointer.
+  it("keeps a touch table row's actions in their reserved cell, out of sight at rest, never over the last column", () => {
+    const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
+    const viewportWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1440 });
+    window.dispatchEvent(new Event('resize'));
+    (globalThis as { matchMedia?: unknown }).matchMedia = () => ({ matches: false });
+    const view = mount({
+      presentation: 'table',
+      detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      useRowActions: () => ({
+        secondaryActions: [{ id: 'pin', label: 'Pin' }],
+        onSecondaryAction: () => undefined,
+      }),
+    });
+    try {
+      view.measure(1440);
+      const trigger = view.container.querySelector<HTMLElement>('[aria-label="More actions"]')!;
+      const row = view.query('row:a')!;
+      const along = (read: (node: HTMLElement) => string, skip: string) => {
+        for (let node: HTMLElement | null = trigger; node !== null && node !== row; node = node.parentElement) {
+          const value = read(node);
+          if (value !== '' && value !== skip) return value;
+        }
+        return skip;
+      };
+      const overlaid = () => {
+        for (let node: HTMLElement | null = trigger; node !== null && node !== row; node = node.parentElement) {
+          if (getComputedStyle(node).position === 'absolute') return true;
+        }
+        return false;
+      };
+      expect(overlaid()).toBe(false);
+      expect(along((node) => getComputedStyle(node).opacity, '1')).toBe('0');
+    } finally {
+      view.unmount();
+      (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;
+      if (viewportWidth) Object.defineProperty(document.documentElement, 'clientWidth', viewportWidth);
+      else Reflect.deleteProperty(document.documentElement, 'clientWidth');
+      window.dispatchEvent(new Event('resize'));
+    }
+  });
+
   it("gives a resting list's rows the full width on a precise pointer: the actions overlay the row's end, revealed by hover", () => {
     const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
     (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({

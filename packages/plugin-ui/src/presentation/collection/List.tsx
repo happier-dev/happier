@@ -1118,14 +1118,14 @@ export function HappierListItem({
   // stays mounted and announced, so the menu anchors to the row's end, focus reveals it and assistive
   // technology reaches it; it shows while its menu is open.
   const overlayRowActions = collectionRow && hasSecondaryActions && accessoryIsRowActions === true && cardCornerAccessory === null
-    && behavior.accessoryPlacement === 'outside'
+    && behavior.accessoryPlacement === 'outside' && collectionItem?.table !== true
     && (!precisePointer || collectionItem?.hairline === false);
   // A mouse or trackpad shows a collection row's actions when the row is the pointer's, has focus inside, is
   // selected or is open: a `•••` on every row is noise (the lab's rows carry only the chevron). The cell stays
   // laid out and announced, so the age keeps its place and assistive technology and Tab still reach it. The
   // overflow itself reads this through `HappierRowActionsReveal`, whatever else shares the row's accessory.
   const hoverRevealRowActions = collectionRow && hasSecondaryActions && cardCornerAccessory === null
-    && behavior.accessoryPlacement === 'outside' && !overlayRowActions && precisePointer;
+    && behavior.accessoryPlacement === 'outside' && !overlayRowActions && (precisePointer || collectionItem?.table === true);
   const rowActionsRevealed = cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
   const layered = contentBesidePressable === true && isInteractive && resolvedTheme !== undefined && resolvedTheme !== null;
   const fillCell = cardFillsCell && Platform.OS === 'web';
