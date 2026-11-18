@@ -60,29 +60,62 @@ describe('Machine census membership through public Sync and real stores', () => 
 
         // Separate cases deliberately use the production Vitest beforeEach device
         // reset. A same-test reconnect would omit the failing lifetime boundary.
-        it.each([0, 1])('restore %i publishes the retained Home Machine', async attempt => {
+        it.each([0, 1])('person restore %i publishes the retained Home Machine and follows descriptor adoption', async attempt => {
             if (attempt === 1) expect(firstRestoreCompleted).toBe(true);
             const credentials = { token: `e30.${btoa(JSON.stringify({ sub: accountId, attempt }))}.signature`,
-                secret: encodeBase64(secret, 'base64url') };
-            const boundary = installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary, {
-                serverUrl, token: credentials.token,
-            });
+                secret: encodeBase64(secret, 'base64') };
+            const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+            const { ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+            const projectCipher = createProjectAccountRowCipherV1({ mode: 'e2ee', material: { type: 'legacy', secret },
+                randomBytes: length => new Uint8Array(length).fill(75) });
+            const workspaceRef = { id: `cold-ui-workspace-${attempt}`, serverId: homeIdentityId,
+                machineId: row.id, rootPath: `/cold-project-${attempt}`, createdAtMs: 1 };
+            const workspaceKey = { kind: 'workspace-ref' as const, serverId: homeIdentityId, id: workspaceRef.id };
+            const workspaceRow = { key: workspaceKey, revision: 0, content: projectCipher.seal({ key: workspaceKey, value: workspaceRef }) };
+            let accountSocket: Socket | undefined;
+            const boundary = installDisconnectedServerSocketBoundary(socket => {
+                accountSocket = socket;
+                configureConnectedServerSocketBoundary(socket);
+            }, { serverUrl, token: credentials.token });
+            let workspaceRows = [workspaceRow];
+            let changes: import('@/sync/api/types/apiTypes').ApiChangeEntry[] = [];
+
             const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
             setRuntimeFetch(async (input, init) => {
                 const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
                 if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
-                    capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } },
+                    capabilities: { serverIdentity: { serverIdentityId: homeIdentityId }, auth: { keyChallenge: { v2: true } } },
                 }));
+                if (path === '/v1/auth/challenge') return Response.json({
+                    challengeId: `cold-ui-challenge-${attempt}`, nonce: 'cold-ui-nonce',
+                    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                    audience: { origin: serverUrl, serverIdentityId: homeIdentityId },
+                });
+                if (path === '/v1/auth') return Response.json({ token: credentials.token });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createLegacyAccountEncryptionCurrentnessFixture({ secret }));
                 if (path === '/v1/machines') return Response.json([row]);
+                if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', coverage: 'complete', rows: workspaceRows });
+                if (path === '/v1/account/project-rows/read') {
+                    const request = ProjectAccountRowReadRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    const found = workspaceRows.find(row => buildProjectAccountRowPhysicalKeyV1(request.key) === buildProjectAccountRowPhysicalKeyV1(row.key));
+                    return Response.json(found ? { status: 'present', row: found } : { status: 'absent' });
+                }
+                if (path === '/v2/changes') {
+                    const { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema } = await import('@happier-dev/protocol/changes');
+                    const after = new Headers(init?.headers).get(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+                    return Response.json(ChangesResponseSchema.parse({ changes: changes.filter(change => change.cursor > Number(after ?? 0)),
+                        nextCursor: changes.at(-1)?.cursor ?? 0 }), {
+                        ...(after === null ? {} : { headers: { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: after } }),
+                    });
+                }
                 return createServerAccountConnectionProbeHttpResponse(path)
                     ?? createEmptyAccountBootstrapHttpResponse(path, init)
                     ?? new Response('{}', { status: 404 });
             });
-            const { connectUiActionClient } = await import('@/dev/testkit/actionClientIntegrationTestkit');
+            const { connectUiPersonActionClient } = await import('@/dev/testkit/actionClientIntegrationTestkit');
             disposeHome = async () => { boundary.dispose(); };
-            const client = await connectUiActionClient({ serverUrl, credentials });
+            const client = await connectUiPersonActionClient({ serverUrl, accountSecret: secret });
             disposeHome = async () => { try { await client.close(); } finally { boundary.dispose(); } };
             const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
             expect(getServerProfileById(client.serverId)?.serverIdentityId).toBe(homeIdentityId);
@@ -100,6 +133,40 @@ describe('Machine census membership through public Sync and real stores', () => 
             expect(storage.getState().machines[row.id]).toMatchObject({ availability: { kind: 'available' },
                 daemonState: { status: 'running' } });
             expect(client.isMachineActive(row.id)).toBe(true);
+            const projectRows = await sync.projectAccountRowsOwnerFor({ serverId: client.serverId, accountId });
+            if (!projectRows) throw new Error('Restored Account has no Project rows owner');
+            expect((await projectRows.read()).workspaceRefs).toEqual([workspaceRef]);
+            expect(await projectRows.waitForWorkspaceRef({ serverId: homeIdentityId, workspaceId: workspaceRef.id,
+                machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath })).toEqual(workspaceRef);
+            // Features can first publish the authenticated descriptor after bootstrap.
+            // The composed UI client must carry the app's Home-change lifecycle too.
+            const profiles = await import('@/sync/domains/server/serverProfiles');
+            await profiles.reconcileServerProfileHomeConnectionDescriptor({ serverUrl,
+                observedServerIdentityId: homeIdentityId,
+                descriptor: { v: 1, homeServerIdentityId: homeIdentityId, canonicalServerUrl: serverUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+            });
+            const selected = profiles.getActiveServerSnapshot();
+            const connection = await import('@/sync/runtime/orchestration/connectionManager');
+            await vi.waitFor(() => expect(connection.getAppliedActiveServerSnapshot()).toMatchObject({
+                serverId: selected.serverId, generation: selected.generation,
+            }));
+            const { apiSocket } = await import('@/sync/api/session/apiSocket');
+            expect(apiSocket.getAccountEncryptionObservationBinding(credentials)).not.toBeNull();
+            const openedRef = { ...workspaceRef, id: `${workspaceRef.id}-opened`, rootPath: `${workspaceRef.rootPath}/opened` };
+            const openedKey = { ...workspaceKey, id: openedRef.id };
+            workspaceRows = [...workspaceRows, { key: openedKey, revision: 1,
+                content: projectCipher.seal({ key: openedKey, value: openedRef }) }];
+            const { ProjectAccountRowChangeHintV1Schema } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+            changes = [{ cursor: 1, changedAt: 1, kind: 'account', entityId: buildProjectAccountRowPhysicalKeyV1(openedKey),
+                hint: ProjectAccountRowChangeHintV1Schema.parse({ projectAccountRow: true, key: openedKey, revision: 1 }) }];
+            const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+            if (!accountSocket) throw new Error('Person restore did not connect its Account socket');
+            for (const listener of accountSocket.listenersAny()) listener('update', UpdateContainerSchema.parse({
+                id: 'cold-ui-opened-row', seq: 1, createdAt: 1,
+                body: { t: 'account-change', changeKinds: ['account'], entityIds: [changes[0]!.entityId] },
+            }));
+            await vi.waitFor(() => expect(storage.getState().projectAccountRows?.workspaceRefs).toContainEqual(openedRef));
             firstRestoreCompleted = true;
         });
     });

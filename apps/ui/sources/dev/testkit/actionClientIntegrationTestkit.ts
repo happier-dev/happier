@@ -185,7 +185,7 @@ export async function connectUiPersonActionClient(params: Readonly<{
             import('@/components/appShell/plugins/AppShellPluginUiProjection'),
             import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness'),
         ]);
-        const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: true });
+        const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: true, withAccountLifecycle: true });
         const scope = getActiveServerAccountScope();
         const shell = await renderHook((kind: RegistryKindV1 | undefined) => {
             const projection = useAppShellPluginUiProjection();
