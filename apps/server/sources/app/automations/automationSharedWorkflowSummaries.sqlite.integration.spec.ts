@@ -17,6 +17,7 @@ import { getWorkflowPublicationAudienceInTx } from '@/app/workflows/workflowPubl
 import { markAutomationChangedTx } from './automationCrudService';
 import { applyAutomationRunTerminalEffectsTx } from './automationRunSucceeded';
 import { encodeAutomationRunCause } from './automationRunCauseCodec';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 
 describe('Team workflow schedule summaries', () => {
     let harness: LightSqliteHarness;
@@ -26,7 +27,10 @@ describe('Team workflow schedule summaries', () => {
     it('retains selected direct/context admission and count privacy on SQLite without a Team', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', name: 'Shared check author' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const subject = { kind: 'machine' as const, serverId: randomUUID(), machineId: randomUUID() };
+        const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
+        await db.machine.create({ data: { id: subject.machineId, accountId: owner.id, metadata: '{}',
+            installationId: randomUUID(), grants: { create: { principalKind: 'account', accountId: viewer.id,
+                accessLevel: 'view', createdByAccountId: owner.id } } } });
         const visibleWorkflowId = randomUUID();
         const deniedWorkflowId = randomUUID();
         const visibleTriggerId = randomUUID();
@@ -100,7 +104,7 @@ describe('Team workflow schedule summaries', () => {
                 const response = await query({ actionId: 'session.archive', phase: 'after', limit: 1, ...(cursor ? { cursor } : {}) });
                 expect(response.statusCode, response.body).toBe(200);
                 const page = AutomationDefinitionListResponseSchema.parse(response.json());
-                expect(page.skippedNotSharedCount).toBe(1);
+                expect(page.skippedNotSharedCount).toBe(0);
                 expect(page.attached).toHaveLength(1);
                 expect(page.attached![0]!.relation).toBe('direct');
                 expect(response.body).not.toContain(deniedWorkflowId);

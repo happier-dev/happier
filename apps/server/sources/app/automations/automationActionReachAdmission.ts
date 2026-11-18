@@ -101,7 +101,18 @@ export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
         if (input.definition.claimedReachesOthers === true) throw new AutomationStoredContentReadError('contentInvalid');
         return false;
     }
-    const subject = input.definition.subject;
+    return resolveAutomationActionSubjectAccessInTx(tx, { accountId: input.accountId,
+        authentication: input.authentication, subject: input.definition.subject, capability: 'manage' });
+}
+
+/** Subject lists and trigger writers consume the same resource-owned read/manage admission. */
+export async function resolveAutomationActionSubjectAccessInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    authentication?: DeploymentAuthentication;
+    subject?: AutomationSubjectV1;
+    capability: 'read' | 'manage';
+}>): Promise<boolean> {
+    const subject = input.subject;
     if (!subject) return false;
     switch (subject.kind) {
         case 'plugin':
@@ -117,30 +128,33 @@ export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
             const environmentId = subject.kind === 'database' ? subject.target.environmentId : subject.environmentId;
             const loaded = await loadDeploymentEnvironmentInTx(tx, input.accountId, subject.serverId,
                 environmentId, input.authentication);
-            return loaded.ok && projectDeploymentEnvironmentHeader(loaded.row, subject.serverId, loaded.admission).capabilities.manage;
+            return loaded.ok && (input.capability === 'read'
+                || projectDeploymentEnvironmentHeader(loaded.row, subject.serverId, loaded.admission).capabilities.manage);
         }
-        case 'machine':
+        case 'machine': {
             if (await readCurrentServerIdentityId(process.env, tx) !== subject.serverId) return false;
-            return await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: input.accountId,
-                machineId: subject.machineId }) === 'manage';
+            const role = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: input.accountId,
+                machineId: subject.machineId });
+            return role !== null && (input.capability === 'read' || role === 'manage');
+        }
         case 'app': {
             if (await readCurrentServerIdentityId(process.env, tx) !== subject.serverId) return false;
             const access = await resolveProjectSourceAccessInTx(tx, input.accountId,
                 subject.projectSourceId, input.authentication);
-            return access.ok && access.canManage;
+            return access.ok && (input.capability === 'read' || access.canManage);
         }
         case 'approvalProfile': {
             if (await readCurrentServerIdentityId(process.env, tx) !== subject.serverId) return false;
             const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.accountId,
                 artifactId: subject.profileId });
-            return access !== null && access.level !== 'view';
+            return access !== null && (input.capability === 'read' || access.level !== 'view');
         }
         case 'session': {
             if (await readCurrentServerIdentityId(process.env, tx) !== subject.serverId) return false;
             const authentication = input.authentication;
             if (!authentication?.authenticationAuthority) return false;
             const access = await resolveSessionAccessForOperation(tx, { accountId: input.accountId,
-                sessionId: subject.sessionId, capability: 'editSessionRecords', authentication: {
+                sessionId: subject.sessionId, capability: input.capability === 'read' ? 'readTranscript' : 'editSessionRecords', authentication: {
                     env: authentication.env ?? process.env, authority: authentication.authenticationAuthority,
                     authenticationEvidence: authentication.authenticationEvidence,
                 } });

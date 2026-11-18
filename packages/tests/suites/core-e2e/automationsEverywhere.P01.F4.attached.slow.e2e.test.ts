@@ -417,6 +417,19 @@ describe('Automations everywhere: selected attached summaries', () => {
     expect(remaining.skippedNotSharedCount).toBe(3);
     expect(remaining.attached?.map(row => row.triggerId).sort()).toEqual(visible.slice(1).sort());
     expect(JSON.stringify(remaining)).not.toContain(sharedWorkflows[0]);
+    const outsider = await fixture.createAccount('private-trigger-outsider');
+    expect(await outsider.execute('workflow.trigger.list', { subject })).toMatchObject({
+      ok: true, result: { attached: [], skippedNotSharedCount: 0 },
+    });
+    expect(await reader.execute('workflow.trigger.list', { actionId: 'machines.command.run', phase: 'after' }))
+      .toMatchObject({ ok: true, result: { skippedNotSharedCount: 0 } });
+    expect(await owner.execute('machines.access.grant.remove', { ...machine.target,
+      principal: { kind: 'account', accountId: readerId } })).toMatchObject({ ok: true });
+    const afterMachineWithdrawal = await reader.execute('workflow.trigger.list', { subject });
+    expect(afterMachineWithdrawal).toMatchObject({ ok: true, result: { skippedNotSharedCount: 0 } });
+    if (!afterMachineWithdrawal.ok) throw new Error(afterMachineWithdrawal.errorCode);
+    expect(WorkflowTriggerListResultV1Schema.parse(afterMachineWithdrawal.result).attached?.map(row => row.triggerId).sort())
+      .toEqual(visible.slice(1).sort());
     // Selected reads must never request the Account's body-bearing inventory.
     expect(fixture.takeRequestObservations().filter(row => row.method === 'GET' && row.path === '/v3/automations')).toEqual([]);
   }, 0);

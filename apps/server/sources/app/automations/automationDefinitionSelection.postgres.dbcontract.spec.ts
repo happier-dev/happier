@@ -16,6 +16,7 @@ import { registerAutomationV3Routes } from "@/app/api/routes/automations/registe
 import { inTx } from '@/storage/inTx';
 import { readSharedWorkflowTriggerSummaries } from './automationSharedWorkflowSummaries';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 
 function queryPlanNodes(value: unknown): ReadonlyArray<Record<string, unknown>> {
     if (Array.isArray(value)) return value.flatMap(queryPlanNodes);
@@ -73,16 +74,24 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
     });
 
     it('pages only matching shared triggers with a stable denied count and indexed structural SQL', async () => {
-        const subject = { kind: 'machine' as const, serverId: randomUUID(), machineId: randomUUID() };
+        const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
+        const unreadableSubject = { ...subject, machineId: randomUUID() };
+        const outsiderId = (await db.account.create({ data: { encryptionMode: 'plain' } })).id;
+        await db.machine.createMany({ data: [subject, unreadableSubject].map(({ machineId }) => ({
+            id: machineId, accountId, metadata: '{}', installationId: randomUUID(),
+        })) });
+        await db.machineGrant.create({ data: { machineId: subject.machineId, principalKind: 'account',
+            accountId: otherAccountId, accessLevel: 'view', createdByAccountId: accountId } });
         const workflows = [randomUUID(), randomUUID(), randomUUID()];
         const visibleTriggerIds = [randomUUID(), randomUUID()].sort();
         const automationIds = workflows.map(() => randomUUID());
         const structural = { kind: 'action' as const, actionId: 'session.archive', actionIdsJson: JSON.stringify(['session.archive']),
             phase: 'after', subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject), reachesOthers: true };
-        const triggerRow = (id: string, automationId: string) => ({ ...structural, id,
+        const triggerRow = (id: string, automationId: string, selectedSubject = subject) => ({ ...structural, id,
+            subjectKey: automationSubjectKeyV1(selectedSubject),
             definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
                 binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: 0, triggerKind: 'action' },
-                definition: { kind: 'action', phase: 'after', actionIds: ['session.archive'], subject } })),
+                definition: { kind: 'action', phase: 'after', actionIds: ['session.archive'], subject: selectedSubject } })),
         });
         await db.account.update({ where: { id: accountId }, data: { name: 'Workflow author' } });
         await db.artifact.createMany({ data: workflows.map(id => ({ id, accountId,
@@ -98,6 +107,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                     ? visibleTriggerIds.map((triggerId, triggerIndex) => ({ ...triggerRow(triggerId, id), enabled: triggerIndex === 0 }))
                     : [{ ...triggerRow(randomUUID(), id), reachesOthers: index === 1 }] } } });
         }
+        await db.automationTrigger.create({ data: { ...triggerRow(randomUUID(), automationIds[1]!, unreadableSubject),
+            automationId: automationIds[1]!, actionId: 'machines.command.run', actionIdsJson: '["machines.command.run"]',
+            subjectKey: automationSubjectKeyV1(unreadableSubject) } });
         const unrelated = await db.automation.findMany({ where: { accountId, workflowDefinitionId: 'builtin:unrelated' }, select: { id: true } });
         await db.automationTrigger.createMany({ data: unrelated.map((row, index) => ({ ...triggerRow(randomUUID(), row.id),
             automationId: row.id, actionId: null,
@@ -147,6 +159,17 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 subject: { ...subject, serverId: randomUUID() }, contextSubjects: [subject] });
             expect(context.attached?.map(row => row.relation)).toEqual(['context', 'context']);
             expect(context.skippedNotSharedCount).toBe(1);
+            const mixed = await listAutomationDefinitionsPage({ accountId: otherAccountId,
+                subject: unreadableSubject, contextSubjects: [subject] });
+            expect(mixed.skippedNotSharedCount).toBe(1);
+            expect(mixed.attached?.map(row => row.relation)).toEqual(['context', 'context']);
+            const outsider = await listAutomationDefinitionsPage({ accountId: outsiderId, subject });
+            expect(outsider).toMatchObject({ attached: [], skippedNotSharedCount: 0 });
+            await db.machineGrant.delete({ where: { machineId_accountId: {
+                machineId: subject.machineId, accountId: otherAccountId } } });
+            const revoked = await listAutomationDefinitionsPage({ accountId: otherAccountId, subject });
+            expect(revoked.skippedNotSharedCount).toBe(0);
+            expect(revoked.attached?.map(row => row.triggerId)).toEqual(visibleTriggerIds);
             // Action-detail candidates use the complete selector, rather than the
             // singleton actionId leaf or the Account's trigger inventory.
             const actionSelected: string[] = [];
@@ -155,7 +178,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 const page = await listAutomationDefinitionsPage({ accountId: otherAccountId,
                     actionId: 'session.archive', phase: 'after', limit: 1, cursor: actionCursor });
                 expect(page.automations).toEqual([]);
-                expect(page.skippedNotSharedCount).toBe(1);
+                expect(page.skippedNotSharedCount).toBe(0);
                 expect(page.attached).toHaveLength(1);
                 expect(page.attached![0]).toMatchObject({ workflowDefinitionId: workflows[0], relation: 'direct' });
                 expect(JSON.stringify(page)).not.toContain(workflows[1]!);
@@ -184,7 +207,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                     expect(scans.reduce((sum, node) => sum + (Number(node['Actual Rows'])
                         + Number(node['Rows Removed by Filter'] ?? 0) + Number(node['Rows Removed by Index Recheck'] ?? 0))
                         * Number(node['Actual Loops']), 0))
-                        .toBeLessThanOrEqual(visibleTriggerIds.length + 2);
+                        .toBeLessThanOrEqual(visibleTriggerIds.length + 2
+                            + (query.bindings.includes(automationSubjectKeyV1(unreadableSubject)) ? 1 : 0));
                 }
             }
         } finally {
@@ -192,6 +216,53 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
             await traced.$disconnect();
             await db.automation.deleteMany({ where: { id: { in: automationIds } } });
             await db.artifact.deleteMany({ where: { id: { in: workflows } } });
+            await db.machine.deleteMany({ where: { id: { in: [subject.machineId, unreadableSubject.machineId] } } });
+            await db.account.delete({ where: { id: outsiderId } });
+        }
+    });
+
+    it('uses verified viewer authentication for Session subject counts without granting management', async () => {
+        const serverId = await getOrCreateServerIdentityId();
+        const session = await db.session.create({ data: { accountId, tag: randomUUID(), metadata: '{}',
+            encryptionMode: 'plain', currentStorageState: 'hosted', grants: { create: {
+                principalKind: 'account', accountId: otherAccountId, accessLevel: 'view', createdByAccountId: accountId,
+            } } } });
+        const subject = { kind: 'session' as const, serverId, sessionId: session.id };
+        const automationId = randomUUID();
+        const workflowId = randomUUID();
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+        await db.artifact.create({ data: { id: workflowId, accountId,
+            header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
+            body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.automation.create({ data: { id: automationId, accountId, workflowDefinitionId: workflowId,
+            name: 'Private Session check', templateCiphertext: '{}', triggers: { create: {
+                kind: 'action', actionIdsJson: '["session.archive"]', phase: 'after', subjectKind: 'session',
+                subjectKey: automationSubjectKeyV1(subject), reachesOthers: true,
+                id: triggerId,
+                definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: 'action' },
+                    definition: { kind: 'action', phase: 'after', actionIds: ['session.archive'], subject } })),
+            } } } });
+        const app = createAuthenticatedTestApp();
+        registerAutomationV3Routes(app);
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v3/automations/query',
+                headers: { 'x-test-user-id': otherAccountId }, payload: { subject } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ attached: [], skippedNotSharedCount: 1 });
+            const unqualified = await listAutomationDefinitionsPage({ accountId: otherAccountId, subject });
+            expect(unqualified).toMatchObject({ attached: [], skippedNotSharedCount: 0 });
+            await db.sessionGrant.deleteMany({ where: { sessionId: session.id, accountId: otherAccountId } });
+            const revoked = await app.inject({ method: 'POST', url: '/v3/automations/query',
+                headers: { 'x-test-user-id': otherAccountId }, payload: { subject } });
+            expect(revoked.statusCode, revoked.body).toBe(200);
+            expect(revoked.json()).toMatchObject({ attached: [], skippedNotSharedCount: 0 });
+        } finally {
+            await app.close();
+            await db.automation.delete({ where: { id: automationId } });
+            await db.artifact.delete({ where: { id: workflowId } });
+            await db.session.delete({ where: { id: session.id } });
         }
     });
 

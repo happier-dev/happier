@@ -18,11 +18,14 @@ import { loadAutomationEventStatusProjections } from './automationEventStatusPro
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationTriggerSummarySource } from './automationTypes';
 import { canProjectSharedAutomationTriggerSummary } from './automationActionIndex';
+import { resolveAutomationActionSubjectAccessInTx } from './automationActionReachAdmission';
+import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 
 const { definitionEnvelope: _privateEnvelope, ...summaryTriggerSelect } = automationTriggerListItemSelect;
 
 export type AutomationAttachedTriggerSelection = Readonly<{
     accountId: string;
+    authentication?: DeploymentAuthentication;
     limit?: number;
     cursor?: string | null;
 } & ({ subject: AutomationSubjectV1; contextSubjects?: readonly AutomationSubjectV1[] }
@@ -94,6 +97,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
         };
         const page: Awaited<ReturnType<typeof readCandidates>> = [];
         const workflowAccess = new Map<string, WorkflowSummaryArtifactAccess>();
+        const subjectReadability = new Map<string, boolean>();
         let skippedNotSharedCount = 0;
         let candidateCursor: string | null = null;
         for (;;) {
@@ -112,7 +116,20 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
             const ref = parseWorkflowDefinitionRefV1(workflow);
             return ref?.kind === 'artifact' ? visible.has(ref.artifactId) : row.automation.accountId === params.accountId;
           });
-          skippedNotSharedCount += scoped.length - admitted.length;
+          if ('subject' in params) {
+            const admittedIds = new Set(admitted.map(row => row.id));
+            const denied = scoped.filter(row => !admittedIds.has(row.id));
+            const deniedKeys = new Set(denied.map(row => row.subjectKey));
+            // Permission work follows distinct requested subjects, never trigger rows.
+            for (const [key, subject] of subjects) {
+              if (!deniedKeys.has(key) || subjectReadability.has(key)) continue;
+              subjectReadability.set(key, await resolveAutomationActionSubjectAccessInTx(tx, {
+                accountId: params.accountId, authentication: params.authentication, subject, capability: 'read',
+              }));
+            }
+            skippedNotSharedCount += denied.filter(row => row.subjectKey !== null
+              && subjectReadability.get(row.subjectKey) === true).length;
+          }
           for (const row of admitted) {
             if ((!params.cursor || row.id > params.cursor) && page.length <= limit) {
                 page.push(row);
@@ -121,6 +138,8 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                 if (access) workflowAccess.set(row.id, access);
             }
           }
+          // Action detail has no readable-subject count to aggregate beyond its page.
+          if ('actionId' in params && page.length > limit) break;
           if (candidates.length < AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS) break;
           candidateCursor = candidates.at(-1)!.id;
         }

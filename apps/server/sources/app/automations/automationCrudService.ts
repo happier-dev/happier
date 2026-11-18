@@ -4725,6 +4725,7 @@ function decodeAutomationDefinitionListCursor(
  */
 export async function listAutomationDefinitionsPage(params: Readonly<{
     accountId: string;
+    authentication?: DeploymentAuthentication;
     actionId?: string;
     phase?: AutomationActionTrigger['phase'];
     subject?: AutomationSubjectV1;

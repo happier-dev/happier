@@ -176,7 +176,8 @@ export function registerAutomationV3Routes(
     app: Fastify,
     workerPublisherDependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
 ): void {
-    const readDefinitions = async (accountId: string, input: unknown, reply: FastifyReply) => {
+    const readDefinitions = async (accountId: string, input: unknown, reply: FastifyReply,
+        authentication: ReturnType<typeof readTeamOperationAuthenticationFromRequest>) => {
         try {
             const query = AutomationDefinitionQueryRequestSchema.parse(input);
             if ('proposedSchedule' in query) return previewAutomationSchedule(query.proposedSchedule);
@@ -184,6 +185,7 @@ export function registerAutomationV3Routes(
                 await readAutomationTriggerEventDeclarations(accountId, query));
             const page = await listAutomationDefinitionsPage({
                 accountId,
+                authentication,
                 ...(query.actionId !== undefined ? { actionId: query.actionId, phase: query.phase! } : {}),
                 ...(query.subject !== undefined ? { subject: query.subject } : {}),
                 ...(query.contextSubjects !== undefined ? { contextSubjects: query.contextSubjects } : {}),
@@ -240,13 +242,15 @@ export function registerAutomationV3Routes(
     app.get("/v3/automations", {
         preHandler: [app.authenticate, requirePresentUser],
         schema: { querystring: AutomationDefinitionListRequestSchema },
-    }, async (request, reply) => readDefinitions(request.userId, request.query, reply));
+    }, async (request, reply) => readDefinitions(request.userId, request.query, reply,
+        readTeamOperationAuthenticationFromRequest(request)));
     // One structural Artifact page can exceed URL/header limits. The body read
     // retains the same list policy, projection and keyset owner as GET.
     app.post("/v3/automations/query", {
         preHandler: [app.authenticate, requirePresentUser],
         schema: { body: AutomationDefinitionQueryRequestSchema },
-    }, async (request, reply) => readDefinitions(request.userId, request.body, reply));
+    }, async (request, reply) => readDefinitions(request.userId, request.body, reply,
+        readTeamOperationAuthenticationFromRequest(request)));
 
     app.get("/v3/automations/settings", {
         preHandler: [app.authenticate, requirePresentUser],

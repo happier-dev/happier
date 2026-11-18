@@ -6606,8 +6606,11 @@ In unreleased 0.3 source, `workflow.trigger.list` accepts
 It returns `attached` rows with direct/context relation, safe author attribution,
 available source status and the actor's latest started Run. Workflow visibility
 comes from the existing Artifact header reader, including direct-person grants.
-Unavailable Workflow references contribute only to `skippedNotSharedCount`,
-deduplicated by Trigger across the selected scope and independent of pagination.
+Unavailable Workflow references contribute only to `skippedNotSharedCount` for
+subjects the viewer can currently read through the resource's existing access owner,
+deduplicated by Trigger across those subjects and independent of pagination.
+Each direct/context subject is admitted independently. Action-wide reads return
+zero for this count because they establish no visible resource scope.
 Private Workflow bodies and other Accounts' authored operands are not returned.
 Omitted-subject applicability still depends on its structural producer.
 
