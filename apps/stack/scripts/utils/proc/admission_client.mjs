@@ -246,6 +246,9 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
           }
           if (response.kind === 'capacity-wait') priorityScope?.suspend();
           if (response.kind === 'reserved') {
+            if (response.backfill) {
+              console.error(`[preferred-execution] admitted as a backfill (class=${className}, floorKiB=${response.floorKiB}, borrowedKiB=${response.backfill.borrowedKiB}, headStartInMs=${response.backfill.headStartInMs})`);
+            }
             selectedFloorKiB = response.floorKiB;
             selectedWorkers = response.workers;
             // Retained pre-CPU brokers cannot enforce CPU capacity. Keep their
@@ -281,7 +284,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               admittedDuration = { kind: 'slot-duration', slotId: response.slotId, admittedAt: response.admittedAt,
                 className: request.className, durationClass: request.durationClass, p99DurationMs: request.p99DurationMs };
             }
-            const acquiredEnv = { ...resources.env, HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: root,
+            // The run's duration describes this request only; nested producers use their own history.
+            const payloadEnv = { ...resources.env };
+            delete payloadEnv.HAPPIER_ADMISSION_DURATION_CLASS;
+            delete payloadEnv.HAPPIER_ADMISSION_DURATION_P99_MS;
+            const acquiredEnv = { ...payloadEnv, HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: root,
               HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: machine,
               HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: String(process.pid),
               HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: String(selectedFloorKiB),
@@ -295,15 +302,20 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             }
             // Report the scope's kernel peak on the slot before it closes, so the
             // broker records this identity's true high-water mark, success or not.
-            payload = run(acquiredEnv).finally(async () => {
+            const report = line => Promise.all([...slotConnections].map(socket =>
+              new Promise(done => socket.write(JSON.stringify(line) + '\n', () => done()))));
+            payload = run(acquiredEnv).then(async result => {
+              // A successful run's admitted time joins its identity's duration history.
+              if (result === 0) await report({ kind: 'slot-completed', status: 0 });
+              return result;
+            }).finally(async () => {
               // Only the outermost admission owns its jobs scope. A client nested in
               // another admitted payload shares that scope, so its peak is the parent's.
               if (env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) return;
               const peakKiB = await (readJobPeakKiB ?? (await import('./admission_memory.mjs')).readJobScopePeakKiB)();
               if (!Number.isSafeInteger(peakKiB) || peakKiB <= 0) return;
-              const line = JSON.stringify({ kind: 'slot-peak', peakKiB, className: request.className,
-                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n';
-              await Promise.all([...slotConnections].map(socket => new Promise(done => socket.write(line, () => done()))));
+              await report({ kind: 'slot-peak', peakKiB, className: request.className,
+                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry });
             });
             payload.then(() => control?.destroy(), () => control?.destroy());
           }
@@ -343,6 +355,7 @@ class AdmissionRefusal extends Error {
 /** Systemic 20:31Z: identity is the component plus the command's entry (program,
  * package-manager script, or `--test`), never its argument list, so new file
  * lists or flags reuse the recorded peak. */
+const SCRIPT_HOSTS = new Set(['pnpm', 'npm', 'yarn', 'bun', 'node', 'tsx', 'bash', 'sh', 'corepack']);
 export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = process.cwd(), command, args = [] }) {
   const separator = args[0] === '--heavyweight-admitted-exec' ? args.indexOf('--') : -1;
   let tokens = separator >= 0 ? args.slice(separator + 1) : [command, ...args];
@@ -356,7 +369,10 @@ export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = proces
     break;
   }
   const entry = [program(0)];
-  for (const token of tokens.slice(1)) {
+  // A package manager names the script it runs (`pnpm run test`) and a script runner
+  // the file (`node x.mjs`); any other program is its own identity, so its arguments
+  // (`vitest run <files>`) never split it into a new identity per file list.
+  if (SCRIPT_HOSTS.has(program(0))) for (const token of tokens.slice(1)) {
     if (token === '--test') { entry.push(token); break; }
     if (token.startsWith('-')) continue;
     entry.push(token);

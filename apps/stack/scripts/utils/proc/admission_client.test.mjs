@@ -595,4 +595,10 @@ test('a command identity names the program it runs, not its env prefix or packag
   // Unchanged forms keep their recorded keys.
   assert.equal(identity('pnpm', 'run', 'test:local', '--run', 'x.test.tsx'), 'pnpm run test:local');
   assert.equal(identity('node', '--test', 'a.test.mjs'), 'node --test');
+  // A tool is its own identity: its arguments (subcommands, file lists) never split it.
+  // b50ffd2d5eb peeled `pnpm exec vitest run <files>` to `vitest run <file>`, a new identity
+  // per test file that took the class's related maximum (9 GiB instead of 1.5 GiB).
+  assert.equal(identity('pnpm', 'exec', 'vitest', 'run', 'sources/a.test.ts'), 'vitest');
+  assert.equal(identity('npx', 'vitest', 'run', 'sources/b.test.ts'), 'vitest');
+  assert.equal(identity('vitest', 'sources/c.test.ts'), 'vitest');
 });

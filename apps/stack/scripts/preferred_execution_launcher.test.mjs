@@ -860,8 +860,9 @@ test('native remote dispatch carries its completed duration history into broker 
   const observations = join(resolve(worker.launcher, '../../../..'), 'duration-observations.jsonl');
   const payload = `import { appendFileSync } from 'node:fs';
 import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(worker.admissionClientPath).href)};
-const p99 = Number(process.env.HAPPIER_ADMISSION_DURATION_P99_MS || 0);
-if (p99) await new Promise(resolve => setTimeout(resolve, 2 * p99 + 1));
+// The run's duration reaches the broker, not the payload (P03-BROKER-W2): wait out its overrun deadline.
+const { nextOverrunAt } = await requestAdmissionSample(${JSON.stringify(worker.admissionRoot)});
+if (nextOverrunAt) await new Promise(resolve => setTimeout(resolve, Math.max(0, nextOverrunAt - Date.now()) + 1));
 appendFileSync(${JSON.stringify(observations)}, JSON.stringify(await requestAdmissionSample(${JSON.stringify(worker.admissionRoot)})) + '\\n');
 `;
   for (const checkout of [fixture.invocation.cwd, resolve(worker.launcher, '../../../..')]) {

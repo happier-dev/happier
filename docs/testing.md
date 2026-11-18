@@ -652,10 +652,13 @@ wrapper durations measured on 2026-11-13; those durations include preparation an
 admission, so it is an opportunity window rather than a payload runtime estimate.
 Subsequent releases, including recovered slots, are then pledged up to the head's
 minimum floor. The pledge is lent (EASY backfill) only to a waiter whose recorded
-run-time p99 ends before the head's projected start: the earliest time admitted
-slots, released at their own p99 (or now when unknown or overrun), free the head's
-minimum floor. Without that projection the pledge stays exclusive. Borrowed memory
-returns to the pledge on release. No new timer or tunable is used. The head is offered capacity first
+run-time p99 ends before the head's projected start and whose floor fits in the
+free plus pledged memory. The projected start comes from the same service-order
+simulation as AUTO placement's expected start: admitted slots release at their own
+p99 (or now when unknown or overrun), so the head still starts on time. A waiter
+without duration history never backfills. Borrowed memory returns to the pledge
+on release. A backfilled waiter's client logs `[preferred-execution] admitted as a
+backfill (…, borrowedKiB=…, headStartInMs=…)`. No new timer or tunable is used. The head is offered capacity first
 as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
 same pledge from unreserved memory and CPU. The sample exposes head age,
@@ -715,7 +718,14 @@ p99 from the compact per-class projection `duration-projection.json` (the 200 mo
 recent successful run times per class), never from the append-only
 `provenance.jsonl` audit log. Run time is the admitted payload's duration reported
 by the worker's admission client (`HSTACK_ADMISSION_RUN_MS:<id>:<ms>`), so worker
-queue wait is excluded; commands without admission record their wall time. The broker reports
+queue wait is excluded; commands without admission record their wall time. That
+class p99 describes the run's own payload admission only: preparation steps and
+producers inside the payload do not inherit it (windows2-linux 2026-11-18: a 1 h 50 min
+plugin batch carried its run's 404 s p99 and disabled backfill). The broker instead
+gives a request without a duration the nearest-rank p99 of its command identity's
+successful admitted run times (`identity-durations.json`, 200 per identity, recorded
+when the client reports a zero exit); an identity without a recorded success has
+no duration. The broker reports
 an `overruns` entry for each slot strictly older than twice that class p99, and
 `durationHistoryUnavailableCount` when a slot lacks usable duration metadata.
 It never kills overrun work or invents a threshold when history is unavailable.
@@ -977,9 +987,13 @@ runs of its exact project set. Only with no related record does it reserve the
 class's maximum kernel peak. Its first completion records its own peak, which sizes
 every later run. A routed dispatch admits its `bash -c` wrapper on the worker, so the
 dispatcher forwards the command's own argv and cwd (`--identity-arg=`/`--identity-cwd=`)
-and the identity is the command's (for example `apps/ui` + `pnpm exec vitest`), not
-the wrapper text, which embedded the file list and never repeated (2026-11-17: routed
-validation reserved 3.5-6.5 GiB p50 against recorded peaks of 1.1-1.7 GiB). A class
+and the identity is the command's, not the wrapper text, which embedded the file list
+and never repeated (2026-11-17: routed validation reserved 3.5-6.5 GiB p50 against
+recorded peaks of 1.1-1.7 GiB). The identity names the program that runs: `env
+NAME=value …` and `pnpm|npm|yarn exec`/`npx` launchers are peeled; a package manager
+keeps its script (`pnpm run test`), a script runner (`node`, `tsx`, `bash`) its file,
+and any other program is identified by its name alone, so `pnpm exec vitest run
+<files>` is `apps/ui` + `vitest` whatever the file list. A class
 without kernel history keeps the client's floor, as do dynamic export floors. Maxima live in the broker root's
 `identity-kernel-peaks.json`. At succession each recovered slot reserves
 max(its job scope's `memory.current`, its identity kernel peak) instead of its old

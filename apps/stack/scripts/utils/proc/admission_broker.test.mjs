@@ -422,7 +422,9 @@ async function acquire(root, floorKiB, t, extra = {}) {
     client.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
     const admitted = await client.next();
     assert.equal(admitted.kind, 'admitted');
-    return { admitted, release, slotAddress: reserved.slotAddress };
+    // A slot line from the client (as runAdmittedTask writes slot-peak/slot-completed).
+    const report = line => Promise.all([...peers].map(peer => new Promise(done => peer.write(JSON.stringify(line) + '\n', done))));
+    return { admitted, reserved, release, report, slotAddress: reserved.slotAddress };
   } };
 }
 
@@ -1001,7 +1003,7 @@ test('a routed command is identified by its own argv, not the remote wrapper scr
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify(['validation', 'apps/ui', 'pnpm exec vitest', ['.']])]: 1.5 * gib,
+    [JSON.stringify(['validation', 'apps/ui', 'vitest', ['.']])]: 1.5 * gib,
     [JSON.stringify(['validation', '.', 'node other.mjs', ['.']])]: 9 * gib }));
   const floorFile = join(root, 'floor.txt');
   const wrapper = `set -euo pipefail; cd -- apps/ui; node -e 'require("node:fs").writeFileSync(${JSON.stringify(floorFile)}, process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB)' x.test.ts`;
@@ -1607,6 +1609,48 @@ test('an aged head lends its pledge only to jobs projected to finish before its 
   await ending.release();
   await head.admit();
   assert.equal((await requestAdmissionSample(root)).waitingCount, 0, 'the head starts at its projected time');
+});
+
+test('windows2-linux 2026-11-18: a preparation holder sized by its own recorded duration lets 1-7 GiB waiters backfill and the head still starts on time', linux, async t => {
+  // 16:13-17:26Z: a 10.5 GiB plugin batch (entry-load preparation) ran 1 h 50 min carrying its run's 404 s p99.
+  // Past that p99 the head projection was "now", so the 10.5 GiB head's 9 GiB pledge lent nothing to 33 waiters.
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 40, totalMemoryKiB: 40 }) });
+  const batch = { className: 'package-dist', component: '.', entry: 'node scripts/workspaces/ensureWorkspacePackagesBuilt.mjs', projects: ['.'] };
+  const hours = 3_600_000;
+  // History: the same preparation identity once completed successfully in 2 h.
+  const earlier = await (await acquire(root, 21, t, batch)).admit();
+  now += 2 * hours;
+  await earlier.report({ kind: 'slot-completed', status: 0 });
+  await earlier.release();
+  while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+  const timed = p99DurationMs => ({ durationClass: 'targeted-validation', p99DurationMs });
+  const holder = await (await acquire(root, 21, t, batch)).admit();
+  const pledger = await (await acquire(root, 18, t, timed(1_000))).admit();
+  const head = await acquire(root, 21, t, { className: 'package-dist', arrivedAt: now - headReservationDelayMs });
+  await pledger.release();
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 18, 'the overdue head pledges the release');
+  const untimed = await acquire(root, 2, t, { noWait: true });
+  assert.equal((await untimed.next()).reason, 'HSTACK_MEMORY_BUSY', 'a waiter without duration history does not backfill');
+  const outliving = await acquire(root, 2, t, { ...timed(3 * hours), noWait: true });
+  assert.equal((await outliving.next()).reason, 'HSTACK_MEMORY_BUSY', 'a waiter ending after the head can start does not backfill');
+  const backfills = [];
+  for (const floorKiB of [2, 6, 10]) {
+    const backfill = await (await acquire(root, floorKiB, t, { ...timed(404_000), noWait: true })).admit();
+    assert.ok(backfill.reserved.backfill?.borrowedKiB > 0, 'the backfill is announced to its waiter');
+    backfills.push(backfill);
+  }
+  assert.equal((await requestAdmissionSample(root)).activeCount, 4, '1-7 GiB waiters run beside the 10.5 GiB holder');
+  now += 404_000;
+  for (const backfill of backfills) await backfill.release();
+  // The pledge gets back what it lent plus the free unit the first backfill used.
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 19, 'released backfill memory goes to the head');
+  now += 2 * hours - 404_000;
+  await holder.report({ kind: 'slot-completed', status: 0 });
+  await holder.release();
+  await head.admit();
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 0, 'the head starts when the holder ends');
 });
 
 test('without projected run times the aged head pledge stays exclusive', linux, async t => {

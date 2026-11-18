@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
 import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
+import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 import { readLinuxWorkerProcesses } from './service_memory.mjs';
@@ -79,6 +80,12 @@ function headPriorityRank(request) {
 // or requests without a command identity, keep the client's class floor.
 const IDENTITY_FLOOR_ROUNDING_KIB = 512 * 1024;
 const IDENTITY_PEAKS_FILENAME = 'identity-kernel-peaks.json';
+// P03 ORCH 2026-11-18 (P03-BROKER-W2): a request without its run's duration (a
+// preparation step or a producer inside a run) is projected by its own identity's
+// successful admitted run times, with the same window and nearest-rank p99 as the
+// controller's run history. Without a recorded success it has no duration.
+const IDENTITY_DURATIONS_FILENAME = 'identity-durations.json';
+const IDENTITY_DURATION_CLASS = 'identity-history';
 // Systemic 20:31Z: class + component + script/entry + sorted projects, never argv.
 const identityKey = item => typeof item.entry === 'string' && item.entry && typeof item.component === 'string'
   ? JSON.stringify([item.resourceClass ?? item.className, item.component, item.entry, [...(item.projects ?? [])].sort()]) : null;
@@ -222,6 +229,29 @@ export function createAdmissionBroker({ root,
       }
     } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
     return identityPeaks;
+  }
+  let identityDurations;
+  function recordedIdentityDurations() {
+    if (identityDurations) return identityDurations;
+    identityDurations = new Map();
+    try {
+      for (const [key, durations] of Object.entries(JSON.parse(readFileSync(join(root, IDENTITY_DURATIONS_FILENAME), 'utf8')))) {
+        if (Array.isArray(durations) && durations.every(value => Number.isFinite(value) && value > 0)) identityDurations.set(key, durations);
+      }
+    } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
+    return identityDurations;
+  }
+  function recordIdentityDuration(key, durationMs) {
+    const durations = recordedIdentityDurations();
+    durations.set(key, [...(durations.get(key) ?? []), durationMs].slice(-DURATION_WINDOW));
+    const target = join(root, IDENTITY_DURATIONS_FILENAME);
+    writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(durations)), { mode: 0o600 });
+    renameSync(`${target}.tmp`, target);
+  }
+  function recordedIdentityDuration(item) {
+    const key = identityKey(item);
+    const p99DurationMs = key === null ? null : nearestRankP99(recordedIdentityDurations().get(key) ?? []);
+    return p99DurationMs > 0 ? { durationClass: IDENTITY_DURATION_CLASS, p99DurationMs } : {};
   }
   const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
   function classKernelMaximumKiB(resourceClass) {
@@ -654,32 +684,26 @@ export function createAdmissionBroker({ root,
     if (slot.kernelPeak) {
       try { recordIdentityPeak(slot.kernelPeak, slot.kernelPeak.peakKiB); } catch (error) { recordFailure(error); }
     }
+    if (slot.succeeded && slot.identityKey && slot.admitted && Number.isFinite(slot.admittedAt)) {
+      try { recordIdentityDuration(slot.identityKey, Math.max(1, Date.now() - slot.admittedAt)); } catch (error) { recordFailure(error); }
+    }
     await releaseDecision();
   }
   async function releaseDecision() {
     await observe();
     await drain();
   }
-  /** AUTO placement compares hosts by when a new arrival would start. Simulate
-   * the queue in its service order against the achievable memory: admitted slots
-   * release at their remaining recorded p99, and each waiter starts at the first
-   * release that frees its floor, so floors that cannot run together run one
-   * after another (windows2-linux 2026-11-17: 16 GiB waiters on a 21 GiB host).
-   * The arrival starts once every waiter ahead has started and the memory left
-   * fits the smallest floor ahead (any memory when none waits), else at the next
-   * release. A slot or waiter without a recorded p99 takes the mean recorded p99;
-   * with none recorded, or no achievable memory, there is no projection (null). */
-  function projectedArrivalStartMs(now) {
+  /** The one start simulation behind every projection (AUTO placement and EASY
+   * backfill): admitted slots release at their remaining recorded p99 (a slot
+   * without one at `unrecordedMs`) against the achievable memory, and a floor
+   * above capacity runs alone. The returned `startAt(floorKiB, runMs)` gives the
+   * earliest start (ms from now) of a job after those already started, and
+   * starts it when `runMs` is given. */
+  function simulateServiceOrder(now, unrecordedMs) {
     const capacityKiB = sample.achievableMemoryKiB;
-    const admitted = [...slots.values()].map(slot => ({ floorKiB: slot.floorKiB, p99Ms: slot.p99DurationMs,
-      remainingMs: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : undefined }));
-    const queued = waiting.filter(item => !item.slot).map(item => ({ floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB,
-      p99Ms: item.p99DurationMs, remainingMs: item.p99DurationMs > 0 ? item.p99DurationMs : undefined }));
-    const recorded = [...admitted, ...queued].filter(entry => entry.remainingMs !== undefined);
-    if (!(capacityKiB > 0) || ((admitted.length || queued.length) && !recorded.length)) return admitted.length || queued.length ? null : 0;
-    const meanMs = recorded.reduce((sum, entry) => sum + entry.p99Ms, 0) / recorded.length;
-    // Running jobs as [end, floor]; a floor above capacity runs alone.
-    const running = admitted.map(entry => [entry.remainingMs ?? meanMs, Math.min(entry.floorKiB, capacityKiB)]);
+    // Running jobs as [end, floor].
+    const running = [...slots.values()].map(slot => [slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)
+      ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : unrecordedMs, Math.min(slot.floorKiB, capacityKiB)]);
     let at = 0;
     let usedKiB = running.reduce((sum, [, floorKiB]) => sum + floorKiB, 0);
     const releaseNext = () => {
@@ -688,36 +712,41 @@ export function createAdmissionBroker({ root,
       at = Math.max(at, end);
       usedKiB -= floorKiB;
     };
-    const releaseDone = () => { while (running.length && running.some(([end]) => end <= at)) releaseNext(); };
-    for (const entry of queued) {
-      const floorKiB = Math.min(entry.floorKiB, capacityKiB);
-      releaseDone();
-      while (capacityKiB - usedKiB < floorKiB && running.length) releaseNext();
-      running.push([at + (entry.remainingMs ?? meanMs), floorKiB]);
-      usedKiB += floorKiB;
-    }
-    releaseDone();
-    const arrivalKiB = queued.length ? Math.min(...queued.map(entry => Math.min(entry.floorKiB, capacityKiB))) : 1;
-    while (capacityKiB - usedKiB < arrivalKiB && running.length) releaseNext();
-    return Math.ceil(at);
+    return (floorKiB, runMs) => {
+      const neededKiB = Math.min(floorKiB, capacityKiB);
+      while (running.length && running.some(([end]) => end <= at)) releaseNext();
+      while (capacityKiB - usedKiB < neededKiB && running.length) releaseNext();
+      if (runMs !== undefined) {
+        running.push([at + runMs, neededKiB]);
+        usedKiB += neededKiB;
+      }
+      return at;
+    };
   }
-  /** EASY backfill projection: the earliest time the head's minimum floor fits
-   * if admitted slots release at their recorded p99 run time. A slot without a
-   * duration or past its p99 is assumed to release now, which only moves the
+  /** AUTO placement compares hosts by when a new arrival would start. Simulate
+   * the queue in its service order, so floors that cannot run together run one
+   * after another (windows2-linux 2026-11-17: 16 GiB waiters on a 21 GiB host).
+   * The arrival starts once every waiter ahead has started and the memory left
+   * fits the smallest floor ahead (any memory when none waits), else at the next
+   * release. A slot or waiter without a recorded p99 takes the mean recorded p99;
+   * with none recorded, or no achievable memory, there is no projection (null). */
+  function projectedArrivalStartMs(now) {
+    const queued = waiting.filter(item => !item.slot).map(item => ({ floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB,
+      runMs: item.p99DurationMs > 0 ? item.p99DurationMs : undefined }));
+    const recorded = [...[...slots.values()].filter(slot => slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)).map(slot => slot.p99DurationMs),
+      ...queued.filter(entry => entry.runMs !== undefined).map(entry => entry.runMs)];
+    const work = slots.size + queued.length;
+    if (!(sample.achievableMemoryKiB > 0) || (work && !recorded.length)) return work ? null : 0;
+    const meanMs = recorded.reduce((sum, ms) => sum + ms, 0) / recorded.length;
+    const startAt = simulateServiceOrder(now, meanMs);
+    for (const entry of queued) startAt(entry.floorKiB, entry.runMs ?? meanMs);
+    return Math.ceil(startAt(queued.length ? Math.min(...queued.map(entry => entry.floorKiB)) : 1));
+  }
+  /** EASY backfill: when the head's minimum floor fits in that simulation. A
+   * slot without a duration or past its p99 releases now, which only moves the
    * projection earlier and so never admits a backfill that could delay the head. */
   function projectedHeadStartAt(head, now) {
-    let freeKiB = slotResourceBudget().unreservedMemoryKiB;
-    const needKiB = head.floorOptions?.at(-1).floorKiB ?? head.floorKiB;
-    if (freeKiB >= needKiB) return now;
-    const releases = [...slots.values()].map(slot => ({ floorKiB: slot.floorKiB,
-      at: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(now, slot.admittedAt + slot.p99DurationMs) : now }))
-      .sort((left, right) => left.at - right.at);
-    for (const release of releases) {
-      freeKiB += release.floorKiB;
-      if (freeKiB >= needKiB) return release.at;
-    }
-    // Slots alone cannot make room; external memory decides, so lend nothing.
-    return null;
+    return now + simulateServiceOrder(now, 0)(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB);
   }
   async function drain() {
     // Capacity already free when a request becomes head remains available to
@@ -766,10 +795,12 @@ export function createAdmissionBroker({ root,
         && accountedCpuCores(item, option.workers) <= availableCpuCores);
       // A job projected to finish before the head can start may borrow the
       // head's pledged memory; its release returns it before it is needed.
-      const borrowKiB = !item.floorOptions && headStartAt !== null && headStartAt !== undefined
+      const borrowKiB = !item.floorOptions && headStartAt !== undefined
         && item.p99DurationMs > 0 && Date.now() + item.p99DurationMs <= headStartAt
         && item.floorKiB > availableMemoryKiB && item.floorKiB <= availableMemoryKiB + lendableKiB
         && accountedCpuCores(item) <= availableCpuCores ? item.floorKiB - availableMemoryKiB : 0;
+      // Announced to the waiter (its client logs it), so a backfill is visible in the run's log.
+      const backfill = borrowKiB > 0 ? { borrowedKiB: borrowKiB, headStartInMs: Math.max(0, headStartAt - Date.now()) } : undefined;
       if (borrowKiB > 0) {
         availableMemoryKiB += borrowKiB;
         lendableKiB -= borrowKiB;
@@ -806,7 +837,7 @@ export function createAdmissionBroker({ root,
       const slotId = randomUUID();
       const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
-        slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs,
+        slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: identityKey(item),
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
@@ -817,7 +848,8 @@ export function createAdmissionBroker({ root,
       }
       if (headPledge?.item === item) reserveHead();
       item.resourceSnapshot = resources.snapshot;
-      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers });
+      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers,
+        ...(backfill ? { backfill } : {}) });
     }
     reserveHead(head);
     refreshWatchers();
@@ -845,9 +877,14 @@ export function createAdmissionBroker({ root,
         enqueue(() => { if (!slot.kernelPeak || slot.kernelPeak.peakKiB < peakKiB) slot.kernelPeak = { peakKiB, className, resourceClass, projects, component, entry }; });
         return;
       }
+      if (metadata.kind === 'slot-completed') {
+        if (metadata.status === 0) enqueue(() => { slot.succeeded = true; });
+        return;
+      }
       if (metadata.kind === 'slot-identity') {
         if (typeof metadata.className !== 'string') return;
         enqueue(() => {
+          slot.identityKey ??= identityKey(metadata);
           const key = slot.recovered ? identityKey(metadata) : null;
           const peak = key === null ? undefined : recordedIdentityPeaks().get(key);
           if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
@@ -940,6 +977,7 @@ export function createAdmissionBroker({ root,
       item.headPriority = Math.max(item.ownPriority, item.preparedPriority);
       item.floorKiB = recordedIdentityFloorKiB(item);
       item.floorOptions = recordedIdentityFloorOptions(item);
+      if (item.p99DurationMs === undefined) Object.assign(item, recordedIdentityDuration(item));
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.

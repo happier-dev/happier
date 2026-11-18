@@ -1785,6 +1785,11 @@ function resolveRemoteExecutionPidFile(target, executionId) {
   return `${normalizedHome}/remote-exec/${requireRemoteExecutionId(executionId)}.pid`;
 }
 
+// The run's recorded duration (executor) describes the run's own payload
+// admission. Preparation steps and producers inside the payload are projected by
+// their own recorded history on the worker (P03 ORCH 2026-11-18, P03-BROKER-W2).
+const RUN_ADMISSION_DURATION_KEYS = ['HAPPIER_ADMISSION_DURATION_CLASS', 'HAPPIER_ADMISSION_DURATION_P99_MS'];
+
 export function buildRemoteExecCommand(
   target,
   { executionId, cwd = '.', commandArgs, environment = {}, preparation = null, commandPolicy = null, admissionClass = '', admissionMode = 'wait', lifetimeStdin = false, controlStdin = false } = {},
@@ -1797,7 +1802,8 @@ export function buildRemoteExecCommand(
     throw new Error('[dev-targets] remote command arguments cannot contain NUL bytes');
   }
   const workingDirectory = requireRemoteRelativeWorkingDirectory(target, cwd);
-  const environmentEntries = normalizeRemoteEnvironment(environment);
+  const runDurationEntries = normalizeRemoteEnvironment(environment).filter(([key]) => RUN_ADMISSION_DURATION_KEYS.includes(key));
+  const environmentEntries = normalizeRemoteEnvironment(environment).filter(([key]) => !RUN_ADMISSION_DURATION_KEYS.includes(key));
   const normalizedExecutionId = requireRemoteExecutionId(executionId);
   const pidFile = resolveRemoteExecutionPidFile(target, normalizedExecutionId);
   if (target.platform !== 'windows' && (preparation || admissionClass)) {
@@ -1832,7 +1838,8 @@ export function buildRemoteExecCommand(
       // dist compilers acquire their own canonical admission before their lock.
       // Resolve physical installed-tree identity on the executing worker.
       body.push(`workspace_locks=$(node ${posixQuote(`${repoDir}/apps/stack/scripts/utils/dev_targets/remote_commands.mjs`)} --workspace-locks ${[repoDir, policy.workspaceLock, policy.bootstrap, policy.validation, policy.commandClass].map(posixQuote).join(' ')})`);
-      const admittedArgs = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`, `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
+      const admittedArgs = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
+        ...runDurationEntries.map(([key, value]) => `${key}=${value}`), `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`,
         ...(admissionMode === 'try' ? ['--no-wait'] : [])];
       const admittedCommand = `${admittedArgs.map(posixQuote).join(' ')} "--workspace-locks=$workspace_locks" -- ${args.map(posixQuote).join(' ')}`;

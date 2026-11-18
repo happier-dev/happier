@@ -11,7 +11,7 @@ export const EXECUTION_DURATION_PROJECTION_FILENAME = 'duration-projection.json'
 // defining it (p99 = second largest) while staying a few KiB per class. The
 // append-only provenance log remains the audit record; dispatch and the TUI
 // read only this projection (the log reached 811 MB / 1.91M lines, 2026-11-14).
-const DURATION_WINDOW = 200;
+export const DURATION_WINDOW = 200;
 
 const nativeDirectory = stackBaseDir => join(stackBaseDir, 'dev-target-command-load-native');
 
@@ -161,7 +161,7 @@ export async function readExecutionDurationProjection(stackBaseDir) {
   return validDurations((await readProjectionFile(stackBaseDir))?.durations);
 }
 
-function nearestRankP99(durations) {
+export function nearestRankP99(durations) {
   const sorted = [...durations].sort((left, right) => left - right);
   return sorted[Math.ceil(sorted.length * 0.99) - 1] ?? null;
 }
