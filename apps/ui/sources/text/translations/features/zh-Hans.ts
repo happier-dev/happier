@@ -14840,7 +14840,7 @@ const zhHans: typeof en = {
         title: "已计划",
         writesHere: "写入此处",
         empty: "没有计划写入此处的工作流。",
-        step: ({ ordinal, title }) => `步骤 ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `来自 ${source} · 步骤 ${step}`,
         notifyOnlyReported: "仅在智能体报告了内容时",
         notifyOnlyReportedDescription: "智能体未返回文本时跳过通知。",
@@ -19203,6 +19203,9 @@ const zhHans: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: '此工作流已不可用',
         removeTrigger: '移除触发器',
+        openWorkflow: '打开工作流',
+        editTrigger: '编辑触发器',
+        unlink: '取消关联',
         legacyCreated: '在 Happier 0.2 中创建',
         legacyUnavailable: '旧触发器不可用',
         sessionKeyRequired: '需要会话密钥',
@@ -19282,6 +19285,7 @@ const zhHans: WorkflowTriggersCopy = {
         openRun: "打开运行",
         cancel: "取消",
         aCheck: "一项检查",
+        aCheckLead: "一项检查",
     },
     link: {
         title: ({ name }: { name: string }) => `将工作流关联到 ${name}`,
@@ -19851,6 +19855,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         connecting: '正在连接…',
         paused: '你的 Home 离线期间已暂停',
         failed: '无法开始监听',
+        historyFailed: '无法加载之前的事件',
         filtersAccessibility: '显示事件',
         filters: {
             all: '全部',

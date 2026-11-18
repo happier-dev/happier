@@ -100,9 +100,10 @@ it('names a retained native cause through the exact Run header and preserves its
   // The row says where the retained cause ran, never a mechanism word.
   const machine = await renderHook(() => useServerScopedMachineLabel(lifetime.scope.serverId, source.machineId));
   await expect.poll(() => machine.getCurrent()).toEqual(expect.any(String));
-  expect(hook.getCurrent()?.subtitle).toBe(machine.getCurrent());
+  // The title says what happened; the line beneath names the Run and where it ran, so a long name never hides it.
+  expect(hook.getCurrent()?.subtitle).toBe(`${run.display!.title} · ${machine.getCurrent()}`);
   expect(hook.getCurrent()).toMatchObject({ fact,
-    title: t('workflows.events.runFinished', { workflow: run.display!.title }),
+    title: t('workflows.events.runFinished', { workflow: t('workflows.events.someWorkflow') }),
     open: { href: createMachineExecutionRunRoute(lifetime.scope.serverId, source.machineId, source.runId) } });
   expect(reads).toEqual([{ runId: source.runId, includeStructured: false, includeLatestToolResult: false }]);
   run = executionRun('Review the renamed deployment');

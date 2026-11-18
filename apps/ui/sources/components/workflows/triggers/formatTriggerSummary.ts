@@ -243,9 +243,12 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             return t(facts.mode === 'notify' ? 'workflows.triggers.card.actionSentence.beforeNotify' : 'workflows.triggers.card.actionSentence.beforeWait', { action });
         }
         case 'schedule':
+            // The instant in the viewer's clock, as event times and Every day read: the year only when it isn't this
+            // year, and no zone (every time on screen is the viewer's own).
             if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
                 time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {
-                    year: 'numeric', month: 'short', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT, timeZoneName: 'short',
+                    ...(new Date(trigger.schedule.scheduledAt).getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' as const }),
+                    month: 'short', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT,
                 }),
             });
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null

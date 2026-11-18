@@ -48,6 +48,11 @@ describe('formatTriggerSummary', () => {
         expect(summary).toContain('workflows.triggers.once.at(time=');
         expect(summary).toContain('2030');
         expect(summary).not.toContain('everyMinutes');
+        // This year's instant reads like every other time on screen: no year, no zone.
+        const thisYear = new Date(new Date().getFullYear(), 10, 18, 0, 1).getTime();
+        const sameYear = formatTriggerSummary({ kind: 'schedule', schedule: { kind: 'once', scheduledAt: thisYear } });
+        expect(sameYear).not.toContain(String(new Date().getFullYear()));
+        expect(sameYear).not.toMatch(/GMT|UTC/u);
     });
     it('waits for a scheduler projection instead of presenting a retained past occurrence as the next run', () => {
         const now = new Date(2026, 9, 20, 10).getTime();

@@ -14856,7 +14856,7 @@ const es: typeof en = {
         title: "Programado",
         writesHere: "Escribe aquí",
         empty: "No hay workflows programados para escribir aquí.",
-        step: ({ ordinal, title }) => `paso ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `De ${source} · paso ${step}`,
         notifyOnlyReported: "Solo si el agente informó de algo",
         notifyOnlyReportedDescription: "Omitir la notificación si el agente no devuelve texto.",
@@ -19265,6 +19265,9 @@ const es: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: 'Este flujo ya no está disponible',
         removeTrigger: 'Quitar disparador',
+        openWorkflow: 'Abrir flujo de trabajo',
+        editTrigger: 'Editar disparador',
+        unlink: 'Desvincular',
         legacyCreated: 'Creado en Happier 0.2',
         legacyUnavailable: 'Disparador antiguo no disponible',
         sessionKeyRequired: 'Se necesita la clave de sesión',
@@ -19344,6 +19347,7 @@ const es: WorkflowTriggersCopy = {
         openRun: "Abrir ejecución",
         cancel: "Cancelar",
         aCheck: "una comprobación",
+        aCheckLead: "Una comprobación",
     },
     link: {
         title: ({ name }: { name: string }) => `Vincular un flujo a ${name}`,
@@ -19913,6 +19917,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
         connecting: 'Conectando…',
         paused: 'En pausa mientras tu Home está sin conexión',
         failed: 'No se pudo empezar a escuchar',
+        historyFailed: 'No se pudieron cargar los eventos anteriores',
         filtersAccessibility: 'Mostrar eventos',
         filters: {
             all: 'Todo',

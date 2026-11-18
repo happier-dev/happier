@@ -230,8 +230,9 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             })}
         />
     );
-    return React.useMemo(() => ({ pending, open: openRow, add, remove, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
-        [pending, openRow, add, remove, toggle, popover, thenOptions.resolveWorkflowTitle]);
+    return React.useMemo(() => ({ pending, open: openRow, add, remove, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle,
+        isWorkflowTitlePending: thenOptions.isWorkflowTitlePending }),
+        [pending, openRow, add, remove, toggle, popover, thenOptions.resolveWorkflowTitle, thenOptions.isWorkflowTitlePending]);
 }
 
 export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;

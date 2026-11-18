@@ -73,14 +73,19 @@ const PREDEPLOY = {
   ...FREEZE,
   automationId: 'automation-pre-deploy',
   triggerId: 'trigger-pre-deploy',
-  workflowId: 'artifact-pre-deploy-checks',
+  workflowId: '6f1a2c3d-4b5e-4f60-8a71-0c2d3e4f5a61',
 };
 const NOTIFY = {
   ...FREEZE,
   automationId: 'automation-tell-releases',
   triggerId: 'trigger-tell-releases',
-  workflowId: 'artifact-tell-releases',
+  workflowId: '6f1a2c3d-4b5e-4f60-8a71-0c2d3e4f5a62',
   mode: 'notify' as const,
+};
+/** The saved workflows the scenes name, so a card reads "Pre-deploy checks" as it does live, never "A check". */
+export const APPROVAL_CHECKS_WORKFLOW_TITLES: Readonly<Record<string, string>> = {
+  [PREDEPLOY.workflowId]: 'Pre-deploy checks',
+  [NOTIFY.workflowId]: 'Tell #releases',
 };
 const ref = (row: Readonly<{ automationId: string; triggerId: string }>) => ({
   automationId: row.automationId,

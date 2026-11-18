@@ -11,7 +11,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, SESSION_TRIGGER_WHEN_KINDS, type TriggerWhenValue } from './sessionTriggerForm';
-import { resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
+import { ACTION_PHASE_GLYPHS, resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
@@ -198,8 +198,6 @@ export function buildWorkflowTriggerStartOptions(
     return [...led, ...options.filter((option) => !resource.startIds.includes(option.id))];
 }
 
-/** The relation glyph of an Action trigger: before (into the Action) and after (out of it). */
-export const ACTION_PHASE_GLYPHS = { before: 'sign-in', after: 'sign-out' } as const satisfies Record<ActionPhase, IconName>;
 
 /**
  * The When a newly chosen start begins with; a session event keeps a Session already chosen. An Action

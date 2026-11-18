@@ -14,6 +14,8 @@ import type { HappierWorkStatusTone } from './workStatus.js';
 export type HappierTriggerRowBodyProps = Readonly<{
   testID: string;
   title: string;
+  /** Drawn in the title's place while the name is still arriving (the skeleton title bar); `title` stays the accessible name. */
+  titleContent?: ReactNode;
   subtitle: ReactNode;
   subtitleText: string;
   accessibilityLabel?: string;
@@ -50,6 +52,8 @@ export type HappierTriggerRowHost = Readonly<{
 export type HappierTriggerRowProps = Readonly<{
   testID: string;
   title: string;
+  /** The title slot's placeholder while the name is still arriving. */
+  titleContent?: ReactNode;
   /** Already qualified/localized by the caller, including Off or review attention. */
   qualifier?: string | null;
   qualifierAccessibilityLabel?: string;
@@ -82,7 +86,7 @@ const TRAILING_CONTROLS = Object.freeze({ flexDirection: 'row', alignItems: 'cen
 function DefaultRow(props: HappierTriggerRowBodyProps) {
   const accessory = props.menu ? <View style={TRAILING_CONTROLS}>{props.menu}{props.toggle}</View> : props.toggle;
   return <HappierListItem testID={props.testID} title={props.title}
-    titleContent={!props.enabled && !props.attention ? <HappierText variant="label" tone="muted">{props.title}</HappierText> : undefined}
+    titleContent={props.titleContent ?? (!props.enabled && !props.attention ? <HappierText variant="label" tone="muted">{props.title}</HappierText> : undefined)}
     subtitle={props.subtitleText || undefined}
     subtitleContent={props.subtitle ? <HappierText variant="micro" tone={props.attention ? 'attention' : props.enabled ? 'secondary' : 'muted'}>{props.subtitle}</HappierText> : undefined}
     accessibilityLabel={props.accessibilityLabel}
@@ -134,7 +138,7 @@ export function HappierTriggerRow(props: HappierTriggerRowProps) {
   const toggle = <Toggle testID={`${props.testID}-switch`} value={props.enabled} disabled={props.toggleDisabled}
     accessibilityLabel={props.toggleLabel} onValueChange={props.onToggle} hitReach={toggleOnActions ? ACTIONS_LINE_HIT_REACH : undefined} />;
   return <>
-    <Row testID={props.testID} title={props.title} subtitle={subtitle} subtitleText={line}
+    <Row testID={props.testID} title={props.title} {...(props.titleContent ? { titleContent: props.titleContent } : {})} subtitle={subtitle} subtitleText={line}
       accessibilityLabel={props.qualifierAccessibilityLabel
         ? [props.title, lead, props.qualifierAccessibilityLabel, outcome?.text, provenance].filter(Boolean).join('. ')
         : undefined}

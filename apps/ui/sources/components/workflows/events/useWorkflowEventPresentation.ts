@@ -153,7 +153,7 @@ export function useWorkflowEventPresentation(
           lines.push({
             key: 'folder',
             label: t('workflows.events.folder'),
-            value: formatSessionPath(sessionPath),
+            value: sessionPath,
             mono: true,
           });
         return {
@@ -205,8 +205,10 @@ export function useWorkflowEventPresentation(
       case 'run': {
         const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : executionTitle!;
         const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
-        // What the row is about after the title: how the Run ended, else where a retained native cause ran.
-        const subtitle = result ?? (executionSource === null ? null : joinHappierFacts(sessionName, machineName) || null);
+        // As a Machine event: the title says what happened, the line under it which workflow and how it ended (or where
+        // a retained native cause ran), so a long workflow name never truncates "finished" away (F3).
+        const subtitle = joinHappierFacts(workflow,
+          result ?? (executionSource === null ? null : joinHappierFacts(sessionName, machineName) || null)) || null;
         const href = executionSource === null ? createWorkflowRunRoute(fact.runId, serverId)
           : createMachineExecutionRunRoute(serverId ?? '', executionSource.machineId, executionSource.runId);
         return {
@@ -219,7 +221,7 @@ export function useWorkflowEventPresentation(
             fact.event === 'needs_attention'
               ? 'workflows.events.runNeedsYou'
               : 'workflows.events.runFinished',
-            { workflow },
+            { workflow: t('workflows.events.someWorkflow') },
           ),
           lines: [
             {
@@ -246,8 +248,10 @@ function readSessionMachineId(
   return row?.metadata?.machineId ?? null;
 }
 
+/** The Session's folder as every Session row says it: home-relative on its own Machine's home (F9c). */
 function readSessionPath(
   row: SessionListRenderableSession | null,
 ): string | null {
-  return row?.metadata?.path ?? null;
+  const path = row?.metadata?.path;
+  return path ? formatSessionPath(path, row?.metadata?.homeDir ?? undefined) : null;
 }

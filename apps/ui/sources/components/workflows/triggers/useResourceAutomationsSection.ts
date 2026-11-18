@@ -101,8 +101,8 @@ function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTri
         ...(session ? { lifetimeSessionId: session.sessionId } : {}) });
     const projected = React.useMemo(() => read.attachedPage ? projectAccountTriggerRows({
         sets: read.sets, attachedPage: read.attachedPage, accountId: accountLifetime?.scope.accountId,
-        resolveWorkflowTitle: editor.resolveWorkflowTitle,
-    }) : EMPTY_ROWS, [read.sets, read.attachedPage, accountLifetime?.scope.accountId, editor.resolveWorkflowTitle]);
+        resolveWorkflowTitle: editor.resolveWorkflowTitle, isWorkflowTitlePending: editor.isWorkflowTitlePending,
+    }) : EMPTY_ROWS, [read.sets, read.attachedPage, accountLifetime?.scope.accountId, editor.resolveWorkflowTitle, editor.isWorkflowTitlePending]);
     const rows = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'direct'), [projected]);
     const also = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'context'), [projected]);
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0 };

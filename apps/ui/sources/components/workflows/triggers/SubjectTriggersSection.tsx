@@ -14,6 +14,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { Typography } from '@/constants/Typography';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
@@ -152,11 +154,14 @@ export const SubjectTriggersSectionContent = React.memo(
     const serverId = accountLifetime?.scope.serverId;
     // Another person's trigger and a broader one that also matches here are read here and changed in their
     // workflow: the row opens it (its trigger editor when it has no saved workflow).
+    const openWorkflow = React.useCallback((workflowId: string) => {
+      router.push({ pathname: '/workflows/[id]', params: { id: workflowId, ...(serverId ? { serverId } : {}) } } as never);
+    }, [router, serverId]);
     const openReadOnly = React.useCallback((row: AccountTriggerRow, anchor: React.RefObject<View | null>) => {
       const workflowId = row.attachment?.workflowDefinitionId;
-      if (workflowId) router.push({ pathname: '/workflows/[id]', params: { id: workflowId, ...(serverId ? { serverId } : {}) } } as never);
+      if (workflowId) openWorkflow(workflowId);
       else void editor.open(row, anchor);
-    }, [editor, router, serverId]);
+    }, [editor, openWorkflow]);
     const close = () => setOpening(null);
     const sentenceKey = React.useRef(0);
     const openSentence = React.useCallback((starter: SubjectSentenceStarter | null, anchor: React.RefObject<View | null>, options?: SessionWorkflowSentenceOptions) => {
@@ -211,7 +216,7 @@ export const SubjectTriggersSectionContent = React.memo(
               accessibilityLabel={t('workflows.triggers.section.link')} tooltip={t('workflows.triggers.section.link')}
               onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })} />
           </View>
-        ) : linkSlot === 'pending' ? (
+        ) : linkSlot === 'pending' || linkSlot === 'unavailable' ? (
           <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
             aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <IconButton iconName="link" variant="plain" accessibilityLabel={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
@@ -242,7 +247,7 @@ export const SubjectTriggersSectionContent = React.memo(
               onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
             />
           </View>
-        ) : linkSlot === 'pending' ? (
+        ) : linkSlot === 'pending' || linkSlot === 'unavailable' ? (
           <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
             aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
@@ -280,19 +285,21 @@ export const SubjectTriggersSectionContent = React.memo(
                   void editor.toggle(row, next);
                 }}
                 onRemove={editor.remove}
+                onOpenWorkflow={openWorkflow}
               />
             ))}
+        {/* Starts that could not be read say so under the rows they belong to, before the host's own rows. */}
+        {linkSlot === 'unavailable' && status !== 'failed' ? (
+          <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
+            title={t('workflows.triggers.section.startsUnavailable')}
+            action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />
+        ) : null}
         {props.children}
         {empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
         ))}
         {nothingHere ? (
           <SurfaceStateCard testID="subject-triggers-empty" size="line" kind="empty" title={t('workflows.triggers.section.empty')} />
-        ) : null}
-        {linkSlot === 'unavailable' && status !== 'failed' ? (
-          <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
-            title={t('workflows.triggers.section.startsUnavailable')}
-            action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />
         ) : null}
         {skippedNotSharedCount > 0 ? (
           <SurfaceStateCard testID="subject-triggers-not-shared" size="line" kind="unavailable"
@@ -421,12 +428,15 @@ const ReadOnlyAutomationRow = React.memo(function ReadOnlyAutomationRow(props: R
   return (
     <View ref={anchorRef} collapsable={false}>
       <Item testID={`subject-triggers-read-only:${row.automationId}:${row.triggerId ?? 'manual'}`}
-        title={row.subtitle} subtitle={joinHappierFacts(row.title, author)} dimmed={row.off}
+        title={row.subtitlePending ? WORKFLOW_NAME_PENDING_TITLE : row.subtitle} subtitle={joinHappierFacts(row.title, author)} dimmed={row.off}
         icon={<Icon name={row.glyph} color={theme.colors.text.secondary} />}
         onPress={() => props.onOpen(row, anchorRef)} />
     </View>
   );
 });
+
+/** A linked workflow's name still arriving holds the row's title slot with the loading bar, never "Run a workflow". */
+const WORKFLOW_NAME_PENDING_TITLE = <SkeletonTitle lineHeight={Typography.variant('body').lineHeight as number} testID="subject-triggers-name-pending" />;
 
 const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
   props: Readonly<{
@@ -438,16 +448,27 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
     onToggle: (next: boolean) => void;
     /** The editor's stable remover; the Action owns its confirmation. */
     onRemove: (row: AccountTriggerRow) => unknown;
+    /** Opens the saved workflow this trigger runs (the row's ⋯ → Open workflow). */
+    onOpenWorkflow: (workflowId: string) => void;
   }>,
 ) {
   const anchorRef = React.useRef<View>(null);
   const { row } = props;
-  const { onRemove } = props;
+  const { onRemove, onOpenWorkflow } = props;
   const openRef = React.useRef(props.onOpen);
   openRef.current = props.onOpen;
   React.useEffect(() => { if (props.reveal) openRef.current(anchorRef); }, [props.reveal]);
-  const menuActions = React.useMemo(() => [{ id: 'remove', title: t('workflows.triggers.row.removeTrigger'),
-    icon: 'trash' as const, destructive: true, onPress: () => { void onRemove(row); } }], [onRemove, row]);
+  // 05 S5: Open workflow, Edit trigger, then the destructive one. A saved workflow's trigger here is a link (Unlink keeps
+  // the workflow); an inline one is the trigger itself.
+  const workflowId = row.attachment?.workflowDefinitionId ?? null;
+  const menuActions = React.useMemo(() => [
+    ...(workflowId ? [{ id: 'open', title: t('workflows.triggers.row.openWorkflow'), icon: 'arrow-square-out' as const,
+      onPress: () => onOpenWorkflow(workflowId) }] : []),
+    { id: 'edit', title: t('workflows.triggers.row.editTrigger'), icon: 'pencil-simple' as const,
+      onPress: () => openRef.current(anchorRef) },
+    { id: 'remove', title: t(workflowId ? 'workflows.triggers.row.unlink' : 'workflows.triggers.row.removeTrigger'),
+      icon: workflowId ? 'link-break' as const : 'trash' as const, destructive: true, onPress: () => { void onRemove(row); } },
+  ], [onOpenWorkflow, onRemove, row, workflowId]);
   // A page sheet names a trigger by what it runs, its event the quiet line (the column leads with the event).
   const manual = row.triggerId === null;
   const outcome = useAttachmentOutcome(row);
@@ -456,6 +477,7 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
       <TriggerRow
         testID={`subject-triggers:${row.automationId}${row.triggerId ? `:${row.triggerId}` : ''}`}
         title={row.legacy?.title ?? (manual ? row.title : row.subtitle)}
+        {...(!manual && !row.legacy && row.subtitlePending ? { titleContent: WORKFLOW_NAME_PENDING_TITLE } : {})}
         qualifier={row.legacy?.qualifier ?? (manual ? row.subtitle : row.title)}
         enabled={!row.off}
         multiline={!!row.legacy}
@@ -472,6 +494,6 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
 
 const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-  /** Link's place while this resource's starts load: held, not drawn. */
+  /** Link's place while this resource's starts load or could not be read: held, not drawn, so Automate… never moves. */
   heldSlot: { opacity: 0 },
 }));

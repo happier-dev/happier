@@ -41,6 +41,8 @@ export type TriggerRowProps = Readonly<{
     testID: string;
     /** What it runs: a workflow's name or the inline Then ("Notify me → Discord"). */
     title: string;
+    /** The title slot while that name is still arriving (a skeleton bar); `title` remains the accessible name. */
+    titleContent?: React.ReactNode;
     /** When it fires ("Every Sunday at 9:00 AM", "When a turn ends"): leads the quiet line where no heading says it. */
     when?: string | null;
     /** The qualifier ("Files changed", "When it needs you"), when there is one. */
@@ -98,7 +100,8 @@ const triggerRowHost: HappierTriggerRowHost = {
                 {...(props.attention ? { subtitleLeading: <View style={collectionListStyles.troubleDot} /> } : {})}
                 icon={props.icon} selected={false} rightElement={trailing} onPress={props.onPress} />
         ) : (
-            <Item testID={props.testID} title={props.title} accessibilityLabel={props.accessibilityLabel}
+            <Item testID={props.testID} title={props.titleContent ?? props.title}
+                accessibilityLabel={props.accessibilityLabel ?? (props.titleContent ? [props.title, props.subtitleText].filter(Boolean).join('. ') : undefined)}
                 icon={props.icon} {...(props.multiline ? { titleLines: 0, subtitleLines: 0 } : {})}
                 {...(props.subtitle ? { subtitle: props.subtitle } : {})}
                 {...(props.attention ? { subtitleStyle: workStatusWordStyle('attention') }
@@ -144,7 +147,7 @@ export const TriggerRow = React.memo(function TriggerRow(props: TriggerRowProps)
     const qualifierAccessibilityLabel = qualifierTime && props.qualifierAccessibilityLabel
             ? formatNextScheduledRunAccessibilityLabel(qualifierTime.atMs, props.enabled, nowMs)
             : props.qualifierAccessibilityLabel ?? lead;
-    return <HappierTriggerRow testID={props.testID} title={props.title}
+    return <HappierTriggerRow testID={props.testID} title={props.title} {...(props.titleContent ? { titleContent: props.titleContent } : {})}
         qualifier={lead || null} provenance={editedLine}
         qualifierAccessibilityLabel={qualifierAccessibilityLabel || undefined} outcome={outcome}
         enabled={props.enabled} attention={Boolean(props.attention)} toggleDisabled={props.toggleDisabled}

@@ -16,6 +16,8 @@ export type AccountTriggerRow = Readonly<{
     glyph: IconName;
     /** "{then}": what it runs, or the neutral unavailable line when its source is gone. */
     subtitle: string;
+    /** What it runs is a saved workflow whose name is still being read: the row holds its title slot. */
+    subtitlePending?: true;
     /** Turned off: the row says "Off". */
     off: boolean;
     /** Its Workflow can no longer be opened: the row offers only Remove trigger. */
@@ -54,6 +56,7 @@ export function projectAccountTriggerRows(params: Readonly<{
     attachedPage?: WorkflowAttachedTriggerPageV1;
     accountId?: string;
     resolveWorkflowTitle: (ref: string) => string | null;
+    isWorkflowTitlePending?: (ref: string) => boolean;
     resolveMachineTitle?: (id: string) => string | null;
 }>): readonly AccountTriggerRow[] {
     if (params.attachedPage) {
@@ -74,6 +77,7 @@ export function projectAccountTriggerRows(params: Readonly<{
                 title: formatTriggerSetSummary([attachment.summary]),
                 glyph: resolveTriggerEventGroup(attachment.summary).glyph,
                 subtitle: legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(target, params.resolveWorkflowTitle),
+                ...(!legacy && target?.kind === 'workflow' && params.isWorkflowTitlePending?.(target.ref) ? { subtitlePending: true as const } : {}),
                 off: !attachment.enabled,
                 ...(set && isWorkflowTriggerSourceGone(set) ? { sourceGone: true as const } : {}),
                 ...(legacy ? { legacy } : {}),

@@ -51,6 +51,18 @@ export function listBuiltinWorkflowReferenceOptions(): readonly WorkflowReferenc
  * stores; missing or addressed saved references read only their exact headers without listing options.
  */
 export function useWorkflowReferenceTitles(refs: readonly string[], enabled = true, accountLifetime?: ServerAccountScopeLifetime | null): (ref: string) => string | null {
+    return useWorkflowReferenceTitleRead(refs, enabled, accountLifetime).title;
+}
+
+/**
+ * The same names, plus whether a saved reference's header is still being read: a row naming that
+ * workflow holds its title slot until the read settles instead of showing a generic "Run a workflow"
+ * that the name then replaces. A settled read with no name is not pending; the caller's fallback applies.
+ */
+export function useWorkflowReferenceTitleRead(refs: readonly string[], enabled = true, accountLifetime?: ServerAccountScopeLifetime | null): Readonly<{
+    title: (ref: string) => string | null;
+    isPending: (ref: string) => boolean;
+}> {
     accountLifetime = useWorkflowAccountLifetime(accountLifetime);
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = accountLifetime === undefined ? activeLifetime : accountLifetime;
@@ -61,9 +73,12 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
     const useStore = getStorage();
     const headers = useStore(useShallow(state => artifactIds.map(id => {
         const artifact = state.artifacts[id];
-        return enabled && lifetime?.isCurrent() && areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope)
-            && artifact?.isDecrypted && artifact.ownerAccountId && artifact.access ? artifact.rawHeader ?? null : null;
+        const current = enabled && lifetime?.isCurrent() && areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope);
+        // undefined: not in the store yet (its read may be in flight); null: read, with no readable header.
+        if (current && artifact === undefined) return undefined;
+        return current && artifact?.isDecrypted && artifact.ownerAccountId && artifact.access ? artifact.rawHeader ?? null : null;
     })));
+    const [activeSettledKey, setActiveSettledKey] = React.useState<string | null>(null);
     const addressed = !areServerAccountScopesEqual(activeLifetime?.scope, lifetime?.scope);
     const addressedReadEnabled = enabled && artifactIds.length > 0 && lifetime?.isCurrent() === true && addressed;
     const artifactKey = JSON.stringify(artifactIds);
@@ -77,7 +92,8 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
         const retirement = activeLifetime.onRetire(() => controller.abort());
         // Demand starts with the visible references. Later store deletions withdraw their names;
         // they never turn into a second read that could resurrect an already removed row.
-        void sync.refreshArtifactsByIds(missing, { signal: controller.signal }).catch(() => {});
+        void sync.refreshArtifactsByIds(missing, { signal: controller.signal }).catch(() => {})
+            .finally(() => { if (!controller.signal.aborted) setActiveSettledKey(artifactKey); });
         return () => { controller.abort(); retirement.dispose(); };
     }, [activeLifetime, addressed, artifactKey, enabled, lifetime, useStore]);
     const [addressedRead, setAddressedRead] = React.useState<Readonly<{
@@ -184,7 +200,17 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
         }
         return result;
     }, [addressedReadEnabled, addressedTitles, artifactIds, headers, language, lifetime, pluginTitles, pluginRefs, pluginsEnabled]);
-    return React.useCallback(ref => titles.get(ref) ?? null, [titles]);
+    const title = React.useCallback((ref: string) => titles.get(ref) ?? null, [titles]);
+    const isPending = React.useCallback((ref: string) => {
+        if (titles.has(ref)) return false;
+        const parsed = parseWorkflowDefinitionRefV1(ref);
+        if (parsed?.kind !== 'artifact') return false;
+        const index = artifactIds.indexOf(parsed.artifactId);
+        if (index < 0) return false;
+        return addressedReadEnabled ? addressedTitles === null
+            : headers[index] === undefined && activeSettledKey !== artifactKey;
+    }, [titles, artifactIds, addressedReadEnabled, addressedTitles, headers, activeSettledKey, artifactKey]);
+    return React.useMemo(() => ({ title, isPending }), [title, isPending]);
 }
 
 /**

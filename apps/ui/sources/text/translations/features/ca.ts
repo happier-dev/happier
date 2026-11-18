@@ -14957,7 +14957,7 @@ const ca: typeof en = {
         title: "Programat",
         writesHere: "Escriu aquí",
         empty: "No hi ha workflows programats per escriure aquí.",
-        step: ({ ordinal, title }) => `pas ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `De ${source} · pas ${step}`,
         notifyOnlyReported: "Només si l’agent ha informat d’alguna cosa",
         notifyOnlyReportedDescription: "Omet la notificació si l’agent no retorna text.",
@@ -19343,6 +19343,9 @@ const ca: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: 'Aquest flux ja no està disponible',
         removeTrigger: "Treu l'activador",
+        openWorkflow: 'Obre el flux de treball',
+        editTrigger: "Edita l'activador",
+        unlink: 'Desenllaça',
         legacyCreated: 'Creat a Happier 0.2',
         legacyUnavailable: 'Activador antic no disponible',
         sessionKeyRequired: 'Cal la clau de la sessió',
@@ -19422,6 +19425,7 @@ const ca: WorkflowTriggersCopy = {
         openRun: "Obre l’execució",
         cancel: "Cancel·la",
         aCheck: "una comprovació",
+        aCheckLead: "Una comprovació",
     },
     link: {
         title: ({ name }: { name: string }) => `Vincula un flux a ${name}`,
@@ -19991,6 +19995,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         connecting: 'Connectant…',
         paused: 'En pausa mentre la teva Home està fora de línia',
         failed: 'No s’ha pogut començar a escoltar',
+        historyFailed: 'No s’han pogut carregar els esdeveniments anteriors',
         filtersAccessibility: 'Mostra esdeveniments',
         filters: {
             all: 'Tot',

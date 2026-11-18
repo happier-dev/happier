@@ -20,6 +20,7 @@ import {
   type ApprovalChecksPersonScene,
   APPROVAL_CHECKS_SCENE_LABELS,
   APPROVAL_CHECKS_SCENES,
+  APPROVAL_CHECKS_WORKFLOW_TITLES,
   createApprovalChecksSceneFixture,
   type ApprovalChecksScene,
 } from '@/dev/testkit/fixtures/approvalAutomaticChecksFixtures';
@@ -74,7 +75,23 @@ function useSeededChecksContext(
         sessions: { ...state.sessions, [SESSION_ID]: session },
       });
     state.upsertWorkflowRuns([run], scope);
+    // The checks' saved workflows, by their headers' names, as the card reads them live.
+    const workflows = Object.entries(APPROVAL_CHECKS_WORKFLOW_TITLES)
+      .filter(([id]) => !state.artifacts[id])
+      .map(([id, title]): DecryptedArtifact => ({
+        id, title, headerVersion: 1, seq: 1, createdAt: nowMs, updatedAt: nowMs, isDecrypted: true,
+        ownerAccountId: scope.accountId, access: 'owner',
+        rawHeader: { kind: 'workflow-definition.v1', definitionId: id, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title } },
+      }));
+    if (workflows.length > 0) storage.setState((current) => ({
+      artifacts: { ...current.artifacts, ...Object.fromEntries(workflows.map((artifact) => [artifact.id, artifact])) },
+    }));
     return () => {
+      if (workflows.length > 0) storage.setState((current) => {
+        const artifacts = { ...current.artifacts };
+        for (const artifact of workflows) if (artifacts[artifact.id] === artifact) delete artifacts[artifact.id];
+        return { artifacts };
+      });
       storage.getState().removeWorkflowRun(APPROVAL_CHECKS_RUN_ID, scope);
       if (!seedsSession) return;
       storage.setState((current) => {

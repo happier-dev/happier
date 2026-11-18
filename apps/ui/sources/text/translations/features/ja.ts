@@ -14900,7 +14900,7 @@ const ja: typeof en = {
         title: "予定",
         writesHere: "ここに書き込み",
         empty: "ここに書き込むワークフローの予定はありません。",
-        step: ({ ordinal, title }) => `ステップ ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `送信元 ${source} · ステップ ${step}`,
         notifyOnlyReported: "エージェントが何かを報告した場合のみ",
         notifyOnlyReportedDescription: "エージェントがテキストを返さない場合は通知をスキップします。",
@@ -19263,6 +19263,9 @@ const ja: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: 'このワークフローは利用できなくなりました',
         removeTrigger: 'トリガーを削除',
+        openWorkflow: 'ワークフローを開く',
+        editTrigger: 'トリガーを編集',
+        unlink: 'リンクを解除',
         legacyCreated: 'Happier 0.2 で作成',
         legacyUnavailable: '以前のトリガーを利用できません',
         sessionKeyRequired: 'セッションの鍵が必要です',
@@ -19342,6 +19345,7 @@ const ja: WorkflowTriggersCopy = {
         openRun: "実行を開く",
         cancel: "キャンセル",
         aCheck: "確認",
+        aCheckLead: "確認",
     },
     link: {
         title: ({ name }: { name: string }) => `${name} にワークフローをリンク`,
@@ -19911,6 +19915,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         connecting: '接続中…',
         paused: 'Home がオフラインの間は一時停止中',
         failed: '受信を開始できませんでした',
+        historyFailed: '以前のイベントを読み込めませんでした',
         filtersAccessibility: 'イベントを表示',
         filters: {
             all: 'すべて',

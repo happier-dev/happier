@@ -18,7 +18,7 @@ import { Modal } from '@/modal';
 import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
-import { ApprovalAutomaticChecks, useApprovalAutomaticChecksControls } from '@/components/approvals/ApprovalAutomaticChecks';
+import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, useApprovalAutomaticChecksControls } from '@/components/approvals/ApprovalAutomaticChecks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ApprovalPromptChrome } from './ApprovalPromptChrome';
 import { ApprovalOpenButton } from './ApprovalOpenButton';
@@ -323,6 +323,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     // Before checks hold this Action (05 S6/S8/S9): the footer answers a shared check's consent, cancels a running
     // check, or approves anyway after a failed one; the body says which check and why.
     const automaticChecks = props.approval.v === 2 ? props.approval.automaticChecks ?? null : null;
+    // A refusal by a before check says its reason inside the checks block, once.
+    const checksCarryRefusal = readApprovalAutomaticChecksCarryRefusal(automaticChecks);
     const { decision: checksDecision, answerConsent: onTriggerConsent, cancelChecks: onCancelChecks } = useApprovalAutomaticChecksControls({
         checks: automaticChecks, decide, unavailable: decisionDisabled, isDeciding, setIsDeciding });
     const openChecksRoute = React.useMemo(() => transcriptSource.navigate
@@ -488,7 +490,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         >
             {automaticChecks ? (
                 <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionTitle} serverId={approvalHome.serverId}
-                    {...automaticChecksPresentation}
+                    {...automaticChecksPresentation} failureReason={failureOutcome?.reason ?? null}
                     onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
             ) : null}
             {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
@@ -501,11 +503,11 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {confidentialOutcome ? (
                 <Text testID="approval-prompt-confidential-outcome" style={styles.previewText}>{confidentialOutcome}</Text>
             ) : null}
-            {failureOutcome?.reason || failureOutcome?.serviceStartFailure?.recovery ? (
+            {(failureOutcome?.reason && !checksCarryRefusal) || failureOutcome?.serviceStartFailure?.recovery ? (
                 // The outcome is one paragraph: why it failed and its output, set apart from what was
                 // approved below, so "Review output" never reads as the caption of the command block.
                 <View style={styles.failureGroup}>
-                    {failureOutcome?.reason ? (
+                    {failureOutcome?.reason && !checksCarryRefusal ? (
                         <View testID="approval-prompt-execution-failure" accessibilityRole="alert">
                             <Text style={styles.previewText}>{failureOutcome.reason}</Text>
                         </View>

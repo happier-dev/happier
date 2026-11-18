@@ -68,6 +68,15 @@ export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecks
 }
 
 /**
+ * A refusal the checks themselves explain: the card's own failure line would repeat it, so the checks block carries the
+ * reason (lab `wait-v-arefused`) and the card leaves its loose failure paragraph out.
+ */
+export function readApprovalAutomaticChecksCarryRefusal(checks: ApprovalAutomaticChecksV1 | null | undefined): boolean {
+  return checks?.phase === 'refused'
+    && checks.results.some((result) => result.outcome === 'failed' || result.outcome === 'unavailable');
+}
+
+/**
  * The card's answers while before checks hold the Action, through the card's one decision owner: a shared check's
  * consent (approving the Action is not consent), and Cancel for a running check. Failures alert as every decision does.
  */
@@ -113,6 +122,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.s10,
     gap: theme.space.s4,
   },
+  // A failed check a person may override needs them (amber); one that refused the Action failed (rose).
+  attentionBlock: { backgroundColor: theme.colors.state.warning.background },
+  dangerBlock: { backgroundColor: theme.colors.state.danger.background },
   lead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   leadText: { flexShrink: 1 },
   // Text inherits no ink on web: every line in the block names its colour.
@@ -139,6 +151,8 @@ export const ApprovalAutomaticChecks = React.memo(
       serverId: string | null;
       /** Opens an in-app route (a check's Run, a shared check's workflow); absent where the card cannot navigate. */
       onOpenRoute?: (route: string) => void;
+      /** The settled request's failure reason, which a refusal's block carries (the card then leaves it out). */
+      failureReason?: string | null;
       testID?: string;
     }>,
   ) {
@@ -160,15 +174,17 @@ export const ApprovalAutomaticChecks = React.memo(
         ),
       [checks.selected],
     );
+    // An unnamed check reads "A check" where it starts a sentence or a line, "a check" inside one.
     const nameOf = (
       ref: Readonly<{ automationId: string; triggerId: string }>,
+      position: 'lead' | 'inline' = 'lead',
     ) => {
       const workflowId = selectedByKey.get(
         actionAutomationTriggerKeyV1(ref),
       )?.workflowId;
       return (
         (workflowId ? resolveTitle(workflowId) : null) ??
-        t('workflows.triggers.checks.aCheck')
+        t(position === 'lead' ? 'workflows.triggers.checks.aCheckLead' : 'workflows.triggers.checks.aCheck')
       );
     };
     const runOf = (
@@ -310,41 +326,46 @@ export const ApprovalAutomaticChecks = React.memo(
           ) : null}
         </View>
       );
-    } else if (
-      (checks.phase === 'override' || checks.phase === 'refused') &&
-      failed
-    ) {
+    } else if (checks.phase === 'override' && failed) {
+      // Needs the person: amber, the question first, the workflow's own reason, then who can answer and its Run.
       const workflow = nameOf(failed);
       body = (
-        <View
-          style={styles.block}
-          testID={props.testID ? `${props.testID}:${checks.phase}` : undefined}
-        >
+        <View style={[styles.block, styles.attentionBlock]} testID={props.testID ? `${props.testID}:override` : undefined}>
           <View style={styles.lead}>
-            <Icon
-              name="warning"
-              size={ICON_SIZE.sm}
-              color={theme.colors.text.secondary}
-            />
+            <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
             <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
-              {checks.phase === 'override'
-                ? t('workflows.triggers.checks.overrideTitle', { workflow })
-                : failed.outcome === 'unavailable'
-                  ? t('workflows.triggers.checks.couldNotRun', { workflow })
-                  : t('workflows.triggers.checks.refused', { workflow })}
+              {t('workflows.triggers.checks.overrideTitle', { workflow })}
             </Text>
           </View>
-          {/* The workflow's own reason for failing, as it said it. A refusal settles the request, whose failure
-              already leads with that reason, so only the open override says it here. */}
-          {checks.phase === 'override' && failed.reason ? (
+          {failed.reason ? (
             <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failed.reason}</Text>
           ) : null}
           <View style={styles.line}>
-            {checks.phase === 'override' ? (
-              <Text variant="meta" style={styles.secondary}>
-                {t('workflows.triggers.checks.overrideNote')}
+            <Text variant="meta" style={styles.secondary}>{t('workflows.triggers.checks.overrideNote')}</Text>
+            {openRun(failed.runId)}
+          </View>
+        </View>
+      );
+    } else if (checks.phase === 'refused' && failed) {
+      // The refusal settled the request: its reason leads the block (said once, here), the check's name and Run beneath
+      // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
+      const reason = failed.reason ?? props.failureReason ?? null;
+      body = (
+        <View style={[styles.block, styles.dangerBlock]} testID={props.testID ? `${props.testID}:refused` : undefined}>
+          {reason ? (
+            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{reason}</Text>
+          ) : (
+            <View style={styles.lead}>
+              <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground} />
+              <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
+                {failed.outcome === 'unavailable'
+                  ? t('workflows.triggers.checks.couldNotRun', { workflow: nameOf(failed) })
+                  : t('workflows.triggers.checks.refused', { workflow: nameOf(failed, 'inline') })}
               </Text>
-            ) : null}
+            </View>
+          )}
+          <View style={styles.line}>
+            {reason ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{nameOf(failed)}</Text> : null}
             {openRun(failed.runId)}
           </View>
         </View>
@@ -352,15 +373,15 @@ export const ApprovalAutomaticChecks = React.memo(
     }
     const skipped = [
       ...skippedConsents.map((row) =>
-        t('workflows.triggers.checks.skipped', { workflow: nameOf(row) }),
+        t('workflows.triggers.checks.skipped', { workflow: nameOf(row, 'inline') }),
       ),
       ...skippedNotices.map(({ notice, reason }) => reason === 'machineRequired'
-        ? t('workflows.triggers.checks.skippedNeedsMachine', { workflow: nameOf(notice) })
+        ? t('workflows.triggers.checks.skippedNeedsMachine', { workflow: nameOf(notice, 'inline') })
         // A shared Bot asked by someone else: the line names the Account holder who has not allowed it.
         : reason === 'actorConsentUnavailableForRequester' && props.automaticChecksExecutionAccountName
-          ? t('workflows.triggers.checks.skippedNotAllowedBy', { workflow: nameOf(notice),
+          ? t('workflows.triggers.checks.skippedNotAllowedBy', { workflow: nameOf(notice, 'inline'),
             name: props.automaticChecksExecutionAccountName })
-          : t('workflows.triggers.checks.skippedUnavailable', { workflow: nameOf(notice) }),
+          : t('workflows.triggers.checks.skippedUnavailable', { workflow: nameOf(notice, 'inline') }),
       ),
     ];
     if (!readApprovalAutomaticChecksShown(checks)) return null;

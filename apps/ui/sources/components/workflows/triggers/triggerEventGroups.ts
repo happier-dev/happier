@@ -1,5 +1,4 @@
 import type { IconName } from '@/components/ui/icons/Icon';
-import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 
 import { formatTriggerSummary, readSessionLifecycleKind, type SessionLifecycleKind, type TriggerSummarySource } from './formatTriggerSummary';
 
@@ -23,12 +22,15 @@ export const TRIGGER_LIFECYCLE_GLYPHS = {
     sessionArchived: 'archive',
 } as const satisfies Record<SessionLifecycleKind, IconName>;
 
+/** The relation glyph of an Action trigger: before (into the Action) and after (out of it); every trigger list draws it. */
+export const ACTION_PHASE_GLYPHS = { before: 'sign-in', after: 'sign-out' } as const satisfies Record<'before' | 'after', IconName>;
+
 export function resolveTriggerEventGroup(trigger: TriggerSummarySource): TriggerEventGroup {
     const title = formatTriggerSummary(trigger);
     switch (trigger.kind) {
         case 'action':
             return { id: `action:${JSON.stringify([trigger.phase, trigger.actionIds, trigger.mode, trigger.onFailure])}`,
-                glyph: WORKFLOW_BLOCK_KIND_GLYPH.action, title };
+                glyph: ACTION_PHASE_GLYPHS[trigger.phase], title };
         case 'sessionLifecycle': {
             const kind = readSessionLifecycleKind(trigger.events);
             return { id: `lifecycle:${kind}`, glyph: TRIGGER_LIFECYCLE_GLYPHS[kind], title };

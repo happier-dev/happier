@@ -5,7 +5,7 @@ import type { WorkflowAttachedTriggerPageV1, WorkflowTriggerSetV1 } from '@happi
 import {
     listBuiltinWorkflowReferenceOptions,
     useWorkflowLibraryReferenceOptions,
-    useWorkflowReferenceTitles,
+    useWorkflowReferenceTitleRead,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -27,6 +27,8 @@ export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: bool
     sets?: readonly WorkflowTriggerSetV1[]; attachedPage?: WorkflowAttachedTriggerPageV1 }>): Readonly<{
     workflowOptions: readonly TriggerWorkflowOption[];
     resolveWorkflowTitle: (ref: string) => string | null;
+    /** A named workflow whose header is still being read: its row holds the title slot. */
+    isWorkflowTitlePending: (ref: string) => boolean;
 }> {
     const libraryEnabled = options?.libraryEnabled ?? true;
     const libraryOptions = useWorkflowLibraryReferenceOptions({ enabled: libraryEnabled,
@@ -39,14 +41,14 @@ export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: bool
         }),
         ...(options?.attachedPage?.attached ?? []).flatMap(row => row.workflowDefinitionId === null ? [] : [row.workflowDefinitionId]),
     ], [options?.sets, options?.attachedPage]);
-    const resolveWorkflowTitle = useWorkflowReferenceTitles(references, true, options?.accountLifetime);
+    const { title: resolveWorkflowTitle, isPending: isWorkflowTitlePending } = useWorkflowReferenceTitleRead(references, true, options?.accountLifetime);
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
         ...(libraryEnabled ? listBuiltinWorkflowReferenceOptions() : [])
             .filter((option) => option.ref !== KEEP_GOING_REF)
             .map((option) => ({ ref: option.ref, title: option.title, ...(option.origin === undefined ? {} : { origin: option.origin }) })),
         ...libraryOptions,
     ], [libraryEnabled, libraryOptions]);
-    return { workflowOptions, resolveWorkflowTitle };
+    return { workflowOptions, resolveWorkflowTitle, isWorkflowTitlePending };
 }
 
 export type SendToOption = Readonly<{ value: string; label: string }>;

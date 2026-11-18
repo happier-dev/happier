@@ -153,6 +153,20 @@ describe('projectAccountTriggerRows', () => {
             expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowUnavailable' }),
         ]);
     });
+    it('holds a linked workflow row\'s name while its header is still being read, with the Action phase glyph', () => {
+        const workflow = '00000000-0000-4000-8000-000000000009';
+        const summary = { kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask', actionIds: ['deployments.deploy'] };
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            { automationId: 'linked', triggerId: 't1', workflowDefinitionId: workflow, relation: 'direct', enabled: true, revision: 1,
+                summary, setUpBy: { accountId: 'viewer', displayName: null } },
+        ], nextCursor: null, skippedNotSharedCount: 0 });
+        const project = (pending: boolean, title: string | null) => projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer',
+            resolveWorkflowTitle: () => title, isWorkflowTitlePending: (ref) => pending && ref === workflow });
+        expect(project(true, null)[0]).toMatchObject({ subtitlePending: true, glyph: 'sign-in' });
+        const settled = project(false, 'Pre-deploy checks')[0];
+        expect(settled).toMatchObject({ subtitle: 'Pre-deploy checks', glyph: 'sign-in' });
+        expect(settled?.subtitlePending).toBeUndefined();
+    });
 });
 
 describe('accountTriggerRemoval', () => {

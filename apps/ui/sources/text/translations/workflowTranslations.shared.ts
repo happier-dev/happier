@@ -292,6 +292,8 @@ export const en = {
         connecting: 'Connecting…',
         paused: 'Paused while your Home is offline',
         failed: 'Couldn’t start listening',
+        // Only the read of earlier events failed: live events keep arriving under this line (D9a).
+        historyFailed: 'Couldn’t load earlier events',
         filtersAccessibility: 'Show events',
         filters: {
             all: 'All',

@@ -707,7 +707,8 @@ describe('Account Workflow Library and settings', () => {
             <SubjectTriggersSection subject={{ kind: 'machine', serverId, machineId: 'unreachable-machine' }} subjectName="Studio" />
         </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
-        expect(screen.findByTestId('subject-triggers-link-pending')).toBeNull();
+        // Link's place stays held (unseen) so Automate… does not jump when the read fails; Retry may bring Link back there.
+        expect(screen.findByTestId('subject-triggers-link-pending')).not.toBeNull();
         expect(screen.findByTestId('subject-triggers-link')).toBeNull();
         expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
         await screen.unmount();

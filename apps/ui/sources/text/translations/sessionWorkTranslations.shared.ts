@@ -5,7 +5,8 @@ export const en = {
         title: "Scheduled",
         writesHere: "Writes here",
         empty: "No workflows are scheduled to write here.",
-        step: ({ ordinal, title } : { ordinal: number; title: string }) => `step ${ordinal} · ${title}`,
+        // The step that writes here, by its name: an ordinal beside a name ("step 1 · Summarize") adds nothing a person reads.
+        step: ({ title } : { ordinal: number; title: string }) => title,
         provenanceWorkflowStep: ({ source, step } : { source: string; step: string }) => `From ${source} · step ${step}`,
         notifyOnlyReported: "Only if the agent reported something",
         notifyOnlyReportedDescription: "Skip the notification when the agent returns no text.",

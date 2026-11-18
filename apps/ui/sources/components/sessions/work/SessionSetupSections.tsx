@@ -229,8 +229,6 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
             actionsRef={props.actionsRef} exactTurnPrefill={exactTurnPrefill}
             {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
             hasRetainedContent={scheduledRows.length > 0 || destination.runIds.length > 0}>
-            <SessionWritesHereSection sessionId={sessionId} serverId={props.serverId}
-              scheduled={scheduled} read={destination} />
             {props.onOpenAllAutomations ? (
               <Item
                 testID="session-habits-all-automations"
@@ -239,6 +237,10 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
               />
             ) : null}
           </SubjectTriggersSectionContent>
+          {/* What writes into this Session, under its own quiet label as "Also runs here" is (F1): a schedule and the
+              Run it started read as two things that write here, not one workflow listed twice. */}
+          <SessionWritesHereSection sessionId={sessionId} serverId={props.serverId}
+            scheduled={scheduled} read={destination} />
         </View>
       </SessionTriggerHistoryScope>
     </WorkSectionPlacementProvider>

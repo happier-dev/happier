@@ -121,12 +121,9 @@ const stylesheet = StyleSheet.create(() => ({
         paddingBottom: 16,
         gap: 18,
     },
-    // The empty pane is its whole content: centred in what is left of it.
-    contentEmpty: {
-        flexGrow: 1,
-    },
+    // Nothing started stands where the list will be, in flow: the sections after it (Automations) follow it
+    // instead of being pushed to the pane's floor.
     empty: {
-        flexGrow: 1,
         justifyContent: 'center',
     },
     marks: {
@@ -553,7 +550,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     ref={scrollRef}
                     testID="session-work-scroll"
                     style={styles.scroll}
-                    contentContainerStyle={[styles.content, { maxWidth: columnMaxWidth }, nothingStarted ? styles.contentEmpty : null]}
+                    contentContainerStyle={[styles.content, { maxWidth: columnMaxWidth }]}
                     onScroll={workViewport.onScroll}
                     scrollEventThrottle={100}
                     onLayout={workViewport.onLayout}

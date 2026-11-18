@@ -14840,7 +14840,7 @@ const zhHant: typeof en = {
         title: "已排程",
         writesHere: "寫入此處",
         empty: "沒有排程寫入此處的工作流程。",
-        step: ({ ordinal, title }) => `步驟 ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `來自 ${source} · 步驟 ${step}`,
         notifyOnlyReported: "僅在代理程式回報了內容時",
         notifyOnlyReportedDescription: "代理程式未傳回文字時略過通知。",
@@ -19203,6 +19203,9 @@ const zhHant: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: '此工作流程已無法使用',
         removeTrigger: '移除觸發器',
+        openWorkflow: '開啟工作流程',
+        editTrigger: '編輯觸發器',
+        unlink: '取消連結',
         legacyCreated: '在 Happier 0.2 中建立',
         legacyUnavailable: '舊觸發器無法使用',
         sessionKeyRequired: '需要工作階段金鑰',
@@ -19282,6 +19285,7 @@ const zhHant: WorkflowTriggersCopy = {
         openRun: "開啟執行",
         cancel: "取消",
         aCheck: "一項檢查",
+        aCheckLead: "一項檢查",
     },
     link: {
         title: ({ name }: { name: string }) => `將工作流程連結到 ${name}`,
@@ -19851,6 +19855,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         connecting: '正在連線…',
         paused: '你的 Home 離線期間已暫停',
         failed: '無法開始監聽',
+        historyFailed: '無法載入先前的事件',
         filtersAccessibility: '顯示事件',
         filters: {
             all: '全部',

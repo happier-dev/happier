@@ -11,7 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
-import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
+import { SELECTION_LIST_MODAL_MAX_HEIGHT, SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
@@ -237,7 +237,8 @@ export function ResourceLinkWorkflowSheet(
         name: props.resourceName,
       })}
       maxWidthCap={TRIGGER_POPOVER_WIDTH}
-      maxHeightCap={height}
+      // The shared picker ceiling: as Yours arrives the list grows to it and then scrolls, never up over the window's tabs.
+      maxHeightCap={Math.min(height, SELECTION_LIST_MODAL_MAX_HEIGHT)}
       portal={{
         web: { target: 'body' },
         native: true,

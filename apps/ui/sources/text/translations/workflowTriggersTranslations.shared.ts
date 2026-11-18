@@ -67,6 +67,9 @@ export const en = {
     row: {
         workflowUnavailable: 'This workflow is no longer available',
         removeTrigger: 'Remove trigger',
+        openWorkflow: 'Open workflow',
+        editTrigger: 'Edit trigger',
+        unlink: 'Unlink',
         legacyCreated: 'Created in Happier 0.2',
         legacyUnavailable: 'Legacy trigger unavailable',
         sessionKeyRequired: 'Session key required',
@@ -146,6 +149,7 @@ export const en = {
         openRun: "Open run",
         cancel: "Cancel",
         aCheck: "a check",
+        aCheckLead: "A check",
     },
     link: {
         title: ({ name }: { name: string }) => `Link a workflow to ${name}`,

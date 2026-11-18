@@ -14987,7 +14987,7 @@ const ru: typeof en = {
         title: "Запланировано",
         writesHere: "Пишет сюда",
         empty: "Нет workflow, запланированных для записи сюда.",
-        step: ({ ordinal, title }) => `шаг ${ordinal} · ${title}`,
+        step: ({ title }) => title,
         provenanceWorkflowStep: ({ source, step }) => `От ${source} · шаг ${step}`,
         notifyOnlyReported: "Только если агент что-то сообщил",
         notifyOnlyReportedDescription: "Пропустить уведомление, если агент не вернул текст.",
@@ -19357,6 +19357,9 @@ const ru: WorkflowTriggersCopy = {
     row: {
         workflowUnavailable: 'Этот процесс больше не доступен',
         removeTrigger: 'Убрать триггер',
+        openWorkflow: 'Открыть рабочий процесс',
+        editTrigger: 'Изменить триггер',
+        unlink: 'Отвязать',
         legacyCreated: 'Создано в Happier 0.2',
         legacyUnavailable: 'Старый триггер недоступен',
         sessionKeyRequired: 'Требуется ключ сессии',
@@ -19436,6 +19439,7 @@ const ru: WorkflowTriggersCopy = {
         openRun: "Открыть запуск",
         cancel: "Отмена",
         aCheck: "проверка",
+        aCheckLead: "Проверка",
     },
     link: {
         title: ({ name }: { name: string }) => `Связать сценарий с ${name}`,
@@ -20005,6 +20009,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         connecting: 'Подключение…',
         paused: 'Пауза, пока ваш Home офлайн',
         failed: 'Не удалось начать прослушивание',
+        historyFailed: 'Не удалось загрузить предыдущие события',
         filtersAccessibility: 'Показать события',
         filters: {
             all: 'Все',

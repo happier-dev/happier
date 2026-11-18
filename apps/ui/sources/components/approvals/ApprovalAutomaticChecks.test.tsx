@@ -23,6 +23,7 @@ vi.mock(
 
 const {
   ApprovalAutomaticChecks,
+  readApprovalAutomaticChecksCarryRefusal,
   readApprovalAutomaticChecksDecision,
   useApprovalAutomaticChecksControls,
 } = await import('./ApprovalAutomaticChecks');
@@ -249,6 +250,27 @@ describe('Action before checks on the approval card', () => {
       'workflows.triggers.checks.skipped',
     );
     await second.unmount();
+  });
+
+  // lab wait-v-arefused: the refusal's reason leads one block, the check's name and Run beneath, no second heading.
+  it('leads a refusal with its reason and lets the card leave its own failure line out', async () => {
+    const refused = checks({
+      phase: 'refused',
+      runs: [{ ...ref, runId: 'run-214' }],
+      results: [{ ...ref, runId: 'run-214', outcome: 'failed' }],
+    });
+    expect(readApprovalAutomaticChecksCarryRefusal(refused)).toBe(true);
+    expect(readApprovalAutomaticChecksCarryRefusal(checks({ phase: 'override', runs: refused.runs, results: refused.results }))).toBe(false);
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={refused} actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined}
+        failureReason="3 release tests fail in billing." testID="checks" />,
+    );
+    expect(screen.findByTestId('checks:reason')).not.toBeNull();
+    const text = screen.getTextContent();
+    expect(text).toContain('3 release tests fail in billing.');
+    expect(text).not.toContain('workflows.triggers.checks.refused');
+    expect(text).toContain('workflows.triggers.checks.aCheckLead');
+    await screen.unmount();
   });
 
   // R24 and the shared-Bot recovery: a typed skip says why; an unknown reason says only that it skipped.
