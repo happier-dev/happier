@@ -1,4 +1,4 @@
-import { ExactSessionTurnEndMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { ExactSessionTurnEndMutationV1Schema, SESSION_HOST_LOST_TURN_ISSUE_CODE } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { ExactSessionTurnEndMutationV1 } from '@happier-dev/protocol';
 
 import { resolveDaemonObservedExitMutationId } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
@@ -18,6 +18,7 @@ export type StageObservedExitResult =
 
 export async function stageObservedExit(params: Readonly<{
   trackedSession: Pick<TrackedSession, 'pid' | 'sessionRunnerPid' | 'happySessionId' | 'activeTurnId'>;
+  hostLost: boolean;
   observedAt: number;
   enqueueExactTurnEnd: (mutation: ExactSessionTurnEndMutationV1) => Promise<void>;
   releaseMarkerEvidence: (evidence: MarkerEvidenceRelease) => Promise<void>;
@@ -41,7 +42,17 @@ export async function stageObservedExit(params: Readonly<{
       ...exactTurn,
       observedAt: params.observedAt,
     }),
-    action: 'end_session',
+    ...(params.hostLost ? {
+      action: 'fail',
+      issue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: SESSION_HOST_LOST_TURN_ISSUE_CODE,
+        source: 'stream_error',
+        occurredAt: params.observedAt,
+      },
+    } : { action: 'end_session' }),
     turnId: exactTurn.turnId,
     observedAt: params.observedAt,
   });

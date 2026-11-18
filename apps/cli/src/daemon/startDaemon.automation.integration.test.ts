@@ -1684,7 +1684,8 @@ describe('startDaemon automation wiring (integration)', () => {
         v: 1,
         sessionId: 'sess-orphaned-6480',
         mutationId: expect.stringMatching(/^daemon-observed-exit:/),
-        action: 'end_session',
+        action: 'fail',
+        issue: expect.objectContaining({ code: 'session_host_lost' }),
         turnId: 'turn-exact-orphan',
         observedAt: expect.any(Number),
       }));

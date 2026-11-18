@@ -178,9 +178,15 @@ describe('createOnChildExited', () => {
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
-  it('retains marker and tracked custody until the exact terminal row is durably staged', async () => {
+  it.each([
+    { personStopped: false, action: 'fail' },
+    { personStopped: true, action: 'end_session' },
+  ] as const)('settles exit code 137 as $action when personStopped=$personStopped before releasing custody', async ({ personStopped, action }) => {
     const pid = 123;
-    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1', activeTurnId: 'turn-1' };
+    const tracked = {
+      trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1', activeTurnId: 'turn-1',
+      ...(personStopped ? { stopRequestedAtMs: Date.now() } : {}),
+    };
 
     const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const spawnResourceCleanupByKey = new Map();
@@ -200,7 +206,7 @@ describe('createOnChildExited', () => {
       removeSessionMarkerFn,
     } as any);
 
-    const firstObservation = onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+    const firstObservation = onChildExited(pid, { reason: 'process-exited', code: 137, signal: null });
     const heartbeatObservation = onChildExited(pid, {
       reason: 'process-missing',
       code: null,
@@ -211,7 +217,8 @@ describe('createOnChildExited', () => {
       v: 1,
       sessionId: 'session-1',
       mutationId: expect.stringMatching(/^daemon-observed-exit:/),
-      action: 'end_session',
+      action,
+      ...(!personStopped ? { issue: expect.objectContaining({ code: 'session_host_lost' }) } : {}),
       turnId: 'turn-1',
       observedAt: expect.any(Number),
     }));
@@ -427,9 +434,10 @@ describe('createOnChildExited', () => {
       v: 1,
       sessionId: 'session-1',
       mutationId: expect.stringMatching(/^daemon-observed-exit:/),
-      action: 'end_session',
+      action: 'fail',
       turnId: 'obsolete-turn',
       observedAt: expect.any(Number),
+      issue: expect.objectContaining({ code: 'session_host_lost' }),
     }));
     expect(beforeUnexpectedExitSettlement).not.toHaveBeenCalled();
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(obsoletePid));

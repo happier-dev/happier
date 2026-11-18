@@ -80,6 +80,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
           pid: marker.pid,
           ...(marker.activeTurnId ? { activeTurnId: marker.activeTurnId } : {}),
         },
+        hostLost: true,
         observedAt: now(),
         enqueueExactTurnEnd: (mutation) => params.apiMachine.enqueueDaemonTerminalExactTurnEnd(mutation),
         releaseMarkerEvidence: async () => undefined,

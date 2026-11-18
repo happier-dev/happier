@@ -85,10 +85,21 @@ const SessionTurnMutationBaseV1Schema = lazyZodSchema(() => z.strictObject({
 
 const ExactSessionTurnMutationBaseV1Schema = lazyZodSchema(() => z.omit(SessionTurnMutationBaseV1Schema, { agentId: true }));
 
-export const ExactSessionTurnEndMutationV1Schema = lazyZodSchema(() => z.readonly((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ExactSessionTurnMutationBaseV1Schema, {
-  action: z.literal('end_session'),
-  turnId: TurnIdSchema,
-}))));
+export const SESSION_HOST_LOST_TURN_ISSUE_CODE = 'session_host_lost';
+
+export const ExactSessionTurnEndMutationV1Schema = lazyZodSchema(() => z.readonly(z.union([
+  z.strictObject({
+    ...ExactSessionTurnMutationBaseV1Schema.shape,
+    action: z.literal('end_session'),
+    turnId: TurnIdSchema,
+  }),
+  z.strictObject({
+    ...ExactSessionTurnMutationBaseV1Schema.shape,
+    action: z.literal('fail'),
+    turnId: TurnIdSchema,
+    issue: SessionRuntimeIssueV1Schema.check(z.refine(issue => issue.code === SESSION_HOST_LOST_TURN_ISSUE_CODE)),
+  }),
+])));
 export type ExactSessionTurnEndMutationV1 = z.infer<typeof ExactSessionTurnEndMutationV1Schema>;
 
 export function isExactSessionTurnEndMutationV1(
@@ -202,7 +213,7 @@ export const ExactSessionTurnMutationPositiveReceiptV1Schema = lazyZodSchema(() 
     sessionId: asProtocolZod(SessionIdSchema),
     mutationId: SessionTurnMutationIdV1Schema,
     turnId: TurnIdSchema,
-    action: z.literal('end_session'),
+    action: z.enum(['end_session', 'fail']),
     decision: z.enum(['applied', 'duplicate-terminal']),
     observedAt: SessionTurnObservedAtV1Schema,
     appliedAt: SessionTurnObservedAtV1Schema,

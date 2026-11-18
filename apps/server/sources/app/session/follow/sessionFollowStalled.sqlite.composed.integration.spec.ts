@@ -51,6 +51,7 @@ import { SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 } from '@happier-dev/
 import { clearSessionExplicitStopV1FromMetadata, writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { readSessionFollowReceiverAvailabilityChangedV1 } from '@happier-dev/protocol/changes';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 
 async function publishAcceptedTurnFixture(sessionId: string, turnId: string): Promise<void> {
     await db.sessionTurn.upsert({
@@ -1181,7 +1182,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(receipt.followSources ?? []).toHaveLength(route === 'ordinary-only' ? 0 : 1);
     });
 
-    it('accepts one failed Turn without native ready through manager, ordinary and rule routes, then accepts a distinct later Turn', async () => {
+    it('accepts an observed host loss as one failed Turn through manager, ordinary and rule routes, then accepts a distinct later Turn', async () => {
         const f = await fixture('in_progress', { preset: 'important' });
         await f.follow({ preset: 'quiet' });
         const ruleId = randomUUID();
@@ -1204,12 +1205,32 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         await db.sessionMessage.create({ data: { sessionId: f.source.id, seq: 2, localId: randomUUID(), messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: { type: 'codex', data: { type: 'message', message: partialText } } } },
             transcriptObservationProvenance: { kind: 'non_dependent', source: 'external' } } });
-        await db.sessionTurn.create({ data: { sessionId: f.source.id, turnId: 'worker-turn', status: 'failed',
-            startedAt: terminalAt - 1n, updatedAt: terminalAt, terminalAt,
+        await db.sessionTurn.create({ data: { sessionId: f.source.id, turnId: 'worker-turn', status: 'in_progress',
+            startedAt: terminalAt - 1n, updatedAt: terminalAt - 1n,
             transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 2, finalAssistantMessageSeq: 2 }) } });
-        await db.session.update({ where: { id: f.source.id }, data: { seq: 2, active: false, latestTurnStatus: 'failed' } });
+        await db.session.update({ where: { id: f.source.id }, data: { seq: 2, active: false } });
+        const { stageObservedExit } = await vi.importActual<{
+            stageObservedExit: (input: {
+                trackedSession: { pid: number; happySessionId: string; activeTurnId: string };
+                hostLost: boolean;
+                observedAt: number;
+                enqueueExactTurnEnd: (mutation: unknown) => Promise<void>;
+                releaseMarkerEvidence: () => Promise<void>;
+            }) => Promise<unknown>;
+        }>('../../../../../cli/src/daemon/sessions/stageObservedExit');
+        await stageObservedExit({
+            trackedSession: { pid: 2835242, happySessionId: f.source.id, activeTurnId: 'worker-turn' },
+            hostLost: true,
+            observedAt: Number(terminalAt),
+            enqueueExactTurnEnd: async (mutation) => {
+                await expect(applySessionTurnMutation({ actorUserId: f.account.id, authentication: f.authentication, mutation }))
+                    .resolves.toMatchObject({ ok: true, didApply: true });
+            },
+            releaseMarkerEvidence: async () => {},
+        });
         const failed = await intake.prepare('wake');
         expect(failed?.workerUpdates).toMatchObject([{ ownerState: 'failed', result: partialText,
+            runtimeIssueV1: { code: 'session_host_lost', status: 'failed' },
             transcriptPointer: { kind: 'session', sessionId: f.source.id, seq: 2 } }]);
         expect(failed?.representedFollowLocalInputIds).toHaveLength(1);
         const localId = failed!.representedFollowLocalInputIds![0]!;

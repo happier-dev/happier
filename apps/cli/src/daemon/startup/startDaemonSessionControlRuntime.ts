@@ -3077,9 +3077,9 @@ export async function startDaemonSessionControlRuntime(
   });
   // A crashed runner's held primary Agent, spared for its respawn (one custody owner).
   const sparedHeldAgents = createSparedHeldAgentCustody({ ownerRemainder,
-    // The exit deferred this turn's end to the spare; a give-up ends it the same way.
+    // The unexpected exit deferred Turn settlement while the held Agent could be adopted.
     endTurn: async tracked => {
-      await stageObservedExit({ trackedSession: tracked, observedAt: Date.now(),
+      await stageObservedExit({ trackedSession: tracked, hostLost: true, observedAt: Date.now(),
         enqueueExactTurnEnd: async (mutation) => {
           const machine = params.getApiMachineForSessions();
           if (!machine?.enqueueDaemonTerminalExactTurnEnd) throw new Error('Daemon terminal mutation custody is unavailable');

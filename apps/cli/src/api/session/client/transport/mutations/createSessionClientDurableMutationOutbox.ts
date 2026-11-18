@@ -1139,9 +1139,6 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
         },
         async enqueueSessionTurnMutation(mutation, options) {
             const queued = createQueuedSessionTurnMutation(mutation as SessionTurnMutationV1);
-            if (queued.payload.action === 'end_session') {
-                throw new Error('Runtime mutation custody accepts only a normal turn for the expected session');
-            }
             assertRuntimeCustodyMutation(queued);
             await journal.enqueueSessionTurnMutation(mutation as SessionTurnMutationV1, options);
         },

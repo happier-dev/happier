@@ -1,5 +1,6 @@
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionTurnMutationDecisionV1, SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { isExactSessionTurnEndMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 
 type Turn = Readonly<{ status: string; startedAt: bigint | number; updatedAt: bigint | number }>;
 type Refusal = Readonly<{
@@ -36,8 +37,10 @@ export async function decideSessionTurnMutation(params: Readonly<{
     if (mutation.action !== 'begin' && !currentTurn) {
         return { ok: false, reason: 'no-current-turn', decision: 'missing-turn' };
     }
-    // A delayed exit cannot cancel a replacement turn begun after that exit.
-    if (mutation.action === 'end_session' && currentTurn?.status === 'in_progress') {
+    const isExitSettlement = mutation.action === 'end_session'
+        || (mutation.action === 'fail' && isExactSessionTurnEndMutationV1(mutation));
+    // A delayed exit cannot settle a replacement turn begun after that exit.
+    if (isExitSettlement && currentTurn?.status === 'in_progress') {
         const startedAt = typeof currentTurn.startedAt === 'bigint'
             ? Number(currentTurn.startedAt) : currentTurn.startedAt;
         if (Number.isFinite(startedAt) && startedAt > mutation.observedAt) return terminal();
@@ -49,7 +52,7 @@ export async function decideSessionTurnMutation(params: Readonly<{
     const appendsCancelledTurnAnchors = currentTurn?.status === 'cancelled' && mutation.action === 'append_transcript_anchors';
     if (currentTurn && isTerminal(currentTurn.status)
         && !updatesRollbackFacet && !explicitlyStopsWaitingTurn && !appendsCancelledTurnAnchors) {
-        return { ...terminal(), decision: mutation.action === 'end_session'
+        return { ...terminal(), decision: isExitSettlement
             && requestedTurnId === targetTurnId && latestTurnId === targetTurnId
                 ? 'duplicate-terminal' : 'stale-terminal' };
     }

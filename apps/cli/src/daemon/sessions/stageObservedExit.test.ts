@@ -12,7 +12,7 @@ function expectedMutationId(sessionId: string, turnId: string, observedAt: numbe
 }
 
 describe('stageObservedExit', () => {
-  it('awaits durable acceptance of one strict exact-turn row before releasing marker evidence', async () => {
+  it.each([false, true])('keeps exact settlement in durable custody until acceptance (host lost: %s)', async (hostLost) => {
     let accept!: () => void;
     const enqueueExactTurnEnd = vi.fn(() => new Promise<void>((resolve) => {
       accept = resolve;
@@ -26,6 +26,7 @@ describe('stageObservedExit', () => {
         happySessionId: 'session-1',
         activeTurnId: 'turn-1',
       },
+      hostLost,
       observedAt: 1234,
       enqueueExactTurnEnd,
       releaseMarkerEvidence,
@@ -36,7 +37,8 @@ describe('stageObservedExit', () => {
       v: 1,
       sessionId: 'session-1',
       mutationId: expectedMutationId('session-1', 'turn-1', 1234),
-      action: 'end_session',
+      ...(hostLost ? { action: 'fail', issue: { v: 1, scope: 'primary_session',
+        status: 'failed', code: 'session_host_lost', source: 'stream_error', occurredAt: 1234 } } : { action: 'end_session' }),
       turnId: 'turn-1',
       observedAt: 1234,
     });
@@ -56,6 +58,7 @@ describe('stageObservedExit', () => {
     const enqueueNoTurn = vi.fn(async () => undefined);
     await expect(stageObservedExit({
       trackedSession: { pid: 41, happySessionId: 'session-1' },
+      hostLost: true,
       observedAt: 1234,
       enqueueExactTurnEnd: enqueueNoTurn,
       releaseMarkerEvidence: releaseNoTurn,
@@ -66,6 +69,7 @@ describe('stageObservedExit', () => {
     const releaseFailed = vi.fn(async () => undefined);
     await expect(stageObservedExit({
       trackedSession: { pid: 41, happySessionId: 'session-1', activeTurnId: 'turn-1' },
+      hostLost: true,
       observedAt: 1234,
       enqueueExactTurnEnd: async () => { throw new Error('persistence failed'); },
       releaseMarkerEvidence: releaseFailed,
@@ -78,6 +82,7 @@ describe('stageObservedExit', () => {
     for (const observedAt of [99, 100]) {
       await stageObservedExit({
         trackedSession: { pid: observedAt, happySessionId: 'session-a', activeTurnId: 'turn-1' },
+        hostLost: true,
         observedAt,
         enqueueExactTurnEnd: async (row) => { rows.push(row); },
         releaseMarkerEvidence: async () => undefined,

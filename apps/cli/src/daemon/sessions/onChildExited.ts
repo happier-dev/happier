@@ -484,6 +484,7 @@ export function createOnChildExited(params: Readonly<{
           // completes it, and the spare's give-up ends it (one turn owner at a time).
           trackedSession: spare.transaction
             ? { ...trackedExitSettlementEvidence, activeTurnId: undefined } : trackedExitSettlementEvidence,
+          hostLost: isUnexpected,
           observedAt,
           enqueueExactTurnEnd: async (mutation) => {
             if (!apiMachineForSessions?.enqueueDaemonTerminalExactTurnEnd) {

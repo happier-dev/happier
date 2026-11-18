@@ -2118,6 +2118,11 @@ Windows runner-held Jobs survive daemon restart without
 kill-on-close; after holder death, the owner tag and captured tree supply fallback
 evidence. See [machine processes](cli-architecture.md#machine-processes-03-development).
 
+The daemon stages a confirmed unexpected host loss as an exact Turn failure with
+the `session_host_lost` runtime issue. Follow can deliver that failed outcome from
+the retained Turn. A deliberate Stop settles an active Turn as cancelled through
+the existing Stop path. Outstanding questions retain their own lifecycle.
+
 Startup reattaches live runners through the existing Session markers. Dead-runner
 markers instead enter [orphan settlement](../apps/cli/src/daemon/sessions/publishOrphanedStartupSessionEnds.ts)
 on the machine transport's connected edge, not when asynchronous connection is

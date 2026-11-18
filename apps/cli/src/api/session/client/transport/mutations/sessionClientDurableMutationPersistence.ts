@@ -28,7 +28,7 @@ import { SessionTurnProgressV1Schema } from '@happier-dev/protocol/sessions/stat
 import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { ExactSessionTurnEndMutationV1Schema, isExactSessionTurnEndMutationV1, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionContextIntentV1Schema, SessionPromptStackV1Schema, migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -1191,7 +1191,9 @@ export function parseRuntimeSessionClientDurableMutation(
     if (!mutation) return parsed;
     const belongsToExpectedSession = mutation.payload.sessionId === expectedSessionId;
     const admitted = belongsToExpectedSession && (
-        (mutation.kind === 'session_turn_mutation' && mutation.payload.action !== 'end_session')
+        (mutation.kind === 'session_turn_mutation'
+            && mutation.payload.action !== 'end_session'
+            && (mutation.payload.action !== 'fail' || !isExactSessionTurnEndMutationV1(mutation.payload)))
         || mutation.kind === 'agent_state_request_settlement'
         || mutation.kind === 'session_end'
         || mutation.kind === 'transcript_message_append'

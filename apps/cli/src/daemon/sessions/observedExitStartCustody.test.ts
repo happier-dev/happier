@@ -118,14 +118,18 @@ describe('observed exit across local admission and Home turn start', () => {
                     await expect(readFile(paths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
                 }
                 expect((await readSessionMarker(tracked.trackingKey))?.activeTurnId).toBe(markerFailure === 'persistent' ? undefined : turnId);
-                await stageObservedExit({ trackedSession: tracked, observedAt: 200,
-                    enqueueExactTurnEnd: mutation => daemon.enqueueExactTurnEnd(mutation),
+                await stageObservedExit({ trackedSession: tracked, hostLost: true, observedAt: 200,
+                    enqueueExactTurnEnd: async (mutation) => {
+                        if (mutation.action !== 'fail') throw new Error('Expected an exact host-loss mutation');
+                        await expect(runtime.enqueueSessionTurnMutation(mutation)).rejects.toThrow();
+                        await daemon.enqueueExactTurnEnd(mutation);
+                    },
                     releaseMarkerEvidence: async () => { await removeSessionMarker(tracked.trackingKey); },
                 });
                 await daemon.flush('flush');
                 expect(requests).toEqual([
                     ...(nativeStarted ? [{ action: 'begin', turnId }] : []),
-                    { action: 'end_session', turnId },
+                    { action: 'fail', turnId },
                 ]);
                 const paths = resolveSessionClientDurableMutationJournalPaths({
                     activeServerDir: configuration.activeServerDir, custody: 'daemon', sessionId,
