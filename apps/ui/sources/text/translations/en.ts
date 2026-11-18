@@ -18707,6 +18707,8 @@ const enTerminal = {
 
 const enTerminalEmbedded = {
   inputRecovery: "Input delivery is uncertain. Copy your input and check the terminal before continuing.",
+  inputDraft: "Input typed into the previous shell wasn’t sent to this one.",
+  inputDraftResend: "Resend",
   nativeAccessibility: {
     terminalLabel: 'Terminal',
     fallbackValue:

@@ -15764,6 +15764,8 @@ settingsSession: {
 
   terminalEmbedded: {
     inputRecovery: "La consegna del testo è incerta. Copialo e controlla il terminale prima di continuare.",
+    inputDraft: "L’input digitato nella shell precedente non è stato inviato a questa.",
+    inputDraftResend: "Reinvia",
     nativeAccessibility: {
       terminalLabel: 'Terminale',
       fallbackValue: 'Il contenuto del terminale nativo non è disponibile. Usa la WebView xterm per contenuti del terminale accessibili.',

@@ -15660,6 +15660,8 @@ settingsSession: {
 
   terminalEmbedded: {
     inputRecovery: "Não foi possível confirmar a entrega da entrada. Copie-a e verifique o terminal antes de continuar.",
+    inputDraft: "A entrada digitada no shell anterior não foi enviada para este.",
+    inputDraftResend: "Reenviar",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'O conteúdo do terminal nativo não está disponível. Use a WebView xterm para conteúdo de terminal acessível.',

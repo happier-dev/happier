@@ -357,6 +357,10 @@ export function useMachineTerminalSession(params: Readonly<{
         inputRecoveryAvailable,
         readInputRecovery,
         discardInputRecovery: discardTransportInputRecovery,
+        inputDraftAvailable,
+        readInputDraft,
+        resendInputDraft,
+        discardInputDraft,
     } = useEmbeddedTerminalTransportHandlers({
         machineId: params.machineId,
         readOnly: params.readOnly,
@@ -454,6 +458,10 @@ export function useMachineTerminalSession(params: Readonly<{
         const text = readInputRecovery();
         if (text) copySelection({ source: 'input-recovery', text });
     }, [copySelection, readInputRecovery]);
+    const copyInputDraft = React.useCallback(async () => {
+        const text = readInputDraft();
+        if (text) copySelection({ source: 'input-recovery', text });
+    }, [copySelection, readInputDraft]);
 
     React.useEffect(() => {
         return () => {
@@ -1189,6 +1197,10 @@ export function useMachineTerminalSession(params: Readonly<{
         inputRecoveryAvailable,
         copyInputRecovery,
         discardInputRecovery,
+        inputDraftAvailable: inputDraftAvailable && !params.readOnly,
+        copyInputDraft,
+        resendInputDraft,
+        discardInputDraft,
         detectedUrl,
         onInput,
         onPaste,

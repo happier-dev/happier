@@ -15648,6 +15648,8 @@ settingsSession: {
 
     terminalEmbedded: {
         inputRecovery: "Die Eingabe wurde möglicherweise übertragen. Kopiere sie und prüfe das Terminal, bevor du fortfährst.",
+        inputDraft: "Die Eingabe für die vorherige Shell wurde nicht an diese gesendet.",
+        inputDraftResend: "Erneut senden",
         nativeAccessibility: {
             terminalLabel: 'Terminal',
             fallbackValue: 'Native Terminalinhalte sind nicht verfügbar. Nutze die xterm-WebView für barrierefreie Terminalinhalte.',

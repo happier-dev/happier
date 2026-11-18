@@ -72,6 +72,18 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
                 testID: props.testIdPrefix ? `${props.testIdPrefix}-discard-input` : undefined },
         ],
     };
+    // A superseded draft is a quiet notice over the live shell; typing continues underneath it.
+    if (controller.inputDraftAvailable && !controller.readOnly && controller.status === 'connected') return {
+        kind: 'line', reason: t('terminalEmbedded.inputDraft'),
+        actions: [
+            { label: t('common.copy'), onPress: () => { void controller.copyInputDraft?.(); },
+                testID: props.testIdPrefix ? `${props.testIdPrefix}-copy-draft` : undefined },
+            { label: t('terminalEmbedded.inputDraftResend'), onPress: () => controller.resendInputDraft?.(),
+                testID: props.testIdPrefix ? `${props.testIdPrefix}-resend-draft` : undefined },
+            { label: t('common.discard'), onPress: () => controller.discardInputDraft?.(),
+                testID: props.testIdPrefix ? `${props.testIdPrefix}-discard-draft` : undefined },
+        ],
+    };
     // Consent is asked before any PTY exists: the shell is `not-open` (or just starting), and the line
     // says it is waiting on the person. Only the Approvals shortcut needs the owner's callback.
     if (controller.approvalPending && (controller.status === 'not-open' || controller.status === 'idle' || controller.status === 'connecting')) {

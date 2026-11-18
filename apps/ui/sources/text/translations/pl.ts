@@ -15379,6 +15379,8 @@ settingsSession: {
 
   terminalEmbedded: {
     inputRecovery: "Nie można potwierdzić dostarczenia tekstu. Skopiuj go i sprawdź terminal przed kontynuowaniem.",
+    inputDraft: "Dane wpisane w poprzedniej powłoce nie zostały wysłane do tej.",
+    inputDraftResend: "Wyślij ponownie",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'Natywna zawartość terminala jest niedostępna. Użyj widoku xterm WebView, aby uzyskać dostęp do terminala.',

@@ -42,6 +42,10 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     const inputRecoveryRef = React.useRef(false);
     const discardInputCountRef = React.useRef<number | null>(null);
     const [inputRecoveryAvailable, setInputRecoveryAvailable] = React.useState(false);
+    // Input held for a process that an explicit Open replaced. It never blocks typing into the
+    // replacement and is typed there only when the person resends it.
+    const inputDraftRef = React.useRef('');
+    const [inputDraftAvailable, setInputDraftAvailable] = React.useState(false);
     const inputFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const drainInputRef = React.useRef<() => void>(() => {});
     const finishInputDiscard = React.useCallback((count: number) => {
@@ -58,25 +62,28 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
             discardInputCountRef.current = null;
             return;
         }
-        const discardCount = discardInputCountRef.current;
-        if (!params.machineId || inputInFlightRef.current
-            || (inputRecoveryRef.current && discardCount === null)) return;
+        if (!params.machineId || inputInFlightRef.current) return;
         const terminalId = params.terminalIdRef.current;
         const carrier = params.terminalStreamCarrierRef.current;
-        let queued = queuedInputRef.current[0];
-        if (!terminalId || !queued) return;
-        // Retained input belongs to this process. A restart must never type it into its replacement.
-        if ((queued.machineId && queued.machineId !== params.machineId) || (queued.terminalId && queued.terminalId !== terminalId)) {
-            if (discardCount !== null) {
-                // The replaced process cannot leave a partial line in this new process.
-                finishInputDiscard(discardCount);
-                drainInputRef.current();
-                return;
-            }
-            inputRecoveryRef.current = true;
-            setInputRecoveryAvailable(true);
-            return;
+        if (!terminalId) return;
+        // Retained input belongs to its process. A replacement supersedes it: the held lines become
+        // the person's draft, never typed into the new process and never blocking its live input.
+        const belongsElsewhere = (input: QueuedInput) => Boolean((input.machineId && input.machineId !== params.machineId)
+            || (input.terminalId && input.terminalId !== terminalId));
+        let superseded = 0;
+        while (superseded < queuedInputRef.current.length && belongsElsewhere(queuedInputRef.current[superseded]!)) superseded += 1;
+        if (superseded > 0) {
+            inputDraftRef.current += queuedInputRef.current.splice(0, superseded).map(input => input.event.text).join('');
+            setInputDraftAvailable(true);
+            discardInputCountRef.current = null;
+            inputRecoveryRef.current = false;
+            failedCarrierRef.current = null;
+            setInputRecoveryAvailable(false);
         }
+        const discardCount = discardInputCountRef.current;
+        if (inputRecoveryRef.current && discardCount === null) return;
+        let queued = queuedInputRef.current[0];
+        if (!queued) return;
         if (!carrier || carrier === failedCarrierRef.current) return;
         // Input typed before attachment acquires its process identity at the first send.
         if (!queued.terminalId || !queued.machineId) {
@@ -192,6 +199,18 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     }, [flushPendingInput, sendInputEvent]);
 
     const readInputRecovery = React.useCallback(() => queuedInputRef.current.map(input => input.event.text).join(''), []);
+    const readInputDraft = React.useCallback(() => inputDraftRef.current, []);
+    const discardInputDraft = React.useCallback(() => {
+        inputDraftRef.current = '';
+        setInputDraftAvailable(false);
+    }, []);
+    /** The person's explicit choice to type the superseded draft into the current process. */
+    const resendInputDraft = React.useCallback(() => {
+        const text = inputDraftRef.current;
+        if (readOnlyRef.current || !text) return;
+        discardInputDraft();
+        sendInputEvent({ t: 'text', text });
+    }, [discardInputDraft, sendInputEvent]);
     const discardInputRecovery = React.useCallback(() => {
         if (readOnlyRef.current || !inputRecoveryRef.current || discardInputCountRef.current !== null) return;
         discardInputCountRef.current = queuedInputRef.current.length;
@@ -273,5 +292,9 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
         inputRecoveryAvailable,
         readInputRecovery,
         discardInputRecovery,
+        inputDraftAvailable,
+        readInputDraft,
+        resendInputDraft,
+        discardInputDraft,
     } as const;
 }

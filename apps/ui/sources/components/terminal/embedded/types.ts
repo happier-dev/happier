@@ -33,6 +33,11 @@ export type EmbeddedTerminalPaneController = Readonly<{
     inputRecoveryAvailable?: boolean;
     copyInputRecovery?: () => Promise<void>;
     discardInputRecovery?: () => void;
+    /** Input typed for a process an explicit Open replaced: never typed into the new one unless resent. */
+    inputDraftAvailable?: boolean;
+    copyInputDraft?: () => Promise<void>;
+    resendInputDraft?: () => void;
+    discardInputDraft?: () => void;
     detectedUrl: EmbeddedTerminalDetectedUrl;
     onInput: (data: string) => void;
     onPaste: (data: string) => void | Promise<unknown>;

@@ -15424,6 +15424,8 @@ settingsSession: {
 
   terminalEmbedded: {
     inputRecovery: "La réception de la saisie est incertaine. Copiez-la et vérifiez le terminal avant de continuer.",
+    inputDraft: "La saisie destinée au shell précédent n’a pas été envoyée à celui-ci.",
+    inputDraftResend: "Renvoyer",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'Le contenu du terminal natif est indisponible. Utilise la WebView xterm pour un contenu de terminal accessible.',

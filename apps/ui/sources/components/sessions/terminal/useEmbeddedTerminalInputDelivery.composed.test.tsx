@@ -178,7 +178,7 @@ describe('embedded terminal input delivery through the real carrier', () => {
         await hook.unmount();
     });
 
-    it('keeps initially buffered input for recovery if its process is replaced after a refused write', async () => {
+    it('keeps initially buffered input as a draft, never typed or blocking, if its process is replaced after a refused write', async () => {
         boundary.rpc.mockRejectedValueOnce(markRpcRequestDisposition(new Error('disconnected'), 'notSent'));
         const terminalIdRef: { current: string | null } = { current: null };
         const terminalStreamCarrierRef: { current: ReturnType<typeof createMachineRpcTerminalStreamCarrier> | null } = { current: null };
@@ -196,8 +196,8 @@ describe('embedded terminal input delivery through the real carrier', () => {
         act(() => hook.getCurrent().flushPendingInput());
         await flushHookEffects();
         expect(boundary.rpc).toHaveBeenCalledTimes(1);
-        expect(hook.getCurrent().inputRecoveryAvailable).toBe(true);
-        expect(hook.getCurrent().readInputRecovery()).toBe('held\r');
+        expect(hook.getCurrent()).toMatchObject({ inputRecoveryAvailable: false, inputDraftAvailable: true });
+        expect(hook.getCurrent().readInputDraft()).toBe('held\r');
         await hook.unmount();
     });
 

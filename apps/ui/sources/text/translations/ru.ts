@@ -15371,6 +15371,8 @@ settingsSession: {
 
   terminalEmbedded: {
     inputRecovery: "Доставка ввода не подтверждена. Скопируйте ввод и проверьте терминал, прежде чем продолжить.",
+    inputDraft: "Ввод для предыдущей оболочки не был отправлен в эту.",
+    inputDraftResend: "Отправить снова",
     nativeAccessibility: {
       terminalLabel: 'Терминал',
       fallbackValue: 'Содержимое нативного терминала недоступно. Используйте xterm WebView для доступного содержимого терминала.',

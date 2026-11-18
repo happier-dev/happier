@@ -3247,6 +3247,9 @@ describe('useMachineTerminalSession', () => {
         await act(async () => hook.getCurrent().retryConnect());
         await flushHookEffects({ cycles: 3, turns: 2, runOnlyPendingTimers: true });
         expect(terminalOps.ensure).toHaveBeenCalledTimes(2);
+        // The explicit Open superseded the old process: its held line is a draft that never
+        // blocks typing into the replacement and is never typed into it on its own.
+        expect(hook.getCurrent()).toMatchObject({ inputRecoveryAvailable: false, inputDraftAvailable: true });
         hook.getCurrent().onInput('echo fresh\r');
         await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
 
@@ -3258,6 +3261,14 @@ describe('useMachineTerminalSession', () => {
             },
             expect.any(Object),
         );
+        expect(terminalOps.streamSendInput).not.toHaveBeenCalledWith('machine-1',
+            expect.objectContaining({ terminalId: 'term-input-fresh', event: { t: 'text', text: 'echo stale\r' } }), expect.anything());
+        // Resend is the person's explicit choice to type the draft into the new shell.
+        await act(async () => hook.getCurrent().resendInputDraft());
+        await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
+        expect(terminalOps.streamSendInput).toHaveBeenLastCalledWith('machine-1',
+            { terminalId: 'term-input-fresh', event: { t: 'text', text: 'echo stale\r' } }, expect.any(Object));
+        expect(hook.getCurrent().inputDraftAvailable).toBe(false);
 
         await hook.unmount();
     });
@@ -3314,6 +3325,7 @@ describe('useMachineTerminalSession', () => {
         await act(async () => hook.getCurrent().retryConnect());
         await flushHookEffects({ cycles: 3, turns: 2, runOnlyPendingTimers: true });
         expect(terminalOps.ensure).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()).toMatchObject({ inputRecoveryAvailable: false, inputDraftAvailable: true });
         hook.getCurrent().onInput('echo fresh rpc\r');
         await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
 
@@ -3325,6 +3337,13 @@ describe('useMachineTerminalSession', () => {
             },
             expect.any(Object),
         );
+
+        const sends = terminalOps.streamSendInput.mock.calls.length;
+        await act(async () => hook.getCurrent().discardInputDraft());
+        await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
+        expect(hook.getCurrent().inputDraftAvailable).toBe(false);
+        // Discarding a superseded draft sends nothing to the replacement shell.
+        expect(terminalOps.streamSendInput).toHaveBeenCalledTimes(sends);
 
         await hook.unmount();
     });

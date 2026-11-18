@@ -12694,6 +12694,8 @@ settingsSession: {
 
     terminalEmbedded: {
         inputRecovery: "無法確認輸入是否已送達。請複製輸入並檢查終端，然後再繼續。",
+        inputDraft: "在上一個 Shell 中輸入的內容未傳送到此 Shell。",
+        inputDraftResend: "重新傳送",
         nativeAccessibility: {
             terminalLabel: '終端機',
             fallbackValue: '原生終端機內容無法使用。請使用 xterm WebView 存取無障礙終端機內容。',
