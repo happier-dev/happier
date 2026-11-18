@@ -12,7 +12,8 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema,
+import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readBuiltinWidgetDescriptorV1, WidgetAreaLayoutV1Schema,
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -1137,21 +1138,38 @@ describe('mounted Usage page scope commands', () => {
         expect(frames, 'every committed frame retains the selected Cost while acknowledged inputs are admitted').toEqual(frames.map(() => 'cost'));
     });
 
-    it('retains Cost while acknowledged bindings await their layout publication', async () => {
+    it.each(['period', 'sources', 'dashboard'] as const)('hands off acknowledged Cost during a %s change with layout admission held', async change => {
         const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
             import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
         ]);
         const credentials = { token: createServedHomeAccountToken('account-a'),
             secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        const releaseRead = createDeferred<void>();
+        let layoutArtifactId = '';
+        let remainingCostWrites = 0;
+        let holdCostRead = false;
+        let readHeld = false;
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-metric-delayed-publication.test', accountId: 'account-a',
             credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
-            route: request => {
+            route: async request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (request.path === '/v2/usage/query') return Response.json(accounting);
-                return artifacts.handle(request.path + request.url.search, { method: request.method, headers: request.headers,
-                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                const response = await artifacts.handle(request.path + request.url.search, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+                const layoutPath = `/v1/artifacts/${layoutArtifactId}`;
+                if (request.path === layoutPath && request.method === 'POST' && response?.ok && remainingCostWrites > 0) {
+                    holdCostRead = --remainingCostWrites === 0;
+                }
+                if (holdCostRead && request.path === '/v1/artifacts/read') {
+                    const read = ArtifactReadBatchHttpInputV1Schema.parse(request.body);
+                    if (read.artifactIds.includes(layoutArtifactId)) {
+                        readHeld = true;
+                        await releaseRead.promise;
+                    }
+                }
+                return response
                     ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
         const server = home.homes.a!;
@@ -1161,7 +1179,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-delayed-publication" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1179,23 +1197,57 @@ describe('mounted Usage page scope commands', () => {
             expect(bar().props.metric).toBe('tokens');
         });
 
-        const storage = getStorage();
-        const publish = storage.getState().updateArtifact;
-        const held: Parameters<typeof publish>[0][] = [];
-        let holdPublication = true;
-        const publicationSpy = vi.spyOn(storage.getState(), 'updateArtifact').mockImplementation(artifact => {
-            if (holdPublication) held.push(artifact);
-            else publish(artifact);
-        });
-        observe = () => frames.push(bar().props.metric);
-        act(() => bar().props.onMetricChange('cost'));
-        await waitForHomeGovernance(() => expect(bar().props.metricPending).toBe(false));
-        expect(bar().props.metric, 'an acknowledged write must not clear Cost before its bindings are admitted').toBe('cost');
-        expect(frames).toContain('cost');
-        holdPublication = false;
-        await act(async () => { for (const artifact of held) publish(artifact); });
-        await waitForHomeGovernance(() => expect(bar().props.metric).toBe('cost'));
-        publicationSpy.mockRestore();
+        const metricWidgets = () => screen.findAllByType(WidgetSurface)
+            .filter(node => readBuiltinWidgetDescriptorV1(node.props.instance.definition)?.inputs?.fields.some(field => field.path === 'metric'));
+        const sourceFilter = () => screen.findAllByType(SelectionListFilterChip)
+            .find(node => node.props.filter.id === 'sources')!.props.filter;
+        layoutArtifactId = buildWidgetSurfaceArtifactIdV1({ serverId: server.id, accountId: 'account-a',
+            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'how-you-work' } });
+        remainingCostWrites = metricWidgets().length;
+        expect(remainingCostWrites).toBeGreaterThan(0);
+        // Withhold only the server's read of the final revision. The real write,
+        // acknowledgement and local Artifact publication can all finish.
+        try {
+            act(() => bar().props.onMetricChange('cost'));
+            await waitForHomeGovernance(() => {
+                expect(readHeld).toBe(true);
+                expect(bar().props.metricPending).toBe(false);
+            });
+            expect(bar().props.metric).toBe('cost');
+            expect(metricWidgets().some(node => node.props.instance.bindings.metric?.value !== 'cost')).toBe(true);
+            if (change === 'dashboard') {
+                const layoutBar = () => screen.findByType(WidgetAreaLayoutBar);
+                observe = () => { if (layoutBar().props.selectedId === 'overview') frames.push(bar().props.metric); };
+                await act(async () => { layoutBar().props.onSelect('overview'); });
+                await waitForHomeGovernance(() => {
+                    expect(layoutBar().props.selectedId).toBe('overview');
+                    expect(bar().props.metricPending).toBe(false);
+                });
+                expect(bar().props.metric).toBe('tokens');
+                expect(frames).not.toContain('cost');
+            } else {
+                observe = () => frames.push(bar().props.metric);
+                if (change === 'period') {
+                    await act(async () => { await bar().props.onPeriodChange('30days'); });
+                    expect(bar().props.period).toBe('30days');
+                } else {
+                    await act(async () => { await sourceFilter().onChange('native'); });
+                    expect(shownScope(bar().props.scopeFilters, 'sources')).toEqual(['native']);
+                }
+                expect(metricWidgets().some(node => node.props.instance.bindings.metric?.value !== 'cost')).toBe(true);
+            }
+        } finally {
+            await act(async () => { releaseRead.resolve(); });
+        }
+        if (change !== 'dashboard') {
+            await waitForHomeGovernance(() => {
+                expect(metricWidgets().length).toBeGreaterThan(0);
+                expect(metricWidgets().every(node => node.props.instance.bindings.metric?.value === 'cost')).toBe(true);
+            });
+            expect(frames.length).toBeGreaterThan(0);
+            expect(frames).toEqual(frames.map(() => 'cost'));
+        }
+        observe = undefined;
     });
 
     it('defers never-near widgets and keeps admitted content mounted through partial visibility and scroll return', async () => {

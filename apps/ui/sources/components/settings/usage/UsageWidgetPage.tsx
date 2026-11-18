@@ -318,14 +318,18 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   );
   const widgetMetric =
     metrics.size === 1 ? ([...metrics][0] as 'tokens' | 'cost') : null;
-  const metricLifetime = React.useMemo(() => ({ controller: new AbortController(), running: false }), [props.port, props.authority]);
+  const metricLifetime = React.useMemo(() => ({ surface: props.port.surface, controller: new AbortController(), running: false }), [props.port, props.authority]);
   const [pendingMetric, setPendingMetric] = React.useState<Readonly<{ lifetime: typeof metricLifetime; metric: 'tokens' | 'cost'; writing: boolean }> | null>(null);
-  const metric = pendingMetric?.lifetime === metricLifetime ? pendingMetric.metric : widgetMetric;
+  // A filter change rebinds the write port while the same dashboard remains displayed.
+  const pendingForDocument = pendingMetric?.lifetime.surface === metricLifetime.surface ? pendingMetric : null;
+  const visiblePendingMetric = pendingForDocument && (!pendingForDocument.writing || pendingForDocument.lifetime === metricLifetime)
+    ? pendingForDocument : null;
+  const metric = visiblePendingMetric?.metric ?? widgetMetric;
   React.useEffect(() => {
     // Acknowledgement ends write activity; the admitted publication ends selection handoff.
-    if (pendingMetric?.lifetime === metricLifetime && !pendingMetric.writing && ready?.isCurrent() && widgetMetric === pendingMetric.metric)
+    if (pendingMetric && (!pendingForDocument || (!pendingMetric.writing && ready?.isCurrent() && widgetMetric === pendingMetric.metric)))
       setPendingMetric(current => current === pendingMetric ? null : current);
-  }, [metricLifetime, pendingMetric, ready, widgetMetric]);
+  }, [pendingForDocument, pendingMetric, ready, widgetMetric]);
   const metricApproval = useActionApprovalContinuation({
     scopeKey: JSON.stringify(props.authority?.scope ?? null),
     serverId: props.authority?.scope.serverId ?? '',
@@ -355,7 +359,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           metricApproval.requestApproval(registration);
         },
       }).then(writes => {
-        acknowledged = writes.every(write => write.result.ok);
+        acknowledged = !metricLifetime.controller.signal.aborted && writes.every(write => write.result.ok);
         retirePresentationNotice(key);
         if (!metricLifetime.controller.signal.aborted && writes.some(write => !write.result.ok))
           publishPresentationNotice({ key, severity: 'error', message: t('widgetAdd.saveFailed') });
@@ -446,7 +450,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     }),
     [],
   );
-  const metricPending = layoutLoading || pendingMetric?.lifetime === metricLifetime && pendingMetric.writing;
+  const metricPending = layoutLoading || visiblePendingMetric?.writing === true;
   const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
   const metricOptions = React.useMemo(() => usageTokensCostMetricOptions(), []);
   const filterBar = React.useMemo(() => <UsageFilterBar
