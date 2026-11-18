@@ -28,7 +28,7 @@ export function buildMachineServiceLogIndex(input: Readonly<{
     const next = followed?.kind === 'page' ? followed.page : null;
     // A cursor page continues exact bytes. Without a cursor the live answer is a replacement tail.
     const append = first.page.nextCursor !== null && input.continues !== false;
-    const text = next ? append ? first.page.text + next.text : next.text : first.page.text;
+    const text = withoutComposeProjectPrefix(next ? append ? first.page.text + next.text : next.text : first.page.text);
     const index = buildLogIndexV1({
         sourceKey: input.sourceKey, positionBasis: 'page', baseline: input.baseline,
         log: { logId: first.page.sourceRevision, startLine: 1, startByte: 0,
@@ -38,4 +38,16 @@ export function buildMachineServiceLogIndex(input: Readonly<{
     const secretMasking = (next ?? first.page).secretMasking === 'incomplete';
     return { kind: 'index', index, truncated: next ? next.truncated || append && first.page.truncated : first.page.truncated,
         secretMasking };
+}
+
+/**
+ * Happier names every Compose project `happier-<64 hex>`, and Compose prefixes each container, volume and network
+ * with it, so a deployment's lines would carry the same 72 characters each. People know these resources by their
+ * service, volume or network name: the prefix is dropped here, once, so lines, Find and Copy all read the same text.
+ * Download still walks the source's own pages unchanged.
+ */
+const COMPOSE_PROJECT_PREFIX = /happier-[0-9a-f]{64}[-_]/gu;
+
+function withoutComposeProjectPrefix(text: string): string {
+    return text.replace(COMPOSE_PROJECT_PREFIX, '');
 }
