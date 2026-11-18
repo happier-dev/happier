@@ -3,6 +3,7 @@ import { ReviewMetadataV1Schema } from './reviewArtifactV1.js';
 import { ReviewListFilterV1Schema } from './reviewListFilterV1.js';
 import { ResourceSpaceMembershipV1Schema } from '../collections/spaces/resourceSpaceMembershipV1.js';
 import { ReviewCommentAppearanceInputV1Schema } from './comments/v1.js';
+import { ReviewHumanStateV1Schema } from './reviewHumanV1.js';
 
 const id = z.string().check(z.minLength(1));
 const ordinal = z.number().check(z.int(), z.minimum(1));
@@ -28,6 +29,11 @@ export const ReviewListItemV1Schema = z.strictObject({
 export type ReviewListItemV1 = z.infer<typeof ReviewListItemV1Schema>;
 export const ReviewListResponseV1Schema = z.strictObject({ items: z.array(ReviewListItemV1Schema), cursor: z.nullable(id) });
 export type ReviewListResponseV1 = z.infer<typeof ReviewListResponseV1Schema>;
+
+export const ReviewGetRequestV1Schema = z.strictObject({ reviewId: id });
+export type ReviewGetRequestV1 = z.infer<typeof ReviewGetRequestV1Schema>;
+export const ReviewGetResponseV1Schema = z.strictObject({ review: ReviewListItemV1Schema, human: ReviewHumanStateV1Schema });
+export type ReviewGetResponseV1 = z.infer<typeof ReviewGetResponseV1Schema>;
 
 export const ReviewWorkflowHistoryRequestV1Schema = z.strictObject({ workflowId: id, reviewId: id });
 export type ReviewWorkflowHistoryRequestV1 = z.infer<typeof ReviewWorkflowHistoryRequestV1Schema>;
