@@ -342,6 +342,24 @@ describe('JSON Web Tokens in diagnostic text', () => {
 
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
+
+  it.each([
+    ['ordinary text', '', null],
+    ['GitHub token', 'ghp_', '[REDACTED]'],
+    ['GitHub fine-grained token', 'github_pat_', '[REDACTED]'],
+    ['GitLab token', 'glpat-', '[REDACTED]'],
+    ['npm token', 'npm_', '[REDACTED]'],
+    ['Docker token', 'dckr_pat_', '[REDACTED]'],
+    ['model-hub token', 'hf_', '[REDACTED]'],
+    ['model-provider token', 'sk-', '[REDACTED]'],
+    ['Slack token', 'xoxb-', '[REDACTED]'],
+    ['Stripe token', 'sk_live_', '[REDACTED]'],
+    ['Google OAuth token', 'ya29.', '[REDACTED]'],
+  ] as const)('handles %s at the Home artifact byte budget', (_kind, prefix, redacted) => {
+    // The live Home accepts 10 MiB artifacts; these valid inputs overflowed String.replace before upload.
+    const input = `${prefix}${'a'.repeat(10 * 1024 * 1024 - prefix.length)}`;
+    expect(redactBugReportSensitiveText(input)).toBe(redacted ?? input);
+  });
 });
 
 describe('redaction stays linear on adversarial diagnostic text', () => {

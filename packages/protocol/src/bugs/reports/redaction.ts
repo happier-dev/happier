@@ -280,7 +280,9 @@ const JSON_WEB_TOKEN_SEGMENT_MINIMUM_LENGTH = 10;
  * re-measured from each of its own offsets: without it, a text made of many
  * short runs pays a quadratic cost inside every one of them.
  */
-const JSON_WEB_TOKEN_RUN_PATTERN = /([^A-Za-z0-9._-]|^)([A-Za-z0-9._-]{35,})/g;
+// Keep the minimum fixed and consume the rest with `*`: V8's open-ended
+// counted repetition overflows its stack on a valid artifact-sized run.
+const JSON_WEB_TOKEN_RUN_PATTERN = /([^A-Za-z0-9._-]|^)([A-Za-z0-9._-]{35}[A-Za-z0-9._-]*)/g;
 
 /**
  * Judges one maximal base64url run in a single left-to-right pass.
@@ -363,38 +365,38 @@ function redactKnownSensitiveText(input: string): string {
       (_match, delimiter: string, run: string) => `${delimiter}${redactJsonWebTokensInBase64UrlRun(run)}`,
     )
     .replace(/\b(A3T[A-Z0-9]{16}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b/g, '[REDACTED]')
-    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
-    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED]')
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*\b/g, '[REDACTED]')
     // GitLab is GitHub's peer here and its token was reaching reports whole: the
     // clone-URL rule only covers `https://oauth2:glpat-…@`, and the generic
     // `token` rule needs a word boundary that `GITLAB_TOKEN=` denies it, so a
     // bare token or an environment dump published the credential verbatim.
     // The body run ends the match rather than `\b`, because `-` and `_` are both
     // token characters and a trailing one would otherwise be left visible.
-    .replace(/\bglpat-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g, '[REDACTED]')
-    .replace(/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
+    .replace(/\bglpat-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])/g, '[REDACTED]')
+    .replace(/\bnpm_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
     // A registry or model-hub credential in install output has the same standing
     // as the npm one above it. `hf_` is already one of the families the local
     // inventory advertises as redacted through `redactsProcessArgs`, so leaving
     // it here disclosed in a report what the process projection removes.
-    .replace(/\bdckr_pat_[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g, '[REDACTED]')
-    .replace(/\bhf_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
-    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED]')
+    .replace(/\bdckr_pat_[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])/g, '[REDACTED]')
+    .replace(/\bhf_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*\b/g, '[REDACTED]')
     // Slack issues app-level tokens under `xapp-`, which the bot/user `xox…`
     // prefix cannot match; both bodies are the same hyphenated alphabet.
-    .replace(/\b(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10,}/g, '[REDACTED]')
+    .replace(/\b(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10}[A-Za-z0-9-]*/g, '[REDACTED]')
     .replace(
       /\bhttps:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+/gi,
       'https://hooks.slack.com/services/[REDACTED]',
     )
     // `pk_` is Stripe's publishable identifier and stays readable; only the secret
     // and restricted key prefixes name a credential.
-    .replace(/\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b/g, '[REDACTED]')
+    .replace(/\b[sr]k_(?:live|test)_[A-Za-z0-9]{16}[A-Za-z0-9]*\b/g, '[REDACTED]')
     .replace(/\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[REDACTED]')
     // Google's second credential prefix: an OAuth access token, which `AIza`
     // above cannot match. A dot is a token character here, so the body run
     // carries it and the match ends where the run does.
-    .replace(/\bya29\.[A-Za-z0-9._-]{20,}(?![A-Za-z0-9._-])/g, '[REDACTED]')
+    .replace(/\bya29\.[A-Za-z0-9._-]{20}[A-Za-z0-9._-]*(?![A-Za-z0-9._-])/g, '[REDACTED]')
     // A private key body is the one payload worth losing entirely from a report.
     // The body scan is lazy against an end marker and also closes at end of
     // input, so a log truncated mid-key surrenders nothing. That end-of-input
