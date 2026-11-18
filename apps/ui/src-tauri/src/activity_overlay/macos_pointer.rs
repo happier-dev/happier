@@ -167,8 +167,7 @@ pub(super) fn install<R: Runtime>(
             let owner: Retained<PointerOwner> = unsafe { msg_send![super(owner), init] };
             let class = AnyClass::get(c"NSTrackingArea").ok_or("AppKit tracking areas unavailable")?;
             // Local tracking-area moves detect leaving the island while still inside its
-            // animation envelope. Pet additionally tracks moves throughout dragging.
-            // Keep sampling while a press drags across the retained animation envelope.
+            // animation envelope. Both owners keep sampling while a press drags across it.
             // Without this bit, leaving the island during a drag leaves the full panel frame
             // accepting mouse events until another crossing happens.
             let options: usize = 0x01 | 0x02 | 0x80 | 0x200 | 0x400;
