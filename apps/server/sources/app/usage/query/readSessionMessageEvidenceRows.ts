@@ -66,7 +66,7 @@ export async function readSessionMessageEvidenceRowsInTx(tx: Tx,
     for (const chunk of portableQueryChunks({ values: sessions, bindingsPerValue: 2 })) {
         const subjects = prismaRuntime.join(chunk.map(session => prismaRuntime.sql`(${prismaRuntime.raw('m.' + s.column('sessionId'))}=${session.id}
             ${session.maximumSeq === null ? prismaRuntime.empty : prismaRuntime.sql`AND ${prismaRuntime.raw('m.' + s.column('seq'))}<=${session.maximumSeq}`})`), ' OR ');
-        rows.push(...await tx.$queryRaw<UsageMessageEvidenceStorageRow[]>(prismaRuntime.sql`
+        const projected = await tx.$queryRaw<UsageMessageEvidenceStorageRow[]>(prismaRuntime.sql`
             SELECT ${prismaRuntime.raw(['id', 'sessionId', 'localId', 'createdAt'].map(key => `m.${s.column(key)}`).join(', '))},
             ${prismaRuntime.raw(`(SELECT ${s.collect('sc.value')} FROM (
                 SELECT ${s.json(data, 'sidechainId')} AS value WHERE ${s.type(s.json(data, 'sidechainId'))}='string'
@@ -82,7 +82,8 @@ export async function readSessionMessageEvidenceRowsInTx(tx: Tx,
             ${prismaRuntime.raw(tools)} AS ${prismaRuntime.raw(s.column('tools'))},
             ${prismaRuntime.raw(accepted)} AS ${prismaRuntime.raw(s.column('acceptedDelivery'))}
             FROM ${prismaRuntime.raw(s.column('SessionMessage'))} m WHERE ${subjects}
-            ORDER BY ${prismaRuntime.raw('m.' + s.column('sessionId'))}, ${prismaRuntime.raw('m.' + s.column('seq'))} DESC`));
+            ORDER BY ${prismaRuntime.raw('m.' + s.column('sessionId'))}, ${prismaRuntime.raw('m.' + s.column('seq'))} DESC`);
+        for (const row of projected) rows.push(row);
     }
     return rows;
 }
