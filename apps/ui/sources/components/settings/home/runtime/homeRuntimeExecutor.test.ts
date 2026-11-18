@@ -7,6 +7,7 @@ import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixt
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import { standardCleanup } from '@/dev/testkit';
+import { t } from '@/text';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 let answerRpc: Parameters<typeof installSessionActionRpcBoundary>[0] = () => { throw new Error('Unexpected daemon request'); };
@@ -67,13 +68,17 @@ describe('Home runtime restart task lifecycle', () => {
 
     it('does not start a restart when the daemon cannot observe completion', async () => {
         installTransport(['start', 'poll', 'respond'], Promise.resolve({ protocolVersion: 1, taskId: 'remote-restart', ok: true, data: { healthy: true } }));
-        await expect(restartHomeRuntime(executor, context)).resolves.toMatchObject({ kind: 'failed' });
+        await expect(restartHomeRuntime(executor, context)).resolves.toMatchObject({
+            kind: 'failed', message: t('homeGovernance.runtime.restartFromHost', { host: executor.hostName }),
+        });
         expect(requests.some((call) => (call.params as { method?: string }).method === 'start')).toBe(false);
     });
 
     it('does not start an advertised but unavailable task service', async () => {
         installTransport(['start', 'wait'], Promise.resolve({ protocolVersion: 1, taskId: 'remote-restart', ok: true, data: { healthy: true } }), false);
-        await expect(restartHomeRuntime(executor, context)).resolves.toMatchObject({ kind: 'failed' });
+        await expect(restartHomeRuntime(executor, context)).resolves.toMatchObject({
+            kind: 'failed', message: t('homeGovernance.runtime.restartFromHost', { host: executor.hostName }),
+        });
         expect(requests.some((call) => (call.params as { method?: string }).method === 'start')).toBe(false);
     });
 

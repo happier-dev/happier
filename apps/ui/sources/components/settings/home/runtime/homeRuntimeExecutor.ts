@@ -20,6 +20,7 @@ import {
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { t } from '@/text';
 
 import { resolveHomeRuntimeExecutor, type HomeRuntimeExecutor } from './resolveHomeRuntimeExecutor';
 
@@ -203,7 +204,11 @@ export async function restartHomeRuntime(
                     if (!output.success) return { kind: 'outcome_unknown', ...(taskId ? { taskId } : {}) };
                     if (output.data.status === 'outcome_unknown') return { kind: 'outcome_unknown',
                         ...(output.data.taskId ? { taskId: output.data.taskId } : {}) };
-                    if (output.data.status === 'unavailable') return { kind: 'failed', message: null };
+                    if (output.data.status === 'unavailable') {
+                        return { kind: 'failed', message: output.data.reason === 'system_tasks_unavailable'
+                            ? t('homeGovernance.runtime.restartFromHost', { host: executor.hostName })
+                            : null };
+                    }
                     return completedRestart(output.data.taskId, output.data.result);
                 } finally { account.dispose(); }
             }
