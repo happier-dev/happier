@@ -8394,8 +8394,8 @@ describe('deployment children retain their controller Action authority', () => {
             expect(metadata.json()).toMatchObject({ ok: true, environment: { id: f.environment.id } });
             expect((await readEnvironment(f.environment.id, 'deployments.environments.get')).statusCode).toBe(200);
             expect((await readEnvironment(crypto.randomUUID())).statusCode).toBe(401);
-            const settle = async (machine = f.controller, deploymentId = f.receipt.id) => {
-                const body = signedStage(f, machine, 'failed', f.receipt.revision);
+            const settle = async (machine = f.controller, deploymentId = f.receipt.id, state: 'failed' | 'running' = 'failed') => {
+                const body = signedStage(f, machine, state, f.receipt.revision);
                 return app.inject({ method: 'POST', url: path, payload: { ...body, deploymentId }, headers: {
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
@@ -8410,7 +8410,12 @@ describe('deployment children retain their controller Action authority', () => {
             const response = await settle();
             expect(response.statusCode, response.body).toBe(200);
             expect(DeploymentReceiptResultV1Schema.parse(response.json())).toMatchObject({ ok: true, state: 'failed' });
-            expect((await settle()).statusCode).toBe(401);
+            // A second admitted observer of the same outcome reads the settled receipt instead of an authorization refusal.
+            const replay = await settle();
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(DeploymentReceiptResultV1Schema.parse(replay.json())).toMatchObject({ ok: true, state: 'failed' });
+            // Any other transition after settlement is still not admitted.
+            expect((await settle(f.controller, f.receipt.id, 'running')).statusCode).toBe(401);
         }, { authentication: 'real' });
     });
 

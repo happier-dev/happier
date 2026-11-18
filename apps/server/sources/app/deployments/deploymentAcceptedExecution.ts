@@ -20,6 +20,8 @@ type ReceiptCapture = Readonly<{
 export type DeploymentReceiptContinuation = Readonly<{
     deploymentId: string; actionOperationId: string; environmentId: string; installationId: string;
     interruptedSettlement?: true;
+    /** An observer's submitted settlement: a receipt already settled to exactly this state replays it. */
+    observedSettlementState?: string;
 }>;
 type AcceptedReceiptBinding = Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'actionId' | 'requestId' | 'target'>
     & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'requestEnvelopeDigest' | 'installationId' | 'environmentId' | 'workflowActionOrigin' | 'deploymentPreparationAdmission'>>;
@@ -128,7 +130,10 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
             actionOperationId: continuation.actionOperationId } : binding.environmentId ? { environmentId: binding.environmentId } : {}),
         // A fresh signed root can release its requester's interrupted slot on
         // the captured controller, without borrowing the old execution root.
-        ...(observing ? { state: { in: deploymentInProgressStates() } } : continuation?.interruptedSettlement ? { OR: [
+        // Overlapping observers: the slower one reaches the transition owner's same-state replay, never another outcome.
+        ...(observing ? { state: { in: [...deploymentInProgressStates(),
+            ...(continuation?.observedSettlementState ? [continuation.observedSettlementState] : [])] } }
+            : continuation?.interruptedSettlement ? { OR: [
             originalRequest,
             { state: { in: deploymentInProgressStates() } },
         ] } : originalRequest),

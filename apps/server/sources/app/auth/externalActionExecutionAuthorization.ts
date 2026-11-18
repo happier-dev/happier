@@ -1806,6 +1806,8 @@ async function verifyCommon(
             || binding.actionId === 'deployments.receipts.observe') && verifySignature(machine.installationPublicKey) ? {
         deploymentId: nativeTransition.deploymentId, actionOperationId: nativeTransition.actionOperationId,
         environmentId: nativeTransition.environmentId, installationId: binding.installationId,
+        ...(binding.actionId === 'deployments.receipts.observe' && nativeTransition.kind === 'settle'
+            ? { observedSettlementState: nativeTransition.state } : {}),
         // Unknown-outcome recovery records its private reason atomically. The
         // transition owner binds that update to the existing Artifact and versions.
         ...(nativeTransition.kind === 'settle'
