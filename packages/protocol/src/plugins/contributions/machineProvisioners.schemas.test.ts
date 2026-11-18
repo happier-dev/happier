@@ -21,6 +21,19 @@ import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from './catalog.js';
 
+it('admits only JSON Options refusals while preserving the Check finding', () => {
+  const details = { available: false, code: 'sign_in_required',
+    nativeCredentialDelivery: { status: 'unsupported' } };
+  expect(provisioners.readMachineProvisionerOptionsRefusalV1('sign_in_required', details)).toEqual(details);
+  expect(provisioners.readMachineProvisionerOptionsRefusalV1('sign_in_required', {
+    ...details, nativeCredentialDelivery: { status: 'unsupported', code: undefined },
+  })).toBeUndefined();
+  expect(provisioners.readMachineProvisionerOptionsRefusalV1('other_code', details)).toBeUndefined();
+  expect(provisioners.readMachineProvisionerOptionsRefusalV1('sign_in_required', {
+    ...details, available: true,
+  })).toBeUndefined();
+});
+
 it('specializes preparation build choices without widening the canonical closed build envelope', () => {
   const choices = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
   const schema = provisioners.createManagedMachinePresetPreparationBuildInputV1Schema(choices);

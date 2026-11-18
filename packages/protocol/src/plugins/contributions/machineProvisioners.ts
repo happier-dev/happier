@@ -446,8 +446,8 @@ export type MachineProvisionerCheckResultV1 = mini.infer<typeof MachineProvision
 export type MachineProvisionerOptionsResultV1 = mini.infer<typeof MachineProvisionerOptionsResultV1Schema>;
 
 /** Options can author the same unavailable finding as Check in PluginError details. */
-export function readMachineProvisionerOptionsRefusalV1(code: string, details: unknown): MachineProvisionerCheckResultV1 | undefined {
-  const parsed = MachineProvisionerCheckResultV1Schema.safeParse(details);
+export function readMachineProvisionerOptionsRefusalV1(code: string, details: unknown): ReturnType<typeof MachineProvisionerCheckResultProtocolV1Schema.parse> | undefined {
+  const parsed = MachineProvisionerCheckResultProtocolV1Schema.safeParse(details);
   if (parsed.success && !parsed.data.available && parsed.data.code === code) return parsed.data;
   return undefined;
 }
@@ -609,7 +609,7 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
 export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisionersListResultV1Schema>;
 
 /** A declaration-neutral projection of the existing validator, not a second parser. */
-function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSchema<T, T> {
+function projectRoleSchema<TSchema extends z.core.$ZodType>(schema: TSchema) {
   return projectZodProtocolSchema(schema);
 }
 export const ManagedGuestCliBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedGuestCliBuildInputSchema));
