@@ -14,6 +14,7 @@ import { createApiTokenModalLifecycle } from '@/components/settings/apiTokens/sh
 import { useApiTokenGrantNames } from '@/components/settings/apiTokens/grant/useApiTokenGrantCatalogs';
 import { useApiTokenSettingsClock } from '@/components/settings/apiTokens/useApiTokenSettingsClock';
 import { useApiTokenSettingsControllerState } from '@/components/settings/apiTokens/useApiTokenSettingsControllerState';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -96,8 +97,10 @@ function DeploymentCiSummary(props: Readonly<{ input: DeploymentCiInput; control
   const onOpen = React.useCallback((token: ApiTokenSettingsToken) => {
     props.onClose(); router.push(apiTokenRowHref(token));
   }, [props.onClose, router]);
-  const footer = React.useMemo(() => <RoundButton size="normal" title={t('settingsApiTokens.create.submit')}
-    disabled={state.phase !== 'ready'} onPress={props.onCreate} />, [props.onCreate, state.phase]);
+  // One sheet footer owner: Cancel, then the sheet's one action (PAGE-ACCEPT-176 code shape).
+  const footer = React.useMemo(() => <ModalCardFooterActions cancel={{ onPress: props.onClose }}>
+    <RoundButton size="normal" title={t('settingsApiTokens.create.submit')} disabled={state.phase !== 'ready'} onPress={props.onCreate} />
+  </ModalCardFooterActions>, [props.onClose, props.onCreate, state.phase]);
   useModalCardChrome(props.setChrome, React.useMemo(() => ({ kind: 'card' as const,
     title: t('projects.deployments.overviewStatus.ciTitle'), subtitle: props.input.name,
     testID: 'project-deployments.environment.ci.modal', phonePresentation: 'sheet' as const,
