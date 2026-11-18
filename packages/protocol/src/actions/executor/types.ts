@@ -1243,6 +1243,7 @@ export type { ApprovalQueueListItemV1, ApprovalQueueQueryPlanV1, ApprovalQueueLi
 
 type ExecutionRunActionOptions = Readonly<{
   approvalProfileId?: string | null;
+  approvalProfileTeamOrGroupDerived?: boolean;
   serverId?: string | null;
   surface?: ActionExecutorContext['surface'];
   callerInputConstraints?: ActionExecutorContext['callerInputConstraints'];
