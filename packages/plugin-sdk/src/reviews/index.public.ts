@@ -54,6 +54,7 @@ export type { ScmPullRequestReviewScopeProductionV1 } from './scope.js';
 export { ScmPullRequestReviewScopeV1Schema } from './scope.js';
 export type { ReviewStartInput } from './projections.js';
 export { ReviewStartInputSchema } from './projections.js';
+export { readReviewStartActionResultV1, type ReviewStartActionResultV1 } from './projections.js';
 export { createReviewCommentFingerprint } from './comments.js';
 export { createReviewCommentLinkedIssueIdV1 } from './comments.js';
 export { createReviewCommentPublicationSettlementRequestV1 } from './comments.js';

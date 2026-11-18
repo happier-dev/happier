@@ -2,6 +2,7 @@
 export { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
 export { ReviewFindingsV2Schema, parseReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 export { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+export { readReviewStartActionResultV1, type ReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 export {
     REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1,
     REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1,
