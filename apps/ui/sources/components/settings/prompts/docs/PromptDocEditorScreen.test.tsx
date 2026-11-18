@@ -11,6 +11,7 @@ import { beginPromptLibraryCatalogRowsLoad, getPromptLibraryCatalogValue, resetP
 import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import { storage } from '@/sync/domains/state/storage';
 import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { PromptDocEditorScreen } from './PromptDocEditorScreen';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -66,6 +67,23 @@ async function home(records: readonly PromptLibraryRecordV1[] = []) {
 }
 
 describe('PromptDocEditorScreen', () => {
+  it('explains a refused save and retains the unsaved prompt', async () => {
+    const f = await home();
+    storage.setState(state => ({ settings: { ...state.settings,
+      actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'prompt_doc.create': { disabledSurfaces: ['ui'] } } }),
+    } }));
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={null} />);
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('promptDoc.title')?.props.editable).toBe(true));
+      await act(async () => { screen.changeTextByTestId('promptDoc.title', 'Unsaved instructions'); });
+      await screen.pressByTestIdAsync('promptDoc.save');
+      expect(modal.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
+      expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Unsaved instructions');
+      expect(f.boundary.list()).toHaveLength(0);
+      expect(navigation.replace).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
   it('shows a failed document read and retries instead of presenting an editable blank document', async () => {
     let refusedArtifactId: string | null = null;
     let readRefused = false;

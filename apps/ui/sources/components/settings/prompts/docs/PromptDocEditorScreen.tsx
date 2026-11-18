@@ -3,11 +3,13 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
+import { isActionApprovalDeclinedErrorCode, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type PromptDocRevisionV1 } from '@happier-dev/protocol/prompts/library/promptDocV2';
 import { readPromptDocInLibrary, type PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { ArtifactOrganizationMutationFailureV1, readArtifactFolderCatalogV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
 import { resolveArtifactOrganizationHeaderV1, type ArtifactOrganizationHeaderV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { createPromptDoc, updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -322,7 +324,10 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
           }
         } catch { /* The original captured editor no longer admits this receipt. */ }
       }
-      Modal.alert(t('common.error'), t('promptLibrary.saveError'));
+      const failure = parseActionExecuteFailure(error);
+      if (failure && (accountRef.current !== account || !account?.accountLifetime.isCurrent()
+        || failure.errorCode === 'cancelled' || isActionApprovalDeclinedErrorCode(failure.errorCode))) return false;
+      Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('promptLibrary.saveError')));
       return false;
     } finally {
       setSaving(false);
