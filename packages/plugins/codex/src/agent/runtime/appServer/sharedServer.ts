@@ -305,6 +305,100 @@ function defaultDependencies(prepareDirectory: () => ReturnType<ExecService['pre
   };
 }
 
+/**
+ * The one spawn request of a Codex shared app-server listening on `socketPath`. A Session's open
+ * and a parked Agent both build their launch here (INV-ONE-SPEC), so a parked server spawned on the
+ * hand-off's endpoint is the launch the adopting Session would perform.
+ */
+export function buildCodexSharedAppServerSpawnRequest(input: Readonly<{
+  executable: ManagedExecutableRef;
+  processEnv: CodexAppServerEnv;
+  /** The native startup admission's own overrides (`withCodexNativeStartupLock`), not Session overrides. */
+  startupConfigOverrides: readonly string[];
+  disableUserMcpServers: boolean;
+  enableRealtimeConversation: boolean;
+  socketPath: string;
+}>): Parameters<ExecService['spawn']>[0] {
+  return {
+    executable: input.executable,
+    args: buildCodexAppServerArgs({
+      env: input.processEnv,
+      configOverrides: input.startupConfigOverrides,
+      disableUserMcpServers: input.disableUserMcpServers,
+      enableRealtimeConversation: input.enableRealtimeConversation,
+      listenUrl: `unix://${input.socketPath}`,
+    }),
+    cwd: { root: 'workspace', relativePath: '' },
+    env: buildCodexAppServerEnv(input.processEnv),
+    maxStdoutBytes: 4_096,
+    maxStderrBytes: 16_384,
+  };
+}
+
+/**
+ * The Codex shared-control probe: the installed CLI's version output when it supports a shared
+ * app-server on this platform, otherwise `null`. Every shared app-server launch probes here first.
+ */
+export async function probeCodexSharedControl(input: Readonly<{
+  exec: ExecService;
+  processEnv: CodexAppServerEnv;
+  platform?: NodeJS.Platform;
+  signal?: AbortSignal;
+  logger?: Pick<LoggerService, 'debug'>;
+  readCodexVersion?: Dependencies['readCodexVersion'];
+}>): Promise<string | null> {
+  const versionStartedAt = Date.now();
+  const versionOutput = await (input.readCodexVersion ?? readCodexVersion)(
+    input.exec,
+    input.processEnv,
+    input.signal,
+  ).catch(error => {
+    if (input.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
+    return '';
+  });
+  input.logger?.debug('Codex startup phase', { phase: 'version_probe', elapsedMs: Date.now() - versionStartedAt });
+  return supportsSharedControl(versionOutput, input.platform ?? process.platform) ? versionOutput : null;
+}
+
+/**
+ * The launch inputs a Codex shared app-server resolves before its native startup admission: the
+ * Codex executable and whether the realtime conversation feature is advertised. Only native
+ * initialization needs exclusion, so these settle outside the startup lock.
+ */
+export async function resolveCodexSharedAppServerLaunch(input: Readonly<{
+  exec: ExecService;
+  processEnv: CodexAppServerEnv;
+  signal?: AbortSignal;
+  logger?: Pick<LoggerService, 'debug'>;
+  probeRealtime?: Dependencies['probeRealtime'];
+}>): Promise<Readonly<{ executable: ManagedExecutableRef; realtimeConversationAdvertised: boolean }>> {
+  const toolStartedAt = Date.now();
+  const tool = await input.exec.systemTools.resolve({
+    toolId: 'codex-cli',
+    purpose: 'Launch the Codex shared app-server',
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  input.logger?.debug('Codex startup phase', { phase: 'tool_resolve', elapsedMs: Date.now() - toolStartedAt });
+  const probeStartedAt = Date.now();
+  const realtimeConversationAdvertised = await (input.probeRealtime ?? probeCodexRealtimeConversationFeature)({
+    exec: input.exec,
+    executable: tool.executable,
+    env: input.processEnv,
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  input.logger?.debug('Codex startup phase', { phase: 'feature_probe', elapsedMs: Date.now() - probeStartedAt });
+  return { executable: tool.executable, realtimeConversationAdvertised };
+}
+
+/**
+ * The environment the native startup lock derives its startup overrides from. The separated UID's
+ * shim publishes its selected CODEX_HOME, so native SQLite must default to that home: a host-side
+ * sqlite_home argument would override the shim with the custodian's private credential path.
+ */
+export function readCodexSharedAppServerStartupLockEnv(processEnv: CodexAppServerEnv, nativeProxy: boolean): CodexAppServerEnv {
+  return nativeProxy ? { ...processEnv, CODEX_SQLITE_HOME: undefined } : processEnv;
+}
+
 export async function createCodexSharedAppServer(params: Readonly<{
   exec: ExecService;
   logger?: Pick<LoggerService, 'debug'>;
@@ -333,17 +427,10 @@ export async function createCodexSharedAppServer(params: Readonly<{
     return nativeDirectory;
   });
   const dependencies = { ...defaults, ...params.dependencies };
-  const versionStartedAt = Date.now();
-  const versionOutput = await dependencies.readCodexVersion(
-    params.exec,
-    params.processEnv,
-    params.signal,
-  ).catch(error => {
-    if (params.signal?.aborted || readCodexAppServerProbeFailureCode(error)) throw error;
-    return '';
-  });
-  params.logger?.debug('Codex startup phase', { phase: 'version_probe', elapsedMs: Date.now() - versionStartedAt });
-  if (!supportsSharedControl(versionOutput, params.platform ?? process.platform)) return null;
+  const versionOutput = await probeCodexSharedControl({ exec: params.exec, processEnv: params.processEnv,
+    ...(params.platform ? { platform: params.platform } : {}), ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.logger ? { logger: params.logger } : {}), readCodexVersion: dependencies.readCodexVersion });
+  if (versionOutput === null) return null;
 
   const runtimeDirectory = await dependencies.createRuntimeDirectory();
   const transport = { kind: 'unixWebSocket' as const, socketPath: join(runtimeDirectory, 'private', 'app-server.sock'),
@@ -371,42 +458,23 @@ export async function createCodexSharedAppServer(params: Readonly<{
       assertCodexToolRestrictionRuntimeSupported(parseCodexCliStableVersion(versionOutput)?.value);
     }
     startPromise ??= (async () => {
-      const toolStartedAt = Date.now();
-      const tool = await params.exec.systemTools.resolve({
-        toolId: 'codex-cli',
-        purpose: 'Launch the Codex shared app-server',
-        ...(params.signal ? { signal: params.signal } : {}),
-      });
-      params.logger?.debug('Codex startup phase', { phase: 'tool_resolve', elapsedMs: Date.now() - toolStartedAt });
-      // Only native initialization needs exclusion; feature discovery can
-      // settle independently without holding every other cold start behind it.
-      const probeStartedAt = Date.now();
-      realtimeConversationAdvertised = await dependencies.probeRealtime({
-        exec: params.exec,
-        executable: tool.executable,
-        env: request.processEnv,
-        ...(params.signal ? { signal: params.signal } : {}),
-      });
-      params.logger?.debug('Codex startup phase', { phase: 'feature_probe', elapsedMs: Date.now() - probeStartedAt });
+      const launch = await resolveCodexSharedAppServerLaunch({ exec: params.exec, processEnv: request.processEnv,
+        ...(params.signal ? { signal: params.signal } : {}), ...(params.logger ? { logger: params.logger } : {}),
+        probeRealtime: dependencies.probeRealtime });
+      realtimeConversationAdvertised = launch.realtimeConversationAdvertised;
       const lockStartedAt = Date.now();
       await withCodexNativeStartupLock(async (configOverrides, admit) => {
         params.logger?.debug('Codex startup phase', { phase: 'native_startup_admission', elapsedMs: Date.now() - lockStartedAt });
         try {
           const spawnStartedAt = Date.now();
-          serverProcess = await params.exec.withSpawnAdmission(admit, async exec => await exec.spawn({
-            executable: tool.executable,
-            args: buildCodexAppServerArgs({
-              env: request.processEnv,
-              configOverrides,
-              disableUserMcpServers: request.disableUserMcpServers,
-              enableRealtimeConversation: realtimeConversationAdvertised,
-              listenUrl: endpoint,
-            }),
-            cwd: { root: 'workspace', relativePath: '' },
-            env: buildCodexAppServerEnv(request.processEnv),
-            maxStdoutBytes: 4_096,
-            maxStderrBytes: 16_384,
-          }, params.signal || params.nativeLaunch ? {
+          serverProcess = await params.exec.withSpawnAdmission(admit, async exec => await exec.spawn(buildCodexSharedAppServerSpawnRequest({
+            executable: launch.executable,
+            processEnv: request.processEnv,
+            startupConfigOverrides: configOverrides,
+            disableUserMcpServers: request.disableUserMcpServers,
+            enableRealtimeConversation: realtimeConversationAdvertised,
+            socketPath,
+          }), params.signal || params.nativeLaunch ? {
             ...(params.signal ? { signal: params.signal } : {}),
             ...(nativeDirectory?.nativeLaunch || params.nativeLaunch ? { nativeLaunch: nativeDirectory?.nativeLaunch ?? params.nativeLaunch } : {}),
           } : undefined));
@@ -453,16 +521,11 @@ export async function createCodexSharedAppServer(params: Readonly<{
           throw error;
         }
       }, params.signal, params.logger, {
-        // The separated UID's shim publishes its selected CODEX_HOME. Native
-        // SQLite must default to that home: a host-side sqlite_home argument
-        // would override the shim with the custodian's private credential path.
         // Unresolved native roots retain the existing OS-user startup lock.
-        processEnv: nativeDirectory?.nativeProxy
-          ? { ...request.processEnv, CODEX_SQLITE_HOME: undefined }
-          : request.processEnv,
+        processEnv: readCodexSharedAppServerStartupLockEnv(request.processEnv, nativeDirectory?.nativeProxy === true),
         configOverrides: request.configOverrides, cwd: request.cwd, versionOutput, deferUntilSpawn: true,
       }, params.onStartupWaiting);
-      return tool.executable;
+      return launch.executable;
     })();
     try {
       return await startPromise;
