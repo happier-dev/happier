@@ -17,7 +17,11 @@ import { deriveActionChildRequestIdV1 } from '@happier-dev/protocol/workflows/wo
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 
-installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+installSettingsViewCommonModuleMocks({
+    storage: 'real',
+    text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
+});
 // Vitest replaces Metro's deferred loader; Action admission, approval custody and dispatch remain real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
     const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
@@ -38,6 +42,8 @@ const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { t } = await import('@/text');
 const { Pressable } = await import('react-native');
+const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
 
 afterEach(async () => {
     await standardCleanup();
@@ -121,7 +127,7 @@ it.each(['agent', 'ui'] as const)('preserves %s authority with operation confirm
     await screen.unmount();
 });
 
-it('keeps an agent caller on the legacy Give a copy command and refuses its own approval despite explicit Allow', async () => {
+it('refuses agent self-approval on legacy Give a copy despite explicit Allow, and confirms an actual touch natively', async () => {
     let phase = 'restore-account';
     let invocationOutcome: Awaited<ReturnType<ReturnType<typeof createDefaultActionExecutor>['execute']>> | undefined;
     onTestFailed(() => console.error('legacy approval boundary', JSON.stringify({ phase, invocationOutcome,
@@ -160,8 +166,10 @@ it('keeps an agent caller on the legacy Give a copy command and refuses its own 
         title: header.title, header, body: JSON.stringify(draft), headerVersion: 1, bodyVersion: 1,
         seq: 1, createdAt: 1, updatedAt: 1 }, 'mounted_owner'));
     let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+    let templatePane: ReturnType<typeof useAppPaneScope>['scopeState'];
     function LegacyCommand() {
         reader = useOptionalCurrentUiContextReader();
+        templatePane = useAppPaneScope(createSessionPaneScopeId(session.id, serverId)).scopeState;
         const open = useOpenBotTemplate(session, serverId, true);
         return <Pressable testID="legacy-give-copy" onPress={() => { void open?.(); }} />;
     }
@@ -210,22 +218,16 @@ it('keeps an agent caller on the legacy Give a copy command and refuses its own 
     phase = 'cancel-agent-invocation';
     await act(async () => { agentController.abort(); });
     expect(await invocation).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
-    const agentApprovalId = approvalId;
+    const artifactsBeforeTouch = homes.artifacts(serverId).list().map(row => row.id).sort();
     phase = 'touch-open';
     await screen.pressByTestIdAsync('legacy-give-copy');
-    await waitForHomeGovernance(() => {
-        const approval = homes.artifacts(serverId).list().find(row => row.id !== artifactId && row.id !== agentApprovalId);
-        expect(approval).toBeDefined();
-        approvalId = approval!.id;
-    });
-    expect(readApproval()).toMatchObject({ requestedSurface: 'ui', createdBy: { surface: 'system' },
-        executionOriginV1: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } } });
-    // Explicit Allow still permits delegation for a request made by an actual touch.
-    await act(async () => {
-        expect(await executor.execute('approval.request.decide', { artifactId: approvalId, decision: 'approve' },
-            { ...caller, signal: undefined, actionRequestId: 'delegate-touch-created-request' }))
-            .toMatchObject({ ok: true });
-    });
-    await waitForHomeGovernance(() => expect(readApproval().status).toBe('executed'));
+    // Explicit UI Ask uses native confirmation (docs/actions.md), not a second
+    // approval Artifact that an agent could decide on the person's behalf.
+    phase = 'await-native-confirmation';
+    await waitForHomeGovernance(() => expect(templatePane?.details.tabs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'bot-template.editor', resource: { kind: 'bot-template.editor', serverId, artifactId } }),
+    ])));
+    expect(homes.artifacts(serverId).list().map(row => row.id).sort()).toEqual(artifactsBeforeTouch);
+    expect(readApproval().status).toBe('open');
     await screen.unmount();
 });
