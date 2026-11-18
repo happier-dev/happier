@@ -37,10 +37,17 @@ export type VercelProjectPreparation = Readonly<{
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 
-function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase, caught?: Readonly<{ error: unknown }>): DeploymentTargetRoleFailureV1 {
+function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase,
+  cause?: Readonly<{ error: unknown } | { status: number }>): DeploymentTargetRoleFailureV1 {
   const result: DeploymentTargetRoleFailureV1 = { v: 1, code, phase, retryable: false };
-  return code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase: `deployment.vercel.${phase}`,
-    causeKind: caught ? 'native_failure' : 'not_found', error: caught?.error }) : result;
+  const transportFailure = cause && 'error' in cause;
+  const diagnosed = code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase: `deployment.vercel.${phase}`,
+    causeKind: transportFailure ? 'native_failure' : 'not_found', error: transportFailure ? cause.error : undefined }) : result;
+  if (cause) Object.defineProperty(diagnosed, 'failureCause', {
+    value: projectActionFailureCauseV1('error' in cause ? cause.error : { name: 'Error', status: cause.status },
+      `deployment.provider.${phase}`),
+  });
+  return diagnosed;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -154,19 +161,13 @@ export { endpoint as vercelEndpoint, send as vercelRequest };
 /** A lost deployment or traffic reply leaves the effect uncertain. Retain the observed cause for the Action adapter. */
 export async function sendVercelDeploymentMutation(context: VercelPlatformContext, url: string,
   content?: Parameters<typeof send>[3], repositoryKind?: Repository['kind']): Promise<HttpResponse | DeploymentTargetRoleFailureV1> {
-  const phase = 'deployment.provider.send';
   let response: HttpResponse;
   try { response = await send(context, url, 'POST', content, 'send', repositoryKind); }
   catch (error) {
     if (isPluginError(error)) throw error;
-    return Object.defineProperty(failure('outcome_unknown', 'send'), 'failureCause', {
-      value: projectActionFailureCauseV1(error, phase),
-    });
+    return failure('outcome_unknown', 'send', { error });
   }
-  if (response.status < 500) return response;
-  return Object.defineProperty(failure('outcome_unknown', 'send'), 'failureCause', {
-    value: { phase, errorClass: 'Error', errorCode: null, httpStatus: response.status },
-  });
+  return response.status < 500 ? response : failure('outcome_unknown', 'send', { status: response.status });
 }
 
 export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id: string, context: VercelPlatformContext) {
@@ -175,7 +176,7 @@ export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id
 function rejected(response: HttpResponse, phase: Phase): DeploymentTargetRoleFailureV1 | null {
   if (response.status >= 200 && response.status < 300) return null;
   return failure(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
-    : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', phase);
+    : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', phase, { status: response.status });
 }
 
 function scope(environment: VercelEnvironment): string {

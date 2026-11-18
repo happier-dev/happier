@@ -679,6 +679,17 @@ their declared codes.
 Replies without a cause remain valid. Matching 0.3 daemon and UI peers reload
 together; no persisted format, error-code vocabulary or retry policy changes.
 
+## Deployment traffic observation causes (unreleased 0.3)
+
+A closed deployment target role result can carry an optional typed failure
+cause alongside an acknowledged native deployment id and uncertain state.
+The host records the cause in the existing deployment receipt failure while
+retaining the native id for observation. Earlier results without a cause
+remain valid. Matching development Protocol, SDK, Vercel plugin and daemon
+reload together under the 0.3 direct cut. The 0.2 frontier at `73c533b470ac`
+has no deployment target role result. Retained receipts use their existing
+failure format.
+
 ## Agent preflight failure causes (unreleased 0.3)
 
 Capability invocation errors accept optional `failureCause` using the existing

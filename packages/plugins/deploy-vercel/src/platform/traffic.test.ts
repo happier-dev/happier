@@ -182,3 +182,62 @@ it.each(['promote', 'rollback'] as const)('settles %s from the production target
     } finally { await kit.dispose(); }
   }
 });
+
+it.each([
+  { operation: 'promote', status: null, errorCode: 'ECONNRESET' },
+  { operation: 'rollback', status: 403, errorCode: 'forbidden' },
+  { operation: 'rollback', status: 503, errorCode: null },
+] as const)('keeps the acknowledged $operation id and failed observation ($status, $errorCode)', async ({ operation, status, errorCode }) => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    if (request.method === 'POST') return jsonResponse(200, {});
+    if (new URL(request.url).pathname.startsWith('/v13/deployments/')) return jsonResponse(200, nativeDeployment('production'));
+    if (status === null) throw Object.assign(new Error('lost provider reply'), { code: errorCode });
+    if (status === 403) return jsonResponse(status, { error: { code: errorCode } });
+    return { status, headers: {}, body: new TextEncoder().encode('unreadable proxy body') };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction(operation, input)).resolves.toMatchObject({
+      state: 'outcome_unknown', providerDeploymentId: 'dpl_prior',
+      failureCause: { errorCode, httpStatus: status },
+    });
+    const { priorDeployment: _prior, ...retained } = input;
+    await expect(kit.invokeAction('observe', { ...retained, operation, providerDeploymentId: 'dpl_prior' }))
+      .rejects.toMatchObject({ data: { failureCause: { errorCode, httpStatus: status } } });
+    expect(requests.map(request => request.method)).toEqual(operation === 'promote'
+      ? ['GET', 'POST', 'GET', 'GET'] : ['POST', 'GET', 'GET']);
+  } finally { await kit.dispose(); }
+});
+
+it.each([
+  { status: null, errorCode: 'ECONNRESET' },
+  { status: 503, errorCode: null },
+] as const)('keeps a failed promotion-source read cause without issuing a write ($status, $errorCode)', async ({ status, errorCode }) => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    if (status === null) throw Object.assign(new Error('lost provider reply'), { code: errorCode });
+    return { status, headers: {}, body: new TextEncoder().encode('unreadable proxy body') };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction('promote', input)).rejects.toMatchObject({ code: 'provider_request_failed',
+      data: { failureCause: { errorCode, httpStatus: status } } });
+    expect(requests.map(request => request.method)).toEqual(['GET']);
+  } finally { await kit.dispose(); }
+});
+
+it('keeps a failed preview rebuild observation through the retained-id promotion path', async () => {
+  const http = createPluginHttpFixture({ async request(request) {
+    if (new URL(request.url).pathname === '/v9/projects/prj_exact') return jsonResponse(200, { id: 'prj_exact', accountId: 'team_exact' });
+    throw Object.assign(new Error('lost provider reply'), { code: 'ECONNRESET' });
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction('promote', { ...input, providerDeploymentId: 'dpl_prior' })).resolves.toMatchObject({
+      state: 'outcome_unknown', providerDeploymentId: 'dpl_prior', failureCause: { errorCode: 'ECONNRESET', httpStatus: null },
+    });
+  } finally { await kit.dispose(); }
+});

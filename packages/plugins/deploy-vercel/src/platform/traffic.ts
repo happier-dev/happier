@@ -3,16 +3,33 @@ import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type De
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { createVercelDeployment, observeVercelDeployment, requestVercelDeployment, sendVercelDeploymentMutation, vercelEndpoint, vercelRequest,
   type VercelPlatformContext } from './operations.js';
+import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { readVercelBuiltInUrls } from './addresses.js';
 
 type Operation = 'promote' | 'rollback';
 type Selection = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerDeploymentId'>;
-const fail = (code: DeploymentTargetRoleFailureV1['code'], phase: DeploymentTargetRoleFailureV1['phase'] = 'observe'): never => {
+const fail = (code: DeploymentTargetRoleFailureV1['code'], phase: DeploymentTargetRoleFailureV1['phase'] = 'observe',
+  cause?: Readonly<{ error: unknown }>): never => {
   const error = new PluginError({ code, retryable: false, details: { phase },
-    ...(code === 'deployment_unavailable' ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.vercel.traffic') } : {}) });
+    ...(cause || code === 'deployment_unavailable'
+      ? { failureCause: projectActionFailureCauseV1(cause ? cause.error : { code }, 'deployment.vercel.traffic') } : {}) });
   throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.traffic', causeKind: 'not_found' }) : error;
 };
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+
+async function readTrafficResponse(read: () => Promise<HttpResponse>, context: VercelPlatformContext, phase: 'observe' | 'send') {
+  let response: HttpResponse;
+  try { response = await read(); }
+  catch (error) {
+    context.signal.throwIfAborted();
+    if (isPluginError(error)) throw error;
+    return fail('provider_request_failed', phase, { error });
+  }
+  if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+    : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', phase,
+    { error: { name: 'Error', status: response.status } });
+  return response;
+}
 
 /** Production traffic settles from the alias job or the project's current production target.
  * openapi.vercel.sh requestPromote (v10), requestRollback (v1), getProject (v9), inspected 2026-11-10.
@@ -20,12 +37,8 @@ function object(value: unknown): value is Record<string, unknown> { return value
  */
 export async function observeVercelTraffic(input: Selection, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   if (!input.providerDeploymentId) return fail('outcome_unknown');
-  let response;
-  try { response = await vercelRequest(context, vercelEndpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`,
-    input.providerIdentity.providerAccountId), 'GET'); }
-  catch (error) { context.signal.throwIfAborted(); if (isPluginError(error)) throw error; return fail('provider_request_failed'); }
-  if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
-    : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed');
+  const url = vercelEndpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`, input.providerIdentity.providerAccountId);
+  const response = await readTrafficResponse(() => vercelRequest(context, url, 'GET'), context, 'observe');
   let project: unknown;
   try { project = JSON.parse(new TextDecoder().decode(response.body)); } catch { return fail('provider_response_invalid'); }
   if (!object(project) || project.id !== input.providerIdentity.providerResourceId || project.accountId !== input.providerIdentity.providerAccountId) return fail('provider_response_invalid');
@@ -47,7 +60,9 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
   if (state === 'outcome_unknown' && operation === 'promote') {
     // A preview rebuild can run or fail before it has an alias job. READY alone does not prove traffic moved.
     const deployment = await observeVercelDeployment(input, context, { promotion: true });
-    if (!('code' in deployment) && deployment.state !== 'outcome_unknown') return deployment;
+    if ('code' in deployment) return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
+      failureCause: projectActionFailureCauseV1(deployment, 'deployment.vercel.traffic') };
+    if (deployment.state !== 'outcome_unknown') return deployment;
   }
   const builtInUrls = state === 'succeeded' && object(production) && production.id === input.providerDeploymentId
     ? readVercelBuiltInUrls(production) : undefined;
@@ -62,11 +77,7 @@ export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1
   if (input.providerDeploymentId) return observeVercelTraffic(input, operation, context);
   const providerDeploymentId = input.priorDeployment.providerDeploymentId;
   if (operation === 'promote') {
-    let response;
-    try { response = await requestVercelDeployment(input.providerIdentity, providerDeploymentId, context); }
-    catch (error) { context.signal.throwIfAborted(); if (isPluginError(error)) throw error; return fail('provider_request_failed', 'send'); }
-    if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
-      : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', 'send');
+    const response = await readTrafficResponse(() => requestVercelDeployment(input.providerIdentity, providerDeploymentId, context), context, 'send');
     let source: unknown;
     try { source = JSON.parse(new TextDecoder().decode(response.body)); } catch { return fail('provider_response_invalid', 'send'); }
     if (!object(source) || source.id !== providerDeploymentId || source.projectId !== input.providerIdentity.providerResourceId) {
@@ -91,5 +102,8 @@ export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1
       : 'provider_request_failed', 'send');
   // The write was acknowledged. A failed following read must retain the exact native id for recovery.
   try { return await observeVercelTraffic({ ...input, providerDeploymentId }, operation, context); }
-  catch { return { v: 1, state: 'outcome_unknown', providerDeploymentId, observedAtMs: context.now() }; }
+  catch (error) {
+    return { v: 1, state: 'outcome_unknown', providerDeploymentId, observedAtMs: context.now(),
+      failureCause: projectActionFailureCauseV1(error, 'deployment.vercel.traffic') };
+  }
 }

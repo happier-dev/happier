@@ -77,9 +77,14 @@ function observedReceiptContent(content: ContributedReceiptContent,
     observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>): ContributedReceiptContent {
     const uploadProvenance = content.platform.observation.uploadProvenance ?? observation.uploadProvenance;
     const { failure: _previousFailure, ...retained } = content;
-    return { ...retained, steps: observation.steps ?? content.steps,
-        platform: { ...content.platform, observation: { ...observation,
+    const { failureCause, ...progress } = observation;
+    const observed = { ...retained, steps: progress.steps ?? content.steps,
+        platform: { ...content.platform, observation: { ...progress,
             ...(uploadProvenance ? { uploadProvenance } : {}) } } };
+    return failureCause && progress.state === 'outcome_unknown'
+        ? receiptFailureContent(observed, { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown',
+            failureCause, effectAttempted: true }, 'observe')
+        : observed;
 }
 
 function captureControllerBuildLog(content: ContributedReceiptContent, output: DeploymentStageLogWriter | undefined): ContributedReceiptContent {
@@ -322,7 +327,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         const observed = observedReceiptContent(content, observation);
         // A provider's read timestamp is liveness, not new receipt content.
         if (receipt.deployment.state === observation.state && sameStrictJsonValue(
-            { ...content.platform.observation, observedAtMs: 0 }, { ...observed.platform.observation, observedAtMs: 0 })) {
+            { ...content.platform.observation, observedAtMs: 0 }, { ...observed.platform.observation, observedAtMs: 0 })
+            && (!observation.failureCause || sameStrictJsonValue(content.failure, observed.failure))) {
             return { ok: true as const, environmentId: receipt.deployment.environmentId, revision: environmentRevision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
         }

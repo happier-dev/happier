@@ -302,6 +302,8 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
 
 export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), state: DeploymentStateV1Schema, providerDeploymentId: z.optional(id), observedAtMs: timestamp,
+    /** Why an acknowledged operation could not be observed. The native id remains available for recovery. */
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     /** The provider-observed commit, which may differ from the reviewed request for branch builds. */
     builtSha: z.optional(ScmCommitOidSchema),
     /** Positive native absence observation, required by the host to settle provider deletion. */
