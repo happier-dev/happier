@@ -1381,7 +1381,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
@@ -2148,6 +2148,11 @@ describe('installed deployment storage and target composition', () => {
                     const candidate = documents.get(prepared.targetLinkContent.contentArtifactId)!;
                     const body = decodePlainArtifactStoredContent(String(candidate.body));
                     expect(body).toMatchObject({ body: expect.stringContaining('provider-mode') });
+                    if (scenario === 'variable sync storage rollback') return { status: 503, data: {
+                        error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back',
+                    } };
+                    if (scenario === 'variable sync transport failure')
+                        throw Object.assign(new Error('private egress detail'), { code: 'ECONNRESET' });
                     return scenario === 'variable sync storage conflict'
                         ? { status: 409, data: { ok: false, error: 'deployment_conflict' } }
                         : { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision + 1 } };
@@ -2182,7 +2187,17 @@ describe('installed deployment storage and target composition', () => {
                 expect(result, JSON.stringify(result)).toMatchObject(scenario === 'variable sync storage conflict'
                     ? { ok: false, errorCode: 'deployment_conflict', effectAttempted: true, details: {
                         providerVariables: { persisted: false, failures: [], variables: [{ key: 'MODE', owned: true }] } } }
-                    : { ok: true, result: { ok: true, providerVariables: { persisted: true, failures: [], variables: [{ key: 'MODE', owned: true }] } } });
+                    : scenario === 'variable sync storage rollback' || scenario === 'variable sync transport failure'
+                        ? { ok: false, effectAttempted: true, details: { providerVariables: { persisted: false,
+                            failures: [], variables: [{ key: 'MODE', owned: true }] } },
+                            ...(scenario === 'variable sync storage rollback' ? {
+                                errorCode: 'database_transaction_timeout', failureCause: {
+                                    phase: 'home.database.transaction', errorCode: 'database_transaction_timeout', httpStatus: 503,
+                                },
+                            } : { errorCode: 'outcome_unknown', failureCause: {
+                                phase: 'deployment.home.request', errorCode: 'ECONNRESET',
+                            } }) }
+                        : { ok: true, result: { ok: true, providerVariables: { persisted: true, failures: [], variables: [{ key: 'MODE', owned: true }] } } });
                 expect(nativeReads).toBe(0);
                 return;
             }

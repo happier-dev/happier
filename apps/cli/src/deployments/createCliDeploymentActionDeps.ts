@@ -379,11 +379,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         method, headers, ...(body === undefined ? {} : { data: body }),
         ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true }).catch(homeTransportFailure);
       const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
-      if (providerVariables && rollback) return withProviderEffect(failure(rollback.code));
-      if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code, effectAttempted: false,
+      if (rollback) return withProviderEffect({ ok: false, errorCode: rollback.code, error: rollback.code, effectAttempted: false,
         details: { ...rollback.details, requiredFact: 'transaction_commit',
           remedy: 'Retry the action; the Home rolled back its database transaction.' },
-        failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') };
+        failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') });
       const parsed = (approvalMetadata ? DeploymentApprovalEnvironmentResultV1Schema : actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
       if (!parsed.success && providerVariables) return withProviderEffect(failure('outcome_unknown'));
@@ -406,8 +405,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         ? { ...parsed.data, preparedArtifact: preparedBindingArtifact,
           ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) } : parsed.data;
     } catch (caught) {
-      if (providerVariables) return withProviderEffect(failure(context.signal?.aborted ? 'cancelled' : 'outcome_unknown'));
       const error = caught instanceof HomeTransportFailure ? caught.transport : caught;
+      if (providerVariables) return withProviderEffect({ ...failure(context.signal?.aborted ? 'cancelled' : 'outcome_unknown'),
+        failureCause: normalizeActionExecutorThrownError(error, 'deployment.home.request').failureCause });
       // HTTP rejected these headers before routing, including for mutations.
       if (!context.signal?.aborted) {
         const refused = transportRefusal(error);
