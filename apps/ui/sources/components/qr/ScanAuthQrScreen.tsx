@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { socketPresentsHomeOnline } from '@/sync/api/session/socketStatusPresentation';
 import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEntryForm';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -42,7 +43,7 @@ function PairingConnectionWarning(props: Readonly<{ testID: string }>) {
     const { isAuthenticated } = useAuth();
     const showWarning = getStorage()((state) => state.endpointStatus === 'offline'
         || state.endpointStatus === 'auth_failed'
-        || (isAuthenticated && state.socketStatus !== 'connected'));
+        || (isAuthenticated && !socketPresentsHomeOnline(state.socketStatus)));
     if (!showWarning) return null;
 
     return (

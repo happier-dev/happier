@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { presentSocketStatus } from '@/sync/api/session/socketStatusPresentation';
 import { storage } from '@/sync/domains/state/storageStore';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { createWorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
@@ -37,8 +38,8 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
         for (const listener of listeners) listener();
     };
     const connectionStatus = (): FeedState['status'] => {
-        const status = storage.getState().socketStatus;
-        return status === 'connected' ? 'live' : status === 'connecting' || status === 'paused' ? 'connecting' : 'offline';
+        const status = presentSocketStatus(storage.getState().socketStatus);
+        return status === 'connected' ? 'live' : status === 'connecting' ? 'connecting' : 'offline';
     };
     const releaseDemand = () => {
         const release = close;

@@ -81,6 +81,7 @@ import {
 import { openAddHome } from '@/components/homes/add/openAddHome';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { presentSocketStatus } from '@/sync/api/session/socketStatusPresentation';
 
 /**
  * `sidebar` and `header` (a phone tab's head): the trigger opens the account/Home popover in place, beside or
@@ -318,23 +319,6 @@ function resolveRelayStatusKey(params: Readonly<{
             return 'disconnected';
         case 'idle':
             return params.homeSummaryStatusKey;
-        default:
-            return 'unknown';
-    }
-}
-
-function resolveSocketStatusKey(socketStatus: unknown): 'connected' | 'connecting' | 'disconnected' | 'error' | 'unknown' {
-    switch (socketStatus) {
-        case 'connected':
-            return 'connected';
-        case 'connecting':
-        // An intentional pause reconnects on resume; it is never presented as a loss.
-        case 'paused':
-            return 'connecting';
-        case 'error':
-            return 'error';
-        case 'disconnected':
-            return 'disconnected';
         default:
             return 'unknown';
     }
@@ -816,7 +800,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const collapsedStatusIsPulsing = homeSummary.statusKey === 'connecting';
     const socketPresentation = resolveStatusPresentation(
         theme,
-        resolveSocketStatusKey(socketStatus.status),
+        presentSocketStatus(socketStatus.status),
     );
     const machineStatusKey = resolveMachineConnectionStatusKey(connectionHealth.machineLabelKey);
     const machinesPresentation = resolveStatusPresentation(theme, machineStatusKey);
@@ -826,8 +810,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             homeSummaryStatusKey: homeSummary.statusKey,
         });
     const relayPresentation = resolveStatusPresentation(theme, relayStatusKey);
-    const isRetrying = connectionHealth.endpointStatus === 'connecting' || socketStatus.status === 'connecting'
-        || socketStatus.status === 'paused';
+    const isRetrying = connectionHealth.endpointStatus === 'connecting' || presentSocketStatus(socketStatus.status) === 'connecting';
     const nextRetryAt = connectionHealth.nextRetryAt ?? activeSyncError?.nextRetryAt;
     const canRetryRelayConnection = irohTransportPresentation.permitsRetry && (
         relayStatusKey === 'connecting'

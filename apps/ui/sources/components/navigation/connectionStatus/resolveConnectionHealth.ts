@@ -1,4 +1,5 @@
 import { computeMachinesSummary } from '@/components/sessions/guidance/computeMachinesSummary';
+import { presentSocketStatus } from '@/sync/api/session/socketStatusPresentation';
 
 import type {
     ConnectionHealth,
@@ -25,7 +26,7 @@ export function resolveConnectionHealth(input: Readonly<{
     syncErrorKind?: ConnectionSyncErrorKind;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
 }>): ConnectionHealth {
-    const params = { ...input, socketStatus: input.socketStatus === 'paused' ? 'connecting' as const : input.socketStatus };
+    const params = { ...input, socketStatus: input.socketStatus === 'idle' ? input.socketStatus : presentSocketStatus(input.socketStatus) };
     let hasUnknownReadyCount = false;
     let readyCount = 0;
     const machines = computeMachinesSummary(

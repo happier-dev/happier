@@ -120,6 +120,16 @@ describe('ScanAuthQrScreen connection warning', () => {
         },
     );
 
+    it('does not warn while the socket is paused on purpose (hidden or backgrounded) and resuming', async () => {
+        getStorage().setState({ socketStatus: 'paused' });
+        const screen = await renderScanner({ token: 'test-token', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+        expect(screen.findAllHostsByTestId('auth-qr-connection-warning')).toHaveLength(0);
+        await act(async () => {
+            getStorage().setState({ socketStatus: 'error' });
+        });
+        expect(screen.findAllHostsByTestId('auth-qr-connection-warning')).not.toHaveLength(0);
+    });
+
     it('warns on endpoint loss even before the socket status changes', async () => {
         getStorage().setState({ endpointStatus: 'offline' });
         const screen = await renderScanner();
