@@ -170,6 +170,13 @@ import {
 
 export type SessionInfoPresentation = 'pane' | 'route';
 
+/** A host's presentation is fixed for its lifetime, so the wrapper never changes type under mounted rows. */
+function SessionInfoSections(props: Readonly<{ presentation: SessionInfoPresentation; children?: React.ReactNode }>) {
+  return props.presentation === 'pane'
+    ? <SidePaneInspectorSections>{props.children}</SidePaneInspectorSections>
+    : <>{props.children}</>;
+}
+
 /**
  * The Session's Info, as one body for both hosts (P2 U2): the right-rail Info panel on desktop and
  * the `/session/[id]/info` route on phones and direct links. The caller owns the exact address and
@@ -1275,8 +1282,9 @@ function SessionInfoContent({
   return (
     <SessionInfoSectionSummaryProvider value={sectionSummaries.host}>
     <ItemList style={{ paddingTop: 0 }}>
-      {/* An inspector, not a settings page (lab csinfo I2): flat sections, small type, 36px rows. */}
-      <SidePaneInspectorSections>
+      {/* In the side pane an inspector (lab csinfo I2): flat sections, small type, 36px rows. On its own
+          page (phones, direct links) a configuration page on sheets (phone-system-1109 p5-info). */}
+      <SessionInfoSections presentation={presentation}>
       <SessionInfoIdentity
         presentation={presentation}
         session={session}
@@ -1677,7 +1685,7 @@ function SessionInfoContent({
           </View>
         </ItemGroup>
       ) : null}
-      </SidePaneInspectorSections>
+      </SessionInfoSections>
     </ItemList>
     </SessionInfoSectionSummaryProvider>
   );
