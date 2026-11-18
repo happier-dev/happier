@@ -2469,8 +2469,11 @@ automated callers do not inherit this direct UI intent.
 
 Raw host repair controls retain their already-confirmed target occurrence through
 the same Account carrier. The canonical `action.invoke` operand carries optional
-`expectedContributorOccurrenceId` to the target's existing occurrence admission;
-settled consent cannot approve a replacement target selected after the prompt.
+`expectedContributorOccurrenceId` to the target's existing occurrence admission.
+For an Account Action, the ingress first matches a projected Account custody id
+to the current Account selection, then translates it to that registry's
+process-local occurrence; settled consent cannot approve a replacement target
+selected after the prompt.
 
 The UI admits Account Action and Resource descriptors without acquiring or
 evaluating their executable artifact. The first invocation, Resource read or

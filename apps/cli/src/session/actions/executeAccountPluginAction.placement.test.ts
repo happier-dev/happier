@@ -313,6 +313,46 @@ it('executes a qualified Account Action through the same owner as action.invoke 
     }
 });
 
+it('accepts the Account selection custody occurrence for a retained Account Action', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-custody-occurrence-'));
+    const app = fastify();
+    const accountId = 'account-custody-occurrence-owner';
+    const serverId = 'account-custody-occurrence-home';
+    const serverHttpBaseUrl = 'http://account-custody-occurrence.test';
+    registerAccountHomeHttp(app, { accountId, serverId });
+    const authored = await registerAuthoredAccountActionRelease(app, accountId);
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
+    const retained = createRetainedAccountExecutionRuntime(() => ({ happyHomeDir,
+        accountExecution: { credentials, serverUrl: serverHttpBaseUrl, serverId, isCurrent: () => true } }));
+    try {
+        const runtime = await retained.read();
+        const selection = runtime.registry.readAccountExecutionSelection?.(authored.pluginId);
+        if (!selection || selection.kind !== 'available') throw new Error('Account fixture selection unavailable');
+        const host = { token, credentials, happyHomeDir, sessionId: 'cli-global', mode: 'plain' as const,
+            ctx: null, serverId, serverHttpBaseUrl };
+        const { deps } = createCliActionExecutorHarness(host);
+        const attempt = await executeAccountPluginAction({ host, deps, accountRuntime: retained,
+            actionId: 'action.invoke',
+            input: { action: { pluginId: authored.pluginId, localId: 'echo' }, input: { key: 'custody' } },
+            context: { surface: 'ui', expectedContributedActionOccurrenceId: selection.custodyId } });
+        expect(attempt).toEqual({ matched: true, result: { ok: true, result: { key: 'custody', surface: 'ui' } } });
+        const stale = await executeAccountPluginAction({ host, deps, accountRuntime: retained,
+            actionId: 'action.invoke',
+            input: { action: { pluginId: authored.pluginId, localId: 'echo' }, input: { key: 'stale' } },
+            context: { surface: 'ui', expectedContributedActionOccurrenceId: `${selection.custodyId}-stale` } });
+        expect(stale).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_generation_retired' } });
+    } finally {
+        await retained.dispose();
+        restore();
+        await app.close();
+        resetActiveAccountSettingsSnapshotForTests();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
+
 it('resolves installed Machine author placement for an active reviewed child', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-action-placement-'));
     const pluginRoot = join(happyHomeDir, 'author');

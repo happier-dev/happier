@@ -193,7 +193,26 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
   // Generic Action tools pass qualified plugin ids; the shared executor
   // admits contributed calls through its canonical action.invoke wrapper.
   const action = parseQualifiedPluginActionId(params.actionId);
-  const context = params.resolveContext ? params.resolveContext(params.context, params.actionId) : params.context;
+  let context = params.resolveContext ? params.resolveContext(params.context, params.actionId) : params.context;
+  // Account/UI projections carry the durable Account custody id, while the
+  // executable registry fences handlers with its process-local occurrence id.
+  // Translate the former at this Account ingress, after checking that the
+  // selected custody is still current; nested callers that already carry the
+  // runtime occurrence retain their existing fence.
+  if (pluginId && selectedAction?.definition.execution && typeof selectedAction.definition.execution === 'object'
+    && selectedAction.definition.execution !== null && 'target' in selectedAction.definition.execution
+    && selectedAction.definition.execution.target === 'account'
+    && context?.expectedContributedActionOccurrenceId !== undefined) {
+    const expected = context.expectedContributedActionOccurrenceId;
+    const currentOccurrence = registry.readPluginOccurrenceId?.(pluginId);
+    const selection = registry.readAccountExecutionSelection?.(pluginId);
+    if (!currentOccurrence || (expected !== currentOccurrence
+      && (selection?.kind !== 'available' || selection.custodyId !== expected))) {
+      return { matched: true, result: { ok: false,
+        errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired' } };
+    }
+    context = { ...context, expectedContributedActionOccurrenceId: currentOccurrence };
+  }
   return { matched: true, result: await executor.execute(action ? 'action.invoke' : params.actionId as ActionId,
     action ? { action, input: params.input } : params.input, context) };
 }
