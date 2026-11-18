@@ -74,6 +74,8 @@ export async function runPtyAttach(params: Readonly<{ sessionId: string }>, deps
   stdin.resume();
   stdout.on('resize', onResize);
 
+  // Resolved by the first output after the restore nudge (the Agent's repaint).
+  let onRedraw: (() => void) | null = null;
   const readLoop = async () => {
     let offset = byteOffset;
     while (!reading.signal.aborted) {
@@ -85,18 +87,28 @@ export async function runPtyAttach(params: Readonly<{ sessionId: string }>, deps
         return;
       }
       const read = response as { frames: Array<{ t: string; data?: string }>; nextByteOffset: number; done: boolean };
+      let wrote = false;
       for (const frame of read.frames) {
-        if (frame.t === 'bytes' && frame.data) stdout.write(Buffer.from(frame.data, 'base64'));
+        if (frame.t === 'bytes' && frame.data) { stdout.write(Buffer.from(frame.data, 'base64')); wrote = true; }
       }
+      if (wrote) { onRedraw?.(); onRedraw = null; }
       offset = read.nextByteOffset;
       if (read.done) { finish(0); return; }
     }
   };
   void readLoop().catch(() => finish(1));
   // Restore step: one row less and back, so the TUI repaints its whole screen for this viewer.
+  // The size is restored after the Agent's repaint, not right after the nudge: two back-to-back
+  // resizes can leave a Windows console TUI at the nudged size.
   const { cols, rows } = size();
-  if (rows > 2) await input({ t: 'resize', cols, rows: rows - 1 });
-  await input({ t: 'resize', cols, rows });
+  let viewing = true;
+  void finished.then(() => { viewing = false; });
+  if (rows > 2) {
+    const redrawn = new Promise<void>(resolve => { onRedraw = resolve; });
+    await input({ t: 'resize', cols, rows: rows - 1 });
+    await Promise.race([redrawn, finished]);
+  }
+  if (viewing) await input({ t: 'resize', cols, rows });
 
   const code = await finished;
   reading.abort();

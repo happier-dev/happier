@@ -52,6 +52,41 @@ describe('runPtyAttach', () => {
     expect(io.stderr.lines.join('')).toContain('detached');
   });
 
+  it('restores the viewer size only after the Agent redrew for the nudge', async () => {
+    // Two back-to-back resizes can leave a Windows console TUI at the nudged size (live windows2:
+    // 'TUI 100x29' for a 30-row viewer); the restore follows the Agent's repaint instead.
+    const io = terminal();
+    const events: string[] = [];
+    let nudged!: () => void;
+    const nudge = new Promise<void>(resolve => { nudged = resolve; });
+    let reads = 0;
+    const call = async (op: string, request: unknown, signal?: AbortSignal): Promise<unknown> => {
+      if (op === 'open') return { ok: true, terminalId: 't-1', byteOffset: 0 };
+      if (op === 'input') {
+        const event = (request as { event: { t: string; rows?: number } }).event;
+        if (event.t === 'resize') { events.push(`resize ${event.rows}`); if (event.rows === 29) nudged(); }
+        return { ok: true };
+      }
+      if (op === 'read') {
+        reads += 1;
+        if (reads === 1) {
+          await nudge;
+          await new Promise(resolve => setTimeout(resolve, 20));
+          events.push('redraw read');
+          return { ok: true, terminalId: 't-1', nextByteOffset: 6, availableByteOffset: 6, droppedBeforeByteOffset: 0, done: false,
+            frames: [{ t: 'bytes', terminalId: 't-1', seq: 0, byteOffset: 0, byteLength: 6, encoding: 'base64', data: Buffer.from('redraw').toString('base64') }] };
+        }
+        return await new Promise(resolve => signal?.addEventListener('abort', () => resolve({ ok: false, code: 'aborted', message: 'aborted' })));
+      }
+      return { ok: true };
+    };
+    const attached = runPtyAttach({ sessionId: 's-1' }, { call, stdin: io.stdin as never, stdout: io.stdout as never, stderr: io.stderr });
+    await new Promise(resolve => setTimeout(resolve, 80));
+    io.stdin.emit('data', Buffer.from('\u001d'));
+    await expect(attached).resolves.toBe(0);
+    expect(events).toEqual(['resize 29', 'redraw read', 'resize 30']);
+  });
+
   it('refuses with a typed reason when the Session has no live Agent terminal', async () => {
     const io = terminal();
     const code = await runPtyAttach({ sessionId: 's-1' }, { call: async () => ({ ok: false, code: 'agent_terminal_unavailable', message: 'none' }),
