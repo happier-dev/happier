@@ -12,6 +12,15 @@ import {
 import { AllDeploymentsView } from '@/components/projects/deployments/AllDeploymentsScreen';
 import { useDeploymentCollection } from '@/components/projects/deployments/useDeploymentReads';
 import { useAllMachines } from '@/sync/store/hooks';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
+import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
+import {
+  AppShellPluginUiProjectionValueProvider,
+  useAppShellPluginUiProjectionCurrentness,
+  type AppShellPluginUiProjectionValue,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import telemetryManifest from '../../../../../cli/assets/bundled-plugin-manifests/telemetry.json';
 
 /**
  * Dev-only specimen of Projects → All deployments over a fixture network boundary, drawn through the real page
@@ -177,7 +186,27 @@ function transportFor(state: string, machineId: string): DeploymentReadTransport
   };
 }
 
-export function AllDeploymentsSpecimen(props: Readonly<{ state: string }>) {
+/** Cold bundled metadata only: without an installed collector, selected Requests stays unknown. */
+function RequestsColumnSpecimen(props: Readonly<{ children: React.ReactNode }>) {
+  const current = useAppShellPluginUiProjectionCurrentness();
+  const value = React.useMemo(() => ({
+    pluginUiProjection: normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(
+      PluginManifestV2Schema.parse(telemetryManifest))),
+    pluginBrowserProjection: null,
+    phase: 'current',
+    interactionEnabled: false,
+    machineId: current.machineId,
+    serverId: current.serverId,
+    platform: current.platform,
+    accountLifetime: current.accountLifetime,
+    clientExecutableActivation: { status: 'ready' },
+    reloadConnectedAccountProjection() {},
+    reloadClientExecutables() {},
+  } satisfies AppShellPluginUiProjectionValue), [current.machineId, current.serverId, current.platform, current.accountLifetime]);
+  return <AppShellPluginUiProjectionValueProvider value={value}>{props.children}</AppShellPluginUiProjectionValueProvider>;
+}
+
+export function AllDeploymentsSpecimen(props: Readonly<{ state: string; requestsColumn?: boolean }>) {
   const serverId = 'home';
   const machineId = useAllMachines(
     (machines) => machines[0]?.id ?? 'machine-specimen',
@@ -198,5 +227,6 @@ export function AllDeploymentsSpecimen(props: Readonly<{ state: string }>) {
   React.useEffect(() => {
     if (props.state === 'stale' && ready) void refresh();
   }, [props.state, ready, refresh]);
-  return <AllDeploymentsView read={read} serverId={serverId} />;
+  const body = <AllDeploymentsView read={read} serverId={serverId} />;
+  return props.requestsColumn ? <RequestsColumnSpecimen>{body}</RequestsColumnSpecimen> : body;
 }

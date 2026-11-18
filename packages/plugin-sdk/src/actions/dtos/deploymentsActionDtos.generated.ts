@@ -10063,7 +10063,7 @@ export type DeploymentsActionResultById = {
                     measurements?: undefined | {
                         measure: string;
                         unit: string;
-                        basis: 'catalog_estimate' | 'metric_points' | 'provider_reported' | 'sampled_spans';
+                        basis: 'catalog_estimate' | 'metric_points' | 'mixed_telemetry' | 'provider_reported' | 'sampled_spans';
                         producers: {
                             serviceName?: string | undefined;
                             serviceVersion?: string | undefined;

@@ -5,7 +5,7 @@ import type { KeyFlowConfig, KeyFlowReadInput } from '../healthSchemas.js';
 import { analyzeMetricWindow } from './metrics.js';
 
 export type KeyFlowMeasurements = NonNullable<HealthCheckResultV1['measurements']>;
-export type KeyFlowSelection = Readonly<{ serviceName: string; serviceVersion?: string;
+export type KeyFlowSelection = Readonly<{ serviceName?: string; serviceVersion?: string;
     measure: Exclude<KeyFlowReadInput['measure'], { kind: 'spend' }> }>;
 export type KeyFlowWindowInput = KeyFlowSelection & Readonly<{ window: Readonly<{ since: number; until: number }>;
     points: readonly NormalizedMetricPoint[]; spans: readonly CaptureSummary[] }>;
@@ -19,9 +19,27 @@ function empty(input: Pick<KeyFlowWindowInput, 'measure' | 'window'>, reasons: s
         basis: 'metric_points', producers: [], window: input.window, completeness: 'unknown', reasons };
 }
 
+/** A metric population wins over samples for that producer; other emitted services remain included. */
+function selectKeyFlowHttpEvidence(input: KeyFlowWindowInput) {
+    const routes = input.measure.kind === 'route' ? new Set(input.measure.routes.map(item => keyFlowRouteKey(item.method, item.route))) : undefined;
+    const emittedRoute = (method: unknown, route: unknown) => !routes || routes.has(keyFlowRouteKey(method, route));
+    const histogram = input.points.filter(point => point.metricType === 'histogram' && point.name === 'http.server.request.duration'
+        && (input.serviceName === undefined || point.serviceName === input.serviceName)
+        && (input.serviceVersion === undefined || point.serviceVersion === input.serviceVersion)
+        && emittedRoute(point.dimensions['http.request.method'] ?? point.dimensions['http.method'], point.dimensions['http.route']));
+    const measuredServices = input.serviceName === undefined && input.measure.kind === 'http' && input.measure.statistic === 'requests'
+        ? new Set(histogram.map(point => point.serviceName)) : undefined;
+    const spans = input.spans.filter(span => span.kind === 'span' && span.spanKind === 2
+        && (input.serviceName === undefined || span.serviceName === input.serviceName)
+        && !measuredServices?.has(span.serviceName)
+        && span.at >= input.window.since && span.at < input.window.until
+        && emittedRoute(span.endpointMethod, span.endpointRoute) && typeof span.durationMs === 'number');
+    return { histogram, spans };
+}
+
 /** Authored emitted identities only: no URL inference, learned routes or correlation engine. */
 export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
-    const points = input.points.filter(point => point.serviceName === input.serviceName
+    const points = input.points.filter(point => (input.serviceName === undefined || point.serviceName === input.serviceName)
         && (input.serviceVersion === undefined || point.serviceVersion === input.serviceVersion));
     if (input.measure.kind === 'runtime') {
         const metricName = input.measure.metricName;
@@ -35,10 +53,7 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
             completeness: result.status === 'inconclusive' ? 'unknown' : result.status, reasons: [...result.reasons] };
     }
     const measure = input.measure;
-    const routes = measure.kind === 'route' ? new Set(measure.routes.map(item => keyFlowRouteKey(item.method, item.route))) : undefined;
-    const emittedRoute = (method: unknown, route: unknown) => !routes || routes.has(keyFlowRouteKey(method, route));
-    const histogram = points.filter(point => point.metricType === 'histogram' && point.name === 'http.server.request.duration'
-        && emittedRoute(point.dimensions['http.request.method'] ?? point.dimensions['http.method'], point.dimensions['http.route']));
+    const { histogram, spans } = selectKeyFlowHttpEvidence(input);
     if (histogram.length) {
         const latency = analyzeMetricWindow(histogram, { ...input.window,
             statistic: measure.statistic === 'p50' ? 'p50' : 'p95' });
@@ -58,7 +73,7 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
         if (value === undefined && summary.status !== 'inconclusive' && !reasons.length) {
             reasons.push(measure.statistic === 'errorRate' ? hasStatuses ? 'no_traffic' : 'http_status_missing' : 'unsupported_duration_unit');
         }
-        return { measure: measure.statistic, ...(value === undefined ? {} : { value }),
+        const measurement: KeyFlowMeasurements = { measure: measure.statistic, ...(value === undefined ? {} : { value }),
             unit: measure.statistic === 'requests' ? '{request}' : measure.statistic === 'errorRate' ? '1' : 'ms',
             basis: 'metric_points', producers: [...summary.producers], window: input.window,
             ...(summary.observedWindow ? { observedWindow: summary.observedWindow } : {}),
@@ -67,11 +82,17 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
             reasons,
             ...(p50Ms === undefined ? {} : { p50Ms }), ...(p95Ms === undefined ? {} : { p95Ms }),
             ...(errorRate === undefined ? {} : { errorRate }), ...(summary.count === undefined ? {} : { requestCount: summary.count }) };
+        if (input.serviceName === undefined && measure.kind === 'http' && measure.statistic === 'requests' && spans.length) {
+            const sampled = analyzeKeyFlow({ ...input, points: [], spans });
+            const total = value === undefined || sampled.value === undefined ? undefined : value + sampled.value;
+            return { ...measurement, ...(total === undefined ? {} : { value: total, requestCount: total }),
+                basis: 'mixed_telemetry', producers: [...measurement.producers, ...sampled.producers],
+                completeness: measurement.completeness === 'unknown' ? 'unknown' : 'partial',
+                reasons: [...new Set([...measurement.reasons, ...sampled.reasons])] };
+        }
+        return measurement;
     }
     // Trace samples are observed traffic, never a claim about the full request population.
-    const spans = input.spans.filter(span => span.kind === 'span' && span.spanKind === 2 && span.serviceName === input.serviceName
-        && span.at >= input.window.since && span.at < input.window.until && emittedRoute(span.endpointMethod, span.endpointRoute)
-        && typeof span.durationMs === 'number');
     if (!spans.length) return empty(input, ['no_traffic']);
     if (input.serviceVersion !== undefined) return empty(input, ['span_version_unavailable']);
     const durations = spans.map(span => span.durationMs!).sort((left, right) => left - right);
@@ -82,7 +103,8 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
         : measure.statistic === 'errorRate' ? errorRate : measure.statistic === 'p50' ? p50Ms : p95Ms,
         unit: measure.statistic === 'requests' ? '{request}' : measure.statistic === 'errorRate' ? '1' : 'ms',
         p50Ms, p95Ms, errorRate, requestCount: spans.length,
-        basis: 'sampled_spans', producers: [{ serviceName: input.serviceName }], window: input.window,
+        basis: 'sampled_spans', producers: [...new Map(spans.map(span => [span.serviceName,
+            span.serviceName === undefined ? {} : { serviceName: span.serviceName }])).values()], window: input.window,
         completeness: 'partial', reasons: ['sampled_traffic'] };
 }
 

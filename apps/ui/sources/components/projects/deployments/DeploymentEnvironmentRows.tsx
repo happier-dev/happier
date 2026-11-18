@@ -33,6 +33,12 @@ import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark } from './rows/DeploymentEnvironmentRow';
 
+import { deploymentEnvironmentColumns, type DeploymentEnvironmentBuiltinColumn } from './deploymentEnvironmentColumns';
+import { useAppShellPluginUiDeclarationSources, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { ServiceColumnResources } from './ServiceColumnResources';
+import { ServiceColumnCell } from './ServiceColumnCell';
+export { deploymentEnvironmentColumns } from './deploymentEnvironmentColumns';
+
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 type RowParts = ReturnType<typeof useDeploymentEnvironmentRowParts>[number];
 /** A row and who did its latest deploy, so a name that arrives redraws that row only, never the anatomy's every row. */
@@ -116,6 +122,11 @@ export function DeploymentEnvironmentRows(
   }>,
 ) {
   const { theme } = useUnistyles();
+  const declarations = useAppShellPluginUiDeclarationSources();
+  const localize = useProjectedPluginLocalizedTextResolver();
+  const contributedColumns = React.useMemo(() => deploymentEnvironmentColumns(props.hereMachine === true,
+    props.columns ? declarations.projection : null, localize), [props.hereMachine, props.columns, declarations.projection, localize]);
+  const collectors = React.useMemo(() => new Map(props.items.map(item => [item.environment.id, item.environment.telemetryMachineId ?? null])), [props.items]);
   const router = useRouter();
   const parts = useDeploymentEnvironmentRowParts(
     props.items,
@@ -175,7 +186,7 @@ export function DeploymentEnvironmentRows(
       color: theme.colors.text.secondary,
       flexShrink: 1,
     } as const;
-    const renders: Record<DeploymentEnvironmentColumn['key'], CollectionField<Row>['render']> = {
+    const renders: Record<DeploymentEnvironmentBuiltinColumn['key'], CollectionField<Row>['render']> = {
       lastDeploy: (row) =>
           row.steps ? (
             <View style={{ gap: theme.space.s2 }}>
@@ -197,7 +208,9 @@ export function DeploymentEnvironmentRows(
       runsOn: (row) => row.runsOn ? <MiddleEllipsisText value={row.runsOn} style={meta} /> : null,
       state: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord} /> : null,
     };
-    const fields: CollectionField<Row>[] = deploymentEnvironmentColumns(hereMachine).map((column) => ({ ...column, render: renders[column.key] }));
+    const fields: CollectionField<Row>[] = contributedColumns.map(column => ({ ...column, render: 'field' in column
+      ? row => <ServiceColumnCell column={column} environmentId={row.environmentId} collectorMachineId={collectors.get(row.environmentId) ?? null} />
+      : renders[column.key] }));
     return {
       glyph: (row) => <DeploymentEnvironmentMark platform={row.platformMark} />,
       title: (row) =>
@@ -228,17 +241,20 @@ export function DeploymentEnvironmentRows(
       // The name (then its reason, ellipsized) narrows to this floor before a chosen column gives way (UI refinements 11-17).
       titleMinWidth: DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH,
     };
-  }, [groups, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
-  return (
-    <EnvironmentRowMenuContext.Provider value={openTab}>
-      <ServicesPageList<Row>
+  }, [groups, hereMachine, contributedColumns, collectors, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  const list = <ServicesPageList<Row>
         testID={props.testID}
         model={model}
         anatomy={anatomy}
         accessibilityLabel={props.accessibilityLabel}
         useRowActions={useEnvironmentRowActions}
         columns={props.columns ?? SERVICES_APPS_COLUMNS_BINDING}
-      />
+      />;
+  return (
+    <EnvironmentRowMenuContext.Provider value={openTab}>
+      {props.columns ? <ServiceColumnResources projection={declarations.projection} lifetime={declarations.accountLifetime}>
+        {list}
+      </ServiceColumnResources> : list}
     </EnvironmentRowMenuContext.Provider>
   );
 }
@@ -323,32 +339,6 @@ const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { col
 
 /** The Environment name's floor before a chosen column gives way. */
 const DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH = 200;
-
-type DeploymentEnvironmentColumn = Readonly<{
-  key: 'lastDeploy' | 'runsOn' | 'state';
-  title: string;
-  description: string;
-  minWidth: number;
-  priority: number;
-  align?: 'end';
-  listColumn: true;
-}>;
-
-/**
- * An Environment row's columns, as the rows draw them and the Columns menu names them: one declaration, so the menu
- * and the table never disagree. A Machine's own page leaves out the Machine they all run on.
- */
-export function deploymentEnvironmentColumns(hereMachine: boolean): readonly DeploymentEnvironmentColumn[] {
-  return [
-    // "469b2bb · 10m ago": the version and its age whole at a desktop width (lab envRow "ver · age").
-    { key: 'lastDeploy', title: t('projects.deployments.services.columnLastDeploy'),
-      description: t('projects.deployments.services.columnLastDeployDescription'), minWidth: 152, priority: 4, listColumn: true },
-    ...(hereMachine ? [] : [{ key: 'runsOn' as const, title: t('projects.deployments.services.columnRunsOn'),
-      description: t('projects.deployments.services.columnRunsOnDescription'), minWidth: 184, priority: 3, listColumn: true as const }]),
-    { key: 'state', title: t('projects.deployments.services.columnState'),
-      description: t('projects.deployments.services.columnStateDescription'), minWidth: 136, priority: 5, align: 'end', listColumn: true },
-  ];
-}
 
 /** Every band of a Services list stands on its one sheet, under the one bar that names the columns (lab envList). */
 export const SERVICES_ONE_SHEET = { key: 'services', title: '' } as const;

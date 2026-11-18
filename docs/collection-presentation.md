@@ -108,17 +108,41 @@ the existing UI projection qualifies field references. A mark can reference a
 field declared by another extension for the same entity in that plugin.
 The public field evaluator consumes already-held facts and retains unavailable
 saved selections when a plugin is retired. Admission and evaluation acquire no
-Resources and activate no plugin. Resource-backed host-row loading and its
-dependent host filters remain deferred; declaration availability does not make
-that loading path available. Row operations use ordinary plugin Actions.
+Resources and activate no plugin. Resource-backed loading is available at the
+Services fact adapter; other host-row loading and its dependent host filters
+remain deferred. Row operations use ordinary plugin Actions.
 
 Fields may declare a display-only `number` value with its `unit` and optional
 `column` presentation (`title`, `width`, `align`, `priority`, `defaultHidden`).
 The same admitted qualified field identity carries this metadata through the
 held projection; listing it never reads the Resource. Numeric ingress preserves
 known zero and rejects missing or non-finite values. Numeric fields do not gain
-time-filter operators or numeric sorting. This metadata contract does not yet
-bind a Services Environment to collector service names or load a trend.
+time-filter operators or numeric sorting.
+
+For a service field whose source is a Resource, the Services fact adapter binds
+`launchInput: { entity: 'service', environmentIds: [...] }` for the mounted rows.
+The public Resource result is `{ items: [{ environmentId, value }] }`, admitted
+by `PluginServiceListFieldResourceResultV1Schema`; each addressed value then
+passes the existing field-specific scalar/set/time/boolean ingress. An omitted
+row remains unknown. The public SDK exports both input and result schemas from
+`@happier-dev/plugin-sdk/ui`. This envelope adds row addressing, not a trend
+grammar or a second field identity.
+
+Services Apps' optional **Requests · 24 h** field uses this declaration and is
+off by default. Its row is an Environment: the existing telemetry metric owner
+totals HTTP requests across all of that Environment's emitted service names.
+Mounted consuming cells share one `capture-view` Resource batch per collector;
+the batch selects their Environment ids, not the whole list inventory or one
+read per service name. Natural reads and collector pushes advance the 24-hour
+window, without a timer. The existing measured result retains units, producers,
+requested/observed windows and completeness, and its existing metric intervals
+feed the shared inline chart. An emitted zero stays zero; no collector data is
+unknown. Held declaration/menu reads acquire no Resource.
+Metric populations take precedence over sampled spans for the same emitted
+service. Other services' samples remain included, with `mixed_telemetry` basis,
+partial completeness and both producer provenances.
+Mixed-source trends are omitted because histogram population intervals and
+sampled event intervals do not form comparable count windows.
 
 ### Settings column adapters
 

@@ -1,5 +1,6 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { PluginServiceListFieldResourceInputV1Schema, PluginServiceListFieldResourceResultV1Schema } from '@happier-dev/plugin-sdk/ui';
 
 const inspectInput = defineProtocolObject({ sessionId: defineProtocolString() }, { policy: 'closed' });
 
@@ -24,11 +25,18 @@ export function createListExtensionSource(onResourceRead: () => void = () => {})
 }
 
 /** Service columns use the same cold declaration path as held filter fields. */
-export function createServiceColumnSource(onResourceRead: () => void = () => {}) {
+export function createServiceColumnSource(onResourceRead: () => void = () => {}, values: Readonly<Record<string, number>> = { zero: 0, busy: 7 }) {
     return definePlugin({
         id: 'com.acme.requests', version: '1.0.0',
         resources: { requests: { source: 'dynamic', kind: 'asset', contentType: 'application/json', scope: 'surface',
-            runtime: { read: () => { onResourceRead(); return 0; }, observe: () => ({ dispose() {} }) } } },
+            runtime: { read: context => {
+                onResourceRead();
+                if (context.context.kind !== 'surface') throw new TypeError('Expected a service surface');
+                const input = PluginServiceListFieldResourceInputV1Schema.parse(context.context.launchInput);
+                return JSON.stringify(PluginServiceListFieldResourceResultV1Schema.parse({ items: input.environmentIds
+                    .filter(environmentId => Object.hasOwn(values, environmentId))
+                    .map(environmentId => ({ environmentId, value: values[environmentId] })) }));
+            }, observe: () => ({ dispose() {} }) } } },
         ui: { listExtensions: { traffic: {
             entity: 'service',
             filterFields: [{ id: 'requests', title: 'Requests · 24 h', source: { resource: 'requests' },

@@ -19,6 +19,65 @@ function histogram(status: number, counts: string[]): NormalizedMetricPoint {
 }
 
 describe('published selected key-flow reads', () => {
+    it('reads the mounted Environment batch once across every emitted service and preserves unknown and measured zero', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const admitted: string[] = [];
+        const deploymentDatabases = { async admitTelemetryRead(input: { environmentId: string }) {
+            admitted.push(input.environmentId);
+            return { environment: { serverId: 'home', environmentId: input.environmentId, revision: 1 },
+                collectorMachineId: 'collector', capabilities: resolveDeploymentTelemetryCapabilitiesV1({ metrics: true }) };
+        } } as unknown as PluginServices['deploymentDatabases'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: new AbortController().signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, deploymentDatabases } });
+        try {
+            const metric = histogram(200, ['1', '0', '0']);
+            await lease.runtime.store.write([
+                { id: 'frontend', worktree: 'environment:app', kind: 'metric', source: 'otlp', at: 2000, metric },
+                { id: 'worker', worktree: 'environment:app', kind: 'metric', source: 'otlp', at: 2000,
+                    metric: { ...metric, serviceName: 'worker', unit: 'ms', explicitBounds: [10], bucketCounts: ['2', '0'], count: '2' } },
+                { id: 'zero', worktree: 'environment:quiet', kind: 'metric', source: 'otlp', at: 2000,
+                    metric: { ...metric, bucketCounts: ['0', '0', '0'], count: '0' } },
+                { id: 'unselected', worktree: 'environment:unselected', kind: 'metric', source: 'otlp', at: 2000, metric },
+            ]);
+            const result = await host.invokeAction(database.databaseActionLocalIdV1(database.TELEMETRY_METRICS_READ_ACTION_ID_V1), {
+                serverId: 'home', environmentIds: ['app', 'quiet', 'empty'], since: 1000, until: 2000,
+                measure: { kind: 'http', statistic: 'requests' },
+            });
+            expect(result).toMatchObject({ items: [
+                { environmentId: 'app', result: { measurements: { value: 3, requestCount: 3, unit: '{request}',
+                    producers: expect.arrayContaining([{ serviceName: 'checkout', serviceVersion: 'v1', serviceInstanceId: 'one' },
+                        { serviceName: 'worker', serviceVersion: 'v1', serviceInstanceId: 'one' }]),
+                    window: { since: 1000, until: 2000 }, completeness: 'complete' } }, trend: [{ value: 3, count: 3 }] },
+                { environmentId: 'quiet', result: { measurements: { value: 0, unit: '{request}' } }, trend: [{ value: 0 }] },
+                { environmentId: 'empty', result: { status: 'unknown', measurements: { completeness: 'unknown', reasons: ['no_traffic'] } }, trend: [] },
+            ] });
+            expect(admitted).toEqual(['app', 'quiet', 'empty']);
+            expect(JSON.stringify(result)).not.toContain('unselected');
+            await lease.runtime.store.write([
+                { id: 'already-measured', worktree: 'environment:app', kind: 'span', spanKind: 2, source: 'otlp',
+                    serviceName: 'checkout', durationMs: 1, at: 1500 },
+                { id: 'sampled-only', worktree: 'environment:app', kind: 'span', spanKind: 2, source: 'otlp',
+                    serviceName: 'sampled-worker', durationMs: 1, at: 1500 },
+            ]);
+            const mixed = database.TelemetryEnvironmentMetricsReadResultV1Schema.parse(await host.invokeAction(
+                database.databaseActionLocalIdV1(database.TELEMETRY_METRICS_READ_ACTION_ID_V1), {
+                    serverId: 'home', environmentIds: ['app'], since: 1000, until: 2000,
+                    measure: { kind: 'http', statistic: 'requests' },
+                }));
+            expect(mixed.items[0]?.result.measurements).toMatchObject({ value: 4, requestCount: 4,
+                basis: 'mixed_telemetry', completeness: 'partial', reasons: ['sampled_traffic'],
+                producers: expect.arrayContaining([{ serviceName: 'sampled-worker' },
+                    { serviceName: 'checkout', serviceVersion: 'v1', serviceInstanceId: 'one' },
+                    { serviceName: 'worker', serviceVersion: 'v1', serviceInstanceId: 'one' }]),
+            });
+            // The sampled event lies inside the histogram interval; their counts cannot form one comparable line.
+            expect(mixed.items[0]?.trend).toEqual([]);
+        } finally { await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
     it('retains measured zero error intervals after cumulative failures stop', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);

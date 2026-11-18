@@ -5,6 +5,6 @@ import { AllDeploymentsSpecimen } from '@/components/dev/deployments/AllDeployme
 
 /** Dev-only: Projects → All deployments over fixture data. `?state=populated|loading|empty|partial|paged|error|denied|stale`. */
 export default function AllDeploymentsDevScreen() {
-    const params = useLocalSearchParams<{ state?: string }>();
-    return <AllDeploymentsSpecimen state={params.state ?? 'populated'} />;
+    const params = useLocalSearchParams<{ state?: string; columns?: string }>();
+    return <AllDeploymentsSpecimen state={params.state ?? 'populated'} requestsColumn={params.columns === 'requests'} />;
 }

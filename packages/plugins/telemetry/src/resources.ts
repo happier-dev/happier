@@ -5,6 +5,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import * as database from '@happier-dev/database-protocol';
 import type { createCaptureBackgroundOwner } from './background.js';
 import { captureSourcePartition } from './partition.js';
+import { telemetryPartition } from './telemetry/assignments.js';
 
 type ResourceContext = Parameters<NonNullable<PluginDynamicResourceRuntime['createProducer']>>[0];
 
@@ -17,8 +18,13 @@ async function readCaptureResourceSnapshot(context: ResourceContext, demand: dat
         if (!outcome.ok) throw new PluginError({ code: outcome.errorCode, message: outcome.error });
         return outcome.result;
     }
-    const input = projectNativeJsonValueForTransport(demand.input);
+    const until = demand.view === 'metrics' ? Date.now() : 0;
+    const input = projectNativeJsonValueForTransport(demand.view === 'metrics'
+        ? { serverId: demand.input.serverId, environmentIds: demand.input.environmentIds,
+            since: Math.max(0, until - demand.input.windowMs), until, measure: { kind: 'http', statistic: 'requests' } }
+        : demand.input);
     switch (demand.view) {
+        case 'metrics': return { view: demand.view, result: database.TelemetryEnvironmentMetricsReadResultV1Schema.parse(await read(database.TELEMETRY_METRICS_READ_ACTION_ID_V1, input)) };
         case 'costs': return { view: demand.view, result: database.DatabaseCaptureCostsReadResultV1Schema.parse(await read(database.TELEMETRY_COSTS_READ_ACTION_ID_V1, input)) };
         case 'status': return { view: demand.view, result: database.DatabaseCaptureStatusResultV1Schema.parse(await read(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, input)) };
         case 'queries': return { view: demand.view, result: database.DatabaseCaptureQueriesListResultV1Schema.parse(await read(database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, input)) };
@@ -49,9 +55,13 @@ export function createCaptureResourceRuntime(options: Readonly<{
                 async read(invocation) {
                     try {
                         const snapshot = await readCaptureResourceSnapshot(context, demand, invocation.signal);
-                        if (!snapshot.result.ok) unsubscribe();
+                        const partitions = snapshot.view === 'metrics'
+                            ? snapshot.result.items.map(item => telemetryPartition(item.environmentId))
+                            : snapshot.result.ok ? [captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId)] : [];
+                        if (!partitions.length) unsubscribe();
                         else if (!stop && !context.signal.aborted) {
-                            stop = options.subscribe(captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId), () => invalidate?.());
+                            const stops = partitions.map(partition => options.subscribe(partition, () => invalidate?.()));
+                            stop = () => stops.forEach(dispose => dispose());
                         }
                         return JSON.stringify(snapshot);
                     } catch (error: unknown) { unsubscribe(); throw error; }

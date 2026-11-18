@@ -9,6 +9,23 @@ import { admitPluginListFilterFieldV1, compileEntityListFilterV1, createPluginLi
     type PluginListFilterFactsV1, type PluginListFilterSelectionV1 } from '@happier-dev/plugin-sdk/ui';
 import { normalizePluginInstalledUiDeclarations } from './projection';
 import { createInstalledPluginUiProjectionPublication, createPluginUiProjectionUnionPublication } from './projectionUnion';
+import * as fieldOwner from '@happier-dev/protocol/collections/filter/pluginListFilterFieldV1';
+
+it('addresses public service Resource values by row before applying the existing scalar ingress', () => {
+    expect(fieldOwner).toHaveProperty('PluginServiceListFieldResourceInputV1Schema');
+    expect(fieldOwner).toHaveProperty('PluginServiceListFieldResourceResultV1Schema');
+    expect(fieldOwner.PluginServiceListFieldResourceInputV1Schema.parse({ entity: 'service', environmentIds: ['zero', 'busy', 'missing'] }))
+        .toEqual({ entity: 'service', environmentIds: ['zero', 'busy', 'missing'] });
+    const result = fieldOwner.PluginServiceListFieldResourceResultV1Schema.parse({ items: [
+        { environmentId: 'zero', value: 0 }, { environmentId: 'busy', value: 7 },
+    ] });
+    const values = new Map(result.items.map(item => [item.environmentId, item.value]));
+    const number = { value: { kind: 'number', unit: '{request}' } } as const;
+    expect(fieldOwner.admitPluginListFilterFieldValueV1(number, values.get('zero'))).toEqual({ kind: 'available', value: 0 });
+    expect(fieldOwner.admitPluginListFilterFieldValueV1(number, values.get('busy'))).toEqual({ kind: 'available', value: 7 });
+    expect(fieldOwner.admitPluginListFilterFieldValueV1(number, values.get('missing'))).toEqual({ kind: 'invalid' });
+    expect(fieldOwner.PluginServiceListFieldResourceResultV1Schema.safeParse({ items: [{ environmentId: 'zero', value: {} }] }).success).toBe(false);
+});
 
 it('publishes external list declarations to the held-fact consumer and withdraws retired fields without Resource reads', async () => {
     let reads = 0;

@@ -31,6 +31,7 @@ import { t } from '@/text';
 import { DeploymentEnvironmentRows, deploymentEnvironmentColumns, SERVICES_APPS_COLLECTION_ID, type DeploymentEnvironmentColumnsBinding } from './DeploymentEnvironmentRows';
 import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
@@ -235,8 +236,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const [fittedColumnIds, setFittedColumnIds] = React.useState<readonly string[] | null | undefined>(undefined);
   const appsColumns = React.useMemo<DeploymentEnvironmentColumnsBinding>(() => ({ collectionId: SERVICES_APPS_COLLECTION_ID,
     onColumnsFit: setFittedColumnIds }), []);
+  const columnProjection = useAppShellPluginUiDeclarationProjection();
+  const localizeColumn = useProjectedPluginLocalizedTextResolver();
   const appsMenuColumns = React.useMemo(() => collectionColumnsMenuColumns(
-    { id: 'title', title: t('projects.deployments.services.columnEnvironment') }, deploymentEnvironmentColumns(false)), []);
+    { id: 'title', title: t('projects.deployments.services.columnEnvironment') }, deploymentEnvironmentColumns(false, columnProjection, localizeColumn)), [columnProjection, localizeColumn]);
   const columnsMenu = view === 'apps' && !phone && fittedColumnIds !== null ? <CollectionColumnsMenuButton
     collectionId={SERVICES_APPS_COLLECTION_ID} columns={appsMenuColumns} fittedIds={fittedColumnIds ?? null}
     testID="all-deployments.columns" /> : null;

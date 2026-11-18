@@ -4,7 +4,7 @@ import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.
 import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { PluginContributionReferenceV2Schema, PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { PluginUiIconTokenV1Schema } from '../../plugins/contributions/ui/tokens.js';
-import { ExtensionSelectionV1Schema, matchEntityFilterExtensionV1, type EntityFilterFactValueV1, type ExtensionSelectionV1 } from './entityListFilterV1.js';
+import { EntityFilterFactValueV1Schema, ExtensionSelectionV1Schema, matchEntityFilterExtensionV1, type EntityFilterFactValueV1, type ExtensionSelectionV1 } from './entityListFilterV1.js';
 import { defineEntityFilterFieldV1, type EntityFilterRegistryV1 } from './fieldRegistryV1.js';
 import { createEntityFilterConditionCodecV1 } from './fieldConditionsV1.js';
 
@@ -36,6 +36,21 @@ export type PluginListFilterFieldV1 = z.infer<typeof PluginListFilterFieldV1Sche
 export type AdmittedPluginListFilterFieldV1 = Readonly<{ id: string; declaration: PluginListFilterFieldV1 }>;
 export type PluginListFilterSelectionV1 = Readonly<{ extensions?: Readonly<Record<string, ExtensionSelectionV1>> }>;
 export type PluginListFilterFactsV1 = Readonly<{ extensions?: Readonly<Record<string, EntityFilterFactValueV1>> }>;
+
+/** The Services fact adapter binds one Resource read to its mounted Environment rows. */
+export const PluginServiceListFieldResourceInputV1Schema = lazyZodSchema(() => z.strictObject({
+    entity: z.literal('service'),
+    environmentIds: z.array(z.string().check(z.minLength(1))),
+}));
+export type PluginServiceListFieldResourceInputV1 = z.infer<typeof PluginServiceListFieldResourceInputV1Schema>;
+/** Row addressing only; field-specific value semantics remain at the existing scalar ingress. */
+export const PluginServiceListFieldResourceResultV1Schema = lazyZodSchema(() => z.strictObject({
+    items: z.array(z.strictObject({
+        environmentId: z.string().check(z.minLength(1)),
+        value: EntityFilterFactValueV1Schema,
+    })),
+}));
+export type PluginServiceListFieldResourceResultV1 = z.infer<typeof PluginServiceListFieldResourceResultV1Schema>;
 
 /** Current writes require a live declaration of the exact selection kind. Stored reads stay opaque. */
 export function validatePluginListFilterSelectionsV1(fields: readonly AdmittedPluginListFilterFieldV1[], extensions: unknown): boolean {

@@ -1745,6 +1745,16 @@ to manifest arrays. Existing `activate(api)` registers ordinary declared Actions
 and Resources only. The same field declaration supports service-entity numeric
 columns with units and optional presentation metadata; number fields remain
 display-only. The declaration path adds no Resource demand or runtime binding.
+The Services fact adapter binds Resource columns to the public closed
+`{entity:'service', environmentIds:[...]}` launch input and reads
+`{items:[{environmentId,value}]}`. The existing field ingress admits each row's
+scalar value; absent rows stay unknown. These input/result schemas are exported
+from `@happier-dev/plugin-sdk/ui`, without a public trend schema.
+Services' default-off Requests field consumes the existing `capture-view`
+Resource with one mounted Environment batch per collector. The metric Action
+retains its individual-service read and also accepts selected Environment ids;
+that owner aggregates every emitted service name and keeps no-data unknown.
+Resource reads advance the requested duration only on demand or source pushes.
 See [collection presentation](collection-presentation.md)
 for the held-fact evaluator and deferred host-row loading boundary.
 

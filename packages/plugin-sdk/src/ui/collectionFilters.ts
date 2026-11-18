@@ -10,6 +10,14 @@ import {
     type AdmittedPluginListFilterFieldV1, type PluginListFilterFactsV1,
 } from '@happier-dev/protocol/collections/filter/pluginListFilterFieldV1';
 import type { UpdatedSelectionV1, ExtensionSelectionV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+import { PluginServiceListFieldResourceInputV1Schema as canonicalServiceResourceInput,
+    PluginServiceListFieldResourceResultV1Schema as canonicalServiceResourceResult,
+    type PluginServiceListFieldResourceInputV1, type PluginServiceListFieldResourceResultV1,
+} from '@happier-dev/protocol/collections/filter/pluginListFilterFieldV1';
+import type { PluginUiSchema } from './publicContract.js';
+
+export const PluginServiceListFieldResourceInputV1Schema: PluginUiSchema<PluginServiceListFieldResourceInputV1> = canonicalServiceResourceInput;
+export const PluginServiceListFieldResourceResultV1Schema: PluginUiSchema<PluginServiceListFieldResourceResultV1> = canonicalServiceResourceResult;
 
 // The generated Action DTOs supply the public selection vocabulary; Protocol still owns all matching.
 export type { UpdatedSelectionV1, ExtensionSelectionV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
@@ -49,6 +57,8 @@ export {
     admitPluginListFilterFieldV1,
     admitPluginListFilterFieldValueV1,
     validatePluginListFilterSelectionsV1,
+    type PluginServiceListFieldResourceInputV1,
+    type PluginServiceListFieldResourceResultV1,
     type PluginListFilterFieldV1,
     type AdmittedPluginListFilterFieldV1,
     type PluginListFilterFactsV1,

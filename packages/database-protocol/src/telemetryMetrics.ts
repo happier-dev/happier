@@ -31,6 +31,28 @@ export const TelemetryMetricsReadInputV1Schema = z.strictObject({ ...selection, 
 export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
     routes: z.array(z.strictObject({ method: z.string(), route: z.string(), result })),
     trend: z.array(DatabaseTelemetryMetricIntervalV1Schema), usage: z.optional(UsageAnalyticsQueryResponseSchema) });
+/** Services rows are Environments: one demand reads every emitted service for the mounted rows. */
+export const TELEMETRY_REQUESTS_FIELD_ID_V1 = 'requests-24h' as const;
+export const TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 = 'service-requests' as const;
+export const TELEMETRY_REQUESTS_WINDOW_MS_V1 = 24 * 60 * 60 * 1000;
+const environmentBatch = { serverId: text, environmentIds: z.array(text).check(z.minLength(1)) };
+export const TelemetryEnvironmentMetricsReadInputV1Schema = z.strictObject({ ...environmentBatch, since: time, until: time,
+    measure: z.strictObject({ kind: z.literal('http'), statistic: z.literal('requests') }) });
+/** The live Resource advances this duration only when mounted demand reads or the collector pushes. */
+export const TelemetryEnvironmentMetricsResourceInputV1Schema = z.strictObject({ ...environmentBatch,
+    windowMs: z.number().check(z.int(), z.positive()) });
+export const TelemetryEnvironmentMetricsReadResultV1Schema = z.strictObject({ items: z.array(z.strictObject({
+    environmentId: text, ...TelemetryMetricsReadResultV1Schema.shape,
+})) });
+export const TelemetryMetricsActionReadInputV1ProtocolSchema = projectZodProtocolSchema(z.union([
+    TelemetryMetricsReadInputV1Schema, TelemetryEnvironmentMetricsReadInputV1Schema,
+]));
+export const TelemetryMetricsActionReadResultV1ProtocolSchema = projectZodProtocolSchema(z.union([
+    TelemetryMetricsReadResultV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema,
+]));
+export type TelemetryEnvironmentMetricsReadInputV1 = z.infer<typeof TelemetryEnvironmentMetricsReadInputV1Schema>;
+export type TelemetryEnvironmentMetricsReadResultV1 = z.infer<typeof TelemetryEnvironmentMetricsReadResultV1Schema>;
+export type TelemetryEnvironmentMetricsResourceInputV1 = z.infer<typeof TelemetryEnvironmentMetricsResourceInputV1Schema>;
 export const TelemetryMetricsReadResultV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadResultV1Schema);
 export const TelemetryMetricsReadInputV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadInputV1Schema);
 export const TelemetryKeyFlowMeasureV1ProtocolSchema = projectZodProtocolSchema(TelemetryKeyFlowMeasureV1Schema);

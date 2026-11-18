@@ -6,6 +6,21 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Telemetry plugin manifest', () => {
+  it('offers a cold default-off Requests field on Services through the existing Resource', async () => {
+    const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+    const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui/declarationProjection');
+    const { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1 } = await import('@happier-dev/database-protocol');
+    const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
+    expect(manifest.contributes.ui.listExtensions ?? []).toContainEqual({ id: TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1,
+      entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests · 24 h',
+        source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 },
+        value: { kind: 'number', unit: '{request}' },
+        column: { title: 'Requests · 24 h', width: 112, align: 'end', priority: 20, defaultHidden: true } }],
+    });
+    expect(projectPluginPortableUiDeclarationsV1(manifest)[`listExtension:happier.telemetry:${TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1}`])
+      .toMatchObject({ listExtension: { entity: 'service' } });
+  });
+
   it('passes the host manifest parser', () => {
     const parsed = parsePluginManifest(PLUGIN_MANIFEST);
     expect(

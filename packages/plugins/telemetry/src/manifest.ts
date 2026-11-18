@@ -3,6 +3,7 @@ import { definePlugin, PluginError, type PluginInvocationContext } from '@happie
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
     TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
@@ -72,7 +73,12 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  workflows: { [TELEMETRY_REGRESSION_WORKFLOW_ID_V1]: TELEMETRY_REGRESSION_WORKFLOW_V1 },
  // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
  // D36: App vitals, Metric and Slowest routes, offered in Add widget → Telemetry and never auto-added.
- ui: { views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
+ ui: { listExtensions: { [TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1]: {
+  entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests · 24 h',
+   source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number', unit: '{request}' },
+   column: { title: 'Requests · 24 h', width: 112, align: 'end', priority: 20, defaultHidden: true },
+  }],
+ } }, views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
   ...TELEMETRY_WIDGET_RENDERERS,
   // The detail reads occurrences and writes lifecycle through this plugin's own Actions.
   { id: EXCEPTION_DETAIL_RENDERER_ID, kind: 'reactNative', artifact: 'telemetry-exception-detail-native', requiredHostMethods: ['executeAction'] },

@@ -30,6 +30,9 @@ export type ExtensionSelectionV1 =
     | Readonly<{ kind: 'boolean'; value: boolean }>
     | Readonly<{ kind: 'time'; selection: UpdatedSelectionV1 }>;
 export type EntityFilterFactValueV1 = string | readonly string[] | boolean | number | null;
+export const EntityFilterFactValueV1Schema: z.ZodMiniType<EntityFilterFactValueV1> = lazyZodSchema(() => z.union([
+    z.string(), z.array(z.string()), z.boolean(), z.number(), z.null(),
+]));
 
 const TimeSchema = lazyZodSchema(() => z.number().check(z.int()));
 export const UpdatedSelectionV1Schema = lazyZodSchema(() => z.union([

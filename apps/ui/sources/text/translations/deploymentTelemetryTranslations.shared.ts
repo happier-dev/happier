@@ -19,6 +19,7 @@ export type Copy = Readonly<{
     nextDeploy: string;
   }>;
   state: Readonly<{ on: string; off: string }>;
+  measurement: Readonly<{ sampled: string; partial: string; unknown: string }>;
   sheet: Readonly<{
     title: (p: Name) => string;
     purpose: string;
@@ -66,6 +67,11 @@ const en: Copy = {
     nextDeploy: 'Changes apply at the next deploy.',
   },
   state: { on: 'On', off: 'Off' },
+  measurement: {
+    sampled: 'Includes sampled requests',
+    partial: 'Some observations are missing',
+    unknown: 'No collector data for this window',
+  },
   sheet: {
     title: ({ name }) => `Telemetry for ${name}`,
     purpose: 'What Happier records from this app, and where it keeps it.',

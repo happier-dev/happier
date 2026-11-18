@@ -9583,6 +9583,24 @@ same schema under the unpublished direct cut. Older strict development readers
 reject these declarations. This changes no persisted preference format, wire
 epoch, Resource demand or collector query contract.
 
+The service Resource field adapter also adds the closed batch launch input
+`{entity:'service',environmentIds:[...]}` and addressed scalar result
+`{items:[{environmentId,value}]}` at the existing field owner. Matching Protocol,
+SDK and UI readers load together; individual values retain the existing field
+ingress semantics. No public trend grammar or persisted data changes.
+
+The same development metric Action also accepts a closed Environment-batch
+input and returns addressed items containing its existing measured result and
+metric-interval trend. The existing individual-service input/result remain
+valid. Its `capture-view` Resource adds the `metrics` union member with selected
+Environment ids and a requested duration; matching development producers and
+consumers reload together. No new Action id, series schema, persisted format or
+mixed-development adapter is introduced.
+The canonical measurement basis adds `mixed_telemetry` when per-service source
+selection combines metric populations with other services' sampled spans;
+sampling retains partial completeness and both producer provenances. Matching
+closed development readers reload together.
+
 Unreleased 0.3 Action operation declarations add optional
 `cancellation: 'unsupported' | 'supported'` to their existing closed envelope.
 Omission retains unsupported cancellation. Matching Protocol, SDK, plugin

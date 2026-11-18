@@ -23,6 +23,8 @@ export {
     admitPluginListFilterFieldValueV1,
     createPluginListFilterFieldRegistryV1,
     validatePluginListFilterSelectionsV1,
+    PluginServiceListFieldResourceInputV1Schema,
+    PluginServiceListFieldResourceResultV1Schema,
 } from './collectionFilters.js';
 export type {
     SetSelectionV1,
@@ -43,6 +45,8 @@ export type {
     AdmittedPluginListFilterFieldV1,
     PluginListFilterSelectionV1,
     PluginListFilterFactsV1,
+    PluginServiceListFieldResourceInputV1,
+    PluginServiceListFieldResourceResultV1,
 } from './collectionFilters.js';
 export { getWidgetSizeFootprintV1, WIDGET_SIZE_POLICY_V1 } from './widgetSizes.js';
 export type { WidgetGroupWidthV1, WidgetSurfaceRefV1 } from './widgetSizes.js';

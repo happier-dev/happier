@@ -45,7 +45,7 @@ const finiteCause = lazyZodSchema(() => z.strictObject({
 /** Finite numeric observations only. Raw telemetry and trends stay at their producer. */
 const measured = lazyZodSchema(() => z.strictObject({
     measure: z.string(), value: z.optional(z.number()), unit: z.string(),
-    basis: z.enum(['metric_points', 'sampled_spans', 'catalog_estimate', 'provider_reported']),
+    basis: z.enum(['metric_points', 'sampled_spans', 'mixed_telemetry', 'catalog_estimate', 'provider_reported']),
     producers: z.array(z.strictObject({ serviceName: z.optional(z.string()),
         serviceVersion: z.optional(z.string()), serviceInstanceId: z.optional(z.string()) })),
     window: z.strictObject({ since: DeploymentTimestampV1Schema, until: DeploymentTimestampV1Schema }),

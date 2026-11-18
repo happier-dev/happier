@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { definePlugin, PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
@@ -15,6 +15,61 @@ const source = { kind: 'worktree' as const, serverId: 'home', machineId: 'machin
 const unavailable = () => { throw new Error('Unused public host service'); };
 
 describe('capture demanded Resource through real public Actions', () => {
+    it('reads one mounted Environment batch and releases its selected push subscriptions', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        // The daemon SQL handle and host Environment admission are SDK boundaries.
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const deploymentDatabases = { async admitTelemetryRead(input: { environmentId: string }) { return {
+            environment: { serverId: 'home', environmentId: input.environmentId, revision: 1 }, collectorMachineId: 'collector',
+            capabilities: { metrics: true },
+        }; } } as unknown as PluginServices['deploymentDatabases'];
+        const lifetime = new AbortController();
+        const lease = await localCaptureBackground.acquireRuntime({ signal: lifetime.signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, deploymentDatabases } });
+        let reads = 0;
+        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: lifetime.signal,
+            context: { kind: 'surface', mountInstanceKey: 'requests', launchInput: { view: 'metrics', input: {
+                serverId: 'home', environmentIds: ['app', 'empty'], windowMs: 1000,
+            } } },
+            resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
+            observeAction: unavailable,
+            async readAction(ref, input) { reads++; return { ok: true, result: await host.invokeAction(ref.localId, input) }; },
+        };
+        try {
+            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(2000);
+            await lease.runtime.store.write(['web', 'worker'].map((serviceName, index) => ({ id: serviceName,
+                kind: 'span' as const, spanKind: 2, source: 'otlp' as const, worktree: 'environment:app', at: 1500 + index,
+                serviceName, durationMs: 1 })));
+            const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
+            if (!resource?.createProducer) throw new Error('Resource registration missing');
+            const producer = await resource.createProducer(options);
+            let invalidations = 0;
+            const observation = await producer.observe(() => { invalidations++; }, options);
+            try {
+                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ view: 'metrics', result: { items: [
+                    { environmentId: 'app', result: { measurements: { value: 2, basis: 'sampled_spans', window: { since: 1000, until: 2000 } } } },
+                    { environmentId: 'empty', result: { status: 'unknown' }, trend: [] },
+                ] } });
+                expect(reads).toBe(1);
+                await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
+                expect(invalidations).toBe(0);
+                await lease.runtime.store.write([{ id: 'more', kind: 'span', spanKind: 2, source: 'otlp',
+                    worktree: 'environment:app', serviceName: 'third', durationMs: 1, at: 2100 }]);
+                expect(invalidations).toBe(1);
+                vi.setSystemTime(2200);
+                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ result: { items: [
+                    { environmentId: 'app', result: { measurements: { value: 3, window: { since: 1200, until: 2200 } } } }, { environmentId: 'empty' },
+                ] } });
+                expect(reads).toBe(2);
+                await observation.dispose(); await producer.dispose();
+                await lease.runtime.clear('environment:app');
+                expect(invalidations).toBe(1);
+            } finally { await observation.dispose(); await producer.dispose(); }
+        } finally { vi.useRealTimers(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
     it('pushes selected cost operands through the existing demanded Resource and stops its subscription on disposal', async () => {
         const fixture = createCaptureSqliteFixture(), owner = localCaptureBackground;
         const lifetime = new AbortController(), consumer = new AbortController();

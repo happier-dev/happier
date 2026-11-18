@@ -7,6 +7,7 @@ import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID
     databaseActionLocalIdV1, databaseActionMetadata, projectDatabaseCaptureUsageV1, projectDatabaseAppCostMetricSeriesV1,
     projectUsagePageCost, TelemetryMetricsReadResultV1Schema, type TelemetryMetricsReadResultV1,
     TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { TelemetryEnvironmentMetricsReadResultV1Schema } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureSummary } from './store/capture.js';
@@ -16,7 +17,7 @@ import { analyzeMetricWindow, type MetricInterval } from './analysis/metrics.js'
 import { keyFlowConfigSchema, keyFlowReadInputSchema, keyFlowReadResultSchema, type KeyFlowReadInput } from './healthSchemas.js';
 import { readCaptureCostWindow, loadCaptureCostPricingContext } from './costs.js';
 
-type TrafficReadInput = Omit<KeyFlowReadInput, 'serverId' | 'measure'> & {
+type TrafficReadInput = Omit<KeyFlowReadInput, 'serverId' | 'measure' | 'serviceName'> & { serviceName?: string;
     measure: Exclude<KeyFlowReadInput['measure'], { kind: 'spend' }> };
 type TelemetryCapabilities = Awaited<ReturnType<PluginInvocationContext['services']['deploymentTelemetry']['readAssignments']>>[number]['capabilities'];
 export type KeyFlowWindow = Awaited<ReturnType<typeof readKeyFlowWindow>> & {
@@ -48,7 +49,8 @@ export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficR
     const selectedPoints = wanted ? points.filter(point => wanted.has(keyFlowRouteKey(
         point.dimensions['http.request.method'] ?? point.dimensions['http.method'], point.dimensions['http.route']))) : points;
     const spans: CaptureSummary[] = [];
-    if (input.measure.kind !== 'runtime' && selectedPoints.length === 0) {
+    if (input.measure.kind !== 'runtime' && (selectedPoints.length === 0
+        || input.serviceName === undefined && input.measure.kind === 'http' && input.measure.statistic === 'requests')) {
         let before: Readonly<{ at: number; id: string }> | undefined;
         while (true) {
             const limit = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
@@ -90,7 +92,10 @@ export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficR
             }
         }
         const selected = selectedPoints;
-        if (measurements.basis === 'sampled_spans') {
+        if (measurements.basis === 'mixed_telemetry') {
+            // Population intervals and individual sampled events do not share comparable count windows.
+            trend = [];
+        } else if (measurements.basis === 'sampled_spans') {
             const statistic = input.measure.statistic;
             trend = spans.filter(span => (!wanted || wanted.has(keyFlowRouteKey(span.endpointMethod, span.endpointRoute)))
                 && typeof span.durationMs === 'number').map(span => ({
@@ -218,6 +223,19 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             if (input.until <= input.since) throw new PluginError({ code: 'invalid_parameters' });
             const admit = context.services.deploymentDatabases?.admitTelemetryRead;
             if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
+            if ('environmentIds' in input) {
+                const runtime = localCaptureBackground.readRuntime();
+                const items = await Promise.all([...new Set(input.environmentIds)].map(async environmentId => {
+                    const admitted = await admit({ serverId: input.serverId, environmentId });
+                    const selectedInput = { environmentId, since: input.since, until: input.until, measure: input.measure };
+                    const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);
+                    const selected = reason ? { measurements: unknown(selectedInput, reason), routes: [], trend: [] }
+                        : await readKeyFlowWindow(runtime!, selectedInput);
+                    return { environmentId, result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
+                        routes: [], trend: selected.trend };
+                }));
+                return projectNativeJsonValueForTransport(TelemetryEnvironmentMetricsReadResultV1Schema.parse({ items }));
+            }
             const admitted = await admit({ serverId: input.serverId, environmentId: input.environmentId });
             const runtime = localCaptureBackground.readRuntime();
             const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);

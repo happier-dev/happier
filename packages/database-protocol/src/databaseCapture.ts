@@ -5,6 +5,7 @@ import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DatabaseFailureV1Schema } from './databaseOperations.js';
 import { DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
+import { TelemetryEnvironmentMetricsResourceInputV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema } from './telemetryMetrics.js';
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 
 /** The local capture launch producer and setup guidance share these names. */
@@ -106,6 +107,7 @@ export const DATABASE_CAPTURE_RESOURCE_REF_V1 = {
     contributionId: DATABASE_CAPTURE_RESOURCE_ID_V1,
 } as const;
 export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view', [
+    z.strictObject({ view: z.literal('metrics'), input: TelemetryEnvironmentMetricsResourceInputV1Schema }),
     z.strictObject({ view: z.literal('costs'), input: DatabaseCaptureCostsReadInputV1Schema }),
     z.strictObject({ view: z.literal('status'), input: DatabaseCaptureStatusInputV1Schema }),
     z.strictObject({ view: z.literal('queries'), input: DatabaseCaptureQueriesListInputV1Schema }),
@@ -116,6 +118,7 @@ export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view',
     z.strictObject({ view: z.literal('endpoints'), input: DatabaseCaptureEndpointsListInputV1Schema }),
 ]);
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
+    z.strictObject({ view: z.literal('metrics'), result: TelemetryEnvironmentMetricsReadResultV1Schema }),
     z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
     z.strictObject({ view: z.literal('queries'), result: DatabaseCaptureQueriesListResultV1Schema }),

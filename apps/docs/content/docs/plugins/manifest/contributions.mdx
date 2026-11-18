@@ -13,8 +13,21 @@ Optional `column` metadata supplies `title`, `width`, `align` (`start` or `end`)
 `priority` and `defaultHidden`. It uses the same field identity and held
 declaration projection as filter fields; discovering these choices never
 activates a plugin or reads its Resource. Numbers are display-only, with no
-numeric filter operators. Service-row Resource loading and collector/trend
-binding are separate from this metadata contract and remain unavailable here.
+numeric filter operators. Services' built-in Telemetry plugin offers the
+default-off **Requests · 24 h** column through this path. It totals every emitted
+service name in the Environment, retaining measured provenance and the existing
+trend. No data displays as unknown; an emitted zero displays as zero. Only
+mounted consuming cells demand the existing Resource, in Environment batches
+per collector; discovering choices performs no read.
+
+A service field Resource receives
+`launchInput: { entity: 'service', environmentIds: ['...'] }` and returns
+`{ items: [{ environmentId: '...', value: 0 }] }`. Import
+`PluginServiceListFieldResourceInputV1Schema` and
+`PluginServiceListFieldResourceResultV1Schema` from
+`@happier-dev/plugin-sdk/ui` to parse this boundary. Each addressed value uses
+the field's existing scalar/set/time/boolean admission; omitted rows remain
+unknown. This public envelope does not define a trend format.
 Matching development hosts are required; an older strict reader can reject the
 added declaration. See the maintained
 [external-author fixture](https://github.com/happier-dev/happier/blob/main/packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source.ts).

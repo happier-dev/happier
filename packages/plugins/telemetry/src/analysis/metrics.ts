@@ -47,6 +47,10 @@ function summarize(intervals:readonly IntervalPoint[],statistic:MetricWindowOpti
   return {value:statistic==='mean'?total/numbers.length:total};
  }
  const histograms=intervals.map(item=>item.point).filter((point):point is Extract<NormalizedMetricPoint,{metricType:'histogram'}>=>point.metricType==='histogram');
+ if(statistic==='count') {
+  const count=numeric(histograms.reduce((total,point)=>total+BigInt(point.count),0n).toString(),reasons);
+  return count===undefined?{}:{value:count,count};
+ }
  if(histograms.some(point=>JSON.stringify(point.explicitBounds)!==JSON.stringify(first.explicitBounds))){reasons.add('incompatible_histograms');return {};}
  if(histograms.some(point=>point.bucketCounts.length!==point.explicitBounds.length+1)){reasons.add('missing_histogram_buckets');return {};}
  const counts=first.bucketCounts.map((_count,index)=>numeric(histograms.reduce((count,point)=>count+BigInt(point.bucketCounts[index]!),0n).toString(),reasons));
@@ -54,7 +58,6 @@ function summarize(intervals:readonly IntervalPoint[],statistic:MetricWindowOpti
  const buckets=counts as number[];
  const count=buckets.reduce((a,b)=>a+b,0);
  if(!Number.isSafeInteger(count)){reasons.add('numeric_precision');return {};}
- if(statistic==='count')return {value:count,count};
  if(!count){reasons.add('no_traffic');return {count};}
  const p50=quantile(buckets,first.explicitBounds,0.5),p95=quantile(buckets,first.explicitBounds,0.95);
  let value:number|undefined;
@@ -86,9 +89,9 @@ export function analyzeMetricWindow(points:readonly NormalizedMetricPoint[],opti
    ...(intervals.length?{observedWindow:intervals.reduce((bounds,interval)=>({since:Math.min(bounds.since,interval.since),until:Math.max(bounds.until,interval.until)}),{since:intervals[0]!.since,until:intervals[0]!.until})}:{}),producers,intervals};
  };
  if(!first){reasons.add('no_traffic');return result({},[]);}
- if(!unit)reasons.add('unknown_unit');
- if(inWindow.some(point=>point.name!==first.name||point.unit!==unit||point.metricType!==first.metricType))reasons.add('incompatible_series');
  const statistic=options.statistic??(first.metricType==='gauge'||(first.metricType==='sum'&&!first.isMonotonic)?'latest':first.metricType==='histogram'?'p95':'sum');
+ if(!unit&&statistic!=='count')reasons.add('unknown_unit');
+ if(inWindow.some(point=>point.name!==first.name||(statistic!=='count'&&point.unit!==unit)||point.metricType!==first.metricType))reasons.add('incompatible_series');
  const series=new Map<string,NormalizedMetricPoint[]>();
  for(const point of selected){const key=metricSeriesKey(point);const group=series.get(key)??[];group.push(point);series.set(key,group);}
  if(first.metricType==='gauge'&&statistic==='latest'&&new Set(inWindow.map(metricSeriesKey)).size>1)reasons.add('multiple_gauge_series');
