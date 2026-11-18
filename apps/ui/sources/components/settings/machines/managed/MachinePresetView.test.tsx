@@ -571,6 +571,40 @@ describe('reachable preset detail', () => {
       expect(hook.getCurrent().canCancel).toBe(false);
     } finally { await hook.unmount(); actionOperationStore.reset(); }
   });
+  it('reattaches a still-running preparation after reload from the persisted owner host', async () => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { useMachinePresetPreparation } = await import('./useMachinePresets');
+    const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const snapshot = { version: 1 as const, operationId: 'reload-build', revision: 4,
+      actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, state: 'running' as const,
+      scope: { accountId: 'owner', machineId: 'actual-builder' }, title: 'Prepare preset',
+      createdAt: 1, startedAt: 2, cancellation: 'supported' as const,
+      progress: { kind: 'phase' as const, phase: 'build-image', label: 'Build prepared image', steps: [
+        { id: 'prepare-inputs', label: 'Prepare build inputs', state: 'succeeded' as const },
+        { id: 'build-image', label: 'Build prepared image', state: 'running' as const },
+        { id: 'save-image', label: 'Save prepared image', state: 'pending' as const },
+      ] } };
+    boundary.rpc.mockImplementation(async request => request.method === ACTION_OPERATION_RPC_METHODS_V2.get
+      ? { kind: 'found', operation: snapshot } : { kind: 'unsupported' });
+    const opened = { ...createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened,
+      prepared: { operationId: snapshot.operationId, status: 'building' as const,
+        binding: { cliIdentity: 'supplier-identity', machineId: snapshot.scope.machineId, credentialConfigurations: [], configuration: {
+          launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
+        } } } };
+    const hook = await renderHook(() => useMachinePresetPreparation({ serverId: scopeId, preset: opened,
+      machineId: 'stale-selection', onChanged: () => {} }));
+    try {
+      await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls).toEqual(expect.arrayContaining([
+        [expect.objectContaining({ serverId: scopeId, accountId: 'owner', machineId: snapshot.scope.machineId,
+          method: ACTION_OPERATION_RPC_METHODS_V2.get, payload: { operationId: snapshot.operationId, waitForTerminal: true } })],
+      ])));
+      expect(hook.getCurrent().operation?.snapshot.state).toBe('running');
+      expect(hook.getCurrent().interrupted).toBe(false);
+      expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
+    } finally { await hook.unmount(); }
+  });
   it('exposes measured prepared storage and canonical unpriced cost, omitting unknown size', async () => {
     const serverId = await seed();
     const { useMachinePresetPreparation } = await import('./useMachinePresets');
