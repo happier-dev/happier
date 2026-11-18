@@ -30,6 +30,49 @@ describe('Review read Actions through authenticated HTTP', () => {
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
 
+    it('reads persisted findings beyond one page and only the current requested-person verdict', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: 'repository', sourceKind: 'workflow', state: 'completed',
+                currentRoundOrdinal: 2, startedAt: new Date(1000), finishedAt: new Date(2000) } } } });
+        // Persisted boundary fixtures: this read must count roots, independently of body paging and appearances.
+        const findings = Array.from({ length: 51 }, (_, index) => {
+            const id = randomUUID();
+            return { id, accountId: owner.id, reviewId, findingIdentity: `finding-${index}`,
+                threadId: id, state: 'open', reviewTriageStatus: index === 50 ? null : 'reject',
+                flagsJson: '{}', anchorJson: '{}', snapshotEnvelopeJson: '{}', bodyEnvelopeJson: '{}',
+                bodyVersion: 1, authorJson: '{}', editsJson: '[]', dispositionsJson: '{}', transitionsJson: '[]',
+                serverRevision: 1, createdAt: BigInt(index), updatedAt: BigInt(index) };
+        });
+        await db.reviewComment.createMany({ data: findings });
+        const pending = findings[50]!;
+        await db.reviewCommentAppearance.createMany({ data: ['first', 'second'].map(reviewerId => ({
+            reviewId, commentId: pending.id, roundOrdinal: 2, runId: 'review-run', reviewerId, sourceKey: reviewerId,
+        })) });
+        await db.reviewRequestedReviewer.create({ data: { reviewId, roundOrdinal: 2,
+            principalKey: `account:${owner.id}`, principal: { kind: 'account', accountId: owner.id }, required: true,
+            eligibleAccounts: { create: { accountId: owner.id } } } });
+        await db.reviewVerdict.create({ data: { reviewId, roundOrdinal: 1, accountId: owner.id, verdict: 'approve' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const executor = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+        const read = () => executor.execute('review.get', { reviewId },
+            { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true });
+        expect(await read()).toMatchObject({ ok: true, result: {
+            review: { state: 'completed', currentRoundOrdinal: 2, counts: { total: 51, needsDecision: 1 } },
+            human: { roundOrdinal: 2, requests: [{ required: true, roundOrdinal: 2 }],
+                verdicts: [{ roundOrdinal: 1, verdict: 'approve' }], needsYou: { requestedVerdict: true, needsYou: true } },
+        } });
+        await db.reviewVerdict.create({ data: { reviewId, roundOrdinal: 2, accountId: owner.id, verdict: 'request_changes' } });
+        await db.reviewComment.update({ where: { id: pending.id }, data: { reviewTriageStatus: 'reject' } });
+        expect(await read()).toMatchObject({ ok: true, result: {
+            review: { state: 'completed', counts: { total: 51, needsDecision: 0 } },
+            human: { verdicts: [{ roundOrdinal: 1, verdict: 'approve' }, { roundOrdinal: 2, verdict: 'request_changes' }],
+                needsYou: { requestedVerdict: false, needsYou: false } },
+        } });
+    });
+
     it.each(['plain', 'e2ee'] as const)('reads only the caller’s demanded metadata page and authorized history (%s)', async encryptionMode => {
         const owner = await db.account.create({ data: { encryptionMode } });
         const outsider = await db.account.create({ data: { encryptionMode } });
