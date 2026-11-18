@@ -95,10 +95,13 @@ describe('useExternalSessionMaterialize', () => {
             sessionServerId: 'server-owned',
         });
 
+        let started: unknown = null;
         await act(async () => {
-            await harness.getCurrent().requestMaterialize();
+            started = await harness.getCurrent().requestMaterialize();
         });
 
+        // The caller gets the operation the daemon started or converged on, so it can follow it to settlement.
+        expect(started).toEqual({ operationId: 'operation-1' });
         expect(materializeStartSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
             request: {
@@ -125,12 +128,12 @@ describe('useExternalSessionMaterialize', () => {
             sessionServerId: 'server-owned',
         });
 
-        let result = true;
+        let result: unknown = true;
         await act(async () => {
             result = await harness.getCurrent().requestMaterialize();
         });
 
-        expect(result).toBe(false);
+        expect(result).toBeNull();
         expect(materializeStartSpy).not.toHaveBeenCalled();
         expect(modalAlertSpy).toHaveBeenCalledWith(
             'common.error',
@@ -192,7 +195,7 @@ describe('useExternalSessionMaterialize', () => {
             sessionServerId: 'server-owned',
         });
 
-        let ready = true;
+        let ready: unknown = true;
         await act(async () => {
             const pending = harness.getCurrent().requestMaterialize();
             await Promise.resolve();
@@ -201,7 +204,7 @@ describe('useExternalSessionMaterialize', () => {
             ready = await pending;
         });
 
-        expect(ready).toBe(false);
+        expect(ready).toBeNull();
         expect(materializeStartSpy).not.toHaveBeenCalled();
         expect(modalAlertSpy).not.toHaveBeenCalled();
         await harness.unmount();

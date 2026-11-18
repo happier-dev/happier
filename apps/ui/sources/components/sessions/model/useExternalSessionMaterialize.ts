@@ -9,6 +9,7 @@ import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import {
     machineExternalSessionMaterializeStart,
 } from '@/sync/ops/machineExternalSessions';
@@ -26,7 +27,11 @@ type UseExternalSessionMaterializeParams = Readonly<{
 
 export type UseExternalSessionMaterializeResult = Readonly<{
     materializeInFlight: boolean;
-    requestMaterialize: () => Promise<boolean>;
+    /**
+     * Resolves to the operation the daemon started or converged on, so a caller can follow that exact
+     * operation to settlement; `null` when nothing was started (every refusal is already shown).
+     */
+    requestMaterialize: () => Promise<ExternalSessionOperationProgressV1 | null>;
 }>;
 
 export function useExternalSessionMaterialize(
@@ -38,7 +43,7 @@ export function useExternalSessionMaterialize(
     const [materializeInFlight, setMaterializeInFlight] = React.useState(false);
     const mountedRef = React.useRef(true);
     const generationRef = React.useRef(0);
-    const requestPromiseRef = React.useRef<Promise<boolean> | null>(null);
+    const requestPromiseRef = React.useRef<Promise<ExternalSessionOperationProgressV1 | null> | null>(null);
     const idempotencyKeyRef = React.useRef<string | null>(null);
     const requestControllerRef = React.useRef<AbortController | null>(null);
     const normalizedSessionId = React.useMemo(
@@ -89,19 +94,19 @@ export function useExternalSessionMaterialize(
         };
     }, [materializeScopeKey, params.externalSessionRuntime.sessionServerId, presentation]);
 
-    const requestMaterialize = React.useCallback((): Promise<boolean> => {
+    const requestMaterialize = React.useCallback((): Promise<ExternalSessionOperationProgressV1 | null> => {
         const signal = requestControllerRef.current?.signal;
-        if (!mountedRef.current || !signal || signal.aborted) return Promise.resolve(false);
+        if (!mountedRef.current || !signal || signal.aborted) return Promise.resolve(null);
         if (requestPromiseRef.current) {
             return requestPromiseRef.current;
         }
         if (!params.hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
-            return Promise.resolve(false);
+            return Promise.resolve(null);
         }
         const link = params.externalSessionRuntime.externalSessionLink;
         if (!link) {
-            return Promise.resolve(false);
+            return Promise.resolve(null);
         }
 
         const requestGeneration = generationRef.current;
@@ -114,31 +119,31 @@ export function useExternalSessionMaterialize(
             && generationRef.current === requestGeneration
             && accountCurrentness.isCurrent()
         );
-        let requestPromise: Promise<boolean> | null = null;
+        let requestPromise: Promise<ExternalSessionOperationProgressV1 | null> | null = null;
         requestPromise = (async () => {
             setMaterializeInFlight(true);
             try {
                 const latestStatus = await params.externalSessionRuntime.refreshNow();
                 if (!isRequestCurrent()) {
-                    return false;
+                    return null;
                 }
                 if (!latestStatus) {
                     Modal.alert(
                         t('common.error'),
                         t('chatFooter.externalSessionStatusUnavailable'),
                     );
-                    return false;
+                    return null;
                 }
                 if (!latestStatus.machineOnline) {
                     Modal.alert(
                         t('common.error'),
                         t('chatFooter.externalSessionMachineOffline'),
                     );
-                    return false;
+                    return null;
                 }
 
                 if (!isRequestCurrent()) {
-                    return false;
+                    return null;
                 }
                 idempotencyKeyRef.current ??= randomUUID();
                 const result = await machineExternalSessionMaterializeStart({
@@ -156,16 +161,16 @@ export function useExternalSessionMaterialize(
                     signal,
                 });
                 if (!isRequestCurrent()) {
-                    return false;
+                    return null;
                 }
                 if (!result.ok) {
                     Modal.alert(
                         t('common.error'),
                         t(presentExternalSessionOperationActionError(result.error.code)),
                     );
-                    return false;
+                    return null;
                 }
-                return true;
+                return result.progress;
             } catch {
                 if (isRequestCurrent()) {
                     Modal.alert(
@@ -173,7 +178,7 @@ export function useExternalSessionMaterialize(
                         t('externalSessions.operationActionErrorUnavailable'),
                     );
                 }
-                return false;
+                return null;
             } finally {
                 if (
                     requestPromiseRef.current === requestPromise

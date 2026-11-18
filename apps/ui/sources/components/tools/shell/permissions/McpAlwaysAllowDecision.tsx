@@ -13,6 +13,13 @@ import { useMcpAlwaysAllow } from './useMcpAlwaysAllow';
 import type { McpAlwaysAllowInput } from './useMcpAlwaysAllow';
 
 /**
+ * A host that already states the decision (the timeline row's header outcome) yields to the settled line while
+ * it renders, so one decision is said once. The line's state is the request-owned receipt, so only the line
+ * knows when it shows.
+ */
+export const McpAlwaysAllowSettledLineReporter = React.createContext<((shown: boolean) => void) | null>(null);
+
+/**
  * The MCP tool card's Always allow (P8 U8.5, lab xa A): before an answer, the footer draws its own ghost
  * decision through `renderDecision`; once Always ran, one line says whether the per-tool setting was saved,
  * and a failed save retries only the write.
@@ -51,11 +58,15 @@ export function McpAlwaysAllowDecisionView(props: Readonly<{
   // Native submit awaits both the answer and its follow-up. After the tool confirms
   // approval, an in-flight submit is waiting for the catalog save.
   const saving = always.status === 'saving' || (!props.pending && always.status === 'answering');
-  if (
-    always.status === 'saved' ||
-    saving ||
-    always.status === 'save_failed'
-  ) {
+  const settled = always.status === 'saved' || saving || always.status === 'save_failed';
+  const reportSettledLine = React.useContext(McpAlwaysAllowSettledLineReporter);
+  // Before paint, so the row never shows the decision twice for a frame.
+  React.useLayoutEffect(() => {
+    if (!reportSettledLine || !settled) return;
+    reportSettledLine(true);
+    return () => reportSettledLine(false);
+  }, [reportSettledLine, settled]);
+  if (settled) {
     const failed = always.status === 'save_failed';
     return (
       <View testID="permission-footer.always-allow-settled" style={styles.line}>

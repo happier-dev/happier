@@ -1,6 +1,10 @@
 import type { PluginAgentExternalLinkedTakeoverWriterSafetyV1 } from '@happier-dev/protocol/plugins/backendDefinitionV1';
 
 import type { ChatFooterExternalControlState } from '@/components/sessions/transcript/ChatFooter';
+import {
+    chatFooterExternalControlOffersWayForward,
+    resolveChatFooterExternalControlActions,
+} from '@/components/sessions/transcript/chatFooterExternalControlActions';
 import type { ExternalSessionIdentityPresentation } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
 import {
     externalAgentStateNeedsAttention,
@@ -45,7 +49,12 @@ type Input = Readonly<{
     }>;
     externalSessionMaterialize?: Readonly<{
         materializeInFlight: boolean;
-        requestMaterialize: () => void | Promise<void | boolean>;
+        requestMaterialize: () => void | Promise<unknown>;
+    }>;
+    externalSessionContinueInNewSession?: Readonly<{
+        available: boolean;
+        inFlight: boolean;
+        requestContinue: () => void | Promise<void>;
     }>;
     isHiddenSystemSessionSession: boolean;
 }>;
@@ -73,6 +82,39 @@ function createMaterializeCallback(
     };
 }
 
+function createContinueInNewSessionCallback(
+    input: Input,
+): () => Promise<void> {
+    return async () => {
+        await input.externalSessionContinueInNewSession?.requestContinue();
+    };
+}
+
+/**
+ * Continue in a new session replaces the takeover dead end: the status is known, the outside Agent is
+ * not running (a running one keeps Re-check, since takeover may open once it stops) and neither
+ * takeover mode is available. Derived from the takeover facts alone, never from the Agent's id.
+ */
+function resolveContinueInNewSession(
+    input: Input,
+    status: Input['externalSessionRuntime']['status'],
+): ExternalControlFooterState['continueInNewSession'] {
+    const owner = input.externalSessionContinueInNewSession;
+    if (!owner || (!owner.available && !owner.inFlight)) return null;
+    if (input.externalSessionOperationBlocksNewOperation === true) return null;
+    if (status == null || status.runnerActive === true) return null;
+    if (status.canTakeOverDirect === true || status.canTakeOverPersist === true) return null;
+    return {
+        requestEnabled:
+            input.hasWriteAccess === true
+            && status.machineOnline === true
+            && !owner.inFlight
+            && input.externalSessionMaterialize?.materializeInFlight !== true,
+        inFlight: owner.inFlight,
+        onRequest: createContinueInNewSessionCallback(input),
+    };
+}
+
 export function resolveSessionViewExternalControlFooter(input: Input): SessionViewExternalControlFooter | null {
     if (input.isHiddenSystemSessionSession || input.externalSessionOperationRunning === true) {
         return null;
@@ -83,7 +125,7 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
 
     const status = input.externalSessionRuntime.status;
     const externalAgentState = input.externalSessionRuntimePresentation?.externalAgent.state ?? 'unknown';
-    return {
+    const footer: ExternalControlFooterState = {
         externalAgentPresentation: {
             state: externalAgentState,
             needsAttention: externalAgentStateNeedsAttention(externalAgentState),
@@ -124,5 +166,9 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
                     onRequest: createMaterializeCallback(input),
                 }
                 : null,
+        continueInNewSession: resolveContinueInNewSession(input, status),
     };
+    // The row speaks only with a way forward (or the reader's request in flight): where the Session runs is
+    // already in the header, and the Session's notice then speaks alone (one message per state).
+    return chatFooterExternalControlOffersWayForward(resolveChatFooterExternalControlActions(footer)) ? footer : null;
 }

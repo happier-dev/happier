@@ -43,6 +43,7 @@ import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happie
 import { buildToolCallMessageRouteId } from "@happier-dev/session-core/messages";
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { renderToolPermissionFooter } from '../permissions/renderToolPermissionFooter';
+import { McpAlwaysAllowSettledLineReporter } from '../permissions/McpAlwaysAllowDecision';
 import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
 import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
@@ -346,8 +347,11 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                     }) ?? t('errors.permissionDenied')
                 )
                 : statusKind === 'stopped' ? t('machineGuard.session.stopped') : null;
-    // A native decision collapses to the exact label that was applied, who answered and when (lab mb B).
-    const nativeAnswerPermission = statusKind !== 'error' && statusKind !== 'stopped' && resolveNativePermissionAnswer(toolForRendering.permission)
+    // A native decision collapses to the exact label that was applied, who answered and when (lab mb B), unless the
+    // settled catalog line below is saying it with its save state (one message per decision).
+    const [catalogSettledLineShown, setCatalogSettledLineShown] = React.useState(false);
+    const nativeAnswerPermission = statusKind !== 'error' && statusKind !== 'stopped' && !catalogSettledLineShown
+        && resolveNativePermissionAnswer(toolForRendering.permission)
         ? toolForRendering.permission : undefined;
     const headerTerminalStatus = nativeAnswerPermission ? (
         <PermissionAnswerOutcomeStatus permission={nativeAnswerPermission} serverId={props.serverId} />
@@ -534,7 +538,9 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             <TranscriptToolResultCard tool={toolForRendering} sessionId={props.sessionId} serverId={props.serverId}
                 mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true} />
 
-            {permissionFooter}
+            <McpAlwaysAllowSettledLineReporter.Provider value={setCatalogSettledLineShown}>
+                {permissionFooter}
+            </McpAlwaysAllowSettledLineReporter.Provider>
             {approvalCards}
         </TranscriptJumpAttention>
         </TranscriptRowSeqProvider>

@@ -262,7 +262,8 @@ describe('ChatFooter (local control)', () => {
         };
         const screen = await renderFooter({ externalControl: resolveSessionViewExternalControlFooter(input) });
 
-        expect(screen.findByTestId('session-chatFooter-externalControl')).not.toBeNull();
+        // Without Take over the row has nothing beyond the header's Agent and Machine, so it is withheld.
+        expect(screen.findByTestId('session-chatFooter-externalControl') !== null).toBe(offered);
         expect(screen.findByTestId('session-chatFooter-takeOverDirect') !== null).toBe(offered);
         expect(screen.getTextContent().includes('externalSessions.externalAgentTakeOverHint')).toBe(offered);
     });
@@ -482,6 +483,65 @@ describe('ChatFooter (local control)', () => {
             screen.pressByTestId('session-chatFooter-importIntoHappier');
         });
         expect(onRequestMaterialize).toHaveBeenCalledTimes(1);
+    });
+
+    it('replaces the takeover dead end with Continue in a new session, keeping Import into Happier secondary', async () => {
+        const onRequestContinue = vi.fn(async () => {});
+        const onRequestMaterialize = vi.fn(async () => {});
+        const screen = await renderFooter({
+            externalControl: {
+                statusKnown: true,
+                machineOnline: true,
+                runnerActive: false,
+                trustedPid: null,
+                activity: 'idle',
+                canTakeOverDirect: false,
+                canTakeOverPersist: false,
+                takeoverPreflightInFlight: false,
+                takeoverInFlight: null,
+                onRequestTakeoverPreflight: vi.fn(async () => {}),
+                materialize: { requestEnabled: true, inFlight: false, onRequest: onRequestMaterialize },
+                continueInNewSession: { requestEnabled: true, inFlight: false, onRequest: onRequestContinue },
+            },
+        });
+
+        const banners = screen.findAllByType(WarningActionBanner);
+        expect(banners.map((banner) => banner.props.testID)).toEqual(['session-chatFooter-externalControl']);
+        expect(banners[0]?.props.actionTestID).toBe('session-chatFooter-continueInNewSession');
+        expect(banners[0]?.props.actionLabel).toBe('externalSessions.operationTitleContinueInNewSession');
+        expect(banners[0]?.props.secondaryActions?.map((action: { testID: string }) => action.testID))
+            .toEqual(['session-chatFooter-importIntoHappier']);
+        expect(screen.getTextContent()).toContain('externalSessions.operationContinueInNewSessionAvailable');
+
+        await act(async () => {
+            screen.pressByTestId('session-chatFooter-continueInNewSession');
+        });
+        expect(onRequestContinue).toHaveBeenCalledTimes(1);
+        expect(onRequestMaterialize).not.toHaveBeenCalled();
+    });
+
+    it('shows Continue in a new session busy while it waits for its import', async () => {
+        const screen = await renderFooter({
+            externalControl: {
+                statusKnown: true,
+                machineOnline: true,
+                runnerActive: false,
+                trustedPid: null,
+                activity: 'idle',
+                canTakeOverDirect: false,
+                canTakeOverPersist: false,
+                takeoverPreflightInFlight: false,
+                takeoverInFlight: null,
+                materialize: null,
+                continueInNewSession: { requestEnabled: false, inFlight: true, onRequest: vi.fn(async () => {}) },
+            },
+        });
+
+        const banner = screen.findAllByType(WarningActionBanner)[0];
+        expect(banner?.props.actionTestID).toBe('session-chatFooter-continueInNewSession');
+        expect(banner?.props.actionBusy).toBe(true);
+        expect(banner?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('externalSessions.operationComposerImporting');
     });
 
     it('labels unfetched takeover state honestly while keeping the explicit preflight action available', async () => {

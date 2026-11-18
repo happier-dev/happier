@@ -259,7 +259,11 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         paddingBottom: theme.space.s4,
     },
     row: {
-        flex: 1,
+        // Sized from its content (not a zero basis) so a narrow row shares the shortfall with the terminal status
+        // instead of handing the status its whole half first and leaving the title a few characters.
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 'auto',
         minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',

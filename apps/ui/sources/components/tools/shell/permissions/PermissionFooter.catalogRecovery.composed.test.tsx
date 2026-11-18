@@ -122,6 +122,11 @@ it.each([
     const showedSaving = screen.findHostByTestId('permission-footer.always-allow-settled') !== null
         && screen.getTextContent().includes('Saving');
     expect(screen.findHostByTestId('permission-footer.choice.remember')).toBeNull();
+    // The settled line says the decision and its save state; the row header does not repeat it.
+    if (surface === 'timeline') {
+        expect(screen.findHostByTestId('permission-footer.always-allow-settled')).not.toBeNull();
+        expect(screen.findHostByTestId('tool-timeline-row-native-answer')).toBeNull();
+    }
     expect(nativeTransport).toHaveBeenCalledTimes(1);
     finishSave.resolve();
 

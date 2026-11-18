@@ -316,6 +316,9 @@ import { type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/u
 import { presentExternalSessionOperationShell } from "@/components/sessions/shell/../external/progress/externalSessionOperationShellPresentation";
 import { readExternalSessionOperationPresentationFromMetadata } from "@/components/sessions/shell/../transcript/items/externalSessionOperationMetadata";
 import { resolveSessionViewRuntimeDisplayState } from "@/components/sessions/shell/view/resolveSessionViewRuntimeDisplayState";
+import { useSessionViewExternalControlFooter } from "@/components/sessions/shell/view/useSessionViewExternalControlFooter";
+import type { resolveExternalSessionRuntimePresentation } from "@/components/sessions/presentation/externalSessionRuntimePresentation";
+import type { resolveExternalSessionIdentityPresentation } from "@/components/sessions/presentation/externalSessionIdentityPresentation";
 import { resolvePermissionRequestWait, resolveSessionViewConnectionStatus, type SessionViewPendingQueueAction, type SessionViewPendingQueueLine, type SessionViewProviderBindingLine } from "@/components/sessions/shell/view/resolveSessionViewConnectionStatus";
 import { isPendingMessageForRecipient } from "@/sync/domains/pending/pendingMessageRecipient";
 import { resolveSessionGuardComposerState } from "@/components/sessions/shell/view/resolveSessionGuardComposerState";
@@ -519,6 +522,8 @@ export type SessionComposerControllerOptions = Readonly<{
     pendingMessages: readonly PendingMessage[];
     managedWakePresentation: SessionManagedWakePresentation;
     externalSessionRuntime: ReturnType<typeof useExternalSessionRuntime>;
+    externalSessionRuntimePresentation: ReturnType<typeof resolveExternalSessionRuntimePresentation> | null;
+    externalSessionIdentityPresentation: ReturnType<typeof resolveExternalSessionIdentityPresentation>;
     sessionRunnerRuntimeStatus: SessionRunnerRuntimeStatusSnapshot | null;
     sessionRunnerRuntimeStatusMachineId: string | null;
     onSessionRunnerRuntimeStatusInvalidated: () => void;
@@ -554,6 +559,8 @@ export function useSessionComposerController({
     pendingMessages,
     managedWakePresentation,
     externalSessionRuntime,
+    externalSessionRuntimePresentation,
+    externalSessionIdentityPresentation,
     sessionRunnerRuntimeStatus,
     sessionRunnerRuntimeStatusMachineId,
     onSessionRunnerRuntimeStatusInvalidated,
@@ -4459,6 +4466,44 @@ export function useSessionComposerController({
         ?? t('status.unknown');
     const machineName = getMachineSentenceName(sessionMachineRecord);
 
+    const targetMachineHomeDir = typeof ownerMetadata?.homeDir === 'string'
+        ? ownerMetadata.homeDir
+        : null;
+    const targetMachinePlatform = typeof ownerMetadata?.platform === 'string'
+        ? ownerMetadata.platform
+        : null;
+    const externalSessionTakeover = useExternalSessionTakeover({
+        sessionId,
+        accountLifetime: sessionAccountLifetime,
+        hasWriteAccess,
+        externalSessionRuntime,
+        targetMachineHomeDir,
+        // The linked session path may describe provider/remote source context.
+        // Takeover always starts from a user-confirmed local target on this
+        // fixed machine, so only its local home directory seeds the picker.
+        targetDirectorySuggestion: targetMachineHomeDir,
+        targetMachinePlatform,
+    });
+    const externalControlFooter = useSessionViewExternalControlFooter({
+        sessionId,
+        session,
+        hasWriteAccess,
+        externalSessionRuntime,
+        externalSessionRuntimePresentation,
+        externalSessionIdentityPresentation,
+        materializeNeeded: externalTranscriptAuthorityState.sharing.kind === 'requires_persisted_import',
+        importPublished: externalTranscriptAuthorityState.sharing.kind === 'published_snapshot',
+        externalSessionOperationPresentation,
+        externalSessionOperationShell,
+        externalSessionTakeover,
+        isHiddenSystemSessionSession,
+        sessionRouteServerId,
+        machineId,
+        sessionAccountLifetime,
+        executionRunsEnabled,
+        router,
+    });
+
     const runtimeDisplayState = resolveSessionViewRuntimeDisplayState({
         session,
         isSessionActive,
@@ -4467,7 +4512,8 @@ export function useSessionComposerController({
         machineReachability,
         allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text'
             || (resumeEligibility === 'unknown' && isResumable),
-        externalOperationPending: externalSessionOperationShell.blocksNewOperation,
+        externalOperationBlocksNewOperation: externalSessionOperationShell.blocksNewOperation,
+        externalControlFooter,
         providerName,
         machineName,
     });
@@ -4733,24 +4779,6 @@ export function useSessionComposerController({
         }, timeoutMs);
         return () => clearTimeout(timeoutId);
     }, [controlSwitchTo]);
-    const targetMachineHomeDir = typeof ownerMetadata?.homeDir === 'string'
-        ? ownerMetadata.homeDir
-        : null;
-    const targetMachinePlatform = typeof ownerMetadata?.platform === 'string'
-        ? ownerMetadata.platform
-        : null;
-    const externalSessionTakeover = useExternalSessionTakeover({
-        sessionId,
-        accountLifetime: sessionAccountLifetime,
-        hasWriteAccess,
-        externalSessionRuntime,
-        targetMachineHomeDir,
-        // The linked session path may describe provider/remote source context.
-        // Takeover always starts from a user-confirmed local target on this
-        // fixed machine, so only its local home directory seeds the picker.
-        targetDirectorySuggestion: targetMachineHomeDir,
-        targetMachinePlatform,
-    });
 
     const [followBottomIntentSeq, setFollowBottomIntentSeq] = React.useState(0);
     const requestMountedTranscriptFollow = React.useCallback(() => {
@@ -7913,12 +7941,7 @@ export function useSessionComposerController({
         controlSwitchCallerRef,
         sessionViewCaller,
         executeRecoveryAction,
-        externalTranscriptAuthorityState,
-        externalSessionTakeoverRequestPreflight: externalSessionTakeover.requestTakeoverPreflight,
-        externalSessionTakeoverInFlight: externalSessionTakeover.takeoverInFlight,
-        externalSessionTakeoverPreflightInFlight: externalSessionTakeover.takeoverPreflightInFlight,
-        externalSessionOperationShell,
-        externalSessionOperationPresentation,
+        externalControlFooter,
         isHiddenSystemSessionSession,
         sessionAccountScope,
         router,

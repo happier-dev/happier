@@ -55,8 +55,8 @@ describe('resolveSessionViewExternalControlFooter', () => {
             isHiddenSystemSessionSession: false,
         });
 
-        expect(footer).not.toBeNull();
-        expect(footer?.onRequestTakeoverPreflight).toBeUndefined();
+        // No Take over and nothing else to offer: the row says nothing beyond the header.
+        expect(footer).toBeNull();
     });
 
     it.each([
@@ -83,6 +83,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
                 externalSessionRuntime: { status: null },
                 externalSessionTakeover: {
+                    writerSafety: 'native_prevention',
                     takeoverInFlight: null,
                     takeoverPreflightInFlight: false,
                     requestTakeoverPreflight: vi.fn(),
@@ -105,6 +106,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionLink: { machineId: 'machine-1' },
             externalSessionRuntime: { status: null },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: vi.fn(),
@@ -199,7 +201,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
         'failed',
         'reconciliation_required',
     ] as const)(
-        'leaves %s progress as the sole operation action owner while preserving read-only status',
+        'leaves %s progress as the sole operation action owner',
         (status) => {
             const operationShell = presentExternalSessionOperationShell(
                 createRecoveryProgress(status),
@@ -233,19 +235,127 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 isHiddenSystemSessionSession: false,
             });
 
-            expect(footer).toEqual(expect.objectContaining({
-                statusKnown: true,
-                machineOnline: true,
-                runnerActive: false,
-                canTakeOverDirect: true,
-                canTakeOverPersist: true,
-                onRequestTakeoverPreflight: undefined,
-                materialize: null,
-            }));
+            // The progress card is the one way forward; the row offers nothing beside it.
+            expect(footer).toBeNull();
             expect(requestTakeoverPreflight).not.toHaveBeenCalled();
             expect(requestMaterialize).not.toHaveBeenCalled();
         },
     );
+
+    describe('continue in a new session', () => {
+        const takeover = {
+            takeoverInFlight: null,
+            takeoverPreflightInFlight: false,
+            requestTakeoverPreflight: vi.fn(),
+        } as const;
+        const idleStatus = {
+            machineOnline: true,
+            runnerActive: false,
+            activity: 'idle',
+            canTakeOverDirect: false,
+            canTakeOverPersist: false,
+        } as const;
+
+        function resolveContinue(overrides: Partial<ResolverTestInput> & Readonly<{
+            status?: NonNullable<ResolverTestInput['externalSessionRuntime']['status']> | null;
+            continueAvailable?: boolean;
+            continueInFlight?: boolean;
+            requestContinue?: () => Promise<void>;
+        }> = {}) {
+            const { status, continueAvailable, continueInFlight, requestContinue, ...rest } = overrides;
+            return resolveFooter({
+                externalSessionLink: { machineId: 'machine-1' },
+                externalSessionRuntime: { status: status === undefined ? idleStatus : status },
+                externalSessionTakeover: takeover,
+                hasWriteAccess: true,
+                externalSessionContinueInNewSession: {
+                    available: continueAvailable ?? true,
+                    inFlight: continueInFlight ?? false,
+                    requestContinue: requestContinue ?? vi.fn(async () => {}),
+                },
+                isHiddenSystemSessionSession: false,
+                ...rest,
+            });
+        }
+
+        it('offers it exactly where takeover is a dead end: status known, idle, neither takeover mode', async () => {
+            const requestContinue = vi.fn(async () => {});
+            const footer = resolveContinue({ requestContinue });
+            expect(footer?.continueInNewSession).toEqual(expect.objectContaining({
+                requestEnabled: true,
+                inFlight: false,
+            }));
+            await footer?.continueInNewSession?.onRequest();
+            expect(requestContinue).toHaveBeenCalledTimes(1);
+
+            expect(resolveContinue({ status: null })?.continueInNewSession ?? null).toBeNull();
+            expect(resolveContinue({ status: { ...idleStatus, canTakeOverDirect: true } })?.continueInNewSession ?? null)
+                .toBeNull();
+            expect(resolveContinue({ status: { ...idleStatus, canTakeOverPersist: true } })?.continueInNewSession ?? null)
+                .toBeNull();
+            // A running outside Agent keeps Re-check: takeover may open once it stops.
+            expect(resolveContinue({ status: { ...idleStatus, runnerActive: true } })?.continueInNewSession ?? null)
+                .toBeNull();
+        });
+
+        it('is withheld when its owner says it is unavailable or an operation blocks new ones', () => {
+            expect(resolveContinue({ continueAvailable: false })?.continueInNewSession ?? null).toBeNull();
+            expect(resolveContinue({ externalSessionOperationBlocksNewOperation: true })?.continueInNewSession ?? null)
+                .toBeNull();
+        });
+
+        it('needs write access, an online machine and no request already in flight', () => {
+            expect(resolveContinue({ hasWriteAccess: false })?.continueInNewSession?.requestEnabled).toBe(false);
+            expect(resolveContinue({ status: { ...idleStatus, machineOnline: false } })?.continueInNewSession?.requestEnabled)
+                .toBe(false);
+            const inFlight = resolveContinue({ continueInFlight: true })?.continueInNewSession;
+            expect(inFlight).toEqual(expect.objectContaining({ requestEnabled: false, inFlight: true }));
+            const importing = resolveContinue({
+                materializeNeeded: true,
+                externalSessionMaterialize: { materializeInFlight: true, requestMaterialize: vi.fn() },
+            })?.continueInNewSession;
+            // A plain Import in flight disables Continue without claiming Continue is the one running.
+            expect(importing).toEqual(expect.objectContaining({ requestEnabled: false, inFlight: false }));
+        });
+    });
+
+    // One message per state: a row that offers nothing only repeats the header's Agent and Machine.
+    it('renders nothing when the row offers no way forward and nothing is in flight', () => {
+        const base = {
+            externalSessionLink: { machineId: 'machine-1' },
+            externalSessionIdentity: { agentLabel: 'Muse', machineLabel: 'NLDW4' },
+            externalSessionTakeover: {
+                writerSafety: 'unsupported',
+                takeoverInFlight: null,
+                takeoverPreflightInFlight: false,
+                requestTakeoverPreflight: vi.fn(),
+            },
+            isHiddenSystemSessionSession: false,
+        } as const;
+        expect(resolveFooter({ ...base, externalSessionRuntime: { status: null } })).toBeNull();
+        expect(resolveFooter({
+            ...base,
+            externalSessionRuntime: { status: { machineOnline: false, runnerActive: false, activity: 'idle' } },
+        })).toBeNull();
+    });
+
+    it('keeps the row while the reader\'s own import is in flight before any operation is published', () => {
+        const footer = resolveFooter({
+            externalSessionLink: { machineId: 'machine-1' },
+            materializeNeeded: true,
+            hasWriteAccess: true,
+            externalSessionRuntime: { status: null },
+            externalSessionTakeover: {
+                writerSafety: 'unsupported',
+                takeoverInFlight: null,
+                takeoverPreflightInFlight: false,
+                requestTakeoverPreflight: vi.fn(),
+            },
+            externalSessionMaterialize: { materializeInFlight: true, requestMaterialize: vi.fn() },
+            isHiddenSystemSessionSession: false,
+        });
+        expect(footer?.materialize).toEqual(expect.objectContaining({ inFlight: true }));
+    });
 
     it('suppresses the external-control banner while the pushed operation presentation is active', () => {
         const footer = resolveFooter({
@@ -286,6 +396,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: vi.fn(),
@@ -306,6 +417,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 status: null,
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight,

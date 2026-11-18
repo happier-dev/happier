@@ -6,6 +6,7 @@ import { WarningActionBanner } from '@/components/sessions/shell/view/WarningAct
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import type { SessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { useSessionChatFooterState } from '@/sync/domains/state/storage';
+import { resolveChatFooterExternalControlActions } from './chatFooterExternalControlActions';
 
 export type ChatFooterExternalAgentPresentation = Readonly<{
     state: ExternalSessionRuntimePresentation['externalAgent']['state'];
@@ -29,6 +30,15 @@ export type ChatFooterExternalControlState = Readonly<{
     takeoverInFlight: 'direct' | 'persisted' | null;
     onRequestTakeoverPreflight?: () => void | Promise<void>;
     materialize: Readonly<{
+        requestEnabled: boolean;
+        inFlight: boolean;
+        onRequest: () => void | Promise<void>;
+    }> | null;
+    /**
+     * Offered only where takeover is a dead end (decided by the footer resolver): import when needed,
+     * then the replay fork flow. Takes the primary seat; Import into Happier stays secondary.
+     */
+    continueInNewSession?: Readonly<{
         requestEnabled: boolean;
         inFlight: boolean;
         onRequest: () => void | Promise<void>;
@@ -151,43 +161,38 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         props.permissionsInUiWhileLocal,
     ]);
 
-    // An external session gets one footer row and one primary: Take over (or Re-check) when offered,
-    // with Import into Happier as the secondary beside it; Import leads only when it is the sole action.
+    // An external session gets one footer row and one primary: Take over (or Re-check) when offered, else
+    // Continue in a new session where takeover is a dead end, with Import into Happier as the secondary
+    // beside either; Import leads only when it is the sole action.
     const externalControlBanner = React.useMemo(() => {
         if (!props.externalControl) return null;
         const externalControl = props.externalControl;
 
-        const switchingToDirect = externalControl.takeoverInFlight === 'direct';
-        const switchingToPersisted = externalControl.takeoverInFlight === 'persisted';
-        const preflightInFlight = externalControl.takeoverPreflightInFlight;
-        const hasTakeoverMode =
-            externalControl.canTakeOverDirect
-            || externalControl.canTakeOverPersist;
-        const showTakeoverAction =
-            !switchingToDirect
-            && !switchingToPersisted
-            && (
-                !externalControl.statusKnown
-                || externalControl.runnerActive
-                || hasTakeoverMode
-            )
-            && typeof externalControl.onRequestTakeoverPreflight === 'function';
-        const materialize = externalControl.materialize ?? null;
-        const importIsPrimary = materialize !== null && !showTakeoverAction;
+        const {
+            switchingToDirect,
+            switchingToPersisted,
+            preflightInFlight,
+            showTakeoverAction,
+            materialize,
+            continueInNewSession,
+            importIsPrimary,
+            operationInFlight,
+        } = resolveChatFooterExternalControlActions(externalControl);
         const importLabel = t('externalSessions.operationTitleMaterialize');
         const importDisabled = materialize !== null && (!materialize.requestEnabled || materialize.inFlight);
         const externalAgentStatusBody = resolveExternalAgentStatusBody(
             externalControl.externalAgentPresentation,
             showTakeoverAction && !externalControl.runnerActive,
         );
-        const operationInFlight = switchingToDirect || switchingToPersisted || preflightInFlight
-            || materialize?.inFlight === true;
 
         const body = (() => {
             if (switchingToPersisted) return t('chatFooter.switchingToPersistedTakeover');
             if (switchingToDirect) return t('chatFooter.switchingToDirectTakeover');
             if (preflightInFlight) return t('chatFooter.checkingExternalSessionTakeover');
-            if (materialize?.inFlight) return t('externalSessions.operationComposerImporting');
+            // Continue in flight is waiting for its own import, so it reads as importing too.
+            if (materialize?.inFlight || continueInNewSession?.inFlight) {
+                return t('externalSessions.operationComposerImporting');
+            }
             if (showTakeoverAction && externalControl.runnerActive) {
                 const guidance = t('chatFooter.externalSessionTakeoverBlocked');
                 const safetyGuidance = externalControl.trustedPid === null
@@ -196,6 +201,9 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                         pid: externalControl.trustedPid,
                     })}`;
                 return `${externalAgentStatusBody} ${safetyGuidance}`;
+            }
+            if (continueInNewSession) {
+                return `${externalAgentStatusBody} ${t('externalSessions.operationContinueInNewSessionAvailable')}`;
             }
             if (importIsPrimary) {
                 return `${externalAgentStatusBody} ${t('externalSessions.operationMaterializeAvailable')}`;
@@ -213,15 +221,23 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                 disabled: preflightInFlight,
                 onPress: externalControl.onRequestTakeoverPreflight,
             }
-            : importIsPrimary && materialize
+            : continueInNewSession
                 ? {
-                    testID: 'session-chatFooter-importIntoHappier',
-                    label: importLabel,
-                    busy: materialize.inFlight,
-                    disabled: importDisabled,
-                    onPress: materialize.onRequest,
+                    testID: 'session-chatFooter-continueInNewSession',
+                    label: t('externalSessions.operationTitleContinueInNewSession'),
+                    busy: continueInNewSession.inFlight,
+                    disabled: !continueInNewSession.requestEnabled || continueInNewSession.inFlight,
+                    onPress: continueInNewSession.onRequest,
                 }
-                : null;
+                : importIsPrimary && materialize
+                    ? {
+                        testID: 'session-chatFooter-importIntoHappier',
+                        label: importLabel,
+                        busy: materialize.inFlight,
+                        disabled: importDisabled,
+                        onPress: materialize.onRequest,
+                    }
+                    : null;
         const secondaryActions = materialize && !importIsPrimary
             ? [{
                 key: 'import-into-happier',

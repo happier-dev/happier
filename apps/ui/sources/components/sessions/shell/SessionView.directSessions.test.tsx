@@ -4544,30 +4544,13 @@ describe('SessionView (direct sessions)', () => {
     );
   });
 
-  it('keeps the direct Session footer descriptive when its Machine catalog has no writer safety', async () => {
+  it('withholds the direct Session footer when its Machine catalog has no writer safety', async () => {
     await renderSessionView();
 
     const latestChatListProps = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0];
-    expect(latestChatListProps?.externalControl).toEqual({
-      externalAgentPresentation: {
-        state: 'unknown',
-        labelKey: 'status.externalStatusUnknown',
-        needsAttention: false,
-        agentLabel: 'Codex',
-        machineLabel: 'happy-host',
-      },
-      statusKnown: false,
-      machineOnline: false,
-      runnerActive: false,
-      trustedPid: null,
-      activity: 'unknown',
-      canTakeOverDirect: false,
-      canTakeOverPersist: false,
-      takeoverPreflightInFlight: false,
-      takeoverInFlight: null,
-      onRequestTakeoverPreflight: undefined,
-      materialize: null,
-    });
+    // No writer safety means no Take over, and with status not fetched nothing else is offered: the row would only
+    // repeat the header's Agent and Machine, so it is withheld.
+    expect(latestChatListProps?.externalControl).toBeNull();
     expect(machineDirectSessionStatusGetSpy).not.toHaveBeenCalled();
     expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
   });

@@ -13,13 +13,14 @@ describe('getInactiveSessionUiState', () => {
             isSessionActive: false, isResumable: true, isMachineOnline: null,
         })).toEqual({ shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' });
     });
-    // A pending import or takeover is the session's way forward; "can't be resumed" beside its Resume contradicts it.
-    it('says nothing about resuming the session while an external import or takeover operation is pending', () => {
+    // A pending operation card or the external control row is the session's way forward; "can't be resumed" beside
+    // it contradicts it.
+    it('says nothing about resuming the session while its external way forward is on screen', () => {
         expect(getInactiveSessionUiState({
-            isSessionActive: false, isResumable: false, isMachineOnline: true, externalOperationPending: true,
+            isSessionActive: false, isResumable: false, isMachineOnline: true, externalWayForward: true,
         })).toEqual({ shouldShowInput: false, inactiveStatusTextKey: null, noticeKind: 'none' });
         expect(getInactiveSessionUiState({
-            isSessionActive: false, isResumable: false, isMachineOnline: true, externalOperationPending: false,
+            isSessionActive: false, isResumable: false, isMachineOnline: true, externalWayForward: false,
         })).toMatchObject({ noticeKind: 'not-resumable' });
     });
     it('shows input for active sessions', () => {

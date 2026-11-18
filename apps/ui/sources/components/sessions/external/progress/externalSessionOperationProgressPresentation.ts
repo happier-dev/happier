@@ -265,7 +265,14 @@ function resolveSummaryKey(
             ? 'externalSessions.operationStatusOriginOffline'
             : 'externalSessions.operationStatusOriginUnknown';
     }
-    switch (effectiveStatus) {
+    return resolveExternalSessionOperationStatusSummaryKey(effectiveStatus);
+}
+
+/** The one status line for an operation status, for surfaces that only see the pushed status. */
+export function resolveExternalSessionOperationStatusSummaryKey(
+    status: ExternalSessionOperationStatusV1,
+): ExternalSessionOperationTranslationKey {
+    switch (status) {
         case 'running':
             return 'externalSessions.operationStatusRunning';
         case 'awaiting_user_resume':

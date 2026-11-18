@@ -1298,8 +1298,9 @@ describe('SessionView (direct sessions)', () => {
 
     await waitForHomeGovernance(() => {
       const footer = findWarningActionBannerProps('session-chatFooter-externalControl');
-      expect(footer).toBeDefined();
-      expect(footer?.actionTestID).toBe(offered ? 'session-chatFooter-takeOverDirect' : undefined);
+      // Without Take over the row offers nothing beyond the header, so it is withheld.
+      expect(footer !== undefined).toBe(offered);
+      if (offered) expect(footer?.actionTestID).toBe('session-chatFooter-takeOverDirect');
       expect(readDaemonMergedProjectionSummary({ machineId: linkedMachineId, serverId }).current).toBe(true);
     });
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
@@ -1374,11 +1375,8 @@ describe('SessionView (direct sessions)', () => {
       });
     expect(latestChatListProps?.session.metadata.externalSessionOperationV1)
       .toBeUndefined();
-    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl).toEqual(expect.objectContaining({
-      statusKnown: false,
-      onRequestTakeoverPreflight: undefined,
-      materialize: null,
-    }));
+    // The awaiting operation's card is the one way forward; the control row offers nothing beside it.
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl).toBeNull();
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
   });

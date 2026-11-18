@@ -47,7 +47,6 @@ import { useSessionBoardFeatureEnabled } from "@/components/sessions/board/useSe
 import { createSessionBoardDetailsTab } from "@/components/sessions/panes/details/sessionDetailsTabBuilders";
 import { isSessionBoardVisibleInDetails } from "@/components/sessions/board/sessionBoardDetailsVisibility";
 import { useSessionExecutionRunsSupported } from "@/hooks/server/useSessionExecutionRunsSupported";
-import { useEventCallback } from "@/hooks/ui/useEventCallback";
 import { Modal } from "@/modal";
 import { COMPOSER_SETTLED_APPROVAL_PRESENTATIONS, TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from "@/components/tools/shell/approvals/transcriptSettledApprovalPresentations";
 import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptCommittedPresence, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
@@ -132,9 +131,6 @@ import { useSessionSurfaceActivation } from "./view/useSessionSurfaceActivation"
 import { resolveMultiPaneDeviceType } from "@/components/appShell/panes/layout/resolveMultiPaneDeviceType";
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
 import { SessionResumeProvider } from "@/components/sessions/model/SessionResumeContext";
-import { useExternalSessionMaterialize } from "@/components/sessions/model/useExternalSessionMaterialize";
-import { useExternalSessionContinueInNewSession } from "@/components/sessions/model/useExternalSessionContinueInNewSession";
-import { useExternalSessionReplayForkLauncher } from "@/components/sessions/model/useExternalSessionReplayForkLauncher";
 import { useExternalSessionRuntime } from "@/components/sessions/model/useExternalSessionRuntime";
 import { SessionExternalSessionRuntimeProvider } from "@/components/sessions/model/useSessionExternalSessionRuntime";
 import { useAuth } from "@/auth/context/AuthContext";
@@ -193,8 +189,6 @@ import { useScopedPluginUiProjection } from "@/components/plugins/projection/use
 import { PluginSurfacePaneLaunchScope, stagePluginSurfacePaneLaunch, type PluginSurfaceDestinationOpenResolution, type PluginSurfaceDestinationNavigationBinding, usePluginSurfacePaneLaunchScope } from "@/components/plugins/surfaces/pluginSurfaceDestinationNavigation";
 import type { PluginSurfaceOpenHandler, PluginSurfaceOpenOutcome } from "@/components/plugins/surfaces/openPluginSurface";
 import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/useServerCredentialAccountScopes";
-import { resolveSessionViewExternalControlFooter } from "./view/resolveSessionViewExternalControlFooter";
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readExternalSessionOperationPresentationFromMetadata } from "../transcript/items/externalSessionOperationMetadata";
 import { resolveSessionWorkspaceDisplayPresentation } from "@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation";
 import { useSessionReachableMachineTarget } from "../model/useSessionMachineReachability";
@@ -2202,8 +2196,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     pendingMessagesLoaded,
     pendingReadState,
     externalSessionRuntime,
-    externalSessionRuntimePresentation,
-    externalSessionIdentityPresentation,
     chatBottomSpacing,
     routeHydrationPending,
     onAppPanePluginSurfaceNavigationBindingChange,
@@ -2224,13 +2216,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     controlSwitchCallerRef,
     sessionViewCaller,
     executeRecoveryAction,
-    externalTranscriptAuthorityState,
-    externalSessionTakeoverRequestPreflight,
-    externalSessionTakeoverInFlight,
-    externalSessionTakeoverPreflightInFlight,
-    externalSessionOperationShell,
-    externalSessionOperationPresentation,
     isHiddenSystemSessionSession,
+    externalControlFooter,
     sessionAccountScope,
     router,
     sessionMachineAccessRemoved,
@@ -2402,128 +2389,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             }
         })(), { tag: 'SessionView.requestSwitchToRemote' });
     }, [executeRecoveryAction, finishControlSwitchAttempt, hasWriteAccess, sessionAccountLifetime, sessionId, sessionViewCaller]);
-    const externalSessionMaterialize = useExternalSessionMaterialize({
-        sessionId,
-        hasWriteAccess,
-        externalSessionRuntime,
-    });
-
-    const externalSessionMaterializeNeeded =
-        externalTranscriptAuthorityState.sharing.kind === 'requires_persisted_import';
-    const requestExternalSessionTakeoverPreflight = useEventCallback(
-        () => externalSessionTakeoverRequestPreflight(),
-    );
-    const requestExternalSessionMaterialize = useEventCallback(
-        () => externalSessionMaterialize.requestMaterialize(),
-    );
-    const openExternalSessionReplayFork = useExternalSessionReplayForkLauncher({
-        sessionId,
-        session,
-        serverId: externalSessionRuntime.sessionServerId ?? sessionRouteServerId ?? null,
-        machineId: machineId ?? null,
-        enabled: externalSessionRuntime.externalSessionLink !== null,
-        executionRunsEnabled,
-        router,
-    });
-    const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
-    const externalSessionContinueInNewSession = useExternalSessionContinueInNewSession({
-        sessionId,
-        replayEnabled: sessionReplayEnabled,
-        materializeNeeded: externalSessionMaterializeNeeded,
-        importPublished: externalTranscriptAuthorityState.sharing.kind === 'published_snapshot',
-        operation: externalSessionOperationPresentation,
-        requestMaterialize: requestExternalSessionMaterialize,
-        openReplayFork: openExternalSessionReplayFork,
-    });
-    const externalSessionLink = externalSessionRuntime.externalSessionLink;
-    const linkedAgentProjection = useDaemonMergedProjectionInputs({
-        sections: ['agentsById'],
-        machineId: externalSessionLink?.machineId,
-        serverId: externalSessionRuntime.sessionServerId ?? sessionRouteServerId,
-        accountLifetime: sessionAccountLifetime,
-        enabled: externalSessionLink !== null,
-    });
-    const takeoverWriterSafety = externalSessionLink && linkedAgentProjection.phase === 'ready'
-        ? linkedAgentProjection.inputs?.pluginProjectionV2?.agentsById[externalSessionLink.agentId]?.externalSessions?.writerSafety
-        : undefined;
-    const externalControlFooter = React.useMemo(
-        () => resolveSessionViewExternalControlFooter({
-            externalSessionOperationRunning: externalSessionOperationShell.running,
-            externalSessionOperationBlocksNewOperation: externalSessionOperationShell.blocksNewOperation,
-            externalSessionLink: externalSessionRuntime.externalSessionLink
-                ? { machineId: externalSessionRuntime.externalSessionLink.machineId }
-                : null,
-            externalSessionRuntimePresentation: externalSessionRuntimePresentation
-                ? {
-                    externalAgent: {
-                        state: externalSessionRuntimePresentation.externalAgent.state,
-                        labelKey: externalSessionRuntimePresentation.externalAgent.labelKey,
-                    },
-                }
-                : null,
-            externalSessionIdentity: {
-                agentLabel: externalSessionIdentityPresentation.agentLabel,
-                machineLabel: externalSessionIdentityPresentation.machineLabel,
-            },
-            materializeNeeded: externalSessionMaterializeNeeded,
-            hasWriteAccess,
-            externalSessionRuntime: {
-                status: externalSessionRuntime.status
-                    ? {
-                        machineOnline: externalSessionRuntime.status.machineOnline,
-                        runnerActive: externalSessionRuntime.status.runnerActive,
-                        activity: externalSessionRuntime.status.activity,
-                        canTakeOverDirect: externalSessionRuntime.status.canTakeOverDirect,
-                        canTakeOverPersist: externalSessionRuntime.status.canTakeOverPersist,
-                        trustedPid: externalSessionRuntime.status.trustedPid,
-                    }
-                    : null,
-            },
-            externalSessionTakeover: {
-                writerSafety: takeoverWriterSafety,
-                takeoverInFlight: externalSessionTakeoverInFlight,
-                takeoverPreflightInFlight: externalSessionTakeoverPreflightInFlight,
-                requestTakeoverPreflight: requestExternalSessionTakeoverPreflight,
-            },
-            externalSessionMaterialize: {
-                materializeInFlight: externalSessionMaterialize.materializeInFlight,
-                requestMaterialize: requestExternalSessionMaterialize,
-            },
-            externalSessionContinueInNewSession: {
-                available: externalSessionContinueInNewSession.available,
-                inFlight: externalSessionContinueInNewSession.inFlight,
-                requestContinue: externalSessionContinueInNewSession.requestContinue,
-            },
-            isHiddenSystemSessionSession,
-        }),
-        [
-            externalSessionIdentityPresentation.agentLabel,
-            externalSessionIdentityPresentation.machineLabel,
-            externalSessionMaterialize.materializeInFlight,
-            externalSessionMaterializeNeeded,
-            externalSessionContinueInNewSession.available,
-            externalSessionContinueInNewSession.inFlight,
-            externalSessionContinueInNewSession.requestContinue,
-            externalSessionOperationShell.blocksNewOperation,
-            externalSessionOperationShell.running,
-            externalSessionRuntime.externalSessionLink?.machineId,
-            externalSessionRuntime.status?.activity,
-            externalSessionRuntime.status?.canTakeOverDirect,
-            externalSessionRuntime.status?.canTakeOverPersist,
-            externalSessionRuntime.status?.machineOnline,
-            externalSessionRuntime.status?.runnerActive,
-            externalSessionRuntime.status?.trustedPid,
-            externalSessionRuntimePresentation?.externalAgent.labelKey,
-            externalSessionRuntimePresentation?.externalAgent.state,
-            externalSessionTakeoverInFlight,
-            externalSessionTakeoverPreflightInFlight,
-            hasWriteAccess,
-            isHiddenSystemSessionSession,
-            requestExternalSessionMaterialize,
-            requestExternalSessionTakeoverPreflight,
-            takeoverWriterSafety,
-        ],
-    );
 
     const handleTranscriptViewportChange = React.useCallback((state: TranscriptViewportChangeState) => {
         sync.onSessionViewportChange(sessionId, state);

@@ -6,6 +6,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { LruMap } from '@/utils/cache/lruMap';
 import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
 import type { SessionMachineReachability } from '@/sync/domains/machines/reachability/resolveSessionMachineReachability';
+import type { SessionViewExternalControlFooter } from './resolveSessionViewExternalControlFooter';
 
 export type SessionViewRuntimeDisplayState = Readonly<{
     localControlState: ReturnType<typeof getSessionLocalControlState>;
@@ -25,7 +26,9 @@ type Input = Readonly<{
     machineReachability: SessionMachineReachability;
     allowInputWhileInactive: boolean;
     /** A non-terminal external import or takeover operation exists (its card owns the way forward). */
-    externalOperationPending: boolean;
+    externalOperationBlocksNewOperation: boolean;
+    /** The external control row; the footer resolver renders it only while it offers a way forward. */
+    externalControlFooter: SessionViewExternalControlFooter | null;
     providerName: string;
     machineName: string;
 }>;
@@ -33,6 +36,11 @@ type Input = Readonly<{
 const SESSION_VIEW_RUNTIME_DISPLAY_STATE_CACHE = new LruMap<string, SessionViewRuntimeDisplayState>({
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
 });
+
+/** One fact for "the external Session's way forward is on screen", read by the notice below. */
+function hasExternalWayForward(input: Input): boolean {
+    return input.externalOperationBlocksNewOperation || input.externalControlFooter !== null;
+}
 
 function buildCacheKey(input: Input): string {
     return JSON.stringify([
@@ -48,7 +56,7 @@ function buildCacheKey(input: Input): string {
         input.isMachineReachable ? 1 : 0,
         input.machineReachability,
         input.allowInputWhileInactive ? 1 : 0,
-        input.externalOperationPending ? 1 : 0,
+        hasExternalWayForward(input) ? 1 : 0,
         input.providerName,
         input.machineName,
     ]);
@@ -73,7 +81,7 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         isMachineOnline: input.machineReachability === 'unknown' ? null : input.isMachineReachable,
         isArchived: input.session.archivedAt != null,
         allowInputWhileInactive: input.allowInputWhileInactive,
-        externalOperationPending: input.externalOperationPending,
+        externalWayForward: hasExternalWayForward(input),
     });
 
     const bottomNotice = inactiveUi.noticeKind === 'not-resumable'

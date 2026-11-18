@@ -15,10 +15,11 @@ export function getInactiveSessionUiState(opts: {
     isArchived?: boolean;
     allowInputWhileInactive?: boolean;
     /**
-     * An external import or takeover operation is pending (not terminal). Its own card is the way forward, so the
-     * session says nothing about not being resumable beside that card's Resume.
+     * The external Session's way forward is already on screen: a pending import or takeover card, or the external
+     * control row's Take over, Continue in a new session, Import into Happier or the reader's request in flight. The
+     * Session then says nothing about not being resumable beside it.
      */
-    externalOperationPending?: boolean;
+    externalWayForward?: boolean;
 }): InactiveSessionUiState {
     if (opts.isSessionActive) {
         return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
@@ -33,7 +34,7 @@ export function getInactiveSessionUiState(opts: {
     }
 
     if (!opts.isResumable) {
-        if (opts.externalOperationPending) {
+        if (opts.externalWayForward) {
             return { shouldShowInput: false, inactiveStatusTextKey: null, noticeKind: 'none' };
         }
         return {
