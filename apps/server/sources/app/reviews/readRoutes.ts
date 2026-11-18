@@ -53,7 +53,7 @@ export function registerReviewReadRoutes(app: Fastify) {
             return reply.send(await inReadSnapshot(tx => listReviewsInTx(tx, {
                 ...request.body, actorAccountId: request.userId,
             })));
-        } catch (error) { return sendReadError(reply, error); }
+        } catch (error) { sendReadError(reply, error); return; }
     });
 
     app.post(homeDomainActionPathForMethod('review.get', 'POST'), {
@@ -71,7 +71,7 @@ export function registerReviewReadRoutes(app: Fastify) {
                 const human = await readAdmittedReviewHumanStateInTx(tx, { actorAccountId: request.userId, access });
                 return { review, human };
             }));
-        } catch (error) { return sendReadError(reply, error); }
+        } catch (error) { sendReadError(reply, error); return; }
     });
 
     app.post(homeDomainActionPathForMethod('review.history.list', 'POST'), {
@@ -84,6 +84,6 @@ export function registerReviewReadRoutes(app: Fastify) {
             return reply.send(await inReadSnapshot(tx => readReviewHistoryInTx(tx, {
                 ...request.body, actorAccountId: request.userId,
             })));
-        } catch (error) { return sendReadError(reply, error); }
+        } catch (error) { sendReadError(reply, error); return; }
     });
 }

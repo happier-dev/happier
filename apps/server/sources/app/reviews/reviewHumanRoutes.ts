@@ -1,4 +1,5 @@
 import { ReviewHumanGetInputV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictSubmitInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { z } from 'zod/mini';
 import type { Fastify } from '@/app/api/types';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { resolveReviewAccessInTx } from './reviewAccess';
@@ -17,7 +18,8 @@ function sendError(reply: { code(status: number): { send(body: { error: string }
 }
 
 export function registerReviewHumanRoutes(app: Fastify) {
-    app.get('/v1/reviews/:reviewId/human', { preHandler: app.authenticate, attachValidation: true }, async (request, reply) => {
+    const params = z.strictObject({ reviewId: z.string() });
+    app.get('/v1/reviews/:reviewId/human', { preHandler: app.authenticate, attachValidation: true, schema: { params } }, async (request, reply) => {
         const parsed = ReviewHumanGetInputV1Schema.safeParse({ reviewId: request.params.reviewId });
         if (!parsed.success) return reply.code(400).send({ error: 'review_invalid_request' });
         try {
@@ -28,7 +30,7 @@ export function registerReviewHumanRoutes(app: Fastify) {
             }));
         } catch (error) { return sendError(reply, error); }
     });
-    app.post('/v1/reviews/:reviewId/reviewers', { preHandler: app.authenticate, attachValidation: true }, async (request, reply) => {
+    app.post('/v1/reviews/:reviewId/reviewers', { preHandler: app.authenticate, attachValidation: true, schema: { params } }, async (request, reply) => {
         const parsed = ReviewReviewersSetInputV1Schema.safeParse({ ...request.body, reviewId: request.params.reviewId });
         if (!parsed.success) return reply.code(400).send({ error: 'review_invalid_request' });
         try {
@@ -39,7 +41,7 @@ export function registerReviewHumanRoutes(app: Fastify) {
             }));
         } catch (error) { return sendError(reply, error); }
     });
-    app.post('/v1/reviews/:reviewId/verdicts', { preHandler: app.authenticate, attachValidation: true }, async (request, reply) => {
+    app.post('/v1/reviews/:reviewId/verdicts', { preHandler: app.authenticate, attachValidation: true, schema: { params } }, async (request, reply) => {
         if (request.authAuthority !== 'present_user') return reply.code(403).send({ error: 'present_user_required' });
         const parsed = ReviewVerdictSubmitInputV1Schema.safeParse({ ...request.body, reviewId: request.params.reviewId });
         if (!parsed.success) return reply.code(400).send({ error: 'review_invalid_request' });

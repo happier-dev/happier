@@ -122,7 +122,7 @@ describe("review comment operations", () => {
             expectedServerRevision: created.serverRevision, evidence: [{ kind: "reasoning", message: "Reader evidence" }],
             clientMutationId: "view-evidence" } })).rejects.toMatchObject({ code: "review_comment_permission_denied" });
         const refusedBulk = await operations.bulkTransition({ ...viewer, input: { reviewId: "review-1", projectId: "project-1", commentIds: [created.id, second.id],
-            expectedState: "open", toState: "dismissed", expectedServerRevisions: { [created.id]: created.serverRevision, [second.id]: second.serverRevision },
+            expectedState: "open", toState: "dismissed", evidence: [], expectedServerRevisions: { [created.id]: created.serverRevision, [second.id]: second.serverRevision },
             clientMutationId: "view-bulk" } });
         expect(refusedBulk.updated).toEqual([]);
         expect(refusedBulk.failed).toMatchObject([
@@ -133,7 +133,7 @@ describe("review comment operations", () => {
         const publication = { target: { providerId: 'github', configuredAccountId: 'github-reader',
             entryRef: { sourceId: 'github', kindId: 'pull-request', collisionScope: 'repository-1', entryId: '42' }, subtarget: null },
             baseRevision: 'base-1', headRevision: 'head-1', entries: [{ happierCommentId: created.id,
-                expectedServerRevision: created.serverRevision, anchor: created.anchor, snapshot: textSnapshot(['value();']), body: created.body }], verdict: null };
+                expectedServerRevision: created.serverRevision, anchor: created.anchor, snapshot: textSnapshot(['value();']), body: 'Check this' }], verdict: null };
         await expect(claimReviewCommentPublication(operations, { ...viewer, input: publication }))
             .rejects.toMatchObject({ code: 'review_comment_permission_denied' });
         expect(await claimReviewCommentPublication(operations, { ...editor, input: publication }))
