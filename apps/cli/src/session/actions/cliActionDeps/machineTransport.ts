@@ -386,6 +386,7 @@ export function createCliMachineActionTransport(
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,
+      serverUrl: params.serverHttpBaseUrl,
       machineId: input.machineId,
       method: input.method,
       request: input.request,

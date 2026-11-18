@@ -11,7 +11,7 @@ import { callMachineRpc } from './machineRpc';
 import nacl from 'tweetnacl';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -23,6 +23,7 @@ import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 const homes: Array<Readonly<{ close(): Promise<void> }>> = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => home.close())); });
@@ -51,6 +52,7 @@ async function createHome(ownerToken: string | null, installationPublicKey?: str
     } else if (request.url === '/v1/machines/old' || request.url === '/v1/machines/current') {
       response.end(JSON.stringify({ machine: { id: request.url.endsWith('/old') ? 'old' : 'current',
         ...(installationPublicKey ? { installationId: 'installation', installationPublicKey } : {}),
+        access: { custodian: { accountId: 'session-account', displayName: '' }, role: 'manage', resourceMode: accountMode, accessState: 'ready' },
         ...(secret ? { dataEncryptionKey: null } : { storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } }));
     } else { response.writeHead(404).end('{}'); }
   });
@@ -79,13 +81,55 @@ async function createHome(ownerToken: string | null, installationPublicKey?: str
 }
 
 describe('Machine RPC replacement Home custody', () => {
+  it('keeps an Apply nested opaque-preset Plan on the captured requester Home', async () => {
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'session-account' })).toString('base64url')}.signature`, encryption: null } as const;
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'));
+    const focused = await createHome(null);
+    // The same authenticated HTTP/socket boundary accepts this Account first.
+    expect(await callMachineRpc({ credentials, serverUrl: owner.url, machineId: 'current', method: 'status', request: {} }))
+      .toEqual({ status: 'running' });
+    const target = { kind: 'machine' as const, machineId: 'current' };
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_setup_home', machineId: 'current', targets: [{
+      homeId: 'srv_setup_home', machineId: 'current', desiredRevision: 1, recipePlans: [], exclusions: [], sources: [
+        { kind: 'direct', setup: {} },
+        { kind: 'accountPresetOpaque', presetId: 'saved', presetRevision: 1, setupRevision: 3, contentEncryptionMode: 'plain' },
+      ],
+    }] });
+    const envelope = { v: 1 as const, requestId: 'setup-apply', target, input };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-setup-root', binding: {
+      accountId: 'session-account', custodianAccountId: 'session-account', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: input.homeId, machineId: 'current', installationId: 'installation',
+      actionId: 'machines.setup.apply', requestId: envelope.requestId, target,
+      deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', input),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: input.homeId,
+      bootstrap: { credentials, serverHttpBaseUrl: owner.url, isCurrent: async () => true,
+        attribution: { accountId: 'session-account', serverId: input.homeId, machineId: 'current', installationId: 'installation' } } });
+    if (!authorization) throw new Error('Expected admitted Setup requester custody');
+    const transport = createCliMachineActionTransport({ credentials: { token: 'foreign-daemon', encryption: null },
+      serverId: input.homeId, serverIdentityId: input.homeId, serverHttpBaseUrl: owner.url,
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: keys.secretKey });
+    const reviewed = input.targets[0]!;
+    const result = await runWithServerHttpBaseUrl(focused.url, () => transport.callMachineAction({ machineId: 'current',
+      method: RPC_METHODS.MACHINE_SETUP_PLAN, exactMachine: true, effectActionId: 'machines.setup.plan',
+      request: { homeId: input.homeId, machineId: 'current', sources: reviewed.sources, exclusions: reviewed.exclusions, mode: 'effects' },
+      context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'session-account', serverId: input.homeId,
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } }));
+    expect(result).toEqual({ status: 'running' });
+    expect(focused.requests).toEqual([]);
+    expect(focused.socketTokens).toEqual([]);
+    expect(owner.calls).toEqual(['current:status', `current:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
+    expect(owner.socketTokens).toEqual([credentials.token, credentials.token]);
+  });
   it.each([
     { foreignRuntime: false, accountMode: 'plain' as const },
     { foreignRuntime: true, accountMode: 'plain' as const },
     { foreignRuntime: true, accountMode: 'e2ee' as const },
   ])('executes a reviewed Session readiness inventory with its original issuer Account custody ($accountMode, foreign runtime: $foreignRuntime)', async ({ foreignRuntime, accountMode }) => {
     const secret = new Uint8Array(32).fill(43);
-    const credentials = { token: 'captured-session-account', encryption: accountMode === 'plain' ? null : { type: 'legacy' as const, secret } };
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'session-account' })).toString('base64url')}.signature`, encryption: accountMode === 'plain' ? null : { type: 'legacy' as const, secret } };
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
     const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'), accountMode === 'e2ee' ? secret : undefined);
     // Same real loopback path supplies a known-good ordinary control first.
