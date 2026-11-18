@@ -1,10 +1,9 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
-import { parseThemeProfileDocument } from '../../account/settings/themeProfiles.js';
 import { VS_CODE_THEME_IMPORT_ADAPTER, resolveVsCodeThemeIncludes, ThemeImportIssueError } from '../../account/settings/themeProfileExternalThemeImportVsCode.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
-import type { RegistryItemSummaryV1, RegistryItemV1, RegistryContentRefV1 } from '../registryItemsV1.js';
+import { admitRegistryThemeItemV1, type RegistryItemSummaryV1, type RegistryContentRefV1 } from '../registryItemsV1.js';
 import type { RegistryThemeListingV1, RegistryThemeFaceV1 } from '../registryThemeV1.js';
 import { OpenVsxThemePackageV1Schema, RegistryThemeContentUrlV1Schema } from '../registryThemeV1.js';
 import type { RegistryFormatAdapterV1, RegistryFetchContextV1 } from './registryFormatAdapterV1.js';
@@ -101,8 +100,8 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
       payload: { kind: 'theme', state: 'listing', version: detail.version, listing, acquisition } };
     // The Themes category also contains icon/product-icon extensions. A valid empty contribution
     // settles the existing versioned acquisition without fetching or parsing an irrelevant VSIX.
-    if (listing.includes.length === 0) return { summary: itemSummary, fetchedAt: response.fetchedAt,
-      payload: { kind: 'theme', state: 'ready', version: detail.version, listing, themes: [], ref: { kind: 'version', version: detail.version } } };
+    if (listing.includes.length === 0) return admitRegistryThemeItemV1({ summary: itemSummary, fetchedAt: response.fetchedAt,
+      payload: { kind: 'theme', state: 'ready', version: detail.version, listing, themes: [], ref: { kind: 'version', version: detail.version } } });
     if (!ctx.sha256Bytes) throw new Error('Registry host requires a platform SHA-256 digest for theme acquisition');
     const [download, checksum] = await Promise.all([ctx.http.getBytes(acquisition.downloadUrl, { source: req.source }), ctx.http.getText(acquisition.checksumUrl, { source: req.source })]);
     if (!download.ok) throw new RegistryFetchErrorV1(download.status);
@@ -127,7 +126,7 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
       };
       const actual = parse(manifestSchema, JSON.parse(await read('extension/package.json')));
       if (!sameManifest(actual, manifest)) throw invalid('manifest_mismatch');
-      const themes: RegistryThemeFaceV1[] = [];
+      const themes: (Omit<RegistryThemeFaceV1, 'document'> & { document: unknown })[] = [];
       for (const [index, theme] of actual.contributes.themes.entries()) {
         const path = packagePath(theme.path);
         const resolved = await resolveVsCodeThemeIncludes({ root: { id: path, text: await read(path) }, signal: ctx.signal,
@@ -135,12 +134,11 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
         const face = listing.includes[index]!;
         const profile = VS_CODE_THEME_IMPORT_ADAPTER.parse({ ...resolved, name: face.label,
           ...(face.mode === undefined ? {} : { type: face.mode }), id: `theme_${bytesToHex(sha256(new TextEncoder().encode(`${req.source.id}/${req.itemId}/${face.key}`)))}` }, { now: new Date(response.fetchedAt).toISOString() });
-        const parsed = profile && parseThemeProfileDocument(profile);
-        if (!parsed || !parsed.ok) throw invalid();
-        themes.push({ key: face.key, label: face.label, mode: face.mode ?? profile.assetAppearance ?? 'dark', document: parsed.document });
+        if (!profile) throw invalid();
+        themes.push({ key: face.key, label: face.label, mode: face.mode ?? profile.assetAppearance ?? 'dark', document: profile });
       }
-      return { summary: itemSummary, fetchedAt: response.fetchedAt, payload: { kind: 'theme', state: 'ready', version: detail.version,
-        listing, themes, ref: { kind: 'version', version: detail.version } } } satisfies RegistryItemV1;
+      return admitRegistryThemeItemV1({ summary: itemSummary, fetchedAt: response.fetchedAt, payload: { kind: 'theme', state: 'ready', version: detail.version,
+        listing, themes, ref: { kind: 'version', version: detail.version } } });
     } catch (error) {
       ctx.signal?.throwIfAborted();
       if (error instanceof RegistryFetchErrorV1) throw error;

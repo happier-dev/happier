@@ -1,7 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
-import { parseThemeProfileDocument } from '../../account/settings/themeProfiles.js';
-import { RegistryThemeFaceV1Schema, type RegistryThemeCatalogEntryV1, type RegistryThemeFaceV1 } from '../registryThemeV1.js';
-import type { RegistryItemSummaryV1, RegistryItemV1 } from '../registryItemsV1.js';
+import { RegistryThemeFaceV1Schema, type RegistryThemeCatalogEntryV1 } from '../registryThemeV1.js';
+import { admitRegistryThemeItemV1, type RegistryItemSummaryV1, type RegistryItemV1 } from '../registryItemsV1.js';
 import type { RegistryFetchContextV1 } from './registryFormatAdapterV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
@@ -30,11 +29,6 @@ export async function readHappierThemeCatalogItemV1(ctx: RegistryFetchContextV1,
   }
   const parsed = z.array(rawFace).safeParse(raw);
   if (!parsed.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-  const themes: RegistryThemeFaceV1[] = parsed.data.map(face => {
-    const document = parseThemeProfileDocument(face.document);
-    if (!document.ok) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-    return { ...face, document: document.document };
-  });
-  return { summary: registryThemeCatalogSummaryV1(input.source.id, entry), fetchedAt: input.fetchedAt,
-    payload: { kind: 'theme', state: 'ready', version: entry.version, listing: entry.listing, themes, ref: { kind: 'version', version: entry.version } } };
+  return admitRegistryThemeItemV1({ summary: registryThemeCatalogSummaryV1(input.source.id, entry), fetchedAt: input.fetchedAt,
+    payload: { kind: 'theme', state: 'ready', version: entry.version, listing: entry.listing, themes: parsed.data, ref: { kind: 'version', version: entry.version } } });
 }

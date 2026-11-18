@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { sha256 } from '@noble/hashes/sha256';
@@ -6,7 +6,8 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { createRegistryHostV1 } from '../registryHostV1.js';
 import { checkRegistryUpstreamV1 } from '../registryUpdatesV1.js';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '../registryActionsV1.js';
-import { RegistryFetchRequestV1Schema } from '../registryRpcV1.js';
+import { RegistryFetchRequestV1Schema, RegistryFetchResponseV1Schema } from '../registryRpcV1.js';
+import { mergeThemeProfileDocumentEdit, ThemeProfileV1Schema } from '../../account/settings/themeProfiles.js';
 import type { RegistrySourceDescriptorV1 } from '../registrySourcesV1.js';
 import type { RegistryHttpV1 } from './registryFormatAdapterV1.js';
 
@@ -47,6 +48,21 @@ async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: bool
   return { calls, http, bytes, digestInputs, sha256Bytes, setLatest: (version: string) => { latest = version; }, host: createRegistryHostV1({ host: 'web', http, sha256Bytes, readSources: async () => [source] }) };
 }
 describe('Open VSX theme acquisition through the registry host', () => {
+  it('parses each acquired face once through Store provenance projection', async () => {
+    const f = await fixture();
+    const parses = vi.spyOn(ThemeProfileV1Schema, 'safeParse');
+    try {
+      const acquired = await f.host.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette' });
+      const documents = acquired.item.payload.themes.map(face => mergeThemeProfileDocumentEdit(face.document, {
+        source: { kind: 'store', provenance: acquired.provenance, contributionId: face.key },
+      }));
+      expect(documents).toHaveLength(2);
+      expect(documents[0]?.raw.source).toMatchObject({ kind: 'store', provenance: acquired.provenance });
+      expect(parses).toHaveBeenCalledTimes(documents.length);
+    } finally {
+      parses.mockRestore();
+    }
+  });
   it.each([false, true])('uses one platform digest for package acquisition and none for metadata (admitted=%s)', async admitted => {
     const f = await fixture();
     const host = createRegistryHostV1({ host: 'web', http: f.http, sha256Bytes: f.sha256Bytes, readSources: async () => [source],
@@ -149,12 +165,21 @@ describe('Open VSX theme acquisition through the registry host', () => {
     const requests: unknown[] = [];
     const daemon = createRegistryHostV1({ host: 'node', http: f.http, sha256Bytes: f.sha256Bytes, readSources: async () => [source] });
     const native = createRegistryHostV1({ host: 'native', http: f.http, readSources: async () => [source], daemonFetch: async request => {
-      requests.push(request); return daemon.fetchRequest(request);
+      requests.push(request);
+      const response = await daemon.fetchRequest(request);
+      return RegistryFetchResponseV1Schema.parse(JSON.parse(JSON.stringify(response)));
     } });
     await native.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette', version: '1.0.0' });
     expect(requests).toEqual([]);
-    const result = await native.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette', version: '1.0.0', themeContent: true });
-    expect(result.op === 'read' && result.item.payload).toMatchObject({ kind: 'theme', state: 'ready' });
+    const parses = vi.spyOn(ThemeProfileV1Schema, 'safeParse');
+    try {
+      const result = await native.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette', version: '1.0.0' });
+      expect(result.item.payload.themes).toHaveLength(2);
+      // The daemon admits upstream content and the client admits the wire response.
+      expect(parses).toHaveBeenCalledTimes(2 * result.item.payload.themes.length);
+    } finally {
+      parses.mockRestore();
+    }
     expect(requests).toEqual([{ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette', version: '1.0.0', themeContent: true }]);
   });
   it('returns canonical acquisition provenance after one source read and one admission', async () => {

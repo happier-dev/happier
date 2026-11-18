@@ -1,4 +1,4 @@
-import { RegistryFetchRequestV1Schema,RegistryFetchResponseV1Schema,createRegistryHostV1 } from '@happier-dev/protocol/registries';
+import { RegistryFetchRequestV1Schema,RegistryFetchResponseV1Schema,createRegistryHostV1,isReadyRegistryThemeItemV1 } from '@happier-dev/protocol/registries';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -10,6 +10,8 @@ export function registerMachineRegistriesRpcHandlers(params:Readonly<{rpcHandler
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_REGISTRIES_FETCH,async(raw:unknown,context)=>{
     const parsed=RegistryFetchRequestV1Schema.safeParse(raw);
     if(!parsed.success)return {op:'error' as const,status:{state:'invalid_source' as const}};
-    return RegistryFetchResponseV1Schema.parse(await createHost(context?.signal,context).fetchRequest(parsed.data));
+    const response=await createHost(context?.signal,context).fetchRequest(parsed.data);
+    if(response.op==='read' && isReadyRegistryThemeItemV1(response.item))return response;
+    return RegistryFetchResponseV1Schema.parse(response);
   });
 }

@@ -410,81 +410,45 @@ export const VS_CODE_THEME_IMPORT_ADAPTER: ThemeProfileExternalImportAdapter = {
     },
 };
 
-const stripJsonComments = (text: string): string => {
-    let output = '';
-    let inString = false;
-    let stringQuote: '"' | '\'' | null = null;
-    let isEscaped = false;
+const stripJsonThemeTrivia = (text: string): string => {
+    const chunks: string[] = [];
+    let start = 0;
+    // Keep a comma pending until comments and whitespace reveal the next token.
+    let pendingComma = -1;
 
     for (let index = 0; index < text.length; index += 1) {
         const character = text[index];
-        const nextCharacter = text[index + 1];
-
-        if (inString) {
-            output += character;
-            if (isEscaped) {
-                isEscaped = false;
-                continue;
-            }
-            if (character === '\\') {
-                isEscaped = true;
-                continue;
-            }
-            if (character === stringQuote) {
-                inString = false;
-                stringQuote = null;
-            }
+        if (character === '/' && text[index + 1] === '/') {
+            const newline = text.indexOf('\n', index + 2);
+            chunks.push(text.slice(start, index), '\n');
+            index = newline === -1 ? text.length : newline;
+            start = index + 1;
             continue;
         }
-
-        if (character === '"' || character === '\'') {
-            inString = true;
-            stringQuote = character;
-            output += character;
+        if (character === '/' && text[index + 1] === '*') {
+            const close = text.indexOf('*/', index + 2);
+            chunks.push(text.slice(start, index));
+            index = close === -1 ? text.length : close + 1;
+            start = index + 1;
             continue;
         }
-
-        if (character === '/' && nextCharacter === '/') {
-            while (index < text.length && text[index] !== '\n') index += 1;
-            output += '\n';
-            continue;
+        if (pendingComma !== -1 && !/\s/.test(character)) {
+            if (character === '}' || character === ']') chunks[pendingComma] = '';
+            pendingComma = -1;
         }
-
-        if (character === '/' && nextCharacter === '*') {
-            index += 2;
-            while (index < text.length - 1 && !(text[index] === '*' && text[index + 1] === '/')) index += 1;
-            index += 1;
-            continue;
-        }
-
-        output += character;
-    }
-
-    return output;
-};
-
-const stripJsonTrailingCommas = (text: string): string => {
-    let output = '';
-    let inString = false;
-    let escaped = false;
-    for (let index = 0; index < text.length; index += 1) {
-        const character = text[index];
-        if (inString) {
-            output += character;
-            if (escaped) escaped = false;
-            else if (character === '\\') escaped = true;
-            else if (character === '"') inString = false;
-            continue;
-        }
-        if (character === '"') inString = true;
         if (character === ',') {
-            let next = index + 1;
-            while (/\s/.test(text[next] ?? '') && next < text.length) next += 1;
-            if (text[next] === '}' || text[next] === ']') continue;
+            chunks.push(text.slice(start, index), ',');
+            pendingComma = chunks.length - 1;
+            start = index + 1;
+        } else if (character === '"' || character === "'") {
+            while (++index < text.length) {
+                if (text[index] === '\\') index += 1;
+                else if (text[index] === character) break;
+            }
         }
-        output += character;
     }
-    return output;
+    chunks.push(text.slice(start));
+    return chunks.join('');
 };
 
 export const parseThemeImportJsonLikeText = (json: string): unknown | null => {
@@ -492,7 +456,7 @@ export const parseThemeImportJsonLikeText = (json: string): unknown | null => {
         return JSON.parse(json);
     } catch {
         try {
-            return JSON.parse(stripJsonTrailingCommas(stripJsonComments(json)));
+            return JSON.parse(stripJsonThemeTrivia(json));
         } catch {
             return null;
         }

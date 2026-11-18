@@ -1,8 +1,9 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { createRegistryHostV1 } from '../registryHostV1.js';
+import { ThemeProfileV1Schema } from '../../account/settings/themeProfiles.js';
 import { webcrypto } from 'node:crypto';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, deriveMarketplaceSourceId } from '../../marketplace/marketplaceSourceRegistryV1.js';
 import type { RegistrySourceDescriptorV1 } from '../registrySourcesV1.js';
@@ -28,7 +29,13 @@ it('discovers catalog summaries without opening bodies and preserves selected fu
   const metadata = await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample', version: '1.0.0' });
   expect(metadata.op === 'read' && metadata.item.payload).toMatchObject({ kind: 'theme', state: 'listing' });
   expect(calls).toEqual([url, url]);
-  const item = await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample', version: '1.0.0', themeContent: true });
+  const parses = vi.spyOn(ThemeProfileV1Schema, 'safeParse');
+  const item = await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample', version: '1.0.0', themeContent: true })
+    .finally(() => {
+      const count = parses.mock.calls.length;
+      parses.mockRestore();
+      expect(count).toBe(1);
+    });
   expect(item.op === 'read' && item.item.payload).toMatchObject({ kind: 'theme', state: 'ready', themes: [{ document: {
     profile: { assetAppearance: 'dark' }, raw: { assetAppearance: 'dark', futurePresentation: { value: 'retained' } },
   } }] });

@@ -1,6 +1,13 @@
 import { expect, it } from 'vitest';
 import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
-import { RegistryThemePayloadV1Schema } from './registryThemeV1.js';
+import { RegistryThemeDocumentV1Schema, RegistryThemePayloadV1Schema } from './registryThemeV1.js';
+
+it('derives the wire projection from raw and rejects a forged projection over invalid raw', () => {
+  const raw = { schemaVersion: 1, id: 'catalog_night', name: 'Night', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+  expect(RegistryThemeDocumentV1Schema.parse({ raw, profile: { id: 'forged' }, compatibility: null }).profile.id).toBe(raw.id);
+  expect(RegistryThemeDocumentV1Schema.safeParse({ raw: { ...raw, id: '' }, profile: raw, compatibility: null }).success).toBe(false);
+});
 
 it.each([undefined, 'light'] as const)('retains the admitted face mode over document appearance %s without losing future presentation', (assetAppearance) => {
   const parsed = parseThemeProfileDocument({ schemaVersion: 2, id: 'catalog_night', name: 'Night',

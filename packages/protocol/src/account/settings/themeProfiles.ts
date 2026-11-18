@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { isJsonObject, normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
+import { isJsonObject, normalizeStrictJsonValue, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { RegistryProvenanceV1Schema } from '../../registries/registryItemsV1.js';
 import { isSupportedThemeProfileTokenId, migrateThemeProfileOverrideTokenIds } from './themeProfileTokens.js';
 import * as z from '../../zodRuntimePolicy.js';
@@ -220,11 +220,52 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
     } };
 }
 
+const ThemeProfileKnownEditSchema = z.partial(z.strictObject(ThemeProfileV1Schema.shape));
+
+function isUnchangedThemeEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit): boolean {
+    for (const key in edit) {
+        if (!Object.hasOwn(edit, key)) continue;
+        const field = key as keyof ThemeProfileV1;
+        const value = edit[field];
+        if (!Object.hasOwn(ThemeProfileV1Schema.shape, field) || !Object.hasOwn(document.raw, field)
+            || value !== document.profile[field] || value !== document.raw[field]) return false;
+    }
+    return true;
+}
+
 /** Overlay deliberate edits, retaining presentation this build cannot interpret. */
 export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit,
     options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
-    const checked = z.partial(z.strictObject(ThemeProfileV1Schema.shape)).parse(edit);
     const retained = options?.retainedPresentation;
+    const plainEdit = !retained && !options?.removeKnownFields?.length;
+    if (plainEdit && edit && typeof edit === 'object'
+        && (Object.getPrototypeOf(edit) === Object.prototype || Object.getPrototypeOf(edit) === null)
+        && isUnchangedThemeEdit(document, edit)) return document;
+    const checked = ThemeProfileKnownEditSchema.parse(edit);
+    if (plainEdit) {
+        const fields = Object.keys(checked) as (keyof ThemeProfileKnownEdit)[];
+        if (fields.every(field => {
+            if (field === 'schemaVersion') return true;
+            const before = document.raw[field];
+            const after = checked[field];
+            if ((field === 'seeds' || field === 'style') && after && isJsonObject(before)) {
+                return Object.entries(after).every(([key, value]) => sameStrictJsonValue(before[key], value)
+                    && Object.hasOwn(before, key));
+            }
+            return Object.hasOwn(document.raw, field) && sameStrictJsonValue(before, after);
+        })) return document;
+        // Store adds these validated facts to already admitted presentation. A source
+        // change on a reserved id still needs the full identity/source refinement.
+        if (fields.every(field => (field === 'assetAppearance' || field === 'source') && checked[field] !== undefined)
+            && (checked.source === undefined || !isReservedThemeProfileId(document.profile.id))) {
+            const rawEdit = normalizeStrictJsonValue(checked);
+            if (isJsonObject(rawEdit)) return {
+                ...document,
+                profile: { ...document.profile, ...checked },
+                raw: Object.freeze({ __proto__: null, ...document.raw, ...rawEdit }),
+            };
+        }
+    }
     const unknown = retained ? Object.fromEntries(Object.entries(retained.raw)
         .filter(([key]) => !Object.hasOwn(ThemeProfileV1Schema.shape, key))) : {};
     const retainedSection = (section: 'seeds' | 'style') => {

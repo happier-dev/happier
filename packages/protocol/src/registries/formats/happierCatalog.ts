@@ -5,7 +5,7 @@ import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../.
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import { BUILT_IN_REGISTRY_SOURCES_V1, REGISTRY_FORMAT_KINDS_V1, deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
-import { RegistryItemV1Schema, type RegistryContentRefV1, type RegistryItemSummaryV1, type RegistryRemoteProvenanceV1 } from '../registryItemsV1.js';
+import { isReadyRegistryThemeItemV1, RegistryItemV1Schema, type RegistryContentRefV1, type RegistryItemSummaryV1, type RegistryRemoteProvenanceV1 } from '../registryItemsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './index.js';
 import { registryPluginItemV1, registryPluginSummaryV1, registryPluginSupportsKindV1 } from './registryPluginListingV1.js';
 import { bindRegistryMarketplaceCatalogV1 } from './registryMarketplaceCatalogBindingV1.js';
@@ -140,7 +140,7 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
         ...(req.themeContent ? { themeContent: req.themeContent } : {}),
         ...(req.appMappingCorrection ? { appMappingCorrection: req.appMappingCorrection } : {}) };
       const read = ctx.readTargetItem ? await ctx.readTargetItem(target) : await adapter.read(ctx, target);
-      const item = RegistryItemV1Schema.parse(read);
+      const item = isReadyRegistryThemeItemV1(read) ? read : RegistryItemV1Schema.parse(read);
       return { ...item, summary: { ...item.summary, sourceId: req.source.id, itemId: req.itemId,
         flags: { ...item.summary.flags, pick: true as const } } };
     }

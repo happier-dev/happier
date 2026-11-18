@@ -15,7 +15,7 @@ import { readRegistryPackageAppCatalogV1, readRegistryPackageStarterCatalogV1 } 
 import { listHappierStarterCatalogV1, readHappierStarterCatalogItemV1 } from './formats/happierStarterCatalog.js';
 import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './formats/happierAppCatalog.js';
 import { RegistryFetchErrorV1, type RegistryListPageV1 } from './registryListV1.js';
-import { RegistryItemV1Schema,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
+import { admitRegistryAdapterItemV1,isReadyRegistryThemeItemV1,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
 import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../marketplace/marketplaceSourceRegistryV1.js';
 import { resolveRegistryFetchPlanV1 } from './registryFetchPlanV1.js';
 import { fetchRegistrySkillFilesV1,type RegistrySkillFileBytesV1 } from './registryGitTreeV1.js';
@@ -43,6 +43,7 @@ export type RegistryHostDepsV1=Readonly<{
   readThemeUpdateItems?: () => Promise<readonly Readonly<{ key: string; provenance: RegistryProvenanceV1 }>[]>;
   updates?:(filter?:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>)=>Promise<RegistryUpdateCheckResultV1>;
   mutateSources?:(mutation:RegistrySourcesMutationV1)=>Promise<RegistrySourcesMutationResultV1>;
+  /** The daemon transport adapter admits its wire response before returning it. */
   daemonFetch?:(request:RegistryFetchRequestV1)=>Promise<RegistryFetchResponseV1>;
   readPluginBotTemplates?: RegistryBotTemplateReaderV1;
   /** Uses the existing Account-scoped template.preview Action carrier. */
@@ -61,10 +62,9 @@ function adapterFor(source:Pick<RegistrySourceV1,'format'>):RegistryFormatAdapte
   if(!adapter) throw new RegistryFetchErrorV1({state:'newer_format',found:source.format});
   return adapter;
 }
-function parseRegistryItemV1(value: unknown): RegistryItemV1 {
-  const parsed = RegistryItemV1Schema.safeParse(value);
-  if (!parsed.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-  return parsed.data;
+function admitRegistryFetchResponseV1(response: RegistryFetchResponseV1): RegistryFetchResponseV1 {
+  if (response.op === 'read' && isReadyRegistryThemeItemV1(response.item)) return response;
+  return RegistryFetchResponseV1Schema.parse(response);
 }
 /** An optional picks kind disappears only after a successful empty answer, never an outage. */
 function isConfirmedEmptyPicksPage(page: RegistryListPageV1): boolean {
@@ -182,9 +182,9 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       for (const [index, placement] of placements.entries()) {
         try {
           if (placement === 'direct') return applyRegistryAppTemplateHintsV1(
-            parseRegistryItemV1(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
+            admitRegistryAdapterItemV1(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
           // Only the selected catalog pointer reaches its target's transport.
-          const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
+          const response = admitRegistryFetchResponseV1(await viaDaemon({ op: 'read', sourceId: source.id,
             kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }),
             ...(request.op === 'read' && request.themeContent ? { themeContent: request.themeContent } : {}),
             ...('appMappingCorrection' in request && request.appMappingCorrection ? { appMappingCorrection: request.appMappingCorrection } : {}) }));
@@ -202,7 +202,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       throw new RegistryFetchErrorV1({ state: 'unreachable' });
     } };
-    const item=parseRegistryItemV1(await adapter.read(formatCtx,{...request,source}));
+    const item=admitRegistryAdapterItemV1(await adapter.read(formatCtx,{...request,source}));
     if(request.op==='read') {
       if (request.petContent && item.payload.kind === 'pet') {
         const response = await operationCtx.http.getBytes(item.payload.pet.spritesheetUrl, { source });
@@ -272,7 +272,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
             const response = placement === 'direct'
               ? await direct(request, source, { ...operationCtx, appTemplateHints })
               : await viaDaemon(request);
-            const admitted = RegistryFetchResponseV1Schema.parse(response);
+            const admitted = admitRegistryFetchResponseV1(response);
             return admitted.op === 'read' ? { ...admitted, item: applyRegistryAppTemplateHintsV1(admitted.item, appTemplateHints) } : admitted;
           } catch (error) {
             if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) {
@@ -608,6 +608,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
           throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
             ? response.status : { state: 'invalid_source' });
         }
+        if (isReadyRegistryThemeItemV1(response.item)) return { item: response.item };
         output = { item: response.item };
         break;
       }

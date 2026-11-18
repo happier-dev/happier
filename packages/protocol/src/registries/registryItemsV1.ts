@@ -1,4 +1,5 @@
-import { RegistryThemeListingV1Schema, RegistryThemePayloadV1Schema } from './registryThemeV1.js';
+import { RegistryThemeListingV1Schema, RegistryThemePayloadV1Schema, type RegistryThemeFaceV1 } from './registryThemeV1.js';
+import { RegistryFetchErrorV1 } from './registryListV1.js';
 import { RegistryPetMetadataV1Schema, RegistryPetListingV1Schema } from './registryPetV1.js';
 import { RegistryAppMappingV1Schema } from './registryAppMappingV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -186,4 +187,32 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
   }
 })));
 export type RegistryItemV1 = z.infer<typeof RegistryItemV1Schema>;
+
+type ReadyRegistryThemePayloadV1 = Extract<RegistryItemV1['payload'], { kind: 'theme'; state: 'ready' }>;
+type ReadyRegistryThemeItemV1 = RegistryItemV1 & { payload: ReadyRegistryThemePayloadV1 };
+
+export function isReadyRegistryThemeItemV1(item: RegistryItemV1): item is ReadyRegistryThemeItemV1 {
+  return item.payload.kind === 'theme' && item.payload.state === 'ready';
+}
+
+/** Ready theme adapters admit their raw faces at acquisition, using the public item contract. */
+export function admitRegistryThemeItemV1(item: Omit<RegistryItemV1, 'payload'> & {
+  payload: Omit<ReadyRegistryThemePayloadV1, 'themes'> & {
+    themes: readonly (Omit<RegistryThemeFaceV1, 'document'> & { document: unknown })[];
+  };
+}): RegistryItemV1 {
+  const themes = item.payload.themes.map(({ document: raw, ...face }) => ({
+    ...face, document: { raw, profile: null, compatibility: null },
+  }));
+  const result = RegistryItemV1Schema.safeParse({ ...item, payload: { ...item.payload, themes } });
+  if (!result.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+  return result.data;
+}
+
+export function admitRegistryAdapterItemV1(item: RegistryItemV1): RegistryItemV1 {
+  if (isReadyRegistryThemeItemV1(item)) return item;
+  const result = RegistryItemV1Schema.safeParse(item);
+  if (!result.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+  return result.data;
+}
 export type RegistrySkillItemV1 = RegistryItemV1 & Readonly<{ payload: Extract<RegistryItemPayloadV1, { kind: 'skill' }> }>;

@@ -99,4 +99,13 @@ describe('portable VS Code theme import', () => {
     it('parses JSON-like documents without rewriting commas inside string values', () => {
         expect(parseThemeImportJsonLikeText('{/* note */"name":"Comma,}","colors":{},}')).toEqual({ name: 'Comma,}', colors: {} });
     });
+
+    it('retains quoted comment markers and resolves trailing commas across comments', () => {
+        expect(parseThemeImportJsonLikeText(String.raw`{
+            "name": "A \"quoted\" // /* ,} theme",
+            "tokenColors": [1, /* trailing */ ],
+            // comment with "quotes"
+        }`)).toEqual({ name: 'A "quoted" // /* ,} theme', tokenColors: [1] });
+        expect(parseThemeImportJsonLikeText('{"tokenColors": [1,,]}')).toBeNull();
+    });
 });

@@ -8,6 +8,21 @@ const profile = (id: string) => ({
     base: { light: 'light', dark: 'dark' }, overrides: { light: { 'surface.base': '#123456' }, dark: {} },
 });
 
+it('reuses the document and skips full admission for an unchanged edit', () => {
+    const parsed = themes.parseThemeProfileDocument({ ...profile('stable_theme'), assetAppearance: 'dark',
+        style: { radius: 'soft', futureGlow: true }, futurePresentation: { glow: true } });
+    if (!parsed.ok) throw new Error('Invalid theme fixture');
+    expect(themes.mergeThemeProfileDocumentEdit(parsed.document, {})).toBe(parsed.document);
+    expect(themes.mergeThemeProfileDocumentEdit(parsed.document, { assetAppearance: 'dark' })).toBe(parsed.document);
+    expect(themes.mergeThemeProfileDocumentEdit(parsed.document, { style: { radius: 'soft' } })).toBe(parsed.document);
+});
+
+it('still refuses a source change that would invalidate a reserved profile id', () => {
+    const parsed = themes.parseThemeProfileDocument({ ...profile('premiumDark'), source: { kind: 'built-in', presetId: 'premiumDark' } });
+    if (!parsed.ok) throw new Error('Invalid theme fixture');
+    expect(() => themes.mergeThemeProfileDocumentEdit(parsed.document, { source: { kind: 'yours' } })).toThrow('invalid_known_envelope');
+});
+
 describe('Account theme profile library', () => {
     it('refuses library-body authoring through generic Account settings mutations', () => {
         expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key: 'themeProfiles', value: [profile('released_theme')] }] }))
