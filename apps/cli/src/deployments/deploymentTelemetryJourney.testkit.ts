@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
 import type { HeapProfiler, Profiler } from 'node:inspector';
@@ -142,6 +144,12 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
             const cleanup: Array<() => Promise<void>> = [() => home.close()];
             const lifetime = new AbortController();
             try {
+                // The background collector signs through the async identity store, outside the RPC fixture context.
+                const originalInstallationFile = configuration.installationIdentityFile;
+                const installationFile = join(home.baseDir, 'installation-identity.json');
+                await writeFile(installationFile, JSON.stringify(readS0Installation(home)), { mode: 0o600, flag: 'wx' });
+                Reflect.set(configuration, 'installationIdentityFile', installationFile);
+                cleanup.push(async () => { Reflect.set(configuration, 'installationIdentityFile', originalInstallationFile); });
                 // Observe the real OS boundary without retaining native arguments or output.
                 const failedDockerCommands: Array<Readonly<{ verb: string; operation: string; exitCode: number | null; reasons: string[] }>> = [];
                 const verbs = new Set(['image', 'buildx', 'compose', 'version', 'info', 'inspect', 'network', 'volume', 'container', 'ps']);
