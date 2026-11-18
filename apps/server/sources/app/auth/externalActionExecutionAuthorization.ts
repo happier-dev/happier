@@ -1,6 +1,6 @@
 import { WORKFLOW_VALIDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
-import { PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
@@ -4191,7 +4191,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.binding.actionId === WIDGET_CATALOG_LIST_ACTION_ID_V1
         && verified.effectActionId === verified.binding.actionId
         && (proof.method.toUpperCase() === 'GET' && proof.path === '/v1/machines' && proof.body === undefined
-            || proof.method.toUpperCase() === 'POST' && proof.path === '/v1/plugins/availability/materializations/read'
+            || proof.method.toUpperCase() === 'POST' && proof.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
                 && PluginAvailabilityMaterializationsReadActionInputV1Schema.safeParse(proof.body).success)) {
         // Catalog preparation shares the native inventory; Session reads retain their ordinary route owner.
     } else if (verified.binding.actionId === EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1) {
