@@ -415,6 +415,35 @@ describe('workflow project target control', () => {
         expect(onWorkspace).toHaveBeenLastCalledWith({ kind: 'project_checkout' });
     });
 
+    it('opens the step-scope checkout picker from another control, with the step rows, and closes on a choice', async () => {
+        const { WorkflowStepWorkspacePicker } = await import('./WorkflowProjectTargetControl');
+        const sameAsWorkflow = vi.fn();
+        const fromStep = vi.fn();
+        const onClose = vi.fn();
+        const anchorRef = React.createRef<never>();
+        const screen = await renderScreen(React.createElement(WorkflowStepWorkspacePicker, {
+            place: { target: { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' }, machineName: 'Mac Studio', machines: MACHINES },
+            workspace: { value: undefined, onChange: vi.fn(), step: {
+                sameAsWorkflow: { subtitle: 'Workflow default · Project folder', onSelect: sameAsWorkflow },
+                fromSteps: [{ blockId: 'plan', label: 'Plan', onSelect: fromStep }],
+                selection: undefined,
+            } },
+            anchorRef,
+            onClose,
+            testIDPrefix: 'workflow-editor-step-ask-workspace',
+        } as never), { wrapper: ModalHost });
+        // Mounted open, hung from the chip: no trigger of its own, the step's rows first.
+        expect(screen.findByTestId('workflow-editor-step-ask-workspace-project-checkout')).toBeNull();
+        const popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
+        expect(popover.props.anchorRef).toBe(anchorRef);
+        const rootStep = popover.props.rootStep as SelectionListStep;
+        const stepRows = stepOptions(rootStep, 'worktree:step-scope');
+        expect(stepRows.map((option) => option.id)[0]).toBe('workspace_same_as_workflow');
+        await screen.pressByTestIdAsync(`selection-list:${rootStep.id}:option:workspace_same_as_workflow`);
+        expect(sameAsWorkflow).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalled();
+    });
+
     it('says the workflow waits for an offline Machine, from the reachability verdict New Session reads (J6)', async () => {
         const { Text } = await import('@/components/ui/text/Text');
         const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');

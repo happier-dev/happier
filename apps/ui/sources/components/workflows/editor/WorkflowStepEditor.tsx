@@ -351,6 +351,7 @@ export function WorkflowStepEditor(props: Readonly<{
                                 onOpenOptions={openOptions}
                                 authoringFacts={props.authoringFacts}
                                 inheritedWorkspaceLabel={formatWorkflowWorkspaceLabel(props.draft, undefined)}
+                                draft={props.draft}
                                 blockLabel={displayName}
                                 testIDPrefix={`${testIDPrefix}-step-${step.id}`}
                             />

@@ -1543,6 +1543,29 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-inspector-done')).not.toBeNull();
     });
 
+    it('opens the sessions\' checkout picker at step scope from the card\'s Workspace chip, not Step options', async () => {
+        const harness = await loadHarness();
+        const { WorkflowStepWorkspacePicker } = await import('@/components/workflows/editor/WorkflowProjectTargetControl');
+        const changed = vi.fn();
+        const screen = await renderBody(harness, {
+            selectedBlockId: 'analyze',
+            onChange: changed,
+            projectTarget: { machineId: 'machine-1', directory: '/repo/payments' },
+        });
+        expect(screen.root.findAllByType(WorkflowStepWorkspacePicker)).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-workspace');
+        // WF-ACCEPT-1118 item 2 (round 1116b change a): the chip opens the picker with the step's own rows.
+        expect(screen.findByTestId('workflow-editor-inspector-done')).toBeNull();
+        const picker = screen.root.findAllByType(WorkflowStepWorkspacePicker);
+        expect(picker).toHaveLength(1);
+        expect(picker[0]!.props.place.target).toEqual({ machineId: 'machine-1', directory: '/repo/payments' });
+        // A choice writes the step's own Workspace through the draft owner.
+        picker[0]!.props.workspace.onChange({ kind: 'new_worktree', source: { kind: 'original' } });
+        expect(changed.mock.calls.at(-1)?.[0].blocks.find((block: { id: string }) => block.id === 'analyze').execution.workspace)
+            .toEqual({ kind: 'new_worktree', source: { kind: 'original' } });
+        expect(picker[0]!.props.workspace.step.sameAsWorkflow).toBeDefined();
+    });
+
     it('keeps the menus opened inside Step options within its frame', async () => {
         const harness = await loadHarness();
         const { PopoverBoundaryProvider } = await import('@/components/ui/popover/PopoverBoundary');

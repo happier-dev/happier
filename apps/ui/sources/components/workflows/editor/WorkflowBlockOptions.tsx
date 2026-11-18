@@ -533,7 +533,8 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const { draft, onChange, step, testIDPrefix } = props;
     const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
     const continuedSessionLabel = useWorkflowContinuedSessionLabel(effectiveExecution.conversation);
-    const workspace = React.useMemo(() => buildWorkflowStepWorkspace({ draft, step, onChange }), [draft, onChange, step]);
+    const workspace = React.useMemo(() => buildWorkflowStepWorkspace({ draft, step,
+        write: (next) => onChange(setWorkflowStepExecutionField(draft, step.id, 'workspace', next)) }), [draft, onChange, step]);
     if (props.documentEditable === false) return <>
         <ItemGroup title={t('workflows.page.sections.conversationTitle')}><SectionContentRow>
             <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({ draft,

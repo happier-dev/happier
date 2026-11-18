@@ -1,4 +1,3 @@
-import { setWorkflowStepExecutionField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
@@ -21,19 +20,18 @@ import type {
  * A step's Workspace as the checkout picker's step scope (WF-REDESIGN-1116 change a): the picker's own
  * rows write the project folder or a per-run new worktree, "Same as the workflow" clears the step's
  * choice, and "Where a step left it" names an earlier step's folder. Every write is the step's
- * `workspace` through the protocol draft operation.
+ * `workspace`, through the caller's step field writer.
  */
 export function buildWorkflowStepWorkspace(
   params: Readonly<{
     draft: WorkflowEditorDraft;
     step: WorkflowStep;
-    onChange: (next: WorkflowEditorDraft) => void;
+    /** Writes the step's `workspace` (undefined: the workflow's). */
+    write: (next: WorkflowWorkspaceSelection | undefined) => void;
   }>,
 ): WorkflowWhereWorkspace & Readonly<{ step: WorkflowStepWorkspaceScope }> {
-  const { draft, step, onChange } = params;
+  const { draft, step, write } = params;
   const value = step.execution?.workspace;
-  const write = (next: WorkflowWorkspaceSelection | undefined) =>
-    onChange(setWorkflowStepExecutionField(draft, step.id, 'workspace', next));
   // An earlier block reached from several scopes (a Repeat's previous round) is one folder row.
   const seen = new Set<string>();
   const fromSteps = listWorkflowProducerOptions(draft, step.id)

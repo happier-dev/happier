@@ -99,6 +99,7 @@ import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDra
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import type { WorkflowProjectTargetControlHandle } from '../editor/WorkflowProjectTargetControl';
+import { WorkflowStepPlaceContext, type WorkflowStepPlace } from '../editor/WorkflowProjectTargetControl';
 import {
     WorkflowSaveStatus,
     WorkflowStatusReadout,
@@ -604,11 +605,17 @@ function WorkflowEditorBlockList(props: Omit<React.ComponentProps<typeof Workflo
     draftStore: WorkflowEditorDraftStore;
     readValidation: ReadWorkflowEditorValidation;
     onUseExample: React.ComponentProps<typeof WorkflowBlockListEditor>['onUseExample'];
+    /** The workflow's place, for a step card's Workspace chip. */
+    stepPlace: WorkflowStepPlace;
 }>) {
-    const { draftStore, readValidation, onUseExample, ...list } = props;
+    const { draftStore, readValidation, onUseExample, stepPlace, ...list } = props;
     const draft = useWorkflowEditorSelector(draftStore, readWholeDraft);
-    return <WorkflowBlockListEditor {...list} draft={draft} readDraft={draftStore.get} blocks={draft.blocks} validation={readValidation(draft)}
-        {...(documentIsUntouched(draft) && onUseExample !== undefined ? { onUseExample } : {})} />;
+    return (
+        <WorkflowStepPlaceContext.Provider value={stepPlace}>
+            <WorkflowBlockListEditor {...list} draft={draft} readDraft={draftStore.get} blocks={draft.blocks} validation={readValidation(draft)}
+                {...(documentIsUntouched(draft) && onUseExample !== undefined ? { onUseExample } : {})} />
+        </WorkflowStepPlaceContext.Provider>
+    );
 }
 
 type WorkflowEditorInspectorProps = Omit<React.ComponentProps<typeof WorkflowInspector>, 'draft' | 'validation'> & Readonly<{
@@ -1173,6 +1180,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         requestPromptFocus(blockId);
     }, [blockingIssueBlockId, props.onSelectBlock, requestPromptFocus]);
 
+    // The workflow's place, read by a step's Workspace in its options and from its card's chip.
+    const stepPlace = React.useMemo<WorkflowStepPlace>(() => ({
+        target: props.projectTarget,
+        machineName: props.machineName,
+        ...(props.projectMachines === undefined ? {} : { machines: props.projectMachines }),
+        ...(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime }),
+    }), [props.projectTarget, props.machineName, props.projectMachines, props.accountLifetime]);
+
     // One inspector content for both subjects; only the subject and its
     // presentation differ (04 §5.2). Issues keep a group open only once the
     // page reveals them, so a pristine draft stays quiet.
@@ -1194,20 +1209,12 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         ...(props.executionTarget === undefined ? {} : { executionTarget: props.executionTarget }),
         ...(props.runAsTargets === undefined ? {} : { runAsTargets: props.runAsTargets }),
         // A step's Workspace picks a checkout of the workflow's place.
-        place: {
-            target: props.projectTarget,
-            machineName: props.machineName,
-            ...(props.projectMachines === undefined ? {} : { machines: props.projectMachines }),
-            ...(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime }),
-        },
+        place: stepPlace,
         ...(props.description === undefined ? {} : { description: props.description }),
         ...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription }),
     }), [
         props.currentWorkflowRef,
-        props.projectTarget,
-        props.machineName,
-        props.projectMachines,
-        props.accountLifetime,
+        stepPlace,
         props.description,
         props.onChangeDescription,
         documentEditable,
@@ -1329,6 +1336,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             ...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts }),
             ...(sessionDrop === undefined ? {} : { sessionDrop }),
             ...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef }),
+            stepPlace,
             testIDPrefix,
     } satisfies React.ComponentProps<typeof WorkflowEditorBlockList>;
     const blockList = <WorkflowEditorBlockList {...blockListProps} rootFoot={resultFoot} rootAddRow />;

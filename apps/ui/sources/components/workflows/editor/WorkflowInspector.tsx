@@ -9,10 +9,7 @@ import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workfl
 import type { WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowBlockOptions } from './WorkflowBlockOptions';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
-import type { WorkflowStepWorkspaceField } from './WorkflowProjectTargetControl';
-
-/** The workflow's place, as a step's Workspace field reads it. */
-export type WorkflowStepPlace = Pick<React.ComponentProps<typeof WorkflowStepWorkspaceField>, 'target' | 'machineName' | 'machines' | 'accountLifetime'>;
+import type { WorkflowStepPlace } from './WorkflowProjectTargetControl';
 
 /**
  * Step options (04 §5.2): a block's settings, anchored beside the step's control, or the shared sheet

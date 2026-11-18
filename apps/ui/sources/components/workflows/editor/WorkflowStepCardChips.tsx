@@ -15,10 +15,13 @@ import type {
 import { SESSION_COMPOSER_CHIP_FIELDS } from '@/components/sessions/new/SessionServerStartDraftComposerBody';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { listWorkflowStepOverriddenFields } from '@/sync/domains/workflows/workflowAuthoring';
+import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
 import type { WorkflowStepOptionChange } from './useWorkflowStepOptionsSummary';
+import { WorkflowStepPlaceContext, WorkflowStepWorkspacePicker } from './WorkflowProjectTargetControl';
+import { buildWorkflowStepWorkspace } from './workflowStepWorkspace';
 import { WorkflowStepOptionsMore } from './WorkflowStepOptionsChip';
 import {
   isWorkflowStepEngineOverridden,
@@ -133,8 +136,10 @@ export function WorkflowStepOptionChips(
     ) => void;
     onOpenOptions: (anchorRef: React.RefObject<View | null>) => void;
     authoringFacts?: SessionAuthoringControlFacts;
-    /** The workflow's Workspace as the step inherits it; the chip opens the step's options, where the picker lives. */
+    /** The workflow's Workspace as the step inherits it; the Workspace chip opens the checkout picker at step scope. */
     inheritedWorkspaceLabel?: string;
+    /** The step's workflow, for the picker's "Same as the workflow" and "Where a step left it" rows. */
+    draft?: WorkflowEditorDraft;
     /** A row nobody has reached yet (PERF-WF3B): "…" is not mounted until then. */
     optionsResting?: boolean;
     blockLabel: string;
@@ -147,7 +152,7 @@ export function WorkflowStepOptionChips(
     () => [...FOOT_SESSION_FIELDS, ...changedFields.filter((field) => !FOOT_SESSION_FIELDS.includes(field))],
     [changedFields],
   );
-  const workspaceChanged = props.changes.some((change) => change.id === 'workspace');
+  const workspaceChange = props.changes.find((change) => change.id === 'workspace');
   const latest = React.useRef(props.onChangeExecutionField);
   latest.current = props.onChangeExecutionField;
   const onChangeField = React.useCallback(
@@ -180,15 +185,18 @@ export function WorkflowStepOptionChips(
             testIDPrefix={`${props.testIDPrefix}-session`}
           />
         )}
-        {workspaceChanged || props.inheritedWorkspaceLabel === undefined ? null : (
-          <WorkflowStepOptionChangeChip
-            change={{ id: 'workspace', title: t('workflows.workspace.title'), value: props.inheritedWorkspaceLabel }}
-            inherited
-            onOpen={props.onOpenOptions}
-            testID={`${props.testIDPrefix}-workspace`}
+        {workspaceChange === undefined && props.inheritedWorkspaceLabel === undefined ? null : (
+          <WorkflowStepWorkspaceChip
+            change={workspaceChange ?? { id: 'workspace', title: t('workflows.workspace.title'), value: props.inheritedWorkspaceLabel }}
+            inherited={workspaceChange === undefined}
+            step={props.step}
+            {...(props.editable && props.draft !== undefined ? { draft: props.draft } : {})}
+            onChangeWorkspace={(next) => latest.current?.('workspace', next)}
+            onOpenOptions={props.onOpenOptions}
+            testID={workspaceChange === undefined ? `${props.testIDPrefix}-workspace` : `${props.testIDPrefix}-changed-workspace`}
           />
         )}
-        {props.changes.map((change) => (
+        {props.changes.filter((change) => change.id !== 'workspace').map((change) => (
           <WorkflowStepOptionChangeChip
             key={change.id}
             change={change}
@@ -208,11 +216,63 @@ export function WorkflowStepOptionChips(
   );
 }
 
+/**
+ * A step's Workspace chip: opens the sessions' checkout picker at step scope (round 1116b change a), mounted only
+ * while open. A reader, or a workflow with no folder to pick a checkout of, opens the step's options instead.
+ */
+function WorkflowStepWorkspaceChip(
+  props: Readonly<{
+    change: WorkflowStepOptionChange;
+    inherited: boolean;
+    step: WorkflowStep;
+    /** Absent for a reader: the chip opens the step's options. */
+    draft?: WorkflowEditorDraft;
+    onChangeWorkspace: (next: WorkflowStepExecutionSelection['workspace']) => void;
+    onOpenOptions: (anchorRef: React.RefObject<View | null>) => void;
+    testID: string;
+  }>,
+): React.ReactElement {
+  const anchorRef = React.useRef<View>(null);
+  const place = React.useContext(WorkflowStepPlaceContext);
+  const [open, setOpen] = React.useState(false);
+  const close = React.useCallback(() => setOpen(false), []);
+  const { draft, step, onChangeWorkspace } = props;
+  const latestChange = React.useRef(onChangeWorkspace);
+  latestChange.current = onChangeWorkspace;
+  const workspace = React.useMemo(() => !open || draft === undefined ? null
+    : buildWorkflowStepWorkspace({ draft, step, write: (next) => latestChange.current(next) }), [draft, open, step]);
+  const picks = draft !== undefined && place?.target != null && isWorkflowProjectTarget(place.target);
+  return (
+    <View ref={anchorRef} collapsable={false}>
+      <SelectionListFilterChip
+        filter={{
+          id: props.change.id,
+          testID: props.testID,
+          label: props.change.title,
+          valueLabel: props.change.value ?? props.change.title,
+          showLabel: props.change.value !== undefined,
+          ...(props.inherited ? { muted: true } : { accessibilityHint: t('workflows.page.changedForStep') }),
+          // The picker below is the chip's menu; the chip's own popover stays closed.
+          open: false,
+          onOpenChange: (next) => {
+            if (!next) return;
+            if (picks) setOpen(true);
+            else props.onOpenOptions(anchorRef);
+          },
+          renderPopoverContent: () => null,
+        }}
+      />
+      {workspace === null || place === null ? null : (
+        <WorkflowStepWorkspacePicker place={place} workspace={workspace} anchorRef={anchorRef} onClose={close}
+          testIDPrefix={props.testID} />
+      )}
+    </View>
+  );
+}
+
 function WorkflowStepOptionChangeChip(
   props: Readonly<{
     change: WorkflowStepOptionChange;
-    /** From the workflow: the quiet chip, not marked as the step's own change. */
-    inherited?: boolean;
     onOpen: (anchorRef: React.RefObject<View | null>) => void;
     testID: string;
   }>,
@@ -228,7 +288,7 @@ function WorkflowStepOptionChangeChip(
           // "Conversation: Fresh"; an option with no value of its own reads as its name.
           valueLabel: props.change.value ?? props.change.title,
           showLabel: props.change.value !== undefined,
-          ...(props.inherited === true ? { muted: true } : { accessibilityHint: t('workflows.page.changedForStep') }),
+          accessibilityHint: t('workflows.page.changedForStep'),
           open: false,
           onOpenChange: (next) => {
             if (next) props.onOpen(anchorRef);
