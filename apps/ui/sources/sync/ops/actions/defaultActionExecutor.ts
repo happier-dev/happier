@@ -437,6 +437,7 @@ import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
+import { createUiProjectSourceRecipientDelivery } from '@/sync/api/deployments/deploymentContentRecipients';
 import { createUiProjectSessionDefaultsActionDeps, createUiManagedSessionDefaultsContextLoader } from '@/sync/api/projects/projectSessionDefaultsActions';
 import { createUiPrepareSessionSpawnNewInput } from './prepareSessionSpawnNewInput';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
@@ -3668,7 +3669,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         throw error;
       }
     },
-    ...(accountContext ? createProjectSourceActionDeps(accountContext) : {}),
+    ...(accountContext ? createProjectSourceActionDeps(accountContext, deploymentActionDeps?.deploymentAction
+      ? { prepareDeploymentRecipients: createUiProjectSourceRecipientDelivery(accountContext, deploymentActionDeps.deploymentAction) } : {}) : {}),
     ...(accountContext && homeDomainAction
       ? createUiProjectSessionDefaultsActionDeps(accountContext, homeDomainAction) : {}),
     ...(projectSourceTeamMove ? { projectSourcesMoveToTeam: projectSourceTeamMove.projectSourcesMoveToTeam } : {}),

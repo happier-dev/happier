@@ -1,8 +1,7 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import axios from '@/api/client/credentialAxios';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ProjectSourcesMoveToTeamInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { ProjectDeploymentDefaultsOutputV1Schema } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
+import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 import { AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -35,15 +34,7 @@ export async function prepareCliProjectSourceTeamMove(request: Request, host: Re
         machineAccessAction: deps.machineAccessAction, workflowAction: deps.workflowAction,
         isSameHome: (left, right) => host.isSameHomeId(left) && host.isSameHomeId(right),
         readArtifactContents: (ids, context) => Promise.allSettled(ids.map(id => host.openArtifact(id, context))),
-        readDefaults: async (sourceId, context) => {
-            const homeId = context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? host.homeId;
-            const path = `/v1/projects/${encodeURIComponent(sourceId)}/deployment-defaults?serverId=${encodeURIComponent(homeId)}`;
-            const headers = await host.headers(context, 'projects.sources.moveToTeam', { method: 'GET', path });
-            if (!headers) return moveFailure('project_requester_authority_unavailable');
-            const response = await axios.request<unknown>({ method: 'GET', url: `${host.serverHttpBaseUrl}${path}`,
-                headers, signal: context.signal, validateStatus: () => true });
-            return ProjectDeploymentDefaultsOutputV1Schema.parse(response.data);
-        },
+        readDefaults: (sourceId, context) => readProjectDeploymentDefaultsForHost(host, sourceId, context, PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1),
         readApiTokens: async (environmentIds, context) => {
             const response = await deps.accountApiTokensListAction!({ input: { includeChildren: true }, context, signal: context.signal });
             const failure = readActionFailureEnvelope(response);

@@ -8,6 +8,7 @@ import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { admitProjectSourceAttachmentV1, prepareProjectSourceUpdateV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { changesProjectSourceAudienceV1 } from '@happier-dev/deployment-protocol/v1';
 import {
   ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
   ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
@@ -32,6 +33,8 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       | Promise<Readonly<Record<string, string>> | null>;
   readArtifact?(ref: Parameters<SourceArtifactReader>[0], options: Parameters<SourceArtifactReader>[1],
     context: ActionExecutorContext): ReturnType<SourceArtifactReader>;
+  /** Keyholder delivery of the Source's deployment content to its committed audience (best effort). */
+  prepareDeploymentRecipients?(input: Readonly<{ serverId: string; projectSourceId: string }>, context: ActionExecutorContext): Promise<unknown>;
 }>): SourceActionDeps {
   async function request<T>(actionId: SourceActionId, serverId: string, path: string, method: string, body: unknown,
     schema: Schema<T>, context: ActionExecutorContext, prepare?: () => Promise<Readonly<{ ok: true }> | ProjectSourcesFailureV1 | ActionExecuteFailure>): Promise<T | ActionExecuteFailure | ProjectSourcesFailureV1> {
@@ -120,7 +123,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
     projectSourcesUpdate: async (raw, context) => {
       const input = ProjectSourcesUpdateInputV1Schema.parse(raw);
       const attachment = input.patch.attachment;
-      return request('projects.sources.update', input.serverId, `/v1/projects/sources/${encodeURIComponent(input.sourceId)}`, 'PATCH', input,
+      const updated = await request('projects.sources.update', input.serverId, `/v1/projects/sources/${encodeURIComponent(input.sourceId)}`, 'PATCH', input,
         ProjectSourcesUpdateOutputV1Schema, context,
         attachment?.kind === 'attach' || input.patch.owner !== undefined || input.patch.audience !== undefined ? () => prepareProjectSourceUpdateV1({
           input, signal: context.signal,
@@ -129,6 +132,10 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
             'GET', undefined, ProjectSourcesReadOutputV1Schema, context),
           readArtifact: (ref, options) => params.readArtifact ? params.readArtifact(ref, options, context) : Promise.resolve(null),
         }) : undefined);
+      if (changesProjectSourceAudienceV1(input) && 'ok' in updated && updated.ok === true) {
+        await params.prepareDeploymentRecipients?.({ serverId: input.serverId, projectSourceId: input.sourceId }, context);
+      }
+      return updated;
     },
     projectSourcesDelete: async (raw, context) => {
       const input = ProjectSourcesDeleteInputV1Schema.parse(raw);

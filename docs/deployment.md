@@ -2024,9 +2024,21 @@ access to the private Artifacts held by its deployment defaults, Environments,
 Links, Domains and deployment receipts. Artifact access and recipient census
 derive this from the actual parent relation and Source custody; no Artifact grant
 is copied. Independent Artifact grants retain their own lifetime. For E2EE
-content, the existing keyholder header-read preparation must still supply current
-recipient envelopes before another reader can open it; a Source audience edit
-alone cannot create encryption keys.
+content, a keyholder must still supply current recipient envelopes before another
+reader can open it; the server never creates or opens these keys. Two committed
+changes deliver them through the existing Artifact recipient preparation (census
+plus key-envelope commit), run by the keyholding app or CLI that made the change:
+a Source owner or audience edit delivers every Environment's content, all of its
+target links (retained ones included), its Domains and the Source's deployment
+defaults; an Environment Permissions Save that changes deployers or data editors
+delivers that one Environment's content, links and Domains to the audience already
+present. `packages/deployment-protocol/src/v1/contentRecipients.ts` owns both
+selections. Receipts are excluded, as described for receipt history. Delivery is
+best effort after the commit: an audience member whose envelope is missing (the
+editor is not a keyholder, a read failed, or the member has no content key yet)
+still gets `deployment_content_unavailable` until a later trigger delivers it.
+CLI and daemon deployment reads keep recipient preparation off; an app keyholder's
+ordinary content open still prepares the recipients of what it opens.
 
 The same development-source CAS checks workload custody through the existing
 Machine, Artifact and Saved Secret admission owners. Required secret uses come

@@ -17,3 +17,4 @@ export * from './template.js';
 export * from './health.js';
 export * from './review.js';
 export * from './projectSourceTeamMove.js';
+export * from './contentRecipients.js';

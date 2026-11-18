@@ -226,6 +226,8 @@ import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydra
 
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { prepareProjectSourceDeploymentRecipientsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployment-protocol/v1';
+import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 
 /** Private Session adapter receives IDs already resolved by Workflow/SCM admission. */
 export type ResolvedSessionPullRequestBindingInputV1 = SessionPullRequestBindingInputV1 & Readonly<{ sessionId: string }>;
@@ -828,6 +830,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
     dispatchReceipt: async () => executionRunActionFailure('deployment_executor_unavailable'),
   });
   const deploymentStorage = deploymentStorageDeps.deploymentAction!;
+  // This host is a keyholder only for its own credentials; signed requester work delivers at its root caller.
+  const deploymentContentRecipientPorts = (context: ActionExecutorContext): DeploymentContentRecipientPortsV1 | null => {
+    if (!roleArtifactStore || context.externalActionExecutionAuthorization || context.externalActionCredential) return null;
+    return { deploymentAction: deploymentStorage,
+      readDefaults: (sourceId, readContext) => readProjectDeploymentDefaultsForHost({ homeId: actionHomeId,
+        serverHttpBaseUrl: todoHomeBaseUrl, headers: resolveAccountStorageHeaders }, sourceId, readContext, 'projects.sources.update'),
+      prepareArtifactRecipients: (artifactIds, prepareContext) =>
+        withProjectHome(() => roleArtifactStore.prepareRecipients(artifactIds, prepareContext.signal)) };
+  };
   const transcriptDeps = createCliTranscriptActionDeps(params, { resolveServerRequestHeaders });
   const filesystemDeps = createCliFilesystemActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent, readRecord });
   const awarenessDeps = createCliAwarenessActionDeps(params, { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId });
@@ -1272,7 +1283,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
     deploymentReadArtifactHeaders: createDeploymentArtifactHeaderReader({ serverHttpBaseUrl: todoHomeBaseUrl, assertCurrent: assertDeploymentReadCurrent,
       ...(roleArtifactStore ? { artifacts: roleArtifactStore } : {}) }),
-    deploymentAction: async (actionId, input, context, hostChild) => {
+    // A committed Permissions Save delivers the Environment's content to its Source audience.
+    deploymentAction: withDeploymentEnvironmentRecipientDeliveryV1(async (actionId, input, context, hostChild) => {
       if (actionId === 'deployments.environments.get' && 'backupPolicy' in input && input.backupPolicy) {
         try {
           const opened = await readOpenedDeploymentEnvironment(input.environmentId, context, input.backupPolicy, input.serverId);
@@ -1383,7 +1395,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (approval.success && approval.data.actionId === actionId) return approval.data;
       const output = DeploymentActionOutputSchemasV1[actionId].safeParse(execution.result);
       return output.success ? output.data : executionRunActionFailure('invalid_action_output');
-    },
+    }, deploymentContentRecipientPorts),
     ...(params.readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions: params.readAdmittedInputTypeOptions } : {}),
     registryActionExecute: promptsDeps.registryActionExecute,
     homeRuntimeTaskRpc,
@@ -1501,6 +1513,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
       serverHttpBaseUrl: todoHomeBaseUrl,
       admitAccount: admitAccountStorage,
       resolveRequestHeaders: resolveAccountStorageHeaders,
+      prepareDeploymentRecipients: async (input, context) => {
+        const ports = deploymentContentRecipientPorts(context);
+        return ports ? prepareProjectSourceDeploymentRecipientsV1(ports, input, context) : null;
+      },
       readArtifact: async (ref, options, context) => {
         if (context.externalActionExecutionAuthorization) return readProjectRequesterArtifact(ref, options, context);
         if (await projectAccountAdmission(projectHomeId, context) || !roleArtifactStore) return null;

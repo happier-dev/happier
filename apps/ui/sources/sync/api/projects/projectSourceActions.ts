@@ -14,6 +14,7 @@ import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestO
 import { prepareProjectSourceUpdateV1, type ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { changesProjectSourceAudienceV1 } from '@happier-dev/deployment-protocol/v1';
 
 type SourceAccountPort = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentialAuthorityKind' | 'request' | 'assertCurrent'> & Readonly<{
     workflowArtifacts: Readonly<{ read(artifactId: string, options?: ProjectSourceArtifactReadOptionsV1): ReturnType<LazyActionAccountContext['workflowArtifacts']['read']> }>;
@@ -21,7 +22,10 @@ type SourceAccountPort = Pick<LazyActionAccountContext, 'serverId' | 'accountId'
 type Schema<T> = Readonly<{ parse(value: unknown): T }>;
 
 /** Transport below the Action front door, bound to its authenticated Account channel. */
-export function createProjectSourceActionDeps(account: SourceAccountPort) {
+export function createProjectSourceActionDeps(account: SourceAccountPort, options: Readonly<{
+    /** Keyholder delivery of the Source's deployment content to its committed audience (best effort). */
+    prepareDeploymentRecipients?(input: Readonly<{ serverId: string; projectSourceId: string }>, context?: ActionExecutorContext): Promise<unknown>;
+}> = {}) {
     const scopeFailure = (error: unknown): ActionExecuteFailure | null => error instanceof Error
         && 'code' in error && error.code === 'action_account_scope_changed'
         ? { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' } : null;
@@ -117,7 +121,11 @@ export function createProjectSourceActionDeps(account: SourceAccountPort) {
                     account.assertCurrent();
                     if (!admission.ok) return admission;
                 }
-                return request(`/v1/projects/sources/${encodeURIComponent(input.sourceId)}`, 'PATCH', input, ProjectSourcesUpdateOutputV1Schema, context);
+                const updated = await request(`/v1/projects/sources/${encodeURIComponent(input.sourceId)}`, 'PATCH', input, ProjectSourcesUpdateOutputV1Schema, context);
+                if (changesProjectSourceAudienceV1(input) && 'ok' in updated && updated.ok === true) {
+                    await options.prepareDeploymentRecipients?.({ serverId: input.serverId, projectSourceId: input.sourceId }, context);
+                }
+                return updated;
             });
         },
         projectSourcesDelete: async (raw: Parameters<typeof ProjectSourcesDeleteInputV1Schema.parse>[0], context?: ActionExecutorContext) => {

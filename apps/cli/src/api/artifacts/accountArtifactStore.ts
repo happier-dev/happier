@@ -1065,6 +1065,13 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const store = {
     read,
+    /** Keyholder delivery after a committed audience change: census + key-envelope commit per Artifact.
+     * Rejects when any Artifact could not be prepared; the others still commit. */
+    prepareRecipients: async (artifactIds: readonly string[], signal?: AbortSignal) => {
+      const settled = await Promise.allSettled(artifactIds.map(artifactId => prepareCurrent(artifactId, signal)));
+      const refused = settled.find(result => result.status === 'rejected');
+      if (refused) throw refused.reason;
+    },
     /** Prepare with this Account's existing codec; the domain transaction owns the only write. */
     prepareJsonUpdate,
     /** One operation's read/validate/CAS, without a second row/key fetch. */

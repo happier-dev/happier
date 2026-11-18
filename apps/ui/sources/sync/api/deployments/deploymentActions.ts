@@ -14,6 +14,8 @@ import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { withDeploymentEnvironmentRecipientDeliveryV1 } from '@happier-dev/deployment-protocol/v1';
+import { createUiDeploymentContentRecipientPorts } from './deploymentContentRecipients';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
@@ -185,6 +187,8 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentMoveToRepositoryResultV1Schema.parse(result.result);
     };
+    const deliverEnvironmentRecipients = (route: NonNullable<ActionExecutorDeps['deploymentAction']>) =>
+        withDeploymentEnvironmentRecipientDeliveryV1(route, createUiDeploymentContentRecipientPorts(account, route));
     return { readEnvironmentController, readEnvironmentCreateController, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
         deploymentSuggestionTargets: async () => {
             account.assertCurrent();
@@ -225,7 +229,8 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             account.assertCurrent();
             return { input: preview.data.input, preview: preview.data.review };
         },
-        deploymentAction: async (actionId, input, context) => {
+        // A committed Permissions Save delivers the Environment's content to its Source audience.
+        deploymentAction: deliverEnvironmentRecipients(async (actionId, input, context) => {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
         if (actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && 'projection' in input && input.projection === 'investigation') {
@@ -303,5 +308,5 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         if (!result.ok) return result;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         return approval.success ? approval.data : DeploymentActionOutputSchemasV1[actionId].parse(result.result);
-    } };
+    }) };
 }
