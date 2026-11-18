@@ -330,14 +330,10 @@ async function firstKeep(name: string, draft = document(name)) {
 }
 
 async function rejectSecondArtifactInsert() {
-    // PostgreSQL is the genuine persistence boundary. A nontransactional
-    // sequence rejects one face exactly once, so explicit retry can recover.
-    const requireServer = createRequire(resolve(repoRootDir(), 'apps/server/package.json'));
-    type Database = { $executeRawUnsafe(sql: string): Promise<unknown>; $disconnect(): Promise<void> };
-    const { PrismaClient } = requireServer('@prisma/client') as {
-        PrismaClient: new (options: { datasources: { db: { url: string } } }) => Database;
-    };
-    const database = new PrismaClient({ datasources: { db: { url: process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL! } } });
+    // Accept the first face, then reject the second face and its automatic
+    // write retries until the test releases the fault for an explicit retry.
+    const database = await (await import('../../../../apps/server/sources/storage/prismaClientConstruction'))
+        .createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL!);
     const name = `themes_${randomUUID().replaceAll('-', '')}`;
     const close = async () => {
         try {
@@ -349,7 +345,7 @@ async function rejectSecondArtifactInsert() {
     try {
         await database.$executeRawUnsafe(`CREATE SEQUENCE ${name}`);
         await database.$executeRawUnsafe(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
-            BEGIN IF nextval('${name}') = 2 THEN RAISE EXCEPTION 'composed face write failure'; END IF;
+            BEGIN IF nextval('${name}') >= 2 THEN RAISE EXCEPTION 'composed face write failure'; END IF;
             RETURN NEW; END $$`);
         await database.$executeRawUnsafe(`CREATE TRIGGER ${name} BEFORE INSERT ON "Artifact" FOR EACH ROW EXECUTE FUNCTION ${name}()`);
         return close;
