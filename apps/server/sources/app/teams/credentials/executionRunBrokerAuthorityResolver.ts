@@ -1,4 +1,5 @@
 import { DaemonExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { Fastify } from '@/app/api/types';
@@ -6,7 +7,7 @@ import type { ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol
 import type { TeamCredentialExecutionRunCurrentnessResolver } from './providerBrokerAdmission';
 import { db } from '@/storage/db';
 
-type Failure = Readonly<{ ok: false; reasonCode: ProviderBrokerAdmissionFailureCodeV1 }>;
+type Failure = Readonly<{ ok: false; reasonCode: ProviderBrokerAdmissionFailureCodeV1; failureCause?: ActionFailureCauseV1 }>;
 
 export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
     app: Pick<Fastify, 'forwardRpcForUser'>;
@@ -41,15 +42,13 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
         });
         if (!rpc.ok) return failure('execution_run_authority_unavailable');
         const parsed = DaemonExecutionRunBrokerAuthorityResponseV1Schema.safeParse(rpc.result);
-        if (!parsed.success || parsed.data.requestNonce !== requestNonce) return failure('operation_not_current');
+        if (!parsed.success) return failure('execution_run_authority_unavailable', 'invalid_response');
+        if (parsed.data.requestNonce !== requestNonce) return failure('operation_not_current');
         if (parsed.data.status === 'not_current') {
-            return failure(parsed.data.reason === 'not_found'
-                ? 'execution_run_not_found'
-                : parsed.data.reason === 'terminal'
-                    ? 'execution_run_terminal'
-                    : parsed.data.reason === 'runtime_unavailable'
-                        ? 'execution_run_authority_unavailable'
-                        : 'operation_not_current');
+            const { reason } = parsed.data;
+            if (reason === 'not_found') return failure('execution_run_not_found');
+            if (reason === 'terminal') return failure('execution_run_terminal');
+            return failure(reason === 'runtime_unavailable' ? 'execution_run_authority_unavailable' : 'operation_not_current', reason);
         }
         if (parsed.data.serverIdentityId !== serverIdentityId
             || parsed.data.requestingAccountId !== request.requestingAccountId
@@ -73,6 +72,8 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
     };
 }
 
-function failure(reasonCode: ProviderBrokerAdmissionFailureCodeV1): Failure {
-    return { ok: false, reasonCode };
+function failure(reasonCode: ProviderBrokerAdmissionFailureCodeV1, predicate?: string): Failure {
+    return { ok: false, reasonCode, ...(predicate === undefined ? {} : {
+        failureCause: { phase: `provider_broker.execution_run.${predicate}`, errorClass: 'Error', errorCode: reasonCode, httpStatus: null },
+    }) };
 }

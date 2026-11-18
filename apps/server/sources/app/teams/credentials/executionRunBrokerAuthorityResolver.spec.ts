@@ -171,19 +171,24 @@ describe('createExecutionRunBrokerCurrentnessResolver', () => {
         await expect(resolve(request)).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
     });
 
-    it('distinguishes terminal, nonexistent, and unavailable daemon authority', async () => {
+    it('distinguishes terminal, nonexistent, detached, and temporarily unreadable daemon authority', async () => {
         const outcomes = [
-            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'terminal' } }, 'execution_run_terminal'],
-            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'not_found' } }, 'execution_run_not_found'],
-            [{ ok: false }, 'execution_run_authority_unavailable'],
+            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'terminal' } }, 'execution_run_terminal', undefined],
+            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'not_found' } }, 'execution_run_not_found', undefined],
+            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'detached' } }, 'operation_not_current', 'provider_broker.execution_run.detached'],
+            [{ ok: true, result: { status: 'not_current', requestNonce: '11111111-1111-4111-8111-111111111111', reason: 'runtime_unavailable' } }, 'execution_run_authority_unavailable', 'provider_broker.execution_run.runtime_unavailable'],
+            [{ ok: true, result: { status: 'starting' } }, 'execution_run_authority_unavailable', 'provider_broker.execution_run.invalid_response'],
+            [{ ok: false }, 'execution_run_authority_unavailable', undefined],
         ] as const;
-        for (const [rpc, reasonCode] of outcomes) {
+        for (const [rpc, reasonCode, phase] of outcomes) {
             const resolve = createExecutionRunBrokerCurrentnessResolver({
                 app: { forwardRpcForUser: async () => rpc } as never,
                 resolveServerIdentityId: async () => 'srv_home_one',
                 createNonce: () => '11111111-1111-4111-8111-111111111111',
             });
-            await expect(resolve(request)).resolves.toEqual({ ok: false, reasonCode });
+            await expect(resolve(request)).resolves.toMatchObject({
+                ok: false, reasonCode, ...(phase === undefined ? {} : { failureCause: { phase } }),
+            });
         }
     });
 });
