@@ -151,6 +151,23 @@ describe('theme document retention', () => {
             style: { radius: 'round', futureGlow: { amount: 2 }, futureInset: true },
             futurePresentation: { blur: true }, futureTone: '#abcdef' });
     });
+    it('admits a complete editor draft once while retaining future presentation', () => {
+        const parsed = themes.parseThemeProfileDocument({ ...profile('replace_theme'), schemaVersion: 2,
+            seeds: { canvas: '#112233', accent: '#abcdef', futureTone: '#fedcba' },
+            style: { radius: 'round', fontFamily: 'Inter', futureInset: true }, css: '.card{}' });
+        if (!parsed.ok) throw new Error('replace source rejected');
+        const { seeds: _seeds, css: _css, ...draft } = parsed.document.profile;
+        const admission = vi.spyOn(themes.ThemeProfileV1Schema, 'safeParse');
+        const replaced = themes.mergeThemeProfileDocumentEdit(parsed.document, { ...draft, style: { radius: 'soft' } },
+            { replaceKnownPresentation: true });
+        const admissions = admission.mock.calls.length;
+        admission.mockRestore();
+        expect(admissions).toBe(1);
+        expect(replaced.raw).toMatchObject({ schemaVersion: 2, seeds: { futureTone: '#fedcba' }, style: { radius: 'soft', futureInset: true } });
+        expect(replaced.raw).not.toHaveProperty('css');
+        expect(replaced.raw.seeds).not.toHaveProperty('canvas');
+        expect(replaced.raw.style).not.toHaveProperty('fontFamily');
+    });
     it('rejects malformed known fields and source authority while partially projecting future versions', () => {
         for (const change of [{ id: 'new' }, { seeds: { canvas: 'url(external)', accent: '#abcdef' } }, { source: { kind: 'yours', pluginId: 'other' } }]) {
             expect(themes.parseThemeProfileDocument({ ...profile('valid_theme'), ...change }).ok).toBe(false);

@@ -17,9 +17,7 @@ export function useThemeProfileEditorPreview(input: Readonly<{
     // whether that preview is still current.
     const receipt = React.useRef<string | null>(null);
     const document = input.draft?.document;
-    const draft = input.draft?.draft;
     const mode = input.draft?.mode;
-    const css = input.draft?.css;
     React.useLayoutEffect(() => {
         if (!presented || !input.draft) return;
         let previewRef: string | null = null;
@@ -44,10 +42,10 @@ export function useThemeProfileEditorPreview(input: Readonly<{
         }
     }, [input.onFailure, input.owner]);
     React.useEffect(() => {
-        if (!presented || !document || !draft || !mode) return;
+        if (!presented || !document || !mode) return;
         let cancelled = false;
         const timeout = setTimeout(() => {
-            void input.preview({ document, draft, mode, ...(css !== undefined ? { css } : {}) })
+            void input.preview({ document, mode })
                 .then(result => {
                     if (cancelled) revert(result.previewRef);
                     else receipt.current = result.previewRef;
@@ -56,7 +54,7 @@ export function useThemeProfileEditorPreview(input: Readonly<{
                 });
         }, 150);
         return () => { cancelled = true; clearTimeout(timeout); };
-    }, [css, document, draft, input.onFailure, input.preview, mode, presented, revert]);
+    }, [document, input.onFailure, input.preview, mode, presented, revert]);
     React.useEffect(() => () => {
         if (receipt.current === null) return;
         revert(receipt.current);

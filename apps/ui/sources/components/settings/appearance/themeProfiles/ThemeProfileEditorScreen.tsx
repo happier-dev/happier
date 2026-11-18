@@ -181,8 +181,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         const retained = retainedDocument.current;
         if (retained) {
             // A full editor draft replaces supported optional fields; canonical merge retains unknown children.
-            const cleared = mergeThemeProfileDocumentEdit(retained, { id: profile.id }, { removeKnownFields: ['seeds', 'style', 'css'] });
-            return mergeThemeProfileDocumentEdit(cleared, profile, { retainedPresentation: retained });
+            return mergeThemeProfileDocumentEdit(retained, profile, { replaceKnownPresentation: true });
         }
         const parsed = parseThemeProfileDocument(profile);
         if (!parsed.ok) throw new Error(parsed.error);
@@ -302,7 +301,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         const document = draftDocument(profile);
         try {
             const reference = savedReference.current ?? (!isNewProfile ? initialSource.current.reference : null);
-            const saved = await editorActions.saveAndUse({ document, draft: profile, mode: assetAppearance,
+            const saved = await editorActions.saveAndUse({ document, mode: assetAppearance,
                 ...(reference ? { reference } : {}) });
             savedReference.current = saved.reference;
         } catch (error) {
@@ -342,7 +341,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     }, [draft, execute, readonly, router, selection]);
 
     const previewDraft = React.useMemo(() => draft && !readonly && !hasInvalidColor && !hasInvalidProfileName
-        ? { document: draftDocument(draft), draft, mode: assetAppearance } : null,
+        ? { document: draftDocument(draft), mode: assetAppearance } : null,
     [assetAppearance, draft, draftDocument, hasInvalidColor, hasInvalidProfileName, readonly]);
     const reportPreviewFailure = React.useCallback((error: unknown) => {
         Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));

@@ -36,7 +36,7 @@ describe('useThemeProfileEditorPreview', () => {
             {children}
         </PluginSurfaceFocusEligibilityProvider>;
         const hook = await renderHook(({ document }) => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document, draft: document.profile, mode: 'light' }, preview: state.preview, onFailure }),
+            draft: { document, mode: 'light' }, preview: state.preview, onFailure }),
         { initialProps: { document: state.document }, wrapper });
         presented = false;
         await hook.rerender();
@@ -64,7 +64,7 @@ describe('useThemeProfileEditorPreview', () => {
         vi.useFakeTimers();
         const state = fixture();
         const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview: state.preview,
+            draft: { document: state.document, mode: 'light' }, preview: state.preview,
             onFailure: error => { throw error; } }));
         expect(state.owner.read()).toBeNull();
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
@@ -80,7 +80,7 @@ describe('useThemeProfileEditorPreview', () => {
         vi.useFakeTimers();
         const state = fixture();
         const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview: state.preview,
+            draft: { document: state.document, mode: 'light' }, preview: state.preview,
             onFailure: error => { throw error; } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         const replacement = state.owner.begin({ document: state.document, mode: 'dark', origin: { kind: 'agent' } });
@@ -94,7 +94,7 @@ describe('useThemeProfileEditorPreview', () => {
         const state = fixture();
         const onFailure = (error: unknown) => { throw error; };
         const hook = await renderHook(({ document }) => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document, draft: document.profile, mode: 'light' }, preview: state.preview, onFailure }),
+            draft: { document, mode: 'light' }, preview: state.preview, onFailure }),
         { initialProps: { document: state.document } });
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(state.previews()).toBe(1);
@@ -121,7 +121,7 @@ describe('useThemeProfileEditorPreview', () => {
             return state.preview(input);
         };
         const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview,
+            draft: { document: state.document, mode: 'light' }, preview,
             onFailure: error => { throw error; } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         await hook.unmount();
@@ -149,7 +149,7 @@ describe('useThemeProfileEditorPreview', () => {
             </PluginSurfaceFocusEligibilityProvider>
         );
         const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document: state.document, draft: state.document.profile, mode: 'light' },
+            draft: { document: state.document, mode: 'light' },
             preview, onFailure }), { wrapper });
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         presented = false;
@@ -177,7 +177,7 @@ describe('useThemeProfileEditorPreview', () => {
             return result;
         };
         const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
-            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview,
+            draft: { document: state.document, mode: 'light' }, preview,
             onFailure: error => { throw error; } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         await hook.unmount();

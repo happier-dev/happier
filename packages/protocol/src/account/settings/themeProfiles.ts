@@ -249,8 +249,9 @@ function isUnchangedThemeEdit(document: ThemeProfileDocument, edit: ThemeProfile
 
 /** Overlay deliberate edits, retaining presentation this build cannot interpret. */
 export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit,
-    options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
-    const retained = options?.retainedPresentation;
+    options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; replaceKnownPresentation?: true;
+        removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
+    const retained = options?.retainedPresentation ?? (options?.replaceKnownPresentation ? document : undefined);
     const plainEdit = !retained && !options?.removeKnownFields?.length;
     if (plainEdit && edit && typeof edit === 'object'
         && (Object.getPrototypeOf(edit) === Object.prototype || Object.getPrototypeOf(edit) === null)
@@ -289,9 +290,14 @@ export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, ed
     };
     const seeds = retainedSection('seeds');
     const style = retainedSection('style');
-    const raw = { ...document.raw, ...unknown, ...checked, schemaVersion: document.raw.schemaVersion,
-        ...(checked.seeds || Object.keys(seeds).length ? { seeds: { ...(isJsonObject(document.raw.seeds) ? document.raw.seeds : {}), ...seeds, ...checked.seeds } } : {}),
-        ...(checked.style || Object.keys(style).length ? { style: { ...(isJsonObject(document.raw.style) ? document.raw.style : {}), ...style, ...checked.style } } : {}),
+    let previous = document.raw;
+    if (options?.replaceKnownPresentation) {
+        const { seeds: _seeds, style: _style, css: _css, ...envelope } = previous;
+        previous = envelope;
+    }
+    const raw = { ...previous, ...unknown, ...checked, schemaVersion: document.raw.schemaVersion,
+        ...(checked.seeds || Object.keys(seeds).length ? { seeds: { ...(isJsonObject(previous.seeds) ? previous.seeds : {}), ...seeds, ...checked.seeds } } : {}),
+        ...(checked.style || Object.keys(style).length ? { style: { ...(isJsonObject(previous.style) ? previous.style : {}), ...style, ...checked.style } } : {}),
     };
     const result = parseThemeProfileDocument(raw);
     if (!result.ok) throw new Error('invalid_known_envelope');

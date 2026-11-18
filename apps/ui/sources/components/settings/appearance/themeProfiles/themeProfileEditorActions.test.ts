@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { ThemeActionInputSchemas, ThemeActionOutputSchemas, type ThemeActionInput, type ThemeActionOutput, type ThemeActionRequest } from '@happier-dev/protocol/actions/themeActionFamily';
-import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { ThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { createThemeActionHarness } from '@/dev/testkit/harness/themeActionHarness';
@@ -38,10 +38,23 @@ function actionBoundary(options: { keepDefault?: boolean } = {}) {
 }
 
 describe('themeProfileEditorActions', () => {
+    it('passes the already-admitted draft through to the Action boundary by identity', async () => {
+        const { execute, document } = actionBoundary();
+        let admittedDocument: unknown;
+        const observed: ThemeEditorExecute = (id, input) => {
+            admittedDocument = Object.getOwnPropertyDescriptor(input, 'document')?.value;
+            return execute(id, input);
+        };
+        await createThemeProfileEditorActions(observed).preview({ document, mode: 'light' });
+        expect(admittedDocument).toBe(document);
+    });
+
     it('tries a retained edited document without saving, including the flushed CSS bytes', async () => {
         const { calls, execute, document, writes, owner } = actionBoundary();
         const editor = createThemeProfileEditorActions(execute);
-        await editor.preview({ document, draft: { ...document.profile, name: 'Edited theme', style: { radius: 'round' } }, mode: 'light', css: '.composer { opacity: .8 }' });
+        const edited = mergeThemeProfileDocumentEdit(document, { ...document.profile, name: 'Edited theme', style: { radius: 'round' },
+            css: '.composer { opacity: .8 }' }, { replaceKnownPresentation: true });
+        await editor.preview({ document: edited, mode: 'light' });
         expect(calls.map(call => call.id)).toEqual([THEME_ACTION_IDS.tryOn]);
         expect(writes()).toBe(0);
         expect(owner.read()?.origin).toEqual({ kind: 'editor' });
@@ -55,7 +68,8 @@ describe('themeProfileEditorActions', () => {
         const { calls, execute, document, rows, selection, writes, owner } = actionBoundary();
         rows.set(document.profile.id, { document, revision: 1, headerVersion: 1 });
         const editor = createThemeProfileEditorActions(execute);
-        await editor.saveAndUse({ document, draft: { ...document.profile, name: 'Saved edit' }, mode: 'light', reference: { kind: 'artifact', id: document.profile.id } });
+        const edited = mergeThemeProfileDocumentEdit(document, { name: 'Saved edit' });
+        await editor.saveAndUse({ document: edited, mode: 'light', reference: { kind: 'artifact', id: document.profile.id } });
         expect(calls.map(call => call.id)).toEqual([THEME_ACTION_IDS.save, THEME_ACTION_IDS.tryOn, THEME_ACTION_IDS.keep]);
         expect(calls[0]?.input).toMatchObject({ ref: { kind: 'artifact', id: document.profile.id }, document: { raw: { name: 'Saved edit', futurePresentation: { texture: 'paper' } } } });
         expect(writes()).toBe(1);
@@ -68,14 +82,14 @@ describe('themeProfileEditorActions', () => {
     it('reports a Keep response without a saved theme as a save failure', async () => {
         const { execute, document } = actionBoundary({ keepDefault: true });
         const editor = createThemeProfileEditorActions(execute);
-        await expect(editor.saveAndUse({ document, draft: document.profile, mode: 'light' }))
+        await expect(editor.saveAndUse({ document, mode: 'light' }))
             .rejects.toMatchObject({ code: 'theme_not_found' });
     });
 
     it('keeps a new draft without a preliminary save', async () => {
         const { calls, execute, document, writes, rows } = actionBoundary();
         const editor = createThemeProfileEditorActions(execute);
-        await editor.saveAndUse({ document, draft: document.profile, mode: 'light' });
+        await editor.saveAndUse({ document, mode: 'light' });
         expect(calls.map(call => call.id)).toEqual([THEME_ACTION_IDS.tryOn, THEME_ACTION_IDS.keep]);
         expect(writes()).toBe(1);
         expect(rows.size).toBe(1);
