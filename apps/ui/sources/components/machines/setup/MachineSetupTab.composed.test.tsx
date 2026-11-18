@@ -442,10 +442,13 @@ describe('Machine setup preparation', () => {
       const request = MachineSetupPlanInputV1Schema.parse(input);
       return request.mode ? { ...current, sources: request.sources, recipePlans: [] } : current;
     } }));
-    expect(await prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
-      homeId: 'srv_build', machineId: 'devbox', preset: { kind: 'bundledPreset', ref, setup }, isCurrent: () => true })).toMatchObject({
+    const prepared = await prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
+      homeId: 'srv_build', machineId: 'devbox', preset: { kind: 'bundledPreset', ref, setup }, isCurrent: () => true });
+    expect(prepared).toMatchObject({
       ok: true, input: { targets: [{ sources: [{ kind: 'bundledPreset', ref, setup }, { kind: 'direct', setup: {} }] }] },
     });
+    if (!prepared?.ok) throw new Error('Bundled preset preparation failed');
+    expect(prepared.input.targets[0]?.preset).toBeUndefined();
   });
   it.each([false, true])('retains reviewed removals through Plan and Apply, rejecting a substituted selection (combined=%s)', async combined => {
     const { prepareMachineSetupSourcesApplyInput } = await import('@/components/settings/machines/managed/machineSetupReview');
@@ -604,7 +607,8 @@ describe('Machine setup preparation', () => {
       sources: sources.map(source => source.kind === 'accountPresetOpaque' ? { kind: 'unavailable', source } : { kind: 'opened', source }) }], ok: true, review: { machineId: 'workflow-host', machines: [{ machineId: 'workflow-host', online: true }] },
       facts: [{ homeId: 'srv_build', machineId: 'devbox', support: targetSupport, review: targetReview }],
       input: { homeId: 'srv_build', machineId: 'workflow-host', targets: [
-      { homeId: 'srv_build', machineId: 'devbox', sources, desiredRevision: 7, recipePlans: [], exclusions: [], appChildren },
+      { homeId: 'srv_build', machineId: 'devbox', sources, desiredRevision: 7, recipePlans: [], exclusions: [],
+        preset: { id: selected.id, revision: selected.revision, name: selected.name }, appChildren },
     ] } });
   });
   it('requires an exact effects Plan before preparing public Apply and settles changed plans without mutation', async () => {
@@ -638,7 +642,8 @@ describe('Machine setup preparation', () => {
     expect(prepared).toEqual({ sourcePresentations: [{ homeId: 'srv_build', machineId: 'devbox',
       sources: sources.map(source => source.kind === 'accountPresetOpaque' ? { kind: 'unavailable', source } : { kind: 'opened', source }) }], ok: true, facts: [{ homeId: 'srv_build', machineId: 'devbox', support: [] }],
       input: { homeId: 'srv_build', machineId: 'devbox', targets: [
-      { homeId: 'srv_build', machineId: 'devbox', sources, desiredRevision: 7, recipePlans: [], exclusions: [] },
+      { homeId: 'srv_build', machineId: 'devbox', sources, desiredRevision: 7, recipePlans: [], exclusions: [],
+        preset: { id: selected.id, revision: selected.revision, name: selected.name } },
     ] } });
     changed = true;
     expect(await prepareMachineSetupPresetApplyInput(params)).toMatchObject({ ok: false, errorCode: 'plan_changed' });

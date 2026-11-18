@@ -72,6 +72,8 @@ export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
         homeId: params.homeId, machineId: params.machineId, selectedMachineId: params.selectedMachineId,
         combined: combinedRequested, isCurrent: current, targets: [{ homeId: params.homeId, machineId: params.machineId,
             sources, current: plan, desiredRevision: plan.desiredRevision,
+            ...('kind' in params.preset ? {} : { preset: { id: params.preset.id, revision: params.preset.revision,
+                ...(params.preset.name ? { name: params.preset.name } : {}) } }),
             ...(params.removeItemKeys === undefined ? {} : { removeItemKeys: params.removeItemKeys }),
             ...(params.appChildren === undefined ? {} : { appChildren: params.appChildren }) }] });
 }

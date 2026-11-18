@@ -15,6 +15,7 @@ import {
 
 export type MachineSetupReviewTarget = Readonly<{
     homeId: string; machineId: string; desiredRevision: number; sources: MachineSetupSourceApplyV1; appChildren?: MachineSetupAppChildV1[];
+    preset?: MachineSetupApplyInputV1['targets'][number]['preset'];
     removeItemKeys?: string[];
     candidatePreset?: MachineSetupPlanInputV1['candidatePreset'];
     /** Snapshot read before proposing a source change; native retention normalizes the expected response. */
@@ -111,6 +112,7 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         if (!current()) return fail('continuation_retired');
         admitted.push({ homeId: expected.homeId, machineId: expected.machineId, sources: effects.data.sources,
             desiredRevision: effects.data.desiredRevision, recipePlans: effects.data.recipePlans, exclusions: effects.data.exclusions,
+            ...(expected.preset ? { preset: expected.preset } : {}),
             ...(effects.data.removeItemKeys === undefined ? {} : { removeItemKeys: effects.data.removeItemKeys }),
             ...(effects.data.removalPlans === undefined ? {} : { removalPlans: effects.data.removalPlans }),
             ...(target?.appChildren === undefined ? {} : { appChildren: target.appChildren }) });
