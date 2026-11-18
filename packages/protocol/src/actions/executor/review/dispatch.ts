@@ -299,6 +299,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               return requested;
             }
           }
+          if (reviewReviewerIdsForStartV1(reviewInput).length === 0) {
+            await records.settle({ ...reviewRound, outcome: 'completed', finishedAt: Date.now(),
+              runs: [], signal: ctx.signal });
+            return { ok: true, result: { intent: 'review', sessionId, reviewRound,
+              reviewedFingerprint: null, results: [] } };
+          }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
           const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound);
           return executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
