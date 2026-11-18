@@ -1334,6 +1334,9 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "$heavyweight_remote_class" 
   && [ "$heavyweight_placement_class" != source-web-export ]; then
   placement_identity_sample_options=" $(quote_remote "--class=$heavyweight_remote_class")$admission_identity_options"
 fi
+# A cached probe answers the identity floor only for the identity it was asked for.
+placement_identity_key=
+[ -z "$placement_identity_sample_options" ] || placement_identity_key=$(printf '%s\n' "$placement_identity_sample_options" | cksum | awk '{print $1}')
 typecheck_affinity_key=
 case "$policy_heavyClass" in compilation|compilation-*)
   # Advisory locality only, never a compiler-currentness or result-cache key.
@@ -1625,6 +1628,9 @@ read_fresh_cache() {
     # command/cwd/runtime contract. Preserve the first 20 telemetry fields.
     cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print $NF}')
     [ "$cached_command_key" = "$command_key" ] || return 1
+    # Probes of other file lists share this observation; the identity floor (field 27,
+    # stored as floor:identity) serves only the identity it was measured for.
+    cached_sample=$(printf '%s\n' "$cached_sample" | awk -v key="$placement_identity_key" '{split($27, floor, ":"); $27 = (key != "" && floor[2] == key && floor[1] ~ /^[0-9]+$/) ? floor[1] : "unknown"; print}')
     if [ "$heavyweight_placement_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && ($17 == "" || $20 == "" || $20 == "unknown") {exit 0} {exit 1}'; then
       return 1
     fi
@@ -1680,9 +1686,6 @@ probe_target() {
   command_key=$(printf '%s\n' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" "$required_bun_version" "$relative_cwd" | cksum | awk '{print $1}')
   if [ -n "$heavyweight_placement_class" ]; then
     command_key="$command_key:$heavyweight_placement_class"
-  fi
-  if [ -n "$placement_identity_sample_options" ]; then
-    command_key="$command_key:$(printf '%s\n' "$placement_identity_sample_options" | cksum | awk '{print $1}')"
   fi
   cache_path="$cache_dir/$name.cache"
   now=$(date +%s)
@@ -1773,7 +1776,9 @@ EOF
   temporary=$(create_cache_temporary "$cache_path" 2>/dev/null || true)
   if [ -n "$sample_score" ] && [ -n "$capacity" ]; then
     if [ -n "$temporary" ]; then
-      printf '%s 1 %s %s %s %s %s\n' "$now" "$sample_score" "$capacity" "$telemetry" "$runtime_worker_target" "$command_key" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+      printf '%s 1 %s %s %s %s %s\n' "$now" "$sample_score" "$capacity" \
+        "$(printf '%s\n' "$telemetry" | awk -v key="$placement_identity_key" '{if ($27 ~ /^[0-9]+$/ && key != "") $27 = $27 ":" key; else $27 = "unknown"; print}')" \
+        "$runtime_worker_target" "$command_key" > "$temporary" && mv -f -- "$temporary" "$cache_path"
       rm -f -- "$temporary" 2>/dev/null || true
     fi
     if [ -n "$score" ]; then
