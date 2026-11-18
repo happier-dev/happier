@@ -34,6 +34,7 @@ import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "@
 import { admitManagedAcquire } from "./managedAcquire";
 import { validateManagedCreationBirthInTx } from './managedCreationBirth';
 import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
+import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { admitManagedControl, reportManagedAcquire, reportManagedIntent, reportManagedResize, submitManagedAcquire } from './managedMutations';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -1542,7 +1543,7 @@ describe("Machine preset relational owner", () => {
         })).rejects.toMatchObject({ code: 'preset_archived' });
     });
 
-    it('requires fresh acquisition before a member can birth another Session on a kept guest', async () => {
+    it.each(['archive', 'delete'] as const)('requires fresh acquisition after Session %s to birth again on a kept guest', async end => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const member = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -1556,7 +1557,7 @@ describe("Machine preset relational owner", () => {
             machinePolicySandbox: true as const, requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false,
                 acquisitionMode: 'resource-bound' as const, reuseIdle: true as const,
                 input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller } } });
-        const firstRequest = request('member-local-first');
+        const firstRequest = request(`member-local-first-${end}`);
         const first = await admitManagedAcquire(firstRequest);
         await db.managedMachine.update({ where: { id: first.machine.id }, data: { allocation: 'bound' } });
         const birth = { homeId, managedId: first.machine.id, controller };
@@ -1564,10 +1565,14 @@ describe("Machine preset relational owner", () => {
         expect(await admitBirth()).not.toBe(false);
         const session = await db.session.create({ data: { accountId: member.id, tag: 'member-local-session', metadata: '{}',
             encryptionMode: 'plain', managedCreationId: first.machine.id } });
-        await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: session.id, wasArchived: false, archivedAt: new Date() }));
+        if (end === 'archive') {
+            await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: session.id, wasArchived: false, archivedAt: new Date() }));
+        } else {
+            expect(await deleteOwnedSession({ reason: 'user_request', ownerAccountId: member.id, sessionId: session.id })).toEqual({ ok: true });
+        }
         expect(await admitManagedAcquire(firstRequest)).toMatchObject({ replayed: true, machine: { id: first.machine.id } });
         expect(await admitBirth()).toBe(false);
-        expect(await admitManagedAcquire(request('member-local-next'))).toMatchObject({ machine: { id: first.machine.id } });
+        expect(await admitManagedAcquire(request(`member-local-next-${end}`))).toMatchObject({ machine: { id: first.machine.id } });
         expect(await admitBirth()).not.toBe(false);
     });
 

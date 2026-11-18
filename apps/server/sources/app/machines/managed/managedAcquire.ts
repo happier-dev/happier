@@ -185,9 +185,9 @@ export async function admitManagedAcquire(params: Readonly<{
                         homeId: review.homeId, custodianAccountId: selected.custodianAccountId,
                         controllerMachineId: controller?.machineId, controllerInstallationId: controller?.installationId,
                         presetId: preset.id, presetConfigurationRevision: preset.configurationRevision, allocation: 'bound', creationState: 'active',
-                        archivedAt: null, desired: 'start', birthSessions: {
-                            some: { archivedAt: { not: null } }, none: { archivedAt: null },
-                        },
+                        archivedAt: null, desired: 'start', birthSessions: { none: { archivedAt: null } },
+                        OR: [{ birthSessions: { some: { archivedAt: { not: null } } } },
+                            { admittedInput: jsonPathEquals(['resourceBoundSessionEnded'], true) }],
                         AND: [{ admittedInput: jsonPathEquals(['acquisitionMode'], 'resource-bound') },
                             { admittedInput: jsonPathEquals(['reuseIdle'], true) },
                             { admittedInput: jsonPathEquals(['enrollmentAccountId'], params.requesterAccountId) },
