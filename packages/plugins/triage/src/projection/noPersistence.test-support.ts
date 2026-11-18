@@ -1,4 +1,7 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { AccountKvService, StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import {
@@ -22,6 +25,78 @@ import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 import type { TaskList } from '../internalTasks/source.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
+
+/** Trap actual persistence APIs in the calling realm, preserving their reads.
+ * UI Vitest callers pass the adapter their module loader supplies; child-process
+ * callers use the installed package API. All internal read owners remain real. */
+export function installDeviceWriteTraps(options?: Readonly<{ asyncStorage?: object }>) {
+    const attempts: string[] = [];
+    const restorers: Array<() => void> = [];
+    const refuse = (port: string): never => {
+        attempts.push(port);
+        throw new Error(`Provider-derived durable write: ${port}`);
+    };
+    const replace = (target: object, key: string, value: unknown) => {
+        const previous = Object.getOwnPropertyDescriptor(target, key);
+        Object.defineProperty(target, key, { configurable: true, writable: true, value });
+        restorers.push(() => {
+            if (previous) Object.defineProperty(target, key, previous);
+            else Reflect.deleteProperty(target, key);
+        });
+    };
+    const fallbackStorage = { length: 0, key: () => null, getItem: () => null };
+    const windowValue: unknown = Reflect.get(globalThis, 'window');
+    const existingWindow = typeof windowValue === 'object' && windowValue !== null ? windowValue : undefined;
+    const globalStorage: unknown = Reflect.get(globalThis, 'localStorage');
+    const windowStorage: unknown = existingWindow ? Reflect.get(existingWindow, 'localStorage') : undefined;
+    const localStorage = typeof globalStorage === 'object' && globalStorage !== null ? globalStorage
+        : typeof windowStorage === 'object' && windowStorage !== null ? windowStorage : fallbackStorage;
+    if (globalStorage !== localStorage) replace(globalThis, 'localStorage', localStorage);
+    if (existingWindow) {
+        if (!windowStorage) replace(existingWindow, 'localStorage', localStorage);
+    } else {
+        replace(globalThis, 'window', { localStorage });
+    }
+    for (const storage of new Set([localStorage, ...(typeof windowStorage === 'object' && windowStorage !== null ? [windowStorage] : [])])) {
+        for (const method of ['setItem', 'removeItem', 'clear']) {
+            replace(storage, method, () => refuse(`localStorage.${method}`));
+        }
+    }
+
+    const require = createRequire(new URL('../../../../../apps/ui/package.json', import.meta.url));
+    // createRequire bypasses Vitest's module mocks: inject its actual UI adapter
+    // when the calling realm uses the canonical native-storage boundary fixture.
+    const asyncStorage = options?.asyncStorage
+        ?? (require('@react-native-async-storage/async-storage') as { default: object }).default;
+    for (const method of ['setItem', 'mergeItem', 'multiSet', 'multiMerge', 'removeItem', 'multiRemove', 'clear']) {
+        replace(asyncStorage, method, () => refuse(`AsyncStorage.${method}`));
+    }
+    for (const method of ['writeFile', 'appendFile', 'writeFileSync', 'appendFileSync', 'createWriteStream']) {
+        replace(fs, method, () => refuse(`fs.${method}`));
+    }
+    for (const method of ['writeFile', 'appendFile']) {
+        replace(fs.promises, method, () => refuse(`fs.promises.${method}`));
+    }
+    syncBuiltinESMExports();
+
+    // A disconnected trap must not let a no-write claim pass vacuously.
+    const localSetItem: unknown = Reflect.get(localStorage, 'setItem');
+    assert.ok(typeof localSetItem === 'function');
+    assert.throws(() => Reflect.apply(localSetItem, localStorage, ['probe', 'probe']), /Provider-derived durable write/);
+    const setItem: unknown = Reflect.get(asyncStorage, 'setItem');
+    assert.ok(typeof setItem === 'function');
+    assert.throws(() => Reflect.apply(setItem, asyncStorage, ['probe', 'probe']), /Provider-derived durable write/);
+    assert.throws(() => fs.writeFileSync('qb84-write-must-never-exist', 'probe'), /Provider-derived durable write/);
+    assert.deepEqual(attempts, ['localStorage.setItem', 'AsyncStorage.setItem', 'fs.writeFileSync']);
+    attempts.length = 0;
+    return {
+        attempts,
+        restore() {
+            for (const restore of restorers.reverse()) restore();
+            syncBuiltinESMExports();
+        },
+    };
+}
 
 export const NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS = [
     '11111111-1111-4111-8111-111111111111',
@@ -64,7 +139,10 @@ export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?:
         ...handle,
         get: handle.get.bind(handle),
         query: handle.query.bind(handle),
+        put: () => rejectDurableWrite('Collection put'),
+        delete: () => rejectDurableWrite('Collection delete'),
         batch: () => rejectDurableWrite('Collection batch'),
+        forget: () => rejectDurableWrite('Collection forget'),
     });
     const allowedCollections = new Map([
         [CORPUS_SOURCE_INSTANCES_COLLECTION_ID, rejectWrites(collections.sourceInstances)],
@@ -156,6 +234,17 @@ export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?:
     const handler = createTriageListEntriesActionHandler();
     return {
         durableWriteAttempts, scannedPages, actionInputs, defaultScan,
+        async verifyDurableWriteTraps() {
+            for (const handle of allowedCollections.values()) {
+                for (const method of ['put', 'delete', 'batch', 'forget'] as const) {
+                    await assert.rejects(async () => Reflect.apply(handle[method], handle, []),
+                        new RegExp(`The list pass attempted durable storage: Collection ${method}`));
+                }
+            }
+            assert.deepEqual(durableWriteAttempts, [...allowedCollections.values()].flatMap(() =>
+                ['Collection put', 'Collection delete', 'Collection batch', 'Collection forget']));
+            durableWriteAttempts.length = 0;
+        },
         setScan(next: TriageAdmittedOperationExecutorV1) { scan = next; },
         async readEntries(input: TriageListEntriesInputV1) {
             actionInputs.push(input);

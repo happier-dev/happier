@@ -1,77 +1,17 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { createTriageListWindowStore } from './listWindowStore.js';
 import {
     createNoPersistenceTriageFixture,
+    installDeviceWriteTraps,
     NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS,
     NO_PERSISTENCE_INSTANCE_IDS,
 } from './noPersistence.test-support.js';
 
-/** Runs in an actual child process loaded with the package's source config.
- * Only genuine browser/native storage and OS file-write ports are trapped;
- * the store, coordinator, Action, qualification and folds are production code. */
-function installDeviceWriteTraps() {
-    const attempts: string[] = [];
-    const restorers: Array<() => void> = [];
-    const refuse = (port: string): never => {
-        attempts.push(port);
-        throw new Error(`Provider-derived durable write: ${port}`);
-    };
-    const replace = (target: object, key: string, value: unknown) => {
-        const previous = Object.getOwnPropertyDescriptor(target, key);
-        Object.defineProperty(target, key, { configurable: true, writable: true, value });
-        restorers.push(() => {
-            if (previous) Object.defineProperty(target, key, previous);
-            else Reflect.deleteProperty(target, key);
-        });
-    };
-    const localStorage = {
-        length: 0, key: () => null, getItem: () => null,
-        setItem: () => refuse('localStorage.setItem'),
-        removeItem: () => refuse('localStorage.removeItem'),
-        clear: () => refuse('localStorage.clear'),
-    };
-    replace(globalThis, 'localStorage', localStorage);
-    replace(globalThis, 'window', { localStorage });
-
-    // The installed AsyncStorage adapter is the genuine package API boundary.
-    // No native device is required to refuse calls to its mutation ports.
-    const require = createRequire(new URL('../../../../../apps/ui/package.json', import.meta.url));
-    const asyncStorageModule: { default: Record<string, unknown> } = require('@react-native-async-storage/async-storage');
-    for (const method of ['setItem', 'mergeItem', 'multiSet', 'multiMerge', 'removeItem', 'multiRemove', 'clear']) {
-        assert.equal(typeof asyncStorageModule.default[method], 'function');
-        replace(asyncStorageModule.default, method, () => refuse(`AsyncStorage.${method}`));
-    }
-    for (const method of ['writeFile', 'appendFile', 'writeFileSync', 'appendFileSync', 'createWriteStream']) {
-        replace(fs, method, () => refuse(`fs.${method}`));
-    }
-    for (const method of ['writeFile', 'appendFile']) {
-        replace(fs.promises, method, () => refuse(`fs.promises.${method}`));
-    }
-    syncBuiltinESMExports();
-
-    // A disconnected trap must not let a no-write claim pass vacuously.
-    assert.throws(() => localStorage.setItem(), /Provider-derived durable write/);
-    const setItem = asyncStorageModule.default.setItem;
-    assert.ok(typeof setItem === 'function');
-    assert.throws(() => Reflect.apply(setItem, asyncStorageModule.default, ['probe', 'probe']), /Provider-derived durable write/);
-    assert.throws(() => fs.writeFileSync('qb84-write-must-never-exist', 'probe'), /Provider-derived durable write/);
-    assert.deepEqual(attempts, ['localStorage.setItem', 'AsyncStorage.setItem', 'fs.writeFileSync']);
-    attempts.length = 0;
-    return {
-        attempts,
-        restore() {
-            for (const restore of restorers.reverse()) restore();
-            syncBuiltinESMExports();
-        },
-    };
-}
-
 const phase = process.argv.at(-1);
 assert.ok(phase === 'populate' || phase === 'fresh');
 const fixture = createNoPersistenceTriageFixture();
+await fixture.verifyDurableWriteTraps();
 const traps = installDeviceWriteTraps();
 const nowMs = 1_760_000_000_000;
 const store = createTriageListWindowStore({ readEntries: fixture.readEntries, nowMs: () => nowMs });
