@@ -1112,7 +1112,8 @@ describe('requester HTTP authority on the existing external Action carrier', () 
         payload: { v: 1, requestId: 'qa-domain-1104-persisted-g-teardown-r76', target: { kind: 'machine', machineId },
           input: { serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', environmentId: 'cmw424voq00cbmcskx8q38dvv',
             targetLinkId: 'cmw424vpr00cdmcsk85jcci67', requestKey: 'qa-domain-1104-r76-retained-g-teardown', reason: 'decommission' } } });
-      expect.soft([response.statusCode, response.json()]).toEqual([403, payload]);
+      // The daemon keeps its mint refusal correlated with the request (b0aca93e107).
+      expect.soft([response.statusCode, response.json()]).toEqual([403, { ...payload, requestId: 'qa-domain-1104-persisted-g-teardown-r76' }]);
       expect(post).toHaveBeenCalledTimes(1);
       expect(await executionAuthorizationOwner.deliverExternalActionRequest({ actionId: 'deployments.teardown',
         serverHttpBaseUrl: 'https://home.test', body: {}, envelope, headers: {}, isCurrent: async () => true }))
