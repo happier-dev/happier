@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { cp, mkdir, readFile, writeFile, readdir, rm, symlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import childProcess from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -123,10 +123,15 @@ test('source author runtime emits the 18-package closure without native declarat
   await mkdir(revisionRuntime);
   await writeFile(join(revisionRuntime, 'package.json'), JSON.stringify({ name: '@fixture/revision-runtime' }));
   await cp(join(runtimeDir, 'node_modules'), join(installation, 'node_modules'), { recursive: true });
+  // The installation nests the SDK's own version under its workspace; the hoisted
+  // root holds another one that does not satisfy the SDK's declared range.
+  await cp(join(installation, 'node_modules/author-external'), join(installation, 'packages/plugin-sdk/node_modules/author-external'), { recursive: true });
+  await writeFile(join(installation, 'node_modules/author-external/package.json'), JSON.stringify({ name: 'author-external', version: '0.9.0', main: './index.js' }));
   await emitSourceAuthorPackages({ repoDir, sourceRepoDir: repoDir, projectDir, runtimeDir: revisionRuntime,
     workspacePackages: await readWorkspacePackages(repoDir), build, sourceInputDigests: {},
     readSourceInput: path => readFile(path), env: process.env,
-    authorDependencies: { resolveFromPackageJsonPath: join(installation, 'apps/cli/package.json'), dereferenceRootDir: installation } });
+    authorDependencies: { resolveFromPackageJsonPath: bundle => join(installation, relative(repoDir, bundle.srcDir), 'package.json'),
+      dereferenceRootDir: installation } });
   assert.equal(await readFile(join(revisionRuntime, 'authoring/node_modules/@happier-dev/plugin-sdk/node_modules/author-external/index.js'), 'utf8'),
     'export const external = "captured-external";\n');
   assert.match(await readFile(join(sdk, 'dist/.happier-source/src/index.ts'), 'utf8'), /author-16/);
