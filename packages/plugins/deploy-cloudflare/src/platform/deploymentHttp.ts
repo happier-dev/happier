@@ -74,9 +74,9 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
     if (phase === 'teardown') throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
       failureCause: projectActionFailureCauseV1(error, 'deployment.provider.teardown') });
     // A locally stopped request cannot prove that a sent build/cancel did not run.
-    if (mutation) return failure('outcome_unknown', phase, projectActionFailureCauseV1(error, `deployment.provider.${phase}`));
-    context.signal.throwIfAborted();
-    return failure('provider_request_failed', phase);
+    if (!mutation) context.signal.throwIfAborted();
+    return failure(mutation ? 'outcome_unknown' : 'provider_request_failed', phase,
+      projectActionFailureCauseV1(error, `deployment.provider.${phase}`));
   }
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(response.body)); } catch { body = undefined; }
@@ -98,10 +98,9 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   }
   // Preserve acknowledged results even when local cancellation races with the response.
   if (response.status < 200 || response.status >= 300) {
-    if (mutation && response.status >= 500) return failure('outcome_unknown', phase, {
+    return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase, {
       phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, httpStatus: response.status,
     });
-    return failure('provider_request_failed', phase);
   }
   if (body === undefined) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
   // Cloudflare's deletion, asset upload and hash-registration ACKs contain success/errors/messages,

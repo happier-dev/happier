@@ -65,3 +65,17 @@ it.each([
     failureCause: { phase: 'deployment.provider.send', errorCode, httpStatus: status },
   } });
 });
+
+it.each([
+  { status: 503, errorCode: null },
+  { status: null, errorCode: 'ECONNRESET' },
+])('keeps the cause of a failed Pages read ($status, $errorCode)', async ({ status, errorCode }) => {
+  const http = createPluginHttpFixture({ async request() {
+    if (status === null) throw Object.assign(new Error('internal transport details'), { code: errorCode });
+    return { status, headers: {}, body: new TextEncoder().encode('internal proxy details') };
+  } });
+  await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects/app/deployments', 'observe')
+    .then(pagesResult)).rejects.toMatchObject({ code: 'provider_request_failed', data: {
+    failureCause: { phase: 'deployment.provider.observe', errorCode, httpStatus: status },
+  } });
+});
