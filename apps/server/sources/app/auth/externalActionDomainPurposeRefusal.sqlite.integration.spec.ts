@@ -295,6 +295,15 @@ it('names the refusing reviewed-purpose check without changing admission', async
         schemaVersion: 1, name: 'Bound', choices: {} },
       resource: { contributionRef: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, value: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+    const deleteInput = { homeId, managedId: managed.id, expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true };
+    const deleteRoot = await mint('machines.managed.delete', deleteInput);
+    if (typeof deleteRoot === 'string') throw new Error(`Managed delete did not mint: ${deleteRoot}`);
+    const deleteCensus = `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=${encodeURIComponent(machine.id)}`;
+    expect(await verify(deleteRoot, 'machines.managed.delete', 'GET', deleteCensus, undefined))
+      .toEqual({ admitted: true, phase: undefined });
+    expect((await verify(deleteRoot, 'machines.managed.delete', 'GET',
+      `/v1/deployments/machine-references?homeId=another-home&machineId=${encodeURIComponent(machine.id)}`, undefined)).admitted)
+      .toBe(false);
     const report = { homeId, managedId: managed.id, presetId: 'setup', presetRevision: 1,
       target: { kind: 'bound', controller: { machineId: machine.id, installationId: machine.installationId! } },
       state: 'running', operation: { operationId: 'bound-setup' } };
