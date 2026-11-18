@@ -113,6 +113,8 @@ const MORE_TEAMS = '__more-teams';
 
 export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
+    /** A preset authored for one machine's Isolation (the add-sandbox sheet) is that machine's own: no Who can use it. */
+    presetFor?: 'isolation';
     /** Exact caller-supplied native query; never inferred from the viewing device's filesystem. */
     initialOptionsSelectors?: Readonly<Record<string, unknown>>;
     initialEnrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
@@ -1284,7 +1286,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             declared={draft.enrollmentIdentityDefaulted ? managedConfiguratorEnrollmentDefault(draft) : undefined}
             onChange={next => setDraft(current => current ? { ...current, enrollmentIdentity: next } : current)} /> : null}
         {/* Who can use it comes right after what it is: for a Team admin it's the next decision (lab m-presets). */}
-        {draft && props.presetOnly ? <ItemGroup title={t('machinePresets.audience')}>
+        {draft && props.presetOnly && props.presetFor !== 'isolation' ? <ItemGroup title={t('machinePresets.audience')}>
             <ManagedFieldRow testID="managed-config.audience" row={{ title: t('machinePresets.canUse'),
                 choices: [{ id: '', title: t('machinePresets.ownerPersonal') },
                     ...teams.rows.filter(row => row.team.capabilities.manageSettings).map(row => ({ id: row.team.id, title: row.team.name })),

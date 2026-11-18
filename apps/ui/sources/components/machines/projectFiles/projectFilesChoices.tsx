@@ -13,18 +13,13 @@ export type ProjectFilesChoice = Readonly<{
   title: string;
   subtitle: string;
   rightElement?: React.ReactNode;
-  disabled?: boolean;
 }>;
 
 /**
  * "How files get in" as menu rows, for the preset's select and the New Session override alike: the option
- * owner's title and meaning, with Default and Advanced beside the check. A choice the host can't store yet
- * stays listed, dimmed.
+ * owner's title and meaning, with Default and Advanced beside the check.
  */
-export function useProjectFilesChoices(
-  input: Readonly<{ available: (id: ProjectFilesOptionId) => boolean }>,
-): readonly ProjectFilesChoice[] {
-  const { available } = input;
+export function useProjectFilesChoices(): readonly ProjectFilesChoice[] {
   return React.useMemo(
     () =>
       PROJECT_FILES_OPTIONS.map((option) => ({
@@ -44,9 +39,8 @@ export function useProjectFilesChoices(
               ),
             }
           : {}),
-        ...(available(option.id) ? {} : { disabled: true }),
       })),
-    [available],
+    [],
   );
 }
 

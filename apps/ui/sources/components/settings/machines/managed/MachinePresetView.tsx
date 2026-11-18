@@ -31,6 +31,10 @@ import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
 import { MachinePresetProjectFilesSection } from './MachinePresetProjectFilesSection';
+import { describePreparedImageBuilt, projectPresetPreparationSteps } from './presetPreparationPresentation';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
+import { resolvePresetSharedSections } from './managedPresetReach';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
@@ -101,11 +105,12 @@ function MachinePresetPrepareSection(props: Readonly<{
     // Off, the switch says it all; an image kept from before is Archive's to explain (its cleanup help).
     const showsImage = enabled;
     const summary = preparation.readySummary;
-    const readyLine = [
-        summary?.builtAt != null ? t('machinePresets.prepareBuiltAt', { time: formatAsOfTime(summary.builtAt) }) : null,
-        summary?.builtFromRevision != null ? t('machinePresets.prepareBuiltRevision', { revision: summary.builtFromRevision }) : null,
-        summary?.storageBytes != null ? t('machinePresets.prepareStorageKept', { size: formatMachineBytes(summary.storageBytes, 'storage') }) : null,
-    ].filter(Boolean).join(' · ');
+    // A running build names itself and when it started; its owner-named steps follow (lab scene 5 `building`).
+    const building = active && operation !== null;
+    const startedAt = operation?.snapshot.startedAt ?? operation?.snapshot.createdAt;
+    const statusLine = building ? startedAt != null ? t('machinePresets.prepareStarted', { time: formatAsOfTime(startedAt) }) : null
+        : describePreparedImageBuilt(summary);
+    const steps = building || retry ? projectPresetPreparationSteps(preparation.steps) : [];
     return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')} description={t('machinePresets.prepareSectionHelp')}>
         {/* A standing preference of the preset: a switch, and building is its consequence (lab scene 5). */}
         <Item testID="machine-preset.prepare.keep" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
@@ -114,10 +119,17 @@ function MachinePresetPrepareSection(props: Readonly<{
                 value={enabled} disabled={!onChange} onValueChange={next => onChange?.({ ...props.preparation, enabled: next })} />} />
         {/* A ready image says when and from which revision it was built (lab scene 5 `ready`), then the storage it keeps
             when the builder measured it; an unknown fact stays unsaid (S1). */}
-        {showsImage ? <Item testID="machine-preset.preparation" title={status}
-            {...(readyLine ? { subtitle: readyLine } : {})}
+        {showsImage ? <Item testID="machine-preset.preparation" title={building ? t('machinePresets.prepareBuilding') : status}
+            {...(statusLine ? { subtitle: statusLine } : {})}
             subtitleLines={0} mode="info" showChevron={false}
-            loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
+            loading={active && steps.length === 0} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
+        {showsImage && steps.length > 0 ? <SectionContentRow testID="machine-preset.preparation.steps" continuesRow>
+            <SetupSteps variant="compact" steps={steps} testID="machine-preset.preparation.step" />
+        </SectionContentRow> : null}
+        {/* The storage a ready image keeps is its own line (lab scene 5), said only when the builder measured it. */}
+        {showsImage && summary?.storageBytes != null ? <Item testID="machine-preset.preparation.storage" title={t('machinePresets.prepareStorage')}
+            subtitle={t('machinePresets.prepareStorageKept', { size: formatMachineBytes(summary.storageBytes, 'storage') })}
+            subtitleLines={0} mode="info" showChevron={false} /> : null}
         {/* Only while an image is kept ready: what a Happier update does to it, with its cost (lab F5). */}
         {enabled ? <SegmentedChoiceItem<WhenHappierUpdates> testID="machine-preset.prepare.updates" testIDPrefix="machine-preset.prepare.updates"
             title={t('machinePresets.prepareUpdates')} disabled={!onChange}
@@ -387,10 +399,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         ? t('machinePresets.memberCreateHelpLocal', { controller: managingComputer })
         : credentialAccount ? t('machinePresets.memberCreateHelpAccount', { controller: managingComputer, account: credentialAccount })
             : t('machinePresets.memberCreateHelp', { controller: managingComputer });
-    // A local sandbox kind (its declaration enrolls a sandbox that runs on the managing machine and bills nobody) is
-    // used by that machine's Isolation, not made for others: Create one, Who can use it and Running at once belong
-    // to the other presets (lab decision 3).
-    const sessionSandbox = provisioner?.descriptor.enrollmentRole === 'sandbox' && presentation.billing?.location === 'local';
+    // Sections for presets made for others wait for the kind, then leave a personal local sandbox preset (decision 3).
+    const sharedSections = resolvePresetSharedSections({ ownerKind: visiblePreset.owner.kind,
+        descriptor: provisioner?.descriptor, kindLoading: catalog.loading });
+    const sessionSandbox = sharedSections !== 'show';
     const model: MachinePresetDetailModel = {
         name: visiblePreset.name, mark, setup,
         // The page says what this preset makes and who may make it; the edit rule sits under Edit choices.

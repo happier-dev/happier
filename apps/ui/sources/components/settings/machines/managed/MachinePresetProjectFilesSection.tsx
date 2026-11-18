@@ -39,13 +39,7 @@ export function MachinePresetProjectFilesSection(
   const { theme } = useUnistyles();
   const { value, onChange } = props;
   const option = projectFilesOption(value);
-  // Git clone stores a repository and branch the select alone can't name; a preset already cloning keeps it.
-  const available = React.useCallback(
-    (id: ProjectFilesOptionId) =>
-      id !== 'git_clone' || value?.kind === 'git_clone',
-    [value?.kind],
-  );
-  const choices = useProjectFilesChoices({ available });
+  const choices = useProjectFilesChoices();
   // An unset preset copies once with the default content policy; editing it stores that choice explicitly.
   const rows = useWorkspaceContentPolicyRows({
     policy:
@@ -107,17 +101,22 @@ export function MachinePresetProjectFilesSection(
       <ItemGroup testID={`${props.testID}.option`} title={t(option.titleKey)}>
         {value?.kind === 'git_clone' ? (
           <>
+            {/* Unnamed, both come from the session's folder when it starts (lab F4); a named clone shows its own. */}
             <Item
               testID={`${props.testID}.repository`}
               title={t('machineDetailPage.projectFiles.repository')}
-              subtitle={value.source.repository.nameWithOwner}
+              subtitle={t('machineDetailPage.projectFiles.repositoryHelp')}
+              detail={value.source?.repository.nameWithOwner ?? t('machineDetailPage.projectFiles.fromFolder')}
+              subtitleLines={0}
               mode="info"
               showChevron={false}
             />
             <Item
               testID={`${props.testID}.branch`}
               title={t('machineDetailPage.projectFiles.branch')}
-              subtitle={value.branch}
+              subtitle={t('machineDetailPage.projectFiles.branchHelp')}
+              detail={value.branch ?? t('machineDetailPage.projectFiles.folderBranch')}
+              subtitleLines={0}
               mode="info"
               showChevron={false}
             />

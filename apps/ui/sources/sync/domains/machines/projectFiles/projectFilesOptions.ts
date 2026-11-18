@@ -67,18 +67,19 @@ export function projectFilesOption(
 
 /**
  * The value a chosen option stores, keeping the folder's content choices when moving between the copy and sync
- * options. Git clone needs a repository and branch the option alone does not name, so it has no value here.
+ * options. Git clone without its own repository and branch takes the session folder's (resolved by the daemon
+ * before any credential is chosen); a clone already naming them keeps them.
  */
 export function projectFilesValueForOption(
   id: ProjectFilesOptionId,
   previous: SessionProjectFilesV1 | undefined,
-): Exclude<SessionProjectFilesV1, { kind: 'git_clone' }> | null {
+): SessionProjectFilesV1 {
   const contentPolicy =
     previous && previous.kind !== 'git_clone'
       ? previous.contentPolicy
       : undefined;
   const content = contentPolicy ? { contentPolicy } : {};
   if (id === 'copy_once') return { kind: 'copy_once', ...content };
-  if (id === 'git_clone') return null;
+  if (id === 'git_clone') return previous?.kind === 'git_clone' ? previous : { kind: 'git_clone' };
   return { kind: 'sync', mode: id, ...content };
 }

@@ -219,6 +219,7 @@ export function MachineIsolationAddSandboxModal(
         serverId={selection.serverId}
         provisioner={selection.provisioner}
         presetOnly
+        presetFor="isolation"
         initialController={selection.controller ?? props.controller}
         initialConnectPurpose={selection.connectPurpose}
         onCancel={() => setStep('preset')}

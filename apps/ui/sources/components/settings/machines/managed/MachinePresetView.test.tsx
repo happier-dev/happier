@@ -2999,10 +2999,10 @@ describe('reachable preset detail', () => {
       // Two-way sync says the one thing it adds, and its group carries the conflict rule before the content rows.
       expect(screen.findByTestId('machine-preset.project-files.deletions')).not.toBeNull();
       expect(screen.findByTestId('machine-preset.project-files.conflict')).not.toBeNull();
-      // The option list marks Copy once Default and Two-way Advanced; Git clone can't be stored from the select alone.
+      // The option list marks Copy once Default and Two-way Advanced; Git clone is chosen from the folder (4bffe89568e).
       const items = field('machine-preset.project-files.how')!.props.items as ReadonlyArray<{ id: string; disabled?: boolean; rightElement?: unknown }>;
       expect(items.map(item => item.id)).toEqual(['copy_once', 'git_clone', 'keep_synced', 'keep_both_in_sync']);
-      expect(items.find(item => item.id === 'git_clone')?.disabled).toBe(true);
+      expect(items.find(item => item.id === 'git_clone')?.disabled).toBeUndefined();
       expect(items.filter(item => item.rightElement).map(item => item.id)).toEqual(['copy_once', 'keep_both_in_sync']);
       // A Prepare ahead edit keeps the preset's Project files.
       await act(async () => {
@@ -3024,6 +3024,12 @@ describe('reachable preset detail', () => {
       await act(async () => field('machine-preset.project-files.content-content-selection-trigger')!.props.onSelect('all_files'));
       await waitForHomeGovernance(() => expect(saved()).toHaveLength(3));
       expect(saved()[2]).toMatchObject({ projectFiles: { kind: 'copy_once', contentPolicy: { selection: 'all_files' } } });
+      await waitForHomeGovernance(() => expect(stored.revision).toBe(preset.revision + 3));
+      // Git clone stores the folder-derived intent: repository and branch come from the session's folder.
+      await act(async () => field('machine-preset.project-files.how')!.props.onSelect('git_clone'));
+      await waitForHomeGovernance(() => expect(saved()).toHaveLength(4));
+      expect(saved()[3]?.projectFiles).toEqual({ kind: 'git_clone' });
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.project-files.repository')).not.toBeNull());
     } finally { await screen.unmount(); }
   });
 

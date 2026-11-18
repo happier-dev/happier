@@ -37,10 +37,13 @@ function verbPhrase(
   folder: string,
 ): string {
   if (value?.kind === 'git_clone') {
-    return t('machineDetailPage.projectFiles.clones', {
-      repository: value.source.repository.nameWithOwner,
-      branch: value.branch,
-    });
+    // A clone that names its repository and branch says them; otherwise they are the folder's own.
+    return value.source && value.branch
+      ? t('machineDetailPage.projectFiles.clones', {
+          repository: value.source.repository.nameWithOwner,
+          branch: value.branch,
+        })
+      : t('machineDetailPage.projectFiles.clonesFolder', { folder });
   }
   if (value?.kind === 'sync') {
     return value.mode === 'keep_both_in_sync'
@@ -78,13 +81,7 @@ export function ProjectFilesOutcomeChoice(
   const effective = props.override ?? props.presetDefault;
   const defaultId = projectFilesOptionId(props.presetDefault);
   const effectiveId = projectFilesOptionId(effective);
-  // Git clone needs a repository and branch only the preset's own clone names.
-  const available = React.useCallback(
-    (id: ProjectFilesOptionId) =>
-      id !== 'git_clone' || defaultId === 'git_clone',
-    [defaultId],
-  );
-  const choices = useProjectFilesChoices({ available });
+  const choices = useProjectFilesChoices();
   const presetName =
     props.preset?.name ?? t('machineDetailPage.isolation.summary.unnamed');
   const items = React.useMemo<DropdownMenuItem[]>(

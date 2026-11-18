@@ -304,6 +304,47 @@ describe('mounted managed configurator', () => {
     expect(isManagedPoolUnavailableAtReview({ availability: { state: 'known', connectedCount: 0, enabledCount: 1 } }, false)).toBe(false);
   });
 
+  it.each([undefined, 'isolation'] as const)('asks Who can use it only where the preset is not one machine\'s own (presetFor=%s)', async presetFor => {
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+      packageName: '@happier-dev/plugins-devcontainer', displayName: 'Docker container Machines', hasMachineProvisioners: true,
+      entriesById: {}, normalizedManifest: manifest }]));
+    const homeId = `srv_devcontainer_audience_${presetFor ?? 'page'}`;
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://devcontainer-audience-${presetFor ?? 'page'}.example.test`,
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true, teamsEnabled: false, machinePoolsEnabled: false });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
+    const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+    if (declarations.kind !== 'available') throw new Error('Expected the bundled provisioner declaration');
+    const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === manifest.id);
+    if (!selected) throw new Error('Expected the real Devcontainer descriptor');
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = readProvisionerRequest(value);
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+        execution: { ok: true, result: { provisioners: [selected] } } } };
+    } });
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly {...(presetFor ? { presetFor } : {})} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:configuration.image'), screen.getTextContent()).not.toBeNull());
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const audience = screen.tree.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === 'managed-config.audience');
+      // The add-sandbox sheet makes this machine's own preset (lab decision 3); Machines' New preset asks who can use it.
+      if (presetFor === 'isolation') expect(audience).toBeUndefined();
+      else expect(audience).toBeDefined();
+    } finally { await screen.unmount(); }
+  });
+
   it.each(['account', 'team', 'saved-account'] as const)('authors and saves a Devcontainer preset without a controller, native tools, or an effect digest (%s)', async ownerKind => {
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
