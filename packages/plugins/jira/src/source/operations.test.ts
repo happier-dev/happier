@@ -394,10 +394,13 @@ describe('Jira source through provider HTTP', () => {
 
     it('keeps malformed-provider rows visible as incomplete coverage while accepting valid siblings', async () => {
         const h = host((url) => ({ body: url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' }
-            : { issues: [{ key: 'MALFORMED-1', fields: {} }, issue], isLast: true } }));
+            : { issues: [{ key: 'MALFORMED-1', fields: {} }, issue,
+                { ...issue, fields: null }, { ...issue, id: '10002', key: 'ABC-124' }], isLast: true } }));
         const result = TriageScanResultV1Schema.parse(await scanJiraSource({ v: 1, instance, page: { kind: 'initial', limit: 10 } }, h.context));
-        expect(result).toMatchObject({ kind: 'complete', observations: [{ localRef: ref }],
-            evidence: { kind: 'partial', omittedItemCount: 1 } });
+        expect(result).toMatchObject({ kind: 'complete',
+            evidence: { kind: 'partial', omittedItemCount: 2 } });
+        if (result.kind === 'failed') throw new Error('Expected valid siblings');
+        expect(result.observations.map(row => row.localRef.entryId)).toEqual(['10001', '10002']);
     });
 
     it('refuses a cross-site reference before materializing credentials', async () => {

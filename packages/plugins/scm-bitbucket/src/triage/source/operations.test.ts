@@ -318,6 +318,21 @@ describe('Bitbucket scan', () => {
     });
   });
 
+  it('keeps valid pull requests beside independently malformed raw provider rows', async () => {
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const { http } = createHttpStub(routeBitbucket({ '/pullrequests/': { body: {
+      ...pageOne, next: undefined, values: [...pageOne.values,
+        { ...pageOne.values[0], id: null }, { ...pageOne.values[0], destination: null }],
+    } } }));
+    const result = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      createRuntime(connectedAccounts, http),
+      TriageScanInputV1Schema.parse({ v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 10 } }),
+    ));
+    if (result.kind === 'failed') throw new Error(`unexpected failure: ${result.failure.code}`);
+    expect(result.observations.map(row => row.localRef.entryId)).toEqual(['42', '41']);
+    expect(result.evidence).toMatchObject({ kind: 'partial', omittedItemCount: 2 });
+  });
+
   it('projects the authored lane and reports unavailable native lanes as partial', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],

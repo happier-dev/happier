@@ -14,6 +14,18 @@ const workspaceInstance = (teams: unknown) => ({ ...instance, localInstanceKey: 
   configuration: { v: 1 as const, token: JSON.stringify({ v: 1, teams, involvement: 'everyone' }) } });
 
 describe('Linear source through provider HTTP', () => {
+  it('retains valid siblings and counts independently malformed issue rows', async () => {
+    const rows = [issue, { ...issue, id: null }, { ...issue, id: 'issue-2' }, { ...issue, team: null }];
+    const h = host(({ operationName }) => operationName === 'LinearViewer'
+      ? { viewer: { id: 'viewer-1' } } : { issues: page(rows) });
+    const result = TriageScanResultV1Schema.parse(await scanLinearSource({
+      v: 1, instance, page: { kind: 'initial', limit: 4 },
+    }, h.context));
+    expect(result).toMatchObject({ kind: 'complete', evidence: { kind: 'partial', omittedItemCount: 2 } });
+    if (result.kind === 'failed') throw new Error('Expected valid siblings');
+    expect(result.observations.map(row => row.localRef.entryId)).toEqual(['issue-1', 'issue-2']);
+  });
+
   it.each([
     ['updated', 'asc', ['issue-a', 'issue-b', 'issue-y', 'issue-z']],
     ['updated', 'desc', ['issue-z', 'issue-y', 'issue-b', 'issue-a']],
