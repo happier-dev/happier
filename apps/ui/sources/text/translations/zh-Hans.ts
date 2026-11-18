@@ -19132,7 +19132,7 @@ settingsSession: {
       addNeedsReview: "此应用需要先在 Store 中审核才能添加。",
       databaseConnectTitle: "连接到应用",
       databaseMoveTitle: "移动数据库",
-      databaseMoveLead: "选择已部署在此机器上的专用 PostgreSQL 环境。请先通过私有网络共享，并保存管理员密码。",
+      databaseMoveLead: "选择已部署在此机器或其他机器上的专用 PostgreSQL 环境。请先通过私有网络共享，并保存管理员密码。",
       databaseMoveDestination: "专用数据库",
       databaseMoveEmptyTitle: "请先创建专用数据库",
       databaseMoveEmptyBody: "从商店将 PostgreSQL 部署到独立环境，然后返回此处。",

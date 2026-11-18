@@ -19619,7 +19619,7 @@ settingsSession: {
       addNeedsReview: "Esta app precisa de revisão na Store antes de poder ser adicionada.",
       databaseConnectTitle: "Ligar a uma app",
       databaseMoveTitle: "Mover banco de dados",
-      databaseMoveLead: "Escolha um Ambiente PostgreSQL dedicado já implantado nesta Máquina. Compartilhe-o em uma rede privada e salve primeiro a senha de administrador.",
+      databaseMoveLead: "Escolha um Ambiente PostgreSQL dedicado já implantado, nesta Máquina ou noutra. Compartilhe-o em uma rede privada e salve primeiro a senha de administrador.",
       databaseMoveDestination: "Banco de dados dedicado",
       databaseMoveEmptyTitle: "Crie primeiro um banco de dados dedicado",
       databaseMoveEmptyBody: "Implante o PostgreSQL em seu próprio Ambiente pela Loja e volte aqui.",

@@ -19513,7 +19513,7 @@ settingsSession: {
       addNeedsReview: "Esta app necesita una revisión en Store antes de poder añadirse.",
       databaseConnectTitle: "Conectar a una app",
       databaseMoveTitle: "Mover base de datos",
-      databaseMoveLead: "Elige un Entorno dedicado de PostgreSQL ya desplegado en esta Máquina. Compártelo en una red privada y guarda primero su contraseña de administrador.",
+      databaseMoveLead: "Elige un Entorno dedicado de PostgreSQL ya desplegado, en esta Máquina o en otra. Compártelo en una red privada y guarda primero su contraseña de administrador.",
       databaseMoveDestination: "Base de datos dedicada",
       databaseMoveEmptyTitle: "Crea primero una base de datos dedicada",
       databaseMoveEmptyBody: "Despliega PostgreSQL en su propio Entorno desde la Tienda y vuelve aquí.",

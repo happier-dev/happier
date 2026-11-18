@@ -19515,7 +19515,7 @@ settingsSession: {
       addNeedsReview: "Questa app deve essere esaminata nello Store prima di poter essere aggiunta.",
       databaseConnectTitle: "Collega a un’app",
       databaseMoveTitle: "Sposta database",
-      databaseMoveLead: "Scegli un Ambiente PostgreSQL dedicato già distribuito su questa Macchina. Condividilo su una rete privata e salva prima la password amministratore.",
+      databaseMoveLead: "Scegli un Ambiente PostgreSQL dedicato già distribuito, su questa Macchina o su un’altra. Condividilo su una rete privata e salva prima la password amministratore.",
       databaseMoveDestination: "Database dedicato",
       databaseMoveEmptyTitle: "Crea prima un database dedicato",
       databaseMoveEmptyBody: "Distribuisci PostgreSQL nel proprio Ambiente dallo Store, poi torna qui.",

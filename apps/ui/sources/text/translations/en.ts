@@ -22912,7 +22912,7 @@ const enProjects = {
       addNeedsReview: "This app needs a review in Store before it can be added.",
       databaseConnectTitle: "Connect to an app",
       databaseMoveTitle: "Move database",
-      databaseMoveLead: "Choose an already-deployed dedicated PostgreSQL Environment on this Machine. Share it on a private network and save its admin password first.",
+      databaseMoveLead: "Choose an already-deployed dedicated PostgreSQL Environment, on this Machine or another one. Share it on a private network and save its admin password first.",
       databaseMoveDestination: "Dedicated database",
       databaseMoveEmptyTitle: "Create a dedicated database first",
       databaseMoveEmptyBody: "Deploy PostgreSQL as its own Environment from Store, then return here.",

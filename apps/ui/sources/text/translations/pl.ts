@@ -19338,7 +19338,7 @@ settingsSession: {
       addNeedsReview: "Ta aplikacja wymaga przeglądu w Store, zanim będzie można ją dodać.",
       databaseConnectTitle: "Połącz z aplikacją",
       databaseMoveTitle: "Przenieś bazę danych",
-      databaseMoveLead: "Wybierz dedykowane Środowisko PostgreSQL już wdrożone na tej Maszynie. Udostępnij je w sieci prywatnej i najpierw zapisz hasło administratora.",
+      databaseMoveLead: "Wybierz dedykowane Środowisko PostgreSQL już wdrożone, na tej lub innej Maszynie. Udostępnij je w sieci prywatnej i najpierw zapisz hasło administratora.",
       databaseMoveDestination: "Dedykowana baza danych",
       databaseMoveEmptyTitle: "Najpierw utwórz dedykowaną bazę danych",
       databaseMoveEmptyBody: "Wdróż PostgreSQL we własnym Środowisku ze Sklepu, a potem wróć tutaj.",

@@ -19427,7 +19427,7 @@ settingsSession: {
       addNeedsReview: "このアプリは追加する前に Store で確認が必要です。",
       databaseConnectTitle: "アプリに接続",
       databaseMoveTitle: "データベースを移動",
-      databaseMoveLead: "このマシンにデプロイ済みの専用 PostgreSQL 環境を選択してください。プライベートネットワークで共有し、管理者パスワードを先に保存してください。",
+      databaseMoveLead: "このマシンまたは別のマシンにデプロイ済みの専用 PostgreSQL 環境を選択してください。プライベートネットワークで共有し、管理者パスワードを先に保存してください。",
       databaseMoveDestination: "専用データベース",
       databaseMoveEmptyTitle: "先に専用データベースを作成",
       databaseMoveEmptyBody: "ストアから PostgreSQL を専用の環境にデプロイしてから、ここに戻ってください。",
