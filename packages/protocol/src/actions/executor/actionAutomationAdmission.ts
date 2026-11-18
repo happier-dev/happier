@@ -81,6 +81,8 @@ export type ActionAutomationSelectArgsV1 = Readonly<{
   actionId: string;
   input: unknown;
   context: ActionExecutorContext;
+  /** ActionSpec placement is the canonical owner of whether this Action has a Machine. */
+  executionPlacement?: 'machine' | 'session' | 'account' | 'client';
   approvalScope?: ActionApprovalPolicyScopeV1;
   /** Additional facts from the admitted operand's owner, never guessed from arbitrary input ids. */
   subjects?: readonly AutomationSubjectContextV1[];
@@ -306,7 +308,8 @@ export function createActionAutomationPortV1(options: Readonly<{
         signal?.throwIfAborted();
       }
       const subjects = projectActionAutomationSubjectsV1({ ...args, subjects: [...(args.subjects ?? []), ...additionalSubjects] });
-      const machineId = readActionAutomationExecutionMachineV1(args.context);
+      const machineId = args.executionPlacement === undefined || args.executionPlacement === 'machine' || args.executionPlacement === 'session'
+        ? readActionAutomationExecutionMachineV1(args.context) : undefined;
       const sharedRequester = isSharedRequesterActionV1(args.context);
       for (const row of candidates) {
         if (row.phase === 'after' && args.includeAfter === false) continue;
@@ -318,7 +321,7 @@ export function createActionAutomationPortV1(options: Readonly<{
         if (own ? row.subjectKey !== undefined && !matchedSubject : !row.reachesOthers || !matchedSubject) continue;
         const skip = (reason: string) => notices.push({ code: 'action_automation_skipped', reason,
           automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
-        if (!own && !machineId) { skip('machineRequired'); continue; }
+        if (!machineId) { skip('machineRequired'); continue; }
         const references = own ? [] : [...(consents.get(consentKey(row))?.values() ?? [])];
         // Equal revisions avoid a Workflow read at the incumbent private consent
         // owner. Ordering never proves consent current; every candidate is opened there.

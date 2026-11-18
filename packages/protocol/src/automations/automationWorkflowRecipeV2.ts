@@ -108,6 +108,11 @@ export const WorkflowTriggerActorConsentV1Schema = lazyZodSchema(() => z.strictO
     participant: WorkflowMaterializedLeafV1Schema.shape.participant,
     role: WorkflowMaterializedLeafV1Schema.shape.role,
   })),
+  /** Child Workflow body revisions are pinned even when a child has no Agent leaf yet. */
+  childRevisions: z.optional(z.array(z.strictObject({
+    sourceKey: WorkflowMaterializedLeafV1Schema.shape.sourceKey,
+    bodyVersion: z.number().check(z.int(), z.nonnegative()),
+  }))),
 }));
 defineStoredReadProjection(WorkflowTriggerActorConsentV1Schema, () => WorkflowTriggerActorConsentV1Schema);
 

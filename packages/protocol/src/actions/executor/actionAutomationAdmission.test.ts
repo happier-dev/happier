@@ -13,6 +13,20 @@ import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/a
 import { restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
+it('visibly skips own Action checks without an invoking Machine', async () => {
+  const rows = (['before', 'after'] as const).map(phase => ({ automationId: 'own', triggerId: phase,
+    triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'actor',
+    actionIds: ['notifications.notify_me'], phase, ...(phase === 'before' ? { mode: 'wait' as const } : {}) }));
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows }),
+    settle: async () => {} });
+  const args = { actionId: 'notifications.notify_me', input: { message: 'Account effect' }, executionPlacement: 'account' as const,
+    context: { defaultSessionMachineId: 'configured-machine' } };
+  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [], after: [], notices: rows.map(row => ({
+    code: 'action_automation_skipped', reason: 'machineRequired', automationId: row.automationId,
+    triggerId: row.triggerId, workflowId: row.workflowId,
+  })) });
+});
+
 describe('Approval profile subject admission', () => {
   it('matches only the available admission binding, including after access is withdrawn', async () => {
     const subject = { kind: 'approvalProfile' as const, serverId: 'home', profileId: 'profile' };

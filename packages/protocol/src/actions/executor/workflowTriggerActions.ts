@@ -60,6 +60,7 @@ import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/se
 import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
+import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { resolveWorkflowProjectTargetMachineV1, type WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { collectWorkflowLeavesV1, resolveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
 import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPreparationV1.js';
@@ -147,7 +148,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   newId: (kind: 'automation' | 'trigger') => string;
   /** One authorized current-definition read supplies both execution content and display provenance. */
   resolveWorkflow: (ref: string) => Promise<Readonly<{
-    definition: WorkflowDefinitionV1; savedBy?: WorkflowDefinitionSavedByV1; savedAt?: number;
+    definition: WorkflowDefinitionV1; revision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
+    savedBy?: WorkflowDefinitionSavedByV1; savedAt?: number;
   }>>;
   /** Authorized Artifact grant transport; visibility policy remains shared with Run admission. */
   resolveWorkflowTeamIds?: (artifactId: string) => Promise<readonly string[]>;
@@ -442,6 +444,23 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     return { machineId: row.assignments[0]!.machineId, ...context.workspace };
   };
   const resolveDefinition = async (ref: string) => (await deps.resolveWorkflow(ref)).definition;
+  const readChildWorkflowRevisions = async (definition: WorkflowDefinitionV1): Promise<readonly { sourceKey: string; bodyVersion: number }[] | undefined> => {
+    const revisions: Array<{ sourceKey: string; bodyVersion: number }> = [];
+    let complete = true;
+    const visited = new Set<string>();
+    const visit = async (current: WorkflowDefinitionV1): Promise<void> => {
+      for (const block of walkWorkflowBlocks(current.blocks)) {
+        if (block.kind !== 'workflow' || visited.has(block.workflowRef)) continue;
+        visited.add(block.workflowRef);
+        const child = await deps.resolveWorkflow(block.workflowRef);
+        if (child.revision === undefined) { complete = false; continue; }
+        revisions.push({ sourceKey: block.workflowRef, bodyVersion: child.revision.bodyVersion });
+        await visit(child.definition);
+      }
+    };
+    await visit(definition);
+    return complete ? revisions : undefined;
+  };
   const readTriggerEventDeclarations = async (
     events: readonly (WorkflowTriggerEventDeclarationV1 | WorkflowIntendedPluginEventV1)[],
   ): Promise<readonly WorkflowTriggerEventDeclarationV1[]> => {
@@ -875,7 +894,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         || operation.approvedBy.accountId !== caller.runtimeAccountId) return { current: false };
       const { agentSteps, ...matching } = pinned;
       if (!sameStrictJsonValue(matching, actorConsentMatching(input))) return { current: false, review: { reason: 'match' } };
-      if (input.saved.workflowRevision === input.workflowRevision) {
+      if (input.saved.workflowRevision === input.workflowRevision && pinned.childRevisions !== undefined && pinned.childRevisions.length === 0) {
         return { current: true, automationId: row.id, triggerId: trigger.id,
           triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
       }
@@ -888,6 +907,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const changedActions = current.steps.flatMap((step, index) => sameStrictJsonValue(step, operation.steps[index])
         ? [] : [current.actionStepRefs[index]!]);
       const changedAgents = current.agentSteps.filter((step, index) => !sameStrictJsonValue(step, agentSteps[index]));
+      if (input.saved.workflowRevision === input.workflowRevision && pinned.childRevisions !== undefined && pinned.childRevisions.length > 0) {
+        const currentChildren = await readChildWorkflowRevisions(source.definition);
+        const changedChildren = pinned.childRevisions.length !== currentChildren.length
+          || pinned.childRevisions.some((child, index) => !sameStrictJsonValue(child, currentChildren[index]));
+        if (changedChildren) return { current: false, review: { reason: 'steps', changedSteps: current.agentSteps
+          .filter(step => step.sourceKey !== '$root').map(({ sourceKey, blockId }) => ({ sourceKey, blockId })) } };
+      }
       if (current.steps.length !== operation.steps.length || current.agentSteps.length !== agentSteps.length
         || changedActions.length > 0 || changedAgents.length > 0) return { current: false, review: { reason: 'steps',
         changedSteps: [...changedActions, ...changedAgents.map(({ sourceKey, blockId }) => ({ sourceKey, blockId }))] } };
@@ -914,7 +940,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const projected = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context,
         project: input.project, triggerId, resolveWorkflow: resolveDefinition,
         materializer: await deps.resolveMaterializer?.(input.project, caller) });
-      context.actorConsent = { ...actorConsentMatching(input), agentSteps: projected.agentSteps };
+      const childRevisions = await readChildWorkflowRevisions(source.definition);
+      context.actorConsent = { ...actorConsentMatching(input), agentSteps: projected.agentSteps,
+        ...(childRevisions === undefined ? {} : { childRevisions }) };
       const { prepareWorkflowApprovedOperation } = await import('./workflowRunActions.js');
       const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'approval.request.decide',
         input: Object.fromEntries(Object.entries(input.decisionInput).filter(([, value]) => value !== undefined)
