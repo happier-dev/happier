@@ -10339,7 +10339,7 @@ const enSession = {
         reasonApproval: 'Needs your approval in Inbox.',
         reasonSwitched: ({ from, to }: { from: string; to: string }) => `Switched from ${from} to ${to}.`,
         engineMixedUnavailable: 'Choose one agent first',
-        differsUnavailable: 'Differs between these sessions',
+        differsUnavailable: 'Sessions run on different machines',
         attachmentsUnavailable: 'Attachments go to one session at a time',
         linkedFilesUnavailable: 'Files link from one session’s folder',
         pluginUnavailable: 'Plugin controls work in one session at a time',

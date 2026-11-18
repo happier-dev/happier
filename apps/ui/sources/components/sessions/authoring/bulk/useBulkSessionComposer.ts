@@ -1,29 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ExistingSessionCapabilityDelta, ExistingSessionChangeSet } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
-import { SESSION_CAPABILITY_KINDS_V1, readSessionCapabilityOverrideV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { planExistingSessionChanges, type ExistingSessionChangePlan, type ExistingSessionPlanningTarget } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useComposerTextSelector, useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import { bulkChangeTargetKey, executeBulkSessionChanges, isBulkSessionRetryable, orderBulkSessionChangeRows, summarizeBulkSessionChanges, type BulkSessionChangeRow } from './executeBulkSessionChanges';
-
-// Bridge the current shared-selection chip until the screen wires its item callback.
-type PendingSelection = ExistingSessionChangeSet & Readonly<{ capabilitySelection?: SessionCapabilitySelectionV1 | null }>;
-
-function readCapabilityDelta(before: SessionCapabilitySelectionV1, after: SessionCapabilitySelectionV1): readonly ExistingSessionCapabilityDelta[] {
-    return SESSION_CAPABILITY_KINDS_V1.flatMap(kind => {
-        const ids = (value: SessionCapabilitySelectionV1) => kind === 'skill'
-            ? [...(value.skills?.forceIncludeSkillIds ?? []), ...(value.skills?.forceExcludeSkillIds ?? [])]
-            : kind === 'mcp_server'
-                ? [...(value.mcp?.forceIncludeServerIds ?? []), ...(value.mcp?.forceExcludeServerIds ?? [])]
-                : value.skills?.excludeNativeSkillNames ?? [];
-        return [...new Set([...ids(before), ...ids(after)])].flatMap(id => {
-            const state = readSessionCapabilityOverrideV1(after, kind, id);
-            return state === readSessionCapabilityOverrideV1(before, kind, id) ? [] : [{ kind, id, state }];
-        });
-    });
-}
 
 type Submission = Readonly<{ selection: ExistingSessionChangeSet; text: string; targets: readonly ExistingSessionPlanningTarget[];
     skippedTargets: ExistingSessionChangePlan['skippedTargets'] }>;
@@ -44,14 +26,11 @@ export function useBulkSessionComposer(input: Readonly<{
     const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching');
     const textStore = useComposerTextStore(() => input.initialText ?? '');
     const hasMessage = useComposerTextSelector(textStore, hasMessageText);
-    const [selection, setPendingSelection] = useState<PendingSelection>({});
-    const baselineCapabilitySelection = input.targets[0]?.capabilitySelection;
-    const setSelection = useCallback((next: PendingSelection) => {
-        setPendingSelection(previous => {
-            if (next.capabilitySelection === previous.capabilitySelection) return { ...next, capabilityDeltas: previous.capabilityDeltas };
-            return { ...next, capabilityDeltas: readCapabilityDelta(baselineCapabilitySelection ?? {}, next.capabilitySelection ?? {}) };
-        });
-    }, [baselineCapabilitySelection]);
+    const [selection, setPendingSelection] = useState<ExistingSessionChangeSet>({});
+    // Field edits replace the field selection; Skills/MCP item intent is owned by setCapabilityItem and kept.
+    const setSelection = useCallback((next: Omit<ExistingSessionChangeSet, 'capabilityDeltas'>) => {
+        setPendingSelection(previous => ({ ...next, ...(previous.capabilityDeltas ? { capabilityDeltas: previous.capabilityDeltas } : {}) }));
+    }, []);
     const setCapabilityItem = useCallback((delta: ExistingSessionCapabilityDelta) => {
         setPendingSelection(previous => ({
             ...previous,

@@ -7375,7 +7375,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     reasonApproval: "需要你在收件匣中核准。",
                     reasonSwitched: ({ from, to }: { from: string; to: string }) => `已從 ${from} 切換到 ${to}。`,
                     engineMixedUnavailable: "請先選擇一個代理程式",
-                    differsUnavailable: "這些工作階段之間不一致",
+                    differsUnavailable: "這些工作階段在不同的機器上執行",
                     attachmentsUnavailable: "附件一次只能傳送到一個工作階段",
                     linkedFilesUnavailable: "檔案從單一工作階段的資料夾連結",
                     pluginUnavailable: "外掛控制項一次只能用於一個工作階段",

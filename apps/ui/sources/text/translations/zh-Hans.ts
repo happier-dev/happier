@@ -8530,7 +8530,7 @@ export const zhHans: TranslationStructure = {
             reasonApproval: "需要你在收件箱中批准。",
             reasonSwitched: ({ from, to }: { from: string; to: string }) => `已从 ${from} 切换到 ${to}。`,
             engineMixedUnavailable: "请先选择一个智能体",
-            differsUnavailable: "这些会话之间不一致",
+            differsUnavailable: "这些会话在不同的机器上运行",
             attachmentsUnavailable: "附件一次只能发送到一个会话",
             linkedFilesUnavailable: "文件从单个会话的文件夹链接",
             pluginUnavailable: "插件控件一次只能用于一个会话",

@@ -9152,7 +9152,7 @@ localTailscale: {
               reasonApproval: "受信トレイで承認が必要です。",
               reasonSwitched: ({ from, to }: { from: string; to: string }) => `${from} から ${to} に切り替えました。`,
               engineMixedUnavailable: "先にエージェントを1つ選んでください",
-              differsUnavailable: "これらのセッションで異なります",
+              differsUnavailable: "セッションは別々のマシンで実行されています",
               attachmentsUnavailable: "添付は一度に1つのセッションにしか送れません",
               linkedFilesUnavailable: "ファイルは1つのセッションのフォルダからリンクします",
               pluginUnavailable: "プラグインの操作は一度に1つのセッションでのみ使えます",

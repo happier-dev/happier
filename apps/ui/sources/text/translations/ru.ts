@@ -9301,7 +9301,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
               reasonApproval: "Нужно ваше одобрение во «Входящих».",
               reasonSwitched: ({ from, to }: { from: string; to: string }) => `Переключено с ${from} на ${to}.`,
               engineMixedUnavailable: "Сначала выберите одного агента",
-              differsUnavailable: "Отличается в этих сессиях",
+              differsUnavailable: "Сессии работают на разных машинах",
               attachmentsUnavailable: "Вложения уходят в одну сессию за раз",
               linkedFilesUnavailable: "Файлы связываются из папки одной сессии",
               pluginUnavailable: "Элементы плагинов работают в одной сессии за раз",

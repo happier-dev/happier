@@ -37,6 +37,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { ExistingSessionCapabilityDelta, ExistingSessionChangeSet } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
 import { createUnavailablePluginComposerControlChip } from '@/components/plugins/actions/pluginContributedActionComposerChips';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { CrossSessionAuthoringControlTarget } from '@/components/sessions/authoring/controls/crossSessionAuthoringFieldControls';
@@ -278,7 +279,7 @@ function BulkSessionComposer(
   const capabilitiesChip = useBulkCapabilitiesChip({
     targets: controlTargets.targets,
     selection: composer.selection,
-    setSelection: composer.setSelection,
+    setCapabilityItem: composer.setCapabilityItem,
     agentSwitchingEnabled: composer.agentSwitchingEnabled,
     mixedLabel,
   });
@@ -488,8 +489,8 @@ function countSettingsTargets(
 
 type BulkChipInput = Readonly<{
   targets: readonly CrossSessionAuthoringControlTarget[] | null;
-  selection: WorkflowSessionAuthoringSelection;
-  setSelection: (selection: WorkflowSessionAuthoringSelection) => void;
+  selection: ExistingSessionChangeSet;
+  setSelection: (selection: ExistingSessionChangeSet) => void;
   agentSwitchingEnabled: boolean;
   mixedLabel: string;
 }>;
@@ -565,8 +566,10 @@ function useBulkAccountChip(
  * Skills/MCP: the existing draft sheet, previewed on the targets' one Machine. Offered only while every target
  * holds the same selection there (the cross-session owner decides); otherwise the + menu says why.
  */
-function useBulkCapabilitiesChip(input: BulkChipInput) {
-  const { targets, selection, setSelection, agentSwitchingEnabled, mixedLabel } = input;
+function useBulkCapabilitiesChip(
+  input: Omit<BulkChipInput, 'setSelection'> & Readonly<{ setCapabilityItem: (delta: ExistingSessionCapabilityDelta) => void }>,
+) {
+  const { targets, selection, setCapabilityItem, agentSwitchingEnabled, mixedLabel } = input;
   const model = useCrossSessionAuthoringFieldControl({
     field: 'capabilitySelection',
     targets: targets ?? NO_CONTROL_TARGETS,
@@ -575,16 +578,21 @@ function useBulkCapabilitiesChip(input: BulkChipInput) {
     mixedLabel,
   });
   const available = model.kind === 'mcp' ? model : null;
-  const onChange = useEventCallback((next: NonNullable<WorkflowSessionAuthoringSelection['capabilitySelection']>) => {
-    setSelection({ ...selection, capabilitySelection: next });
-  });
+  // Each target's own selection: the sheet reads Mixed where they differ, and an item edit reaches every target
+  // while keeping each one's other overrides (applied on Send).
+  const selections = React.useMemo(
+    () => (targets ?? NO_CONTROL_TARGETS).map((target) => target.values.capabilitySelection),
+    [targets],
+  );
   const chip = useSessionAuthoringCapabilitiesChip({
     agentId: available?.agentId ?? '',
     context: available?.context ?? INERT_MCP_CONTEXT,
-    value: selection.capabilitySelection !== undefined
-      ? selection.capabilitySelection
-      : (targets?.[0]?.values.capabilitySelection ?? null),
-    onChange,
+    itemEditing: {
+      selections,
+      deltas: selection.capabilityDeltas,
+      mixedLabel,
+      onChange: setCapabilityItem,
+    },
   });
   const reason = targets ? describeBulkControlUnavailable(model) : null;
   return React.useMemo(() => {

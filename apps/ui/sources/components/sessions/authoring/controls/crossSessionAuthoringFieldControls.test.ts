@@ -133,7 +133,7 @@ describe('Session-specific field intersection', () => {
         if (model.kind !== 'options') throw new Error('expected mode options');
         expect(model.options.some(option => option.id === model.selectedOptionId)).toBe(false);
     });
-    it('offers Skills/MCP for one Machine scope and shared selection, and says when targets differ', () => {
+    it('offers Skills/MCP for one Machine scope even when selections differ, and says when Machines differ', () => {
         const scoped = (machineId: string, directory: string, skills: string[] = []) => ({ ...target(),
             facts: { agentTargets, agentPickerContext: { machineId, serverId: 'home', directory: null }, machineName: 'devbox' },
             directory, values: { agentTarget: claude, capabilitySelection: skills.length
@@ -141,11 +141,9 @@ describe('Session-specific field intersection', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
             targets: [scoped('m1', '/repo/a'), scoped('m1', '/repo/b')] }))
             .toMatchObject({ kind: 'mcp', agentId: 'claude', context: { machineId: 'm1', directory: '/repo/a', machineName: 'devbox' } });
+        // Differing selections stay editable: item edits keep each target's other overrides.
         const differing = [scoped('m1', '/repo/a', ['pdf']), scoped('m1', '/repo/b')];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection', targets: differing }))
-            .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
-        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
-            targets: differing, capabilityEditing: 'items' }))
             .toMatchObject({ kind: 'mcp', context: { machineId: 'm1', serverId: 'home' } });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
             targets: [scoped('m1', '/repo/a'), scoped('m2', '/repo/a')] }))
