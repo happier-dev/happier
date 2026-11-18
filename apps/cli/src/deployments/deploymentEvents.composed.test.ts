@@ -326,6 +326,20 @@ describe('deployment receipt Events through canonical admission', () => {
         expect(f.execute.mock.calls).toEqual([['deployments.environments.get', { serverId: 'home', environmentId: 'env' },
             { signal: f.context.signal }]]);
     });
+    it('wakes an all-Environment source from a committed receipt invalidation', async () => {
+        const f = fixture();
+        const source = { ...definition('deployment-failed'), sourceConfig: { v: 1 as const, serverId: 'home', observingSince: 2 } };
+        f.sources([source]);
+        f.rows[0].settledAtMs = 1;
+        await f.cycle();
+        expect(f.admissions).toHaveLength(0);
+        f.rows[0].settledAtMs = 3;
+        await f.wake('env', f.rows[0].id);
+        await f.cycle();
+        expect(f.admissions).toHaveLength(1);
+        expect(f.admissions[0]).toMatchObject({ eventRef: { localId: 'deployment-failed' },
+            payload: { environmentId: 'env', deploymentId: 'failed', state: 'failed' } });
+    });
     it('excludes pre-enrollment settlements and preserves settlements after setup before adoption', async () => {
         const f = fixture();
         f.rows[0].settledAtMs = 1;

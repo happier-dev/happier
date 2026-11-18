@@ -45,6 +45,7 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
         input: [], result: { kind: 'text' } }] } },
     project: { machineId: observer.target.machineId, directory: observer.workspaceDir },
     trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity,
+      subject: { kind: 'environment', serverId: fixture.serverId, environmentId: deployInput.environmentId },
       sourceInstanceId: source.sourceInstanceId, sourceContractVersion: source.sourceContractVersion,
       sourceConfig: source.sourceConfig, displayLabel: source.displayLabel,
       observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: event.observationBinding.materializationRef },
@@ -62,7 +63,7 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   };
   expect(await runs()).toEqual([]);
   await docker.setActivationCommandFailure(true);
-  await actor.execute(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput,
+  await actor.executeReviewed(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput,
     { presentUserConfirmation: { actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1 } });
   await waitFor(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
     if (current.length !== 1) return false;

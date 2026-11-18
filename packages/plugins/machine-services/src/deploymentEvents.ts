@@ -51,23 +51,31 @@ const setupAction = (event: EventId) => ({
         const scope = setupSchema.parse(input);
         if (scope.previewChildren && event !== changedEvent) throw new PluginError({ code: 'deployment_target_unavailable' });
         let credentialPrincipal: DeploymentReceiptEventSourceConfigV1['credentialPrincipal'];
-        if (scope.targetLinkId && scope.environmentId !== undefined) {
-            const read = await context.services.actions.execute('deployments.observation.get', {
-                serverId: scope.serverId, environmentId: scope.environmentId, targetLinkId: scope.targetLinkId,
-            }, { signal: context.signal });
-            if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
-            if (read.environment.id !== scope.environmentId || read.environment.runtimeTargetLinkId !== scope.targetLinkId
-                || read.targetLink.id !== scope.targetLinkId || read.targetLink.role !== 'runtime' || read.targetLink.source.kind !== 'plugin') {
-                throw new PluginError({ code: 'deployment_target_unavailable' });
-            }
-            credentialPrincipal = read.credentialPrincipal;
-        } else if (scope.environmentId !== undefined) {
+        if (scope.environmentId !== undefined) {
             const read = await context.services.actions.execute('deployments.environments.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId,
             }, { signal: context.signal });
             if (!('ok' in read) || !read.ok || read.environment.id !== scope.environmentId) throw withActionFailureDiagnostic(new PluginError({
                 code: 'ok' in read && !read.ok ? read.error : 'deployment_unavailable', message: 'The selected Environment is unavailable.',
             }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
+            if (scope.targetLinkId) {
+                const targetLink = read.targetLinks.find(link => link.id === scope.targetLinkId);
+                if (read.environment.runtimeTargetLinkId !== scope.targetLinkId || !targetLink
+                    || targetLink.environmentId !== scope.environmentId || targetLink.role !== 'runtime') {
+                    throw new PluginError({ code: 'deployment_target_unavailable' });
+                }
+                // Native settlement comes from the receipt producer. Only a
+                // provider source needs retained observation credentials.
+                if (targetLink.targetKind !== 'ownServer') {
+                    const observation = await context.services.actions.execute('deployments.observation.get', {
+                        serverId: scope.serverId, environmentId: scope.environmentId, targetLinkId: scope.targetLinkId,
+                    }, { signal: context.signal });
+                    if (!('ok' in observation) || !observation.ok) throw withActionFailureDiagnostic(new PluginError({
+                        code: 'ok' in observation ? observation.error : 'deployment_unavailable',
+                    }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: observation });
+                    credentialPrincipal = observation.credentialPrincipal;
+                }
+            }
         }
         const config = configSchema.parse({ ...scope, observingSince: context.invokedAtMs,
             ...(credentialPrincipal ? { credentialPrincipal } : {}) });
@@ -278,7 +286,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 }
                 // Only the failed source drives finite platform observation. Its
                 // sibling outcome sources consume the receipt owner's invalidation.
-                if (source.targetLinkId && source.environmentId !== undefined && event === DEPLOYMENT_FAILED_EVENT) {
+                if (source.targetLinkId && source.credentialPrincipal && source.environmentId !== undefined && event === DEPLOYMENT_FAILED_EVENT) {
                     for (const [index, receipt] of receipts.entries()) {
                         if (receipt.environmentId !== source.environmentId || receipt.targetLinkId !== source.targetLinkId
                             || receipt.operation === 'teardown' || !inProgressStates.has(receipt.state)) {
@@ -362,39 +370,30 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             wakeSources = wake;
             updateAccountSubscription();
             const receipts = host.subscribe({ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' } }, async event => {
-                let nativeReceipt: Receipt | undefined;
-                let completionError: unknown;
-                try {
-                  if (completionContext) {
-                    const read = await completionContext.services.actions.execute('deployments.receipts.get', event.payload,
-                        { signal: completionContext.signal });
-                    if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({
-                        code: 'ok' in read ? read.error : 'deployment_unavailable',
-                    }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
-                    const receipt = { ...read.deployment, failureSummary: read.failureSummary };
-                    nativeReceipt = receipt;
-                    if (receipt.operation === 'deploy' && receipt.settledAtMs !== undefined) {
-                        for (const candidate of Object.keys(outcomes) as EventId[]) {
-                            if (!outcomes[candidate].completesActionIds || outcomes[candidate].state !== receipt.state
-                                || outcomes[candidate].operation !== null) continue;
-                            await admitNativeActionCompletionObservation(completionContext, projectReceiptObservation({
-                                receipt, event: candidate, serverId: event.payload.serverId, observationReceivedAt: now(),
-                                sourceInstanceId: `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.completion-source.v1',
-                                    [event.payload.serverId, receipt.environmentId, candidate])}`,
-                            }));
-                        }
-                    }
-                  }
-                } catch (error) { completionError = error; }
                 const entries = new Map<string, PendingReceipt>();
                 for (const [id, state] of states) if (state.config.serverId === event.payload.serverId
                     && (state.config.environmentId === undefined || state.config.environmentId === event.payload.environmentId || state.config.previewChildren)) {
-                    const entry = entries.get(state.config.serverId) ?? { environmentId: event.payload.environmentId,
-                        ...(nativeReceipt ? { receipt: nativeReceipt } : {}) };
+                    const entry = entries.get(state.config.serverId) ?? { environmentId: event.payload.environmentId };
                     entries.set(state.config.serverId, entry);
                     state.pending.set(event.payload.deploymentId, entry); await wake(id);
                 }
-                if (completionError !== undefined) throw completionError;
+                if (!completionContext) return;
+                const read = await completionContext.services.actions.execute('deployments.receipts.get', event.payload,
+                    { signal: completionContext.signal });
+                if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({
+                    code: 'ok' in read ? read.error : 'deployment_unavailable',
+                }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
+                const nativeReceipt: Receipt = { ...read.deployment, failureSummary: read.failureSummary };
+                if (nativeReceipt.operation !== 'deploy' || nativeReceipt.settledAtMs === undefined) return;
+                for (const candidate of Object.keys(outcomes) as EventId[]) {
+                    if (!outcomes[candidate].completesActionIds || outcomes[candidate].state !== nativeReceipt.state
+                        || outcomes[candidate].operation !== null) continue;
+                    await admitNativeActionCompletionObservation(completionContext, projectReceiptObservation({
+                        receipt: nativeReceipt, event: candidate, serverId: event.payload.serverId, observationReceivedAt: now(),
+                        sourceInstanceId: `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.completion-source.v1',
+                            [event.payload.serverId, nativeReceipt.environmentId, candidate])}`,
+                    }));
+                }
             });
             const reconnect = host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, async event => {
                 if (event.payload.reason !== 'reconnect') return;
