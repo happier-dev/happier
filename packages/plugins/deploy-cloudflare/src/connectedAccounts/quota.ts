@@ -4,13 +4,15 @@ import { CLOUDFLARE_API_ORIGIN, isCloudflareId, isObject } from './probe.js';
 
 type Quota = Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>;
 
+/**
+ * Subscription rate-plan ids Happier recognizes, by exact id, named with their product so the account-wide label
+ * never matches another product's plan (Workers Paid is not the Pages plan). Unconfirmed by a live capture until the
+ * release check "Vercel and Cloudflare account plan lines" (PLAN U4); any other id says nothing.
+ */
+const WORKERS_PLAN_LABELS: Readonly<Record<string, string>> = { workers_paid: 'Workers Paid' };
+
 function planLabel(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const id = value.trim().toLowerCase();
-  if (!id.includes('worker')) return null;
-  if (id.includes('paid') || id.includes('pro')) return 'Paid';
-  if (id.includes('free')) return 'Free';
-  return null;
+  return typeof value === 'string' && Object.hasOwn(WORKERS_PLAN_LABELS, value) ? WORKERS_PLAN_LABELS[value]! : null;
 }
 
 function parseBody(response: HttpResponse): unknown {
@@ -39,7 +41,7 @@ export async function readCloudflareQuota(context: ConnectedAccountReadContext):
   for (const subscription of subscriptions) {
     if (!isObject(subscription)) continue;
     const ratePlan = isObject(subscription.rate_plan) ? subscription.rate_plan : null;
-    const label = planLabel(ratePlan?.id) ?? planLabel(ratePlan?.public_name) ?? planLabel(subscription.name);
+    const label = planLabel(ratePlan?.id);
     if (label) return { observedAtMs, planLabel: label, limits: [] };
   }
   return { observedAtMs, planLabel: null, limits: [] };

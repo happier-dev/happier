@@ -35,8 +35,10 @@ export async function readVercelQuota(context: ConnectedAccountReadContext): Pro
   if (teamId === null) {
     const userResponse = await request(context, token, `${ORIGIN}/v2/user`);
     if (!userResponse || userResponse.status < 200 || userResponse.status >= 300) return { observedAtMs, planLabel: null, limits: [] };
-    const user = body(userResponse);
-    teamId = object(user) && typeof user.defaultTeamId === 'string' && user.defaultTeamId.trim().length > 0
+    // `GET /v2/user` answers `{ user: { defaultTeamId } }` (API reference; unconfirmed by a capture until the release check).
+    const envelope = body(userResponse);
+    const user = object(envelope) && object(envelope.user) ? envelope.user : null;
+    teamId = user && typeof user.defaultTeamId === 'string' && user.defaultTeamId.trim().length > 0
       ? user.defaultTeamId : null;
   }
   if (teamId === null) return { observedAtMs, planLabel: null, limits: [] };

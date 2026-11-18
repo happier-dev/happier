@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { connectedAccountRuntime } from './account.js';
+import { forbiddenResponse, personalUserResponse, teamId, teamResponse } from './fixtures/accountPlanResponses.js';
 
 const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' } as const;
-const teamId = 'team_example';
 
 function readContext(response: unknown, status = 200, values: { teamId?: string } = { teamId }, responseSequence?: readonly unknown[]): { context: ConnectedAccountReadContext; requests: string[] } {
   const requests: string[] = [];
@@ -29,21 +29,21 @@ function readContext(response: unknown, status = 200, values: { teamId?: string 
 
 describe('Vercel account plan quota', () => {
   it('maps a documented billing plan from the selected team response', async () => {
-    const { context, requests } = readContext({ id: teamId, name: 'Example', billing: { plan: 'pro' } });
+    const { context, requests } = readContext(teamResponse('pro'));
     const result = await connectedAccountRuntime.quota?.(context);
     expect(result).toMatchObject({ planLabel: 'Pro' });
     expect(requests).toEqual([`https://api.vercel.com/v2/teams/${teamId}`]);
   });
 
-  it('uses a personal account defaultTeamId only after the user response supplies it', async () => {
-    const { context, requests } = readContext({}, 200, {}, [{ defaultTeamId: teamId }, { id: teamId, billing: { plan: 'hobby' } }]);
+  it('uses a personal account defaultTeamId only after the documented user response supplies it', async () => {
+    const { context, requests } = readContext({}, 200, {}, [personalUserResponse, teamResponse('hobby')]);
     await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: 'Hobby' });
     expect(requests).toEqual(['https://api.vercel.com/v2/user', `https://api.vercel.com/v2/teams/${teamId}`]);
   });
 
   it.each([
-    { name: 'unmapped plan', body: { id: teamId, name: 'Example', billing: { plan: 'custom' } }, status: 200 },
-    { name: 'denied response', body: { error: { code: 'forbidden' } }, status: 403 },
+    { name: 'unmapped plan', body: teamResponse('custom'), status: 200 },
+    { name: 'denied response', body: forbiddenResponse, status: 403 },
   ])('returns no plan label for $name', async ({ body, status }) => {
     const { context } = readContext(body, status);
     await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ observedAtMs: 1_000, planLabel: null });

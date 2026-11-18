@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { cloudflareConnectedAccountRuntime, CLOUDFLARE_ACCOUNT_ID } from './runtime.js';
+import { billingDeniedResponse, subscriptionsResponse } from './fixtures/subscriptionsResponses.js';
 
 const accountId = 'a'.repeat(32);
 
@@ -24,15 +25,18 @@ function readContext(response: unknown, status = 200): { context: ConnectedAccou
 }
 
 describe('Cloudflare account plan quota', () => {
-  it('maps a Workers paid subscription', async () => {
-    const { context, requests } = readContext({ success: true, result: [{ rate_plan: { id: 'workers_paid' } }] });
-    await expect(cloudflareConnectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ observedAtMs: 2_000, planLabel: 'Paid' });
+  it('names an exactly recognized Workers subscription with its product, so it never reads as another product\u2019s plan', async () => {
+    const { context, requests } = readContext(subscriptionsResponse([{ rate_plan: { id: 'workers_paid', public_name: 'Workers Paid' } }]));
+    await expect(cloudflareConnectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ observedAtMs: 2_000, planLabel: 'Workers Paid' });
     expect(requests).toEqual([`https://api.cloudflare.com/client/v4/accounts/${accountId}/subscriptions`]);
   });
 
   it.each([
-    { name: 'unmapped subscription', body: { success: true, result: [{ rate_plan: { id: 'pages_free' } }] }, status: 200 },
-    { name: 'billing permission denied', body: { success: false, errors: [{ code: 10000 }] }, status: 403 },
+    { name: 'unmapped subscription', body: subscriptionsResponse([{ rate_plan: { id: 'pages_free' } }]), status: 200 },
+    // Only exact ids map: a look-alike id or a name that merely mentions Workers is not a plan Happier knows.
+    { name: 'look-alike plan id', body: subscriptionsResponse([{ rate_plan: { id: 'workers_paid_bundle' } }]), status: 200 },
+    { name: 'name mentioning workers', body: subscriptionsResponse([{ rate_plan: { id: 'enterprise', public_name: 'Pro Workers add-on' } }]), status: 200 },
+    { name: 'billing permission denied', body: billingDeniedResponse, status: 403 },
   ])('returns no plan label for $name', async ({ body, status }) => {
     const { context } = readContext(body, status);
     await expect(cloudflareConnectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ observedAtMs: 2_000, planLabel: null });
