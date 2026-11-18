@@ -2,6 +2,8 @@ import { BrowserEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
 import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
 import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
 import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { browserRecentsState } from '@/sync/domains/state/browserRecentsUiState';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import * as React from 'react';
 import {
     type BrowserContextCapabilities,
@@ -2737,6 +2739,11 @@ describe('BrowserSurfaceHost', () => {
     });
 
     it('opens launchpad targets through the reusable host when no external opener is supplied', async () => {
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
         const onViewTargetChange = vi.fn();
         const registeredUrl = 'https://preview.happier.test/current-registration';
         const resource: LocalServicePreviewResourceV1 = {
@@ -2811,6 +2818,7 @@ describe('BrowserSurfaceHost', () => {
     });
 
     it.each(['registered Session', 'unregistered Project'] as const)('opens the running Service preview for a localhost port typed in the toolbar address (%s)', async scope => {
+        replacePersistentUiStateForTest(browserRecentsState, {});
         const project = scope === 'unregistered Project';
         browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
             enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
@@ -2881,6 +2889,8 @@ describe('BrowserSurfaceHost', () => {
         });
         await vi.waitFor(() => expect(screen.findByType('iframe').props.src).toBe(registeredUrl));
         expect(opens).toEqual([]);
+        expect(browserRecentsState.read(serverAccountScopeKeySuffix(getActiveServerAccountScope()!)))
+            .toEqual([expect.objectContaining({ target: previewTarget })]);
     });
 
     it('opens desktop external URL launchpad rows through the reusable host with policy and native WebView context', async () => {

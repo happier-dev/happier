@@ -1,5 +1,7 @@
 import type {
     BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { rememberOpenedBrowserTarget } from '@/sync/domains/state/browserRecentsUiState';
 import { CheckoutReachabilityScope, useAnnouncedCheckoutMachine } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import type {
     BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
@@ -837,9 +839,9 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     // materializes / retargets the view in THIS host. This is the canonical current-tab seam the
     // launchpad/new-tab URL entry uses; it NEVER spawns a sibling workspace tab. Only EXTERNAL
     // surfaces (Services rows, session-header button) create a new tab via `props.onOpenTarget`.
-    const navigateCurrentTabInPlace = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
+    const navigateCurrentTabInPlace = React.useCallback(async (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
         const identity = resolveBrowserViewIdentityForTarget(target, { browserSessionId: props.browserSessionId });
-        return onCommand({
+        const result = await onCommand({
             kind: 'openView',
             commandId: `browser_command:${identity.viewId}:open:${Date.now()}`,
             ...identity,
@@ -850,8 +852,18 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             focus: true,
             ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}),
         });
+        const dispatched = result.ok ? BrowserCommandDispatchResultV1Schema.safeParse(result.result) : null;
+        const openedTarget = surfaceStateRef.current.browserState.viewsById[identity.viewId]?.target;
+        if (dispatched?.success && dispatched.data.status === 'dispatched' && openedTarget && browserActionAccountLifetime) {
+            // Address resolution may open a Service preview. A managed stream is its
+            // presentation identity; history reopens the requested page instead.
+            rememberOpenedBrowserTarget(browserActionAccountLifetime.scope,
+                openedTarget.kind === 'streamedBrowser' ? target : openedTarget);
+        }
+        return result;
     }, [
         onCommand,
+        browserActionAccountLifetime,
         props.browserSessionId,
         props.platform,
     ]);
