@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
+import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 
 /**
  * The one place a Workflow failure becomes something a person can read.
@@ -227,14 +228,24 @@ export function resolveWorkflowProblemPresentation(
     target?: Readonly<{ machineName?: string | null }>,
 ): WorkflowProblemPresentation {
     const problem = resolveWorkflowProblemCopy(error, scope);
-    if (problem.code === null) return problem;
+    const authorization = error instanceof WorkflowActionError
+        ? ExternalActionHttpErrorSchema.safeParse(error.rawDetails) : null;
+    const authorizationPhase = authorization?.success && 'authorizationRefusal' in authorization.data
+        ? authorization.data.authorizationRefusal : undefined;
+    const technicalCode = problem.code ?? (authorizationPhase && authorization?.success
+        ? 'code' in authorization.data ? authorization.data.code : authorization.data.error : null);
+    if (technicalCode === null) return problem;
     const failure = error instanceof WorkflowActionError ? error.failure : null;
     const details = failure && 'details' in failure ? failure.details : null;
     return { ...problem,
+        ...(authorizationPhase ? { message: t('session.startFailure.cause.permission_denied'),
+            repair: 'none', repairLabel: null } as const : {}),
         ...(problem.code === 'target_unavailable' && target?.machineName
             ? { message: `${target.machineName}: ${problem.message}` } : {}),
         technicalDetails: [
-        { key: 'code', label: t('workflows.run.technical.failureCode'), value: problem.code },
+        { key: 'code', label: t('workflows.run.technical.failureCode'), value: technicalCode },
+        ...(authorizationPhase ? [{ key: 'authorization-phase',
+            label: t('approvals.failureTechnicalLabels.causePhase'), value: authorizationPhase }] : []),
         ...(details && 'reason' in details && typeof details.reason === 'string'
             ? [{ key: 'reason', label: t('workflows.run.technical.failureCause'), value: details.reason }] : []),
     ] };

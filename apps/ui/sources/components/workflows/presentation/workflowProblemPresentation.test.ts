@@ -4,6 +4,7 @@ import { WORKFLOW_OPERATION_ERROR_CODES_V1 } from '@happier-dev/protocol/workflo
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from './workflowRunDisplayName';
@@ -61,6 +62,26 @@ describe('workflowProblemPresentation', () => {
         expect(presentation).toMatchObject({
             code, message,
             repair: 'none', repairLabel: null, accessibilitySemantics: 'alert',
+        });
+    });
+    it('distinguishes a refused authorization from failed sign-in and retains its technical phase', () => {
+        // The Move incident's closed HTTP refusal, projected by the real transport owner.
+        const projected = projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse({
+            error: 'invalid_token', authorizationRefusal: 'effect_family',
+        }));
+        const failure = WorkflowActionFailureV1Schema.safeParse(projected);
+        const error = new WorkflowActionError({ rawCode: projected.errorCode, message: projected.error,
+            ...(failure.success ? { failure: failure.data } : {}), rawDetails: projected.details });
+        expect(resolveWorkflowProblemPresentation(error)).toMatchObject({
+            code: 'invalid_token', message: 'session.startFailure.cause.permission_denied',
+            repair: 'none', repairLabel: null,
+            technicalDetails: [
+                { key: 'code', label: expect.any(String), value: 'invalid_token' },
+                { key: 'authorization-phase', label: expect.any(String), value: 'effect_family' },
+            ],
+        });
+        expect(resolveWorkflowProblemPresentation(actionError('invalid_token'))).toMatchObject({
+            code: 'invalid_token', message: 'errors.authenticationFailed',
         });
     });
     it('presents renewed approval as review rather than a storage retry', () => {
