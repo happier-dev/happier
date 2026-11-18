@@ -2262,57 +2262,53 @@ export async function bootstrapMachineSyncRuntime(
     let hasPendingMachineConnectionPublications = false;
     let machineConnectionPublicationsInFlight: Promise<void> | null = null;
     let pendingOrphanedSessions = params.orphanedDeadDaemonSessions ?? [];
-    const refreshMachineConnectionPublications = async (): Promise<void> => {
-      hasPendingMachineConnectionPublications = true;
+    const publishMachineConnectionState = async (): Promise<void> => {
+      // Registration retains incumbent state. Publish this daemon's lazy
+      // transfer declaration only once the Machine transport is connected.
+      await runMachineReconnectPhase('transfer-publication', () => params.attachTransferRuntimeStatePublisher(connectedApiMachine));
       if (params.isShuttingDown()) return;
-      if (machineConnectionPublicationsInFlight) {
-        await machineConnectionPublicationsInFlight;
-        if (hasPendingMachineConnectionPublications && !params.isShuttingDown()) {
-          return refreshMachineConnectionPublications();
+      await runMachineReconnectPhase('orphan-settlement', async () => {
+        // connect() starts the transport asynchronously. Settle dead markers only
+        // on this connected edge; retain failures for reconnect or handoff resume.
+        if (params.credentials) {
+          const discovered = await readOrphanedDeadPlainRunnerMarkers();
+          const knownPids = new Set(pendingOrphanedSessions.map(marker => marker.pid));
+          pendingOrphanedSessions = [...pendingOrphanedSessions, ...discovered.filter(marker => !knownPids.has(marker.pid))];
         }
-        return;
-      }
-
-      const operation = (async () => {
-        // Registration retains incumbent state. Publish this daemon's lazy
-        // transfer declaration only once the Machine transport is connected.
-        await runMachineReconnectPhase('transfer-publication', () => params.attachTransferRuntimeStatePublisher(connectedApiMachine));
-        if (params.isShuttingDown()) return;
-        await runMachineReconnectPhase('orphan-settlement', async () => {
-          // connect() starts the transport asynchronously. Settle dead markers only
-          // on this connected edge; retain failures for reconnect or handoff resume.
-          if (params.credentials) {
-            const discovered = await readOrphanedDeadPlainRunnerMarkers();
-            const knownPids = new Set(pendingOrphanedSessions.map(marker => marker.pid));
-            pendingOrphanedSessions = [...pendingOrphanedSessions, ...discovered.filter(marker => !knownPids.has(marker.pid))];
-          }
-          if (pendingOrphanedSessions.length > 0) {
-            pendingOrphanedSessions = await publishOrphanedStartupSessionEnds({
-              serverId: params.requesterServerId ?? configuration.activeServerId,
-              apiMachine: connectedApiMachine,
-              orphanedDeadDaemonSessions: pendingOrphanedSessions,
-              isSessionAlreadyRunning: params.isSessionAlreadyRunning,
-              ...(params.isSessionRespawnPending ? { isSessionRespawnPending: params.isSessionRespawnPending } : {}),
-              isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
-              ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
-                await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
-                  resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
-                  releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext });
-              } } : {}),
-            });
-          }
-        });
-        if (params.isShuttingDown()) return;
-        hasPendingMachineConnectionPublications = false;
-      })();
-      machineConnectionPublicationsInFlight = operation;
-      try {
-        return await operation;
-      } finally {
-        if (machineConnectionPublicationsInFlight === operation) {
+        if (pendingOrphanedSessions.length > 0) {
+          pendingOrphanedSessions = await publishOrphanedStartupSessionEnds({
+            serverId: params.requesterServerId ?? configuration.activeServerId,
+            apiMachine: connectedApiMachine,
+            orphanedDeadDaemonSessions: pendingOrphanedSessions,
+            isSessionAlreadyRunning: params.isSessionAlreadyRunning,
+            ...(params.isSessionRespawnPending ? { isSessionRespawnPending: params.isSessionRespawnPending } : {}),
+            isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
+            ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
+              await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
+                resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
+                releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext });
+            } } : {}),
+          });
+        }
+      });
+    };
+    const refreshMachineConnectionPublications = async (): Promise<void> => {
+      if (params.isShuttingDown()) return;
+      hasPendingMachineConnectionPublications = true;
+      if (machineConnectionPublicationsInFlight) return machineConnectionPublicationsInFlight;
+      machineConnectionPublicationsInFlight = (async () => {
+        try {
+          do {
+            // Consume only the edge that started this pass. Reconnects arriving
+            // during orphan settlement still need to publish on the new socket.
+            hasPendingMachineConnectionPublications = false;
+            await publishMachineConnectionState();
+          } while (hasPendingMachineConnectionPublications && !params.isShuttingDown());
+        } finally {
           machineConnectionPublicationsInFlight = null;
         }
-      }
+      })();
+      return machineConnectionPublicationsInFlight;
     };
     const refreshAccountSettingsAfterConnect = async (): Promise<void> => {
       if (params.isShuttingDown()) return;

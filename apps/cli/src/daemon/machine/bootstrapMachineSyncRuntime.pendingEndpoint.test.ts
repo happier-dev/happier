@@ -19,14 +19,19 @@ import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt, type Boot
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Pending recovery after Machine endpoint publication', () => {
-  it.each((['automation-read', 'transfer-ack', 'orphan-capture', 'admission-drain'] as const)
-    .flatMap(heldBoundary => (['connect', 'resume'] as const).map(entry => ({ heldBoundary, entry }))))(
+  it.each([
+    ...(['automation-read', 'transfer-ack', 'orphan-capture', 'admission-drain'] as const)
+      .flatMap(heldBoundary => (['connect', 'resume'] as const).map(entry => ({ heldBoundary, entry }))),
+    { heldBoundary: 'orphan-capture', entry: 'reconnect' } as const,
+  ])(
     'publishes the endpoint on $entry without waiting for $heldBoundary', async ({ heldBoundary, entry }) => {
     await withConfiguredDaemonTestHome({ prefix: 'endpoint-order-' }, async ({ homeDir }) => {
       const hold = createDeferred<void>();
       let boundaryEntered = false;
       let admissionQuiescing = false;
       let endpointWrites = 0;
+      let connectedSocket = 1;
+      let publishedTransferOnSocket: number | undefined;
       let onConnect: (() => void | Promise<void>) | undefined;
       const log = new Logger({ logFilePath: join(homeDir, 'reconnect.log'),
         allowDangerousRemoteLogging: false, pruneCurrentProcessLogs: false });
@@ -51,7 +56,9 @@ describe('Pending recovery after Machine endpoint publication', () => {
         updateDaemonState: async (reduce: Parameters<MachineClient['updateDaemonState']>[0]) => {
           const state = reduce({ status: 'running' });
           if (state?.transfer) {
+            if (entry === 'reconnect' && connectedSocket === 1) throw new Error('socket has been disconnected');
             if (heldBoundary === 'transfer-ack') { boundaryEntered = true; await hold.promise; }
+            publishedTransferOnSocket = connectedSocket;
           } else endpointWrites++;
           return 'published' as const;
         },
@@ -66,6 +73,7 @@ describe('Pending recovery after Machine endpoint publication', () => {
       };
       let runtime: Awaited<ReturnType<typeof bootstrapMachineSyncRuntime>> | undefined;
       let connecting: Promise<void> | undefined;
+      let reconnecting: Promise<void> | undefined;
       try {
         runtime = await bootstrapMachineSyncRuntime({ cliVersion: 'test', machineId: 'endpoint-machine',
           machine: { id: 'endpoint-machine', encryptionMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
@@ -88,12 +96,24 @@ describe('Pending recovery after Machine endpoint publication', () => {
         });
         if (!onConnect) throw new Error('Missing connected edge');
         admissionQuiescing = heldBoundary === 'admission-drain';
-        connecting = entry === 'connect' ? Promise.resolve(onConnect()) : runtime.resumeMachineConnectionPublications();
+        connecting = entry === 'resume' ? runtime.resumeMachineConnectionPublications() : Promise.resolve(onConnect());
         if (admissionQuiescing) await connecting;
         else await vi.waitFor(() => expect(boundaryEntered).toBe(true));
         // No unrelated HTTP read, transfer ACK or dead-runner settlement may
         // precede the broker's first endpoint publication on a connected Machine.
         expect(endpointWrites).toBe(1);
+        if (entry === 'reconnect') {
+          connectedSocket = 2;
+          reconnecting = Promise.resolve(onConnect());
+          await vi.waitFor(() => expect(endpointWrites).toBe(2));
+          // The second connected callback reaches the publication drain while
+          // the previous one is still waiting on the old runner's settlement.
+          await new Promise<void>(resolve => setImmediate(resolve));
+          hold.resolve();
+          await Promise.all([connecting, reconnecting]);
+          expect(publishedTransferOnSocket).toBe(2);
+          return;
+        }
         hold.resolve();
         await connecting;
         expect(endpointWrites).toBe(1);
@@ -107,7 +127,7 @@ describe('Pending recovery after Machine endpoint publication', () => {
               : admissionQuiescing && phase !== 'endpoint-publication' ? [] : ['entered', 'completed']);
         }
       } finally {
-        hold.resolve(); await connecting;
+        hold.resolve(); await Promise.all([connecting, reconnecting]);
         if (runtime) await retireMachineSyncRuntimeAttempt(runtime);
         restoreHttp(); await app.close(); restoreLogger();
       }
