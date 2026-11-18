@@ -17,6 +17,7 @@ import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAc
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationTriggerSummarySource } from './automationTypes';
+import { canProjectSharedAutomationTriggerSummary } from './automationActionIndex';
 import { resolveAutomationActionSubjectAccessInTx } from './automationActionReachAdmission';
 import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 
@@ -102,11 +103,8 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
         for (;;) {
           const candidates = await readCandidates(candidateCursor);
           if (candidates.length === 0) break;
-          // Subject selection must retain structurally matching foreign rows long
-          // enough to count readable-but-unshared references.  The admission
-          // filter below still keeps their summaries private.
           const scoped = candidates.filter(row => row.automation.accountId === params.accountId
-            || 'subject' in params);
+            || (canProjectSharedAutomationTriggerSummary(row.automation, row) && row.automation.workflowDefinitionId !== null));
           const visible = await readWorkflowSummaryArtifactAccessInTx(tx, { accountId: params.accountId,
             workflowDefinitionIds: [...new Set(scoped.flatMap(row => {
                 const ref = parseWorkflowDefinitionRefV1(row.automation.workflowDefinitionId);
