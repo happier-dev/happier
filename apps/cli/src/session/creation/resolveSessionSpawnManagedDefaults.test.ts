@@ -1,4 +1,4 @@
-import axios, { AxiosHeaders } from 'axios';
+import axios from 'axios';
 import nacl from 'tweetnacl';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -18,6 +18,8 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { configuration } from '@/configuration';
+import type { StoredCredentials } from '@/persistence';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connectedServiceBindings';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -238,14 +240,14 @@ describe('Session spawn defaults at admission', () => {
       const path = new URL(String(config.url)).pathname;
       reads.push(path);
       if (crossAccount) {
-        const headers = AxiosHeaders.from(config.headers);
-        expect(headers.has('Authorization')).toBe(false);
+        const headers = config.headers;
+        expect(Object.keys(headers ?? {}).map(name => name.toLowerCase())).not.toContain('authorization');
         expect(verifyExternalActionMachineRequestV1({ authorizationToken: 'admitted-root-proof',
           effectActionId: path === '/v1/teams/get' ? 'teams.get' : 'home.governance.get',
           target: { kind: 'machine', machineId: 'machine' }, installationId: 'installation',
           requestId: `defaults-${testCase.layer}`, method: String(config.method).toUpperCase(), path, body: config.data,
           publicKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).publicKey,
-          signature: String(headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER)) })).toBe(true);
+          signature: String(headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
       }
       if (path === '/v1/teams/get') {
         const projection = { ...team(), viewerJoinedAt: 1700000000000, hasSetup: true };
@@ -263,7 +265,7 @@ describe('Session spawn defaults at admission', () => {
     });
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/encryption')) {
-        expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
         return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       }
       if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
@@ -274,7 +276,7 @@ describe('Session spawn defaults at admission', () => {
       if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/project-rows/read')) {
         const key = { kind: 'project-session-defaults' as const, serverId: 'home', projectKey: 'personal-project' };
         expect(body).toEqual({ key });
-        expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
         const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
         return { status: 200, data: { status: 'present', row: { key, revision: 1, content: cipher.seal({ key, value: {
           permissionModeByAgentTargetKey: { [targetKey]: 'safe-yolo' }, modelByAgentTargetKey: { [targetKey]: model('personal-project-model') },
@@ -294,14 +296,15 @@ describe('Session spawn defaults at admission', () => {
     };
     vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => invokeNative(request.method));
     vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async request => invokeNative(request.method));
-    const params = { credentials: { token, encryption: null, credentialProvenance: 'stored_session' as const }, token, sessionId: '', mode: 'plain', ctx: null,
+    const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
+    const params = { credentials, token, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
       savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
         ...(testCase.layer === 'recovery' ? { readSourceSnapshot: () => null } : {}),
         serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
         snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
-          scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
+          scopeKey: resolveAccountSettingsScopeKeyForToken(token),
           connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
             value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: testCase.layer === 'muse' || testCase.layer === 'pool-default'
               ? [{ purpose: purpose.purpose, target: { kind: 'group', service, groupId: 'saved-codex-pool' } }]
@@ -397,7 +400,7 @@ describe('Session spawn defaults at admission', () => {
       : testCase.surface === 'voice' && voiceInput?.ok
       ? executor.execute('session.spawn_new', voiceInput.input, { surface: 'voice', authority: 'present_user',
         serverId: 'home', actionRequestId: 'voice-member-defaults', bypassApprovals: true })
-      : deps.sessionSpawnNew!({ ...input,
+      : deps.sessionSpawnNew!({ ...input, creationKey: input.creationKey,
       invokeAgentReadinessAction: (actionId, request) => executor.execute(actionId, request, { surface: 'cli',
         authority: 'present_user', serverId: 'home', bypassApprovals: true }), actionCaller: { kind: 'host' }, callerSurface: testCase.surface,
       sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: input.creationKey! }),
@@ -454,7 +457,8 @@ describe('Session spawn defaults at admission', () => {
         : { [serviceId]: { source: 'connected', profileId: testCase.layer === 'requester-project'
           ? 'member-account' : testCase.modelId.replace('-model', '-account') } };
     if (testCase.layer === 'muse' || testCase.layer === 'pool-default') {
-      const connectedBindings = Object.fromEntries(Object.entries(launched[0]?.connectedServices?.bindingsByServiceId ?? {})
+      const services = ConnectedServiceBindingsV2IngressSchema.parse(launched[0]?.connectedServices);
+      const connectedBindings = Object.fromEntries(Object.entries(services.bindingsByServiceId)
         .filter(([, binding]) => binding.source !== 'native'));
       expect(connectedBindings).toEqual(expectedBindings);
     } else {

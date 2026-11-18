@@ -1,4 +1,4 @@
-import axios, { AxiosHeaders } from 'axios';
+import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -31,14 +31,14 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
     const url = new URL(String(config.url));
     const path = url.pathname + url.search;
     reads.push(url.pathname);
-    const headers = AxiosHeaders.from(config.headers);
-    expect(headers.has('Authorization')).toBe(false);
+    const headers = config.headers;
+    expect(Object.keys(headers ?? {}).map(name => name.toLowerCase())).not.toContain('authorization');
     const effectActionId = url.pathname === '/v1/teams/get' ? 'teams.get'
       : url.pathname === '/v1/home/governance/get' ? 'home.governance.get' : 'projects.sources.read';
     expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId,
       target: authorization.binding.target, installationId: 'installed', requestId: 'birth',
       method: String(config.method).toUpperCase(), path, ...(config.data === undefined ? {} : { body: config.data }),
-      publicKey: keys.publicKey, signature: String(headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER)) })).toBe(true);
+      publicKey: keys.publicKey, signature: String(headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
     if (url.pathname === '/v1/projects/sources/selected') return { status: 200, data: { ok: true,
       source: { id: 'selected', name: 'Shared', revision: 1, owner: { kind: 'team', teamId: 'team' },
         audience: [], createdByAccountId: 'owner' }, canManage: false,
