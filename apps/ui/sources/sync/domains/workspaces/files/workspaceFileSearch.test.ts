@@ -5,7 +5,7 @@ import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDi
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 const machineRipgrepMock = vi.fn();
-const machineFilesystemListDirectoryMock = vi.fn();
+const workspaceListDirectoryMock = vi.fn();
 let activeAccountLifetime: ReturnType<typeof createAccountLifetimeFixture> | null = null;
 
 function createAccountLifetimeFixture(accountId: string) {
@@ -48,8 +48,8 @@ vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({
     },
 }));
 
-vi.mock('@/sync/ops/machineFileBrowser', () => ({
-    machineFilesystemListDirectory: (...args: unknown[]) => machineFilesystemListDirectoryMock(...args),
+vi.mock('@/sync/ops/workspaceFileSystem/directoryBrowsing', () => ({
+    workspaceListDirectory: (...args: unknown[]) => workspaceListDirectoryMock(...args),
 }));
 
 const credentialHarness = createHomeGovernanceHarness();
@@ -93,8 +93,8 @@ describe('workspaceFileSearch', () => {
         // workspace dependency graph inside each test's execution budget.
         workspaceFileSearchCache.clearAll();
         machineRipgrepMock.mockReset();
-        machineFilesystemListDirectoryMock.mockReset();
-        machineFilesystemListDirectoryMock.mockResolvedValue({ ok: false });
+        workspaceListDirectoryMock.mockReset();
+        workspaceListDirectoryMock.mockResolvedValue({ success: false });
         activeAccountLifetime = null;
         await credentialHarness.reset();
         SCOPE_A.serverId = await credentialHarness.addHome({ name: 'Files A', serverUrl: 'https://files-a.test', accountId: 'account-a' });
@@ -136,7 +136,7 @@ describe('workspaceFileSearch', () => {
         });
         else {
             machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
-            machineFilesystemListDirectoryMock.mockResolvedValue({ ok: true, entries: paths.map(name => ({ name, type: 'file' })) });
+            workspaceListDirectoryMock.mockResolvedValue({ success: true, entries: paths.map(name => ({ name, type: 'file' })) });
         }
         const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
         const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'prmptMapper', resultType: 'file', includeCoverage: true });
@@ -501,7 +501,7 @@ describe('workspaceFileSearch', () => {
 
     it('throws a typed unavailable error only when ripgrep and directory traversal both fail', async () => {
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        machineFilesystemListDirectoryMock.mockResolvedValue({ ok: false });
+        workspaceListDirectoryMock.mockResolvedValue({ success: false });
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 }))
@@ -510,13 +510,13 @@ describe('workspaceFileSearch', () => {
 
     it('returns a successful empty result when directory traversal answers with an empty workspace', async () => {
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        machineFilesystemListDirectoryMock.mockResolvedValue({ ok: true, entries: [] });
+        workspaceListDirectoryMock.mockResolvedValue({ success: true, entries: [] });
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(1);
+        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(1);
     });
 
     it('returns a successful empty result from ripgrep without consulting traversal', async () => {
@@ -526,38 +526,38 @@ describe('workspaceFileSearch', () => {
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
-        expect(machineFilesystemListDirectoryMock).not.toHaveBeenCalled();
+        expect(workspaceListDirectoryMock).not.toHaveBeenCalled();
     });
 
     it('preserves a successful directory fallback when ripgrep is unavailable', async () => {
         activeAccountLifetime = createAccountLifetimeFixture('account-a');
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        machineFilesystemListDirectoryMock.mockResolvedValueOnce({
-            ok: true,
+        workspaceListDirectoryMock.mockResolvedValueOnce({
+            success: true,
             entries: [{ name: 'README.md', type: 'file' }],
         });
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: 'readme', limit: 50 }))
             .resolves.toEqual([expect.objectContaining({ fullPath: 'README.md', fileType: 'file' })]);
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
-            'm1',
-            { path: '/repo', includeFiles: true },
-            expect.objectContaining({ serverId: SCOPE_A.serverId, accountId: 'account-a' }),
+        expect(workspaceListDirectoryMock).toHaveBeenCalledWith(
+            SCOPE_A,
+            '',
+            expect.objectContaining({ accountId: 'account-a' }),
         );
     });
 
     it.each(['refused', 'thrown'] as const)('retains readable siblings and marks fallback coverage partial after a %s child read', async failure => {
         machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
-        machineFilesystemListDirectoryMock.mockImplementation(async (_machineId: string, input: Readonly<{ path: string }>) => {
-            if (input.path === '/repo') return { ok: true, entries: [
+        workspaceListDirectoryMock.mockImplementation(async (_scope: typeof SCOPE_A, directory: string) => {
+            if (directory === '') return { success: true, entries: [
                 { name: 'unreadable', type: 'directory' }, { name: 'readable', type: 'directory' },
             ] };
-            if (input.path === '/repo/unreadable') {
+            if (directory === 'unreadable') {
                 if (failure === 'thrown') throw new Error('Directory read failed');
-                return { ok: false, errorCode: 'permission_denied' };
+                return { success: false, errorCode: 'permission_denied' };
             }
-            return { ok: true, entries: [{ name: 'keep.ts', type: 'file' }] };
+            return { success: true, entries: [{ name: 'keep.ts', type: 'file' }] };
         });
         const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
         const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: '', includeCoverage: true });
@@ -599,15 +599,15 @@ describe('workspaceFileSearch', () => {
         );
 
         machineRipgrepMock.mockResolvedValueOnce({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        machineFilesystemListDirectoryMock
+        workspaceListDirectoryMock
             .mockResolvedValueOnce({
-                ok: true,
+                success: true,
                 entries: [
                     { name: '.git', type: 'directory' },
                     { name: '.github', type: 'directory' },
                 ],
             })
-            .mockResolvedValueOnce({ ok: true, entries: [{ name: 'ci.yml', type: 'file' }] });
+            .mockResolvedValueOnce({ success: true, entries: [{ name: 'ci.yml', type: 'file' }] });
         const hiddenFallback = await mod.searchWorkspaceFiles({
             scope: { ...SCOPE_A, rootPath: '/fallback' },
             query: 'ci',
@@ -615,7 +615,7 @@ describe('workspaceFileSearch', () => {
             resultType: 'file',
         });
         expect(hiddenFallback).toEqual([expect.objectContaining({ fullPath: '.github/ci.yml' })]);
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
     });
 
     /**

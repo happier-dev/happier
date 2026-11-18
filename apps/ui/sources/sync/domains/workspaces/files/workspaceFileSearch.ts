@@ -5,7 +5,7 @@ import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/server
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
+import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { machineWorkspaceFileList, type MachineWorkspaceFileListErrorCode } from '@/sync/ops/machineWorkspaceFileList';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createWorkspaceFileSearchIndex, rankFileSearchResults, type WorkspaceFileSearchIndex } from './workspaceFileSearchMatcher';
@@ -344,14 +344,6 @@ async function buildFileItemsFromRipgrepGlob(
     return { files: buildFileItemsFromPaths(res.paths), truncated: res.truncated };
 }
 
-function joinPathAbsolute(rootPath: string, directoryPath: string): string {
-    const root = rootPath.replace(/\/+$/g, '');
-    const rel = directoryPath.replace(/^\/+/g, '');
-    if (!root) return rel;
-    if (!rel) return root;
-    return `${root}/${rel}`;
-}
-
 async function buildFileItemsFromDirectoryFallback(
     input: WorkspaceScopeBase,
     accountId: string | null,
@@ -367,33 +359,28 @@ async function buildFileItemsFromDirectoryFallback(
     while (queue.length > 0) {
         throwIfWorkspaceFileSearchAborted(signal);
         const directoryPath = queue.shift() ?? '';
-        const absPath = joinPathAbsolute(input.rootPath, directoryPath);
-        let response: Awaited<ReturnType<typeof machineFilesystemListDirectory>> | undefined;
+        let response: Awaited<ReturnType<typeof workspaceListDirectory>>;
         try {
-            response = await machineFilesystemListDirectory(
-                input.machineId,
-                { path: absPath, includeFiles: true },
-                {
-                    serverId: input.serverId,
-                    callerContext,
-                    ...(accountId ? { accountId } : {}),
-                    ...(signal ? { signal } : {}),
-                },
-            );
+            response = await workspaceListDirectory(input, directoryPath, {
+                callerContext,
+                ...(accountId ? { accountId } : {}),
+                ...(signal ? { signal } : {}),
+            });
         } catch (error) {
             if (signal?.aborted) throw error;
             truncated = true;
             continue;
         }
         throwIfWorkspaceFileSearchAborted(signal);
-        if (!response.ok && response.errorCode === 'filesystem_identity_custody_unavailable') {
+        if (!response.success && response.errorCode === 'filesystem_identity_custody_unavailable') {
             throw new WorkspaceFileSearchUnavailableError(response.errorCode, response.details);
         }
-        if (!response.ok || !Array.isArray(response.entries)) {
+        if (!response.success || !Array.isArray(response.entries)) {
             truncated = true;
             continue;
         }
         answered = true;
+        truncated ||= response.truncated === true;
 
         for (const entry of response.entries) {
             throwIfWorkspaceFileSearchAborted(signal);

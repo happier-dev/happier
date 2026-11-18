@@ -658,6 +658,17 @@ describe('shared workspace filesystem Action admission', () => {
         })]);
     });
 
+    it('addresses the repository tree at the workspace root through the admitted directory Action', async () => {
+        const { listWorkspaceRepositoryDirectoryEntries } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
+        filesystem.response = { success: true, entries: [{ name: 'guest-only.txt', type: 'file', gitIgnored: false }],
+            gitIgnoreAvailable: true };
+        const result = await listWorkspaceRepositoryDirectoryEntries({ scope: target, directoryPath: 'src' });
+        expect(filesystem.calls).toEqual([expect.objectContaining({
+            method: 'listDirectory', payload: { rootPath: '/repo', path: '/repo/src', includeGitIgnore: true },
+        })]);
+        expect(result).toMatchObject({ ok: true, entries: [{ name: 'guest-only.txt', gitIgnored: false }] });
+    });
+
     it('routes bounded directory reads through the same Action policy choke point', async () => {
         filesystem.response = { success: true, entries: [] };
         expect(await workspaceListDirectory(target, 'src')).toEqual({ success: true, entries: [] });

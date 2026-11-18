@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const machineFilesystemListDirectoryMock = vi.fn();
+const workspaceListDirectoryMock = vi.fn();
 
-vi.mock('@/sync/ops/machineFileBrowser', () => ({
-    machineFilesystemListDirectory: (...args: unknown[]) => machineFilesystemListDirectoryMock(...args),
+vi.mock('@/sync/ops/workspaceFileSystem/directoryBrowsing', () => ({
+    workspaceListDirectory: (...args: unknown[]) => workspaceListDirectoryMock(...args),
 }));
 
 /**
@@ -17,12 +17,12 @@ const SCOPE_B = { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' } as 
 describe('workspaceRepositoryDirectory', () => {
     beforeEach(() => {
         vi.resetModules();
-        machineFilesystemListDirectoryMock.mockReset();
+        workspaceListDirectoryMock.mockReset();
     });
 
     it('caches directory entries by workspace scope + directoryPath, and lists through that scope\'s server', async () => {
-        machineFilesystemListDirectoryMock.mockResolvedValue({
-            ok: true,
+        workspaceListDirectoryMock.mockResolvedValue({
+            success: true,
             path: '/repo',
             truncated: false,
             entries: [
@@ -52,17 +52,17 @@ describe('workspaceRepositoryDirectory', () => {
         });
         expect(res2.ok).toBe(true);
 
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
         // Each read went out on the server its own scope names — the entry cannot be filed
         // under one server while being read through another.
-        const serverIds = machineFilesystemListDirectoryMock.mock.calls
-            .map((call) => (call[2] as Readonly<{ serverId?: string | null }> | undefined)?.serverId);
+        const serverIds = workspaceListDirectoryMock.mock.calls
+            .map(([scope]) => (scope as Readonly<{ serverId: string }>).serverId);
         expect(serverIds).toEqual(['server-a', 'server-b']);
     });
 
     it('clears cached entries for a workspace', async () => {
-        machineFilesystemListDirectoryMock.mockResolvedValue({
-            ok: true,
+        workspaceListDirectoryMock.mockResolvedValue({
+            success: true,
             path: '/repo',
             truncated: false,
             entries: [
@@ -76,7 +76,7 @@ describe('workspaceRepositoryDirectory', () => {
             scope: SCOPE_A,
             directoryPath: '',
         });
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(1);
+        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(1);
 
         // The key-addressed clear must name the same entry the scope-addressed warm filled;
         // both go through `tryBuildWorkspaceCacheKey`, and this is where that agreement holds.
@@ -89,7 +89,7 @@ describe('workspaceRepositoryDirectory', () => {
             scope: SCOPE_A,
             directoryPath: '',
         });
-        expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
     });
 
     it('prunes cached descendants when a refreshed parent no longer contains their directory', async () => {
@@ -100,7 +100,7 @@ describe('workspaceRepositoryDirectory', () => {
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src', entries: [{ name: 'old.ts', type: 'file' }] });
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src/deep', entries: [{ name: 'stale.ts', type: 'file' }] });
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src-other', entries: [{ name: 'keep.ts', type: 'file' }] });
-        machineFilesystemListDirectoryMock.mockResolvedValue({ ok: true, path: '/repo', entries: [] });
+        workspaceListDirectoryMock.mockResolvedValue({ success: true, path: '/repo', entries: [] });
         await mod.listWorkspaceRepositoryDirectoryEntries({ scope: SCOPE_A, directoryPath: '' });
         expect(mod.getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src' })).toBeNull();
         expect(mod.getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src/deep' })).toBeNull();
@@ -111,7 +111,7 @@ describe('workspaceRepositoryDirectory', () => {
 
 describe('workspace directory Git ignore metadata', () => {
     it('preserves classification through the canonical workspace cache', async () => {
-        machineFilesystemListDirectoryMock.mockReset().mockResolvedValue({ ok: true, path: '/repo', truncated: false, gitIgnoreAvailable: true,
+        workspaceListDirectoryMock.mockReset().mockResolvedValue({ success: true, path: '/repo', truncated: false, gitIgnoreAvailable: true,
             entries: [{ name: 'node_modules', path: '/repo/node_modules', type: 'directory', gitIgnored: true }, { name: '.env.example', path: '/repo/.env.example', type: 'file', gitIgnored: false }],
         });
         const mod = await import('./workspaceRepositoryDirectory');
@@ -121,7 +121,7 @@ describe('workspace directory Git ignore metadata', () => {
         expect(await mod.warmWorkspaceRepositoryDirectoryCache(input)).toEqual(result);
     });
     it('keeps old daemon entries unclassified and visible', async () => {
-        machineFilesystemListDirectoryMock.mockReset().mockResolvedValue({ ok: true, path: '/repo', truncated: false,
+        workspaceListDirectoryMock.mockReset().mockResolvedValue({ success: true, path: '/repo', truncated: false,
             entries: [{ name: 'node_modules', path: '/repo/node_modules', type: 'directory' }],
         });
         const mod = await import('./workspaceRepositoryDirectory');
@@ -132,7 +132,7 @@ describe('workspace directory Git ignore metadata', () => {
 describe('workspace directory cache across an Account change on one Home', () => {
     const scope = { serverId: 'account-change-tree', machineId: 'shared-machine', rootPath: '/repo' } as const;
     const location = { serverUrl: 'https://account-change-tree', serverId: scope.serverId };
-    const response = (name: string) => ({ ok: true, path: '/repo', truncated: false, entries: [{ name, path: `/repo/${name}`, type: 'file' }] });
+    const response = (name: string) => ({ success: true, path: '/repo', truncated: false, entries: [{ name, path: `/repo/${name}`, type: 'file' }] });
 
     async function signIn(accountId: string) {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -147,17 +147,17 @@ describe('workspace directory cache across an Account change on one Home', () =>
         const { subscribeWorkspaceRepositoryDirectoryRevision } = await import('./workspaceRepositoryDirectoryRevision');
         const workspaceCacheKey = tryBuildWorkspaceCacheKey(scope)!;
         await signIn('tree-account-a');
-        machineFilesystemListDirectoryMock.mockReset();
-        machineFilesystemListDirectoryMock.mockResolvedValueOnce(response('a-private.txt'));
+        workspaceListDirectoryMock.mockReset();
+        workspaceListDirectoryMock.mockResolvedValueOnce(response('a-private.txt'));
         await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath: '' });
         expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })?.[0]?.name).toBe('a-private.txt');
 
         const woken = vi.fn();
         const stop = subscribeWorkspaceRepositoryDirectoryRevision(workspaceCacheKey, woken);
         let settleHeld = (_value: unknown) => {};
-        machineFilesystemListDirectoryMock.mockImplementationOnce(() => new Promise(resolve => { settleHeld = resolve; }));
+        workspaceListDirectoryMock.mockImplementationOnce(() => new Promise(resolve => { settleHeld = resolve; }));
         const held = warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath: 'src' });
-        await vi.waitFor(() => expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2));
 
         await signIn('tree-account-b');
         expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })).toBeNull();

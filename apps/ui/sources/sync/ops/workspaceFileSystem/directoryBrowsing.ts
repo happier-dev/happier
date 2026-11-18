@@ -47,26 +47,20 @@ export async function workspaceCreateDirectory(
     }
 }
 
-export type WorkspaceDirectoryEntry = Readonly<{
-    name: string;
-    type: 'file' | 'directory' | 'other';
-    size?: number;
-    modified?: number;
-}>;
-
 export type WorkspaceListDirectoryResponse =
-    | Readonly<{ success: true; entries: WorkspaceDirectoryEntry[] }>
+    | Extract<ReturnType<typeof FilesystemListDirectoryOutputSchema.parse>, { success: true }>
     | WorkspaceFileSystemFailure;
 
 export async function workspaceListDirectory(
     target: WorkspaceFileSystemTarget,
     path: string,
-    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
+    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext; accountId?: string; includeGitIgnore?: boolean }>,
 ): Promise<WorkspaceListDirectoryResponse> {
     try {
         const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.listDirectory', {
             rootPath: target.rootPath,
             path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
+            ...(options?.includeGitIgnore === undefined ? {} : { includeGitIgnore: options.includeGitIgnore }),
         }, options);
         if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
         const response = FilesystemListDirectoryOutputSchema.safeParse(result.result);

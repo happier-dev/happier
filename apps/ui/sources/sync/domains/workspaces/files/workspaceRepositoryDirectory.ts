@@ -1,4 +1,4 @@
-import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
+import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { readHomeAccountDepartures, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     sortRepositoryDirectoryEntries,
@@ -21,14 +21,6 @@ export {
     getCachedWorkspaceRepositoryGitIgnoreAvailable,
     setCachedWorkspaceRepositoryDirectoryEntries,
 } from './workspaceRepositoryDirectoryCache';
-
-function joinPathAbsolute(rootPath: string, directoryPath: string): string {
-    const root = rootPath.replace(/\/+$/g, '');
-    const rel = directoryPath.replace(/^\/+/g, '');
-    if (!root) return rel;
-    if (!rel) return root;
-    return `${root}/${rel}`;
-}
 
 function getCacheKey(workspaceCacheKey: string, directoryPath: string): string {
     return `${workspaceCacheKey}:${directoryPath}`;
@@ -112,22 +104,11 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     const workspaceCacheKey = tryBuildWorkspaceCacheKey(input.scope);
     if (!workspaceCacheKey) return { ok: false, error: 'unknown_error' };
 
-    // The RAW scope path, never the normalized one: `normalizeFileSystemPath` lowercases
-    // Windows drive and UNC paths, and this is the daemon's `path` argument.
-    const absPath = joinPathAbsolute(input.scope.rootPath, input.directoryPath);
     const departures = captureDirectoryReadDepartures(input.scope.serverId);
-    const response = await machineFilesystemListDirectory(
-        input.scope.machineId,
-        {
-            path: absPath,
-            includeFiles: true,
-            includeGitIgnore: true,
-        },
-        { serverId: input.scope.serverId, signal: input.signal },
-    );
+    const response = await workspaceListDirectory(input.scope, input.directoryPath, { signal: input.signal, includeGitIgnore: true });
     input.signal?.throwIfAborted();
     if (departures !== readHomeAccountDepartures(input.scope.serverId)) return { ok: false, error: 'unknown_error' };
-    if (!response.ok) {
+    if (!response.success) {
         return { ok: false, error: response.error || 'unknown_error' };
     }
 
