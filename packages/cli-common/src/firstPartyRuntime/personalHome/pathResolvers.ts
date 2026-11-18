@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { posix, win32 } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 
 import { expandHomeDirPath } from '../../path/expandHomeDirPath.js';
 
@@ -87,4 +87,13 @@ function readFileUrlPath(databaseUrl: string, platform: NodeJS.Platform): string
     if (value.startsWith('//')) return value.replace(/^\/+/u, '/');
     return value;
   }
+}
+
+/**
+ * The record where a Stack shared-database consumer server keeps its own Home identity, under
+ * its light data directory. The server writes it; Stack readiness and profile reconciliation read
+ * it to recognize the identity their own server minted, without importing server internals.
+ */
+export function resolveServerIdentityRecordPath(dataDir: string): string {
+  return join(dataDir, 'runtime', 'server.identity');
 }

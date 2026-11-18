@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import {
     publishPersonalHomeFileNoClobberDurably,
@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { SERVER_IDENTITY_ID_PATTERN } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
-import { isSharedDatabaseConsumer, resolveServerPrivateRuntimeDir } from "@/config/sharedDatabaseConsumer";
+import { isSharedDatabaseConsumer, resolveServerIdentityRecordPathFromEnv } from "@/config/sharedDatabaseConsumer";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
@@ -136,11 +136,11 @@ function createFileServerIdentityStore(path: string): ServerIdentityStore {
 
 function resolveServerIdentityStore(env: NodeJS.ProcessEnv): ServerIdentityStore {
     if (!isSharedDatabaseConsumer(env)) return databaseServerIdentityStore;
-    const runtimeDir = resolveServerPrivateRuntimeDir(env);
-    if (!runtimeDir) {
+    const recordPath = resolveServerIdentityRecordPathFromEnv(env);
+    if (!recordPath) {
         throw new Error("A shared-database consumer needs HAPPIER_SERVER_LIGHT_DATA_DIR for its own Home identity");
     }
-    return createFileServerIdentityStore(join(runtimeDir, "server.identity"));
+    return createFileServerIdentityStore(recordPath);
 }
 
 async function readPersistedServerIdentityId(reader: Pick<Tx, "simpleCache"> = db): Promise<string | null> {

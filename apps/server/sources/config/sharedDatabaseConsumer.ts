@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { resolveManagedServerLightPathEnvValue } from '@happier-dev/cli-common/firstPartyRuntime/server';
+import { resolveManagedServerLightPathEnvValue, resolveServerIdentityRecordPath } from '@happier-dev/cli-common/firstPartyRuntime/server';
 
 /**
  * A Stack shared-database consumer (a QA stack on its source stack's database) shares rows
@@ -11,12 +11,22 @@ export function isSharedDatabaseConsumer(env: NodeJS.ProcessEnv): boolean {
     return Boolean(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK?.trim());
 }
 
-/** The server's private runtime directory under its light data directory; null when none is configured. */
-export function resolveServerPrivateRuntimeDir(env: NodeJS.ProcessEnv): string | null {
-    const dataDir = resolveManagedServerLightPathEnvValue(
+function resolveServerLightDataDir(env: NodeJS.ProcessEnv): string {
+    return resolveManagedServerLightPathEnvValue(
         env,
         'HAPPIER_SERVER_LIGHT_DATA_DIR',
         'HAPPY_SERVER_LIGHT_DATA_DIR',
     ).trim();
+}
+
+/** The server's private runtime directory under its light data directory; null when none is configured. */
+export function resolveServerPrivateRuntimeDir(env: NodeJS.ProcessEnv): string | null {
+    const dataDir = resolveServerLightDataDir(env);
     return dataDir ? join(dataDir, 'runtime') : null;
+}
+
+/** Where a shared-database consumer keeps its own Home identity; null without a light data directory. */
+export function resolveServerIdentityRecordPathFromEnv(env: NodeJS.ProcessEnv): string | null {
+    const dataDir = resolveServerLightDataDir(env);
+    return dataDir ? resolveServerIdentityRecordPath(dataDir) : null;
 }

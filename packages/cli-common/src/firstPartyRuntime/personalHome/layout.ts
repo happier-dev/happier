@@ -11,6 +11,8 @@ import {
   resolvePersonalHomeSqliteDatabasePath,
 } from './pathResolvers.js';
 
+export { resolveServerIdentityRecordPath } from './pathResolvers.js';
+
 export type PersonalHomeRuntimeLayout = Readonly<{
   installRoot: string;
   configDir: string;

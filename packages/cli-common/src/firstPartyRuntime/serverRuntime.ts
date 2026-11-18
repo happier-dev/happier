@@ -20,6 +20,7 @@ export type { PersonalHomeRuntimeLayout } from './personalHome/layout.js';
 export {
     resolveManagedServerLightPathEnvValue,
     resolvePersonalHomePrivateFilesDir,
+    resolveServerIdentityRecordPath,
 } from './personalHome/pathResolvers.js';
 export { publishPersonalHomeFileNoClobberDurably, replacePersonalHomeFileDurably } from './personalHome/durableFile.js';
 export {
