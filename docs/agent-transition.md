@@ -88,11 +88,13 @@ choice; cutover uses the existing V2 intent writer and Team slot-binding owner. 
 set. Older strict readers reject the canonical field rather than silently dropping its source.
 `input` extends the ordinary user-message send request with a
 **required** `localId` when present. Ordinary composer continuations retain that exact first input.
-In current 0.3 development, settings-only bulk compose omits `input`: the coordinator stops the
-source and commits the target selection and divider without admitting a message or starting an
-empty runtime. Its correlation identity comes from the existing admitted Action request id;
-with-input transitions retain the submitted message's `localId` instead. Retrying settings-only
-cutover under that same Action request id reconciles its existing divider.
+In unreleased 0.3, the [existing-Session planner](#existing-session-field-application)
+omits `input` from bulk Compose transitions. The coordinator stops the source and commits the target
+selection and divider without admitting a message or starting an empty runtime. If the person
+submitted text, the planner schedules delivery as a later `session.message.send` stage for that
+same Session. An input-free transition uses the admitted Action request id as its correlation
+identity. Retrying that cutover under the same id reconciles its existing divider. A transition with
+input uses the submitted message's `localId`.
 
 This settings-only form requires matching 0.3 Protocol and daemon readers. The prospective 0.2
 frontier still requires input on its raw transition RPC and does not expose the admitted
@@ -755,6 +757,21 @@ only while the Account/server lifetime and the same local permission selection r
 newer different local selection stays pending. The existing metadata writer rechecks that guard while
 acquiring and publishing the owner tuple; best-effort publication does not delay arm cleanup or turn
 an already admitted message into a rejection.
+
+### Existing-Session field application
+
+In unreleased 0.3, Protocol owns the field-application map in
+`existingSessionFieldApplication.ts`. It describes whether a field travels
+with the message, through a settings Action or through a same-Session
+transition, and identifies fields available only for new Sessions. Workflow
+reuse applies its own policy to the shared map and input builders.
+
+`planExistingSessionChanges` turns pending edits into ordered stages grouped
+by Action and operands. Capability edits carry one Skill or MCP server item
+per Action and preserve other overrides. An Agent switch runs before the
+message stage. A target that fails a stage or has a non-accepted transition
+is filtered out of later stages. The planner returns intent and skipped
+targets. The [Action executor](actions.md) owns admission and effects.
 
 ## Compatibility
 

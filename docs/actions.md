@@ -389,18 +389,31 @@ operand and one/many cardinality through `sessionTarget`. The shared
 `session.message.send` and `session.status.get` consume self, manager, workers
 (direct or recursive), siblings, Followers, Following, Discussion participants,
 matching filters, and explicit `{selector:'sessions', addresses:[{serverId, sessionId}, ...]}`
-selections; `session.open` requires exactly one result. Explicit selections must
-be nonempty, are deduplicated by Home and Session, and resolve each address
-through the exact-reference admission owner before any effect.
+selections. `session.open` requires exactly one result. The `sessions` arm is
+appended last to `SessionTargetSelectorV1Schema` for stored Collection schema
+widening. Explicit selections must be nonempty. The schema deduplicates by Home
+and Session, and the exact-reference admission owner resolves every address
+before any effect. The UI Account executor admits addresses from its own Home,
+so callers submitting to several Homes must dispatch separately per Home.
+
+Session settings Actions used by bulk Compose declare `sessionId` with
+`cardinality: 'many'`. They include `session.permission_mode.set`,
+`session.model.set`, `session.mode.set`, `session.config_option.set`,
+`session.connected_services_auth.set`, `session.capabilities.set` and
+`session.agent.transition`. The declaration lets the same executor resolve and
+fan out those operands with the ordinary Action policies. See
+[existing-Session field application](agent-transition.md#existing-session-field-application)
+for how Compose plans those operations.
 
 Fan-out runs concurrently across Machines and in selection order within each
 Machine, using the Machine id in the authorized Session status projection.
 If any target has unknown Machine placement, its whole Home runs sequentially.
 The executor preserves positional child request ids and selection-ordered final
-results. Hosts can pass `context.onSessionTargetResult` to receive each completed
-`{actionId, position, target, result}` immediately, including typed failures and
-cancellations; this in-process sink is not Action input or a plugin Host Event.
-Hosts can update result rows from these completions without another execution loop or polling.
+results. Hosts can pass `context.onSessionTargetResult` to receive the executor's
+per-target progress event `{actionId, position, target, result}` as each target
+settles, including typed failures and cancellations. The in-process callback
+lets hosts update result rows directly and is separate from the Action input
+and plugin Host Event contracts.
 Plain Session IDs retain their existing result shape. Group sends/status reads
 return each target's outcome. Native participant recipients remain separate
 inside-Session routing identities.
