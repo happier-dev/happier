@@ -1,8 +1,6 @@
 import type * as React from 'react';
 import type { ProviderPriceFactV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
-// Price text has one owner (deploy auto-mode U3); the Machines surfaces read it from there.
-export { formatPriceSource, formatPriceUnit, formatProviderAmount, presentManagedCost } from '@/components/ui/presentation/providerCostPresentation';
 import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedProvisionerReadiness } from './managedProvisionerReadiness';

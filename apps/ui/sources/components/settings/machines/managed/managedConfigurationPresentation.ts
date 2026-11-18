@@ -13,9 +13,7 @@ import { describeManagedSize as describeSharedManagedSize, managedSizeDimensions
     type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 export { formatManagedSizeBytes } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
-import { countryFlag, presentManagedCost, type ManagedReceiptCost } from './managedMachineDisplay';
-import { presentManagedPresetCost } from '@/components/ui/presentation/providerCostPresentation';
-export { presentManagedPresetCost } from '@/components/ui/presentation/providerCostPresentation';
+import { countryFlag, type ManagedReceiptCost } from './managedMachineDisplay';
 import type { ManagedLocalResourceFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { BillingCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';

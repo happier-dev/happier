@@ -12,7 +12,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { useAgentSignInTargets } from '@/components/settings/connectedServices/defaults/useAgentSignInTargets';
 import { buildManagedConfigurationReceipt } from '@/components/settings/machines/managed/managedConfigurationPresentation';
-import { presentManagedCost } from '@/components/settings/machines/managed/managedMachineDisplay';
+import { presentManagedCost } from '@/components/ui/presentation/providerCostPresentation';
 import { ManagedMachineConfigurator } from '@/components/settings/machines/managed/ManagedMachineConfigurator';
 import {
   describeKeepCosts,

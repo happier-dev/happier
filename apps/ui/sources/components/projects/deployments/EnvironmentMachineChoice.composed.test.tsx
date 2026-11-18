@@ -29,7 +29,7 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { SoftwareInputFields } = await import('@/components/store/StoreSoftwareInputs');
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
-const { DEPLOY_HOST_DOCKER_ITEM } = await import('./EnvironmentMachineChoice');
+const { DEPLOY_HOST_DOCKER_ITEM } = await import('@happier-dev/protocol/deployments/deployHostReadiness');
 
 it('says a ready Machine is ready to host deploys in its Where card (journey-deploy whereM)', async () => {
   const serverId = await homes.addHome({ name: 'Host ready', serverUrl: 'https://deploy-host-ready-card.test',

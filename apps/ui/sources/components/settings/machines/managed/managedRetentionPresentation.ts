@@ -9,7 +9,8 @@ import { describeRetention as describeSharedRetention, formatRetentionDuration a
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { formatPriceUnit, formatProviderAmount, type ProviderPrice } from './managedMachineDisplay';
+import { type ProviderPrice } from './managedMachineDisplay';
+import { formatPriceUnit, formatProviderAmount } from '@/components/ui/presentation/providerCostPresentation';
 
 /**
  * Words and choices for the one Keep it / wake control (plans 51/52). Policy resolution stays in the

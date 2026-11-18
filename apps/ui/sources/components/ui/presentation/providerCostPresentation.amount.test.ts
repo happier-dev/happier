@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatProviderAmount } from './managedMachineDisplay';
+import { formatProviderAmount } from './providerCostPresentation';
 
 describe('provider amount presentation', () => {
   it('rounds a provider’s raw decimal to the currency, keeping honest digits for a tiny hourly rate', () => {

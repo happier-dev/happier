@@ -91,7 +91,8 @@ import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refr
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { describeKeepCosts, describeRetentionConsequence } from './managedRetentionPresentation';
 import { useAgentSignInTargets } from '@/components/settings/connectedServices/defaults/useAgentSignInTargets';
-import { countryName, formatProviderAmount, formatPriceUnit, presentManagedCost } from './managedMachineDisplay';
+import { countryName } from './managedMachineDisplay';
+import { formatProviderAmount, formatPriceUnit, presentManagedCost } from '@/components/ui/presentation/providerCostPresentation';
 import { ManagedImagePreview, useManagedImagePreviews } from './useManagedImagePreviews';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup, ManagedNetworkGroup } from './ManagedChoiceSections';

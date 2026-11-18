@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, describeManagedPresetOffer, formatManagedSizeBytes, describeLocalHeadroom, managedCredentialReceiptTargets, presentManagedPresetCost } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, describeManagedPresetOffer, formatManagedSizeBytes, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
-import { formatPriceSource, presentManagedCost } from './managedMachineDisplay';
+import { formatPriceSource, presentManagedCost, presentManagedPresetCost } from '@/components/ui/presentation/providerCostPresentation';
 import { describeRetention, describeRetentionPolicy, formatRetentionDuration } from './managedRetentionPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';

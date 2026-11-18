@@ -132,7 +132,7 @@ describe('MachineConfigurationReceipt', () => {
 
   it('leads with one hero price, says the same machine\'s monthly price as a sentence, and names one source once', async () => {
     const { t } = await import('@/text');
-    const { formatProviderAmount } = await import('./managedMachineDisplay');
+    const { formatProviderAmount } = await import('@/components/ui/presentation/providerCostPresentation');
     const observedAt = Date.UTC(2026, 9, 8, 10, 40);
     const screen = await renderReceipt({ cost: { kind: 'price', provider: 'Hetzner', prices: [
       { amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'https://api.hetzner.cloud/v1/server_types', observedAt },

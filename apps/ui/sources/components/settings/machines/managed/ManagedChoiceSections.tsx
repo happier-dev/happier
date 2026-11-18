@@ -20,9 +20,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+import { formatPriceUnit } from '@/components/ui/presentation/providerCostPresentation';
 import {
   countryFlag,
-  formatPriceUnit,
   managedImageLabel,
   type ManagedImageOption,
   type ManagedLocationOption,

@@ -9,8 +9,6 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { DEPLOY_HOST_DOCKER_ITEM, readDeployHostRecipe, readDeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
-export { DEPLOY_HOST_DOCKER_ITEM, readDeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
-export type { DeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
 
 const frontDoor = createFrontDoorActionExecute();
 const HOST_RECIPE_SECTIONS = Object.freeze(['familiesById.machineRecipes']);

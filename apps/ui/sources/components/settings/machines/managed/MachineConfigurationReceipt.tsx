@@ -22,13 +22,10 @@ import {
   type ManagedMachineKeepControlProps,
 } from './ManagedMachineKeepControl';
 import {
-  formatPriceSource,
-  formatPriceUnit,
-  formatProviderAmount,
-  presentManagedCost,
   type ManagedReceiptCost,
   type ManagedReceiptFact,
 } from './managedMachineDisplay';
+import { formatPriceSource, formatPriceUnit, formatProviderAmount, presentManagedCost } from '@/components/ui/presentation/providerCostPresentation';
 
 export type ManagedReceiptAction = Readonly<{
   label: string;

@@ -762,8 +762,9 @@ export const DeploymentEnvironmentDraft = React.memo(
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}
-          {/* Unknown readiness opens the Machine setup owner; a confirmed setup need can review its recipe here. */}
-          {!onPlatform && chosen && ((host.setup && !host.prepared) || (!host.setup && host.readiness === 'unknown')) ? (
+          {/* Unknown readiness opens the Machine setup owner; a confirmed setup need can review its recipe here.
+              A Machine that is not answering is unknown because of that cause, which its own notice already says. */}
+          {!onPlatform && chosen && ((host.setup && !host.prepared) || (!host.setup && host.readiness === 'unknown' && !awayMachine)) ? (
             <AttentionBanner
               testID={host.readiness === 'needsSetup' ? 'project-deployments.draft.hostNeedsSetup' : 'project-deployments.draft.hostUnchecked'}
               tone="warning"

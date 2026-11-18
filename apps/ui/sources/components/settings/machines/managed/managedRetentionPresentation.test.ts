@@ -11,7 +11,7 @@ import {
   describeArchiveChoiceConsequence,
   keepOffersWake,
 } from './managedRetentionPresentation';
-import { formatPriceUnit, formatProviderAmount } from './managedMachineDisplay';
+import { formatPriceUnit, formatProviderAmount } from '@/components/ui/presentation/providerCostPresentation';
 
 const HOUR = 3_600_000;
 
