@@ -17,8 +17,6 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { CollectionTitleButton } from '@/components/ui/lists/collection/CollectionTitleButton';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -165,10 +163,9 @@ export function ArtifactsBrowser(props: Readonly<{
         [artifacts, filter, props.folders]);
     const counts = React.useMemo(() => countArtifactBrowserKinds(artifacts), [artifacts]);
     const total = React.useMemo(() => [...counts.values()].reduce((sum, count) => sum + count, 0), [counts]);
-    // The count line counts what the chosen kinds list (a search narrows the rows, not the count); the library's own
-    // total still decides the first visit and the storage meter.
-    const listed = React.useMemo(() => projectArtifactBrowserRows(artifacts, { query: '', kind, sort: 'updated_desc' })
-        .map((row) => row.artifact), [artifacts, kind]);
+    // The count line counts what the page lists: the chosen kinds, narrowed by a search (WAVE-ACCEPT-1118D: never
+    // "1 artifact" above "No artifacts match"). The library's own total still decides the first visit and the meter.
+    const listed = React.useMemo(() => rows.map((row) => row.artifact), [rows]);
     const savedToday = React.useMemo(() => countSavedToday(listed, Date.now()), [listed]);
 
     const besidePage = useDetailsPaneAvailable();
@@ -225,8 +222,6 @@ export function ArtifactsBrowser(props: Readonly<{
                 reservePresent={!loaded && !loadFailed}
                 create={create}
                 search={search}
-                // A phone's title opens the library's choices (kind and order), as every main screen's title does.
-                titleFilters={phoneLayout && !firstVisit ? { kind, onKindChange: setBrowserKind, counts, sort, onSortChange: setSort } : null}
                 // A phone's view switch sits with the count, below the choices (lab A1p keeps the search a full row).
                 viewSwitch={firstVisit ? null : viewSwitch}
                 toolbar={firstVisit ? null : (
@@ -442,7 +437,6 @@ function BrowserHeader(props: Readonly<{
     create: PageCreateAction;
     /** The title row's magnifier and its field; absent while the library is empty (nothing to search yet). */
     search: MainScreenSearch | null;
-    titleFilters: ArtifactTitleFiltersProps | null;
     /** A phone shows the Grid | List | Folders switch on the line with the count. */
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
@@ -461,12 +455,11 @@ function BrowserHeader(props: Readonly<{
     const meter = props.showPresent && props.usage !== null && limit !== null
         ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null;
     return (
-        // The main-screen head (owner 11-11): the title opens the library's choices on a phone, its row ends with the
-        // magnifier and the "+" (the bar's "+" runs the same action); the chips sit right under it, the count line last.
+        // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
+        // same action); the kind and order chips sit right under it on every width (owner O5), the count line last.
         <MainScreenHeader
             testID="artifacts:header"
             title={t('artifacts.title')}
-            titleControl={props.titleFilters ? <ArtifactTitleFilters {...props.titleFilters} /> : undefined}
             alwaysShowTitle
             description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
             details={phone ? undefined : meter ?? undefined}
@@ -562,72 +555,6 @@ function readArtifactKind(id: unknown): ArtifactBrowserKindFilter {
 
 function readArtifactSort(id: string): ArtifactBrowserSort {
     return SORTS.find((candidate) => candidate === id) ?? 'updated_desc';
-}
-
-type ArtifactTitleFiltersProps = Readonly<{
-    kind: ArtifactBrowserKindFilter;
-    onKindChange: (kind: ArtifactBrowserKindFilter) => void;
-    counts: ReadonlyMap<ArtifactBrowserKind, number>;
-    sort: ArtifactBrowserSort;
-    onSortChange: (sort: ArtifactBrowserSort) => void;
-}>;
-
-const KIND_ITEM_PREFIX = 'kind:';
-const SORT_ITEM_PREFIX = 'sort:';
-
-/** A phone's title: "Artifacts ⌄" opens the library's choices, the same kind and order the toolbar's chips set. */
-function ArtifactTitleFilters(props: ArtifactTitleFiltersProps) {
-    const [open, setOpen] = React.useState(false);
-    const kindOptions = useArtifactKindOptions(props.counts, props.kind);
-    const items = React.useMemo<readonly DropdownMenuItem[]>(() => [
-        ...kindOptions.map((option): DropdownMenuItem => ({
-            id: `${KIND_ITEM_PREFIX}${option.id}`,
-            testID: `artifacts:title-menu:kind:${option.id}`,
-            title: option.label,
-            ...('icon' in option ? { icon: option.icon } : {}),
-            checked: option.id === props.kind,
-            category: 'kind',
-        })),
-        ...SORTS.map((candidate): DropdownMenuItem => ({
-            id: `${SORT_ITEM_PREFIX}${candidate}`,
-            testID: `artifacts:title-menu:sort:${candidate}`,
-            title: sortLabel(candidate),
-            checked: candidate === props.sort,
-            category: 'sort',
-        })),
-    ], [kindOptions, props.kind, props.sort]);
-    const { onKindChange, onSortChange } = props;
-    const select = React.useCallback((itemId: string) => {
-        setOpen(false);
-        if (itemId.startsWith(KIND_ITEM_PREFIX)) onKindChange(readArtifactKind(itemId.slice(KIND_ITEM_PREFIX.length)));
-        else if (itemId.startsWith(SORT_ITEM_PREFIX)) onSortChange(readArtifactSort(itemId.slice(SORT_ITEM_PREFIX.length)));
-    }, [onKindChange, onSortChange]);
-    return (
-        <DropdownMenu
-            open={open}
-            onOpenChange={setOpen}
-            items={items}
-            onSelect={select}
-            variant="slim"
-            search={false}
-            separateCategories
-            matchTriggerWidth={false}
-            popoverPortalWebTarget="body"
-            placement="bottom"
-            popoverAnchorAlign="start"
-            popoverAccessibilityLabel={t('artifacts.title')}
-            trigger={({ toggle }) => (
-                <CollectionTitleButton
-                    testID="artifacts:title"
-                    label={t('artifacts.title')}
-                    accessibilityLabel={t('artifacts.title')}
-                    expanded={open}
-                    hasPopup="menu"
-                    onPress={toggle}
-                />
-            )}
-        />
-    );
 }
 
 function BrowserToolbar(props: Readonly<{

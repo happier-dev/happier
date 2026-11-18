@@ -4,7 +4,6 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createArtifactListHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
@@ -710,6 +709,11 @@ describe('Artifacts browser recovery', () => {
         expect(reopened.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
         expect(reopened.findHostByTestId('artifacts:row:prompt')).not.toBeNull();
         expect(reopened.findHostByTestId('artifacts:row:doc')).toBeNull();
+        // The count follows the query: it counts the two matches, and says nothing above a line that finds none.
+        expect(reopened.getTextContent()).toContain('artifacts.countPlural(count=2)');
+        await act(async () => { invokeTestInstanceHandler(reopened.findHostByTestId('artifacts:search'), 'onChangeText', 'zzz'); });
+        expect(reopened.findByTestId('artifacts:noMatch')).not.toBeNull();
+        expect(reopened.getTextContent()).not.toMatch(/artifacts\.count(Singular|Plural)/);
     });
 
     it('says what the page keeps when everything lives elsewhere and shows every kind on request', async () => {
@@ -799,7 +803,7 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findByTestId('artifacts:header:count')).not.toBeNull();
     });
 
-    it('opens the phone title\'s filters: a kind chosen there narrows the library as the kind chip does', async () => {
+    it('keeps the kind and order chips on a phone, as on a desktop, and no second copy of them in the title (owner O5)', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
@@ -807,7 +811,9 @@ describe('Artifacts browser recovery', () => {
             pinnedInSessions: false, readsNeedsYou: false }, body: undefined, bodyVersion: undefined });
         const screen = await renderRows([artifactFixture('document'), board]);
         expect(screen.findHostByTestId('artifacts:row:document')).not.toBeNull();
-        await chooseDropdownMenuItem(screen, 'artifacts:title', 'kind:board');
+        expect(screen.findByTestId('artifacts:title')).toBeNull();
+        expect(screen.findByTestId('artifacts:sort')).not.toBeNull();
+        await chooseKind(screen, 'board');
         expect(screen.findHostByTestId('artifacts:row:document')).toBeNull();
         expect(screen.findHostByTestId('artifacts:row:board')).not.toBeNull();
     });
