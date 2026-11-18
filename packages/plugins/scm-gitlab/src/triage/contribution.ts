@@ -313,7 +313,7 @@ type GitlabMutationActionDeclaration = Readonly<{
   title: string;
   description: string;
   scopes: readonly ['global'];
-  surfaces: readonly ['ui', 'agent', 'mcp', 'cli'];
+  surfaces: readonly ['ui', 'agent', 'mcp', 'cli', 'plugin'];
   placementBindings: readonly ['detailsPanel'];
   execution: typeof GITLAB_ACCOUNT_EXECUTION;
   dangerLevel: 'destructive' | 'externalSideEffect' | 'writesRemote';
