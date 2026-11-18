@@ -38,6 +38,7 @@ import { Text } from '@/components/ui/text/Text';
 import { BareSectionRowsContext, MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge } from './listPresentation';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
+import { SelectionListOptionPresentationContext } from '@/components/ui/selectionList/SelectionListOptionPresentationContext';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { SectionItemDensityProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { ITEM_ROW_PADDING_HORIZONTAL } from './itemDensityMetrics';
@@ -713,8 +714,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     if (floatingMenuSection) {
         return (
             <View testID={testID} style={[styles.menuSection, style]}>
+                {/* The title stands on the menu's one text edge, with its rows (HAPPIER_MENU_ROW_METRICS). */}
                 {props.header === 'none' ? null : typeof title === 'string'
-                    ? <SelectionListSectionHeader title={title} />
+                    ? <SelectionListOptionPresentationContext.Provider value="menu"><SelectionListSectionHeader title={title} /></SelectionListOptionPresentationContext.Provider>
                     : title ?? null}
                 <MenuSectionRowsContext.Provider value={true}>
                 <BareSectionRowsContext.Provider value={false}>

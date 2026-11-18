@@ -5,6 +5,7 @@ import { Typography } from '@/constants/Typography';
 import { SelectableRow } from './SelectableRow';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
+import { SelectionListOptionPresentationContext } from '@/components/ui/selectionList/SelectionListOptionPresentationContext';
 import { Text } from '@/components/ui/text/Text';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
@@ -58,8 +59,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     separator: {
         height: StyleSheet.hairlineWidth,
-        // Aligned with the rows' text, inside the menu inset.
-        marginHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
+        // Edge to edge like the rows it parts: popovers are full-bleed (MENU_ROW_METRICS, LAB-P8 r2).
+        marginHorizontal: 0,
         marginTop: -MENU_ROW_METRICS.sectionPaddingVerticalPx,
         backgroundColor: theme.colors.border.default,
     },
@@ -131,7 +132,12 @@ export function ActionListSection(props: {
         {props.separatorAbove ? <View style={styles.separator} /> : null}
         <View style={[styles.section, props.separatorAbove ? styles.sectionAfterSeparator : null, props.style]}>
             {/* One section label for popover menus: the list owner's, in the title's own case. */}
-            {props.title ? <SelectionListSectionHeader title={props.title} /> : null}
+            {/* A section title stands on the menu's one text edge, with its heading and rows. */}
+            {props.title ? (
+                <SelectionListOptionPresentationContext.Provider value="menu">
+                    <SelectionListSectionHeader title={props.title} />
+                </SelectionListOptionPresentationContext.Provider>
+            ) : null}
 
             {actions.map((action) => {
                 const { renderItem, ...item } = action;

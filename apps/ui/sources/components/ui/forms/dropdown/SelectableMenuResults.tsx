@@ -466,7 +466,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     categorySeparator: {
         height: StyleSheet.hairlineWidth,
-        marginHorizontal: theme.space.s12,
+        // Edge to edge like the rows it parts: popovers are full-bleed (MENU_ROW_METRICS).
+        marginHorizontal: 0,
         marginVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
         backgroundColor: theme.colors.border.subtle,
     },

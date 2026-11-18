@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SectionRowBleedContext, useSectionRowBleedStyle } from './bareRowBleed';
+import { MENU_ROW_METRICS } from './itemDensityMetrics';
+import { MenuSectionRowsContext } from './listPresentation';
 import { PAGE_LIST_METRICS } from './pageListMetrics';
 
 /**
@@ -21,10 +23,14 @@ export function SectionContentRow(props: Readonly<{
     testID?: string;
 }>) {
     const bleedStyle = useSectionRowBleedStyle();
+    // On a popover or menu (`ItemGroup`'s floating menu section) it stands on the menu's one text edge, with the
+    // menu's rows, and like them draws no divider unless asked.
+    const menuRow = React.useContext(MenuSectionRowsContext);
+    const showDivider = props.showDivider ?? !menuRow;
     const row = (
         <View
             testID={props.testID}
-            style={[styles.row, bleedStyle, props.continuesRow ? styles.continuesRow : null, props.showDivider !== false ? styles.divider : null]}
+            style={[styles.row, menuRow ? styles.menuRow : null, bleedStyle, props.continuesRow ? styles.continuesRow : null, showDivider ? styles.divider : null]}
         >
             {props.leading ? (
                 <View style={styles.leadingRow}>
@@ -43,6 +49,9 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
         paddingTop: PAGE_LIST_METRICS.rowPaddingVerticalPx + 2,
         paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx,
+    },
+    menuRow: {
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
     },
     leadingRow: {
         flexDirection: 'row',

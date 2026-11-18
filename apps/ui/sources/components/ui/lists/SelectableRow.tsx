@@ -120,8 +120,10 @@ const stylesheet = StyleSheet.create((theme) => {
     },
     rowMenu: {
         alignSelf: 'stretch',
-        // Whatever row variant a menu picks, its highlight is the menu's edge-to-edge fill (MENU_ROW_SHAPE).
+        // Whatever row variant a menu picks, its highlight is the menu's edge-to-edge fill (MENU_ROW_SHAPE),
+        // and its pitch is the menu's own (one transient-menu scale, whatever the list density).
         ...MENU_ROW_SHAPE,
+        paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
         marginVertical: 0,
         borderWidth: 0,
     },

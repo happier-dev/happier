@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { HAPPIER_MENU_ROW_METRICS, HAPPIER_MENU_ROW_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (
@@ -34,8 +35,10 @@ afterEach(() => standardCleanup());
 const LARGE = 50_000;
 const VIEWPORT = 400;
 const ROW = 36;
-// A row with a subtitle (every file row here) before it is measured: label, gap and subtitle lines plus padding.
-const SUBTITLED_ROW = 56;
+// A row with a subtitle (every file row here) before it is measured: label, gap and subtitle lines plus padding,
+// from the menu row owner.
+const SUBTITLED_ROW = 2 * HAPPIER_MENU_ROW_METRICS.paddingVerticalPx + HAPPIER_MENU_ROW_TEXT.label.lineHeight
+  + HAPPIER_MENU_ROW_METRICS.subtitleGapPx + HAPPIER_MENU_ROW_TEXT.subtitle.lineHeight;
 
 function files(count: number) {
   return Array.from({ length: count }, (_, index) => ({
@@ -224,7 +227,7 @@ describe('DropdownMenu with a very long list', () => {
     expect(above).toBeDefined();
     const unmountedAbove = 40000 - mountedRowIds(screen).filter((id) => Number(id.replace('file-', '')) < 40000).length;
     // A two-line row: label and subtitle lines, the gap between them and the row's vertical padding.
-    expect(above! / unmountedAbove).toBeCloseTo(56, 0);
+    expect(above! / unmountedAbove).toBeCloseTo(SUBTITLED_ROW, 0);
   }, 120_000);
 
   it('lets the person scroll away from the current choice without pulling them back to it', async () => {
