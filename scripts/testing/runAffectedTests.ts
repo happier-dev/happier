@@ -139,7 +139,8 @@ const CODE_FILE = /\.(?:[cm]?[jt]sx?)$/u;
  * the suite's own Vite resolver, aliases and stub plugins included, followed across workspaces
  * and stopping at node_modules. Only resolution runs, no transform, so the whole UI suite fits
  * where a related-mode walk ran out of heap. Inputs the graph cannot place widen to the whole
- * package: the config, the setup closure every test loads, a removed module, an unread asset.
+ * package: the import closures of the config and the setup files every test loads, a removed module,
+ * an unread asset.
  */
 export async function selectGraphUnitTests(params: Readonly<{
   rootDir: string; workspaceDir: string; config: string; changedFiles: readonly string[];
@@ -189,9 +190,13 @@ export async function selectGraphUnitTests(params: Readonly<{
         }
       }
     };
+    // Every test is selected, configured and set up through its config and the setup files, so their import
+    // closures are one "loaded by every test" set: a change there (shared tooling such as the feature-test
+    // gating or worker sizing that only apps/ui/vitest.config.ts imports) runs the whole package.
     const setupFiles = new Set<string>();
     for (const project of vitest.projects) {
-      const setup = project.config.setupFiles.map(file => resolve(project.config.root, file));
+      const configs = [...new Set([configPath, project.vite.config.configFile].filter((file): file is string => Boolean(file)))];
+      const setup = [...configs, ...project.config.setupFiles.map(file => resolve(project.config.root, file))];
       const before = new Set(visited);
       await walk(project, setup);
       for (const file of visited) if (!before.has(file)) setupFiles.add(file);
@@ -208,7 +213,7 @@ export async function selectGraphUnitTests(params: Readonly<{
       }
     }
     const setupHit = changed.find(file => setupFiles.has(resolve(params.rootDir, file)));
-    if (setupHit) return { full: true, reason: `${setupHit} is loaded by every test (setup closure: ${setupFiles.size} of ${visited.size} modules)` };
+    if (setupHit) return { full: true, reason: `${setupHit} is loaded by every test (config and setup closure: ${setupFiles.size} of ${visited.size} modules)` };
     const unplaced = own.find(file => !visited.has(resolve(params.rootDir, file)) && !CODE_FILE.test(file) && !/\.md$/iu.test(file));
     if (unplaced) return { full: true, reason: `${unplaced} is not in the import graph` };
     const tests = new Set(specifications.map(spec => spec.moduleId));

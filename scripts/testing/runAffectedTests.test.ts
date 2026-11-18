@@ -117,3 +117,26 @@ test('unit selection follows the real import graph out of the changed folder, an
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a change to a module only the Vitest config imports (shared tooling outside the package) runs the whole package', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'affected-unit-config-'));
+  try {
+    const put = async (path: string, content: string) => {
+      await mkdir(join(root, path, '..'), { recursive: true });
+      await writeFile(join(root, path), content);
+    };
+    // apps/ui/vitest.config.ts imports scripts/testing/{featureTestGating,vitestWorkers,testHomeEnvironment}; no test does.
+    await put('app/vitest.config.mjs', "import { include } from '../tooling/gating.mjs';\nexport default { test: { include } };");
+    await put('tooling/gating.mjs', "import { pattern } from './patterns.mjs';\nexport const include = [pattern];");
+    await put('tooling/patterns.mjs', "export const pattern = 'src/**/*.test.ts';");
+    await put('app/src/value.ts', 'export const value = 1;');
+    await put('app/src/value.test.ts', "import { value } from './value'; void value;");
+    const select = (changedFiles: string[]) => selectGraphUnitTests({ rootDir: root, workspaceDir: 'app', config: 'vitest.config.mjs', changedFiles });
+    for (const changed of ['tooling/gating.mjs', 'tooling/patterns.mjs']) {
+      assert.equal((await select([changed])).full, true, changed);
+    }
+    assert.deepEqual(await select(['app/src/value.ts']), { full: false, total: 1, files: ['app/src/value.test.ts'] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
