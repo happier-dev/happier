@@ -22,6 +22,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 
 installDisconnectedServerSocketBoundary();
 const transport = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 // Only the Machine network is replaced; credential binding, the Actions front door, the guard store and the rows run for real.
 vi.mock(
   '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
@@ -33,6 +34,8 @@ const { machineGuardStore } =
   await import('@/sync/domains/machines/guard/machineGuardStore');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { MachineActivityWidget } = await import('./MachineActivityWidget');
+const { Modal } = await import('@/modal');
+const { t } = await import('@/text');
 
 function machine(id: string, host: string): Machine {
   return createMachineFixture({
@@ -97,6 +100,7 @@ async function mount(
     bound: boolean;
     machines: Machine[];
     rpc: (method: string, payload: Record<string, unknown>) => unknown;
+    undoOff?: boolean;
   }>,
 ) {
   const serverId = await home.addHome({
@@ -108,11 +112,13 @@ async function mount(
   home.answer(serverId, '/v2/account/settings', {
     body: { content: { t: 'plain', v: {} }, version: 1 },
   });
+  if (options.undoOff) await home.setActionPolicy(serverId, 'machines.guard.activity.undo', 'ui', 'off');
   storage.setState({
     machines: {},
-    machineListByServerId: { [serverId]: options.machines },
-    machineListStatusByServerId: { [serverId]: 'idle' },
+    machineListByServerId: {},
+    machineListStatusByServerId: {},
   });
+  await publishTruthMachineInventory({ serverId, accountId: 'owner' }, options.machines);
   transport.rpc.mockImplementation(
     async ({
       method,
@@ -221,6 +227,25 @@ describe('MachineActivityWidget', () => {
     });
     await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-activity-e1')).not.toBeNull()); });
     expect(screen.findByTestId('machine-activity-e1-resume')).toBeNull();
+  });
+
+  it('explains a refused Resume and keeps the original Activity receipt', async () => {
+    const { screen } = await mount({
+      bound: true,
+      machines: [machine('m1', 'leeroy-mbp')],
+      undoOff: true,
+      rpc: method => method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST ? list([entry({})]) : undefined,
+    });
+    vi.mocked(Modal.alert).mockClear();
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('machine-activity-e1-resume')).not.toBeNull());
+      await screen.pressByTestIdAsync('machine-activity-e1-resume');
+      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
+        t('machineGuard.activity.title'), t('actionConfirmations.turnedOffUnnamedMessage'),
+      ));
+      expect(transport.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO)).toBe(false);
+      expect(screen.findByTestId('machine-activity-e1-resume')).not.toBeNull();
+    } finally { await screen.unmount(); }
   });
 
   it.each([false, true])('resumes a stopped session for a manager (shared: %s) and then shows what happened', async (isShared) => {

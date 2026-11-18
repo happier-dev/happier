@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { MachineGuardActivityRowV1, MachineGuardActivityWayBackV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
 import { undoMachineGuardActivityViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
 import { useMachineDaemonReadTarget } from '@/sync/domains/machines/useMachineDaemonReadTarget';
@@ -18,29 +19,27 @@ export function useGuardWayBack(input: Readonly<{ serverId: string; machineId: s
     pendingId: string | null;
     run: (entry: MachineGuardActivityRowV1, item: MachineGuardActivityWayBackV1) => void;
 }> {
-    const { key } = useMachineDaemonReadTarget(input);
+    const { key, accountBinding } = useMachineDaemonReadTarget(input);
     const [pendingId, setPendingId] = React.useState<string | null>(null);
     const run = React.useCallback((entry: MachineGuardActivityRowV1, item: MachineGuardActivityWayBackV1) => {
         setPendingId(`${entry.id}:${item.label}`);
         void (async () => {
-            let ok = false;
-            try {
-                if (isGuardRestoration(item)) {
-                    ok = (await undoMachineGuardActivityViaAction({ ...key, entryId: entry.id })).ok;
-                } else {
-                    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-                    const outcome = await createFrontDoorActionExecute()(item.actionId, item.input, {
+            const execution = isGuardRestoration(item)
+                ? undoMachineGuardActivityViaAction({ ...key, entryId: entry.id })
+                : import('@/sync/ops/actions/frontDoorRuntimeActionExecutor').then(({ createFrontDoorActionExecute }) =>
+                    createFrontDoorActionExecute()(item.actionId, item.input, {
                         surface: 'ui', ...(key.serverId ? { serverId: key.serverId } : {}),
                         ...(key.expectedAccountId ? { expectedAccountId: key.expectedAccountId } : {}),
-                    });
-                    ok = outcome.ok;
-                }
-            } finally {
+                    }));
+            const outcome = await execution.finally(() => {
                 setPendingId(null);
                 machineGuardStore.refreshMachine(key);
+            });
+            if (!outcome.ok && accountBinding?.isCurrent()) {
+                Modal.alert(t('machineGuard.activity.title'),
+                    resolveActionExecutionErrorMessage(outcome, t('machineGuard.activity.wayBackFailed')));
             }
-            if (!ok) Modal.alert(t('machineGuard.activity.title'), t('machineGuard.activity.wayBackFailed'));
         })();
-    }, [key]);
+    }, [accountBinding, key]);
     return { pendingId, run };
 }
