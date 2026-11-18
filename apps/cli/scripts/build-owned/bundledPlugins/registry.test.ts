@@ -4,8 +4,33 @@ import { renderCliBundledActionCliHelpAssets, renderCliBundledPluginManifestEntr
 import { projectActionCliHelpDeclaration } from '../../../src/cli/actions/commandHelp';
 import { actionCliCommandPattern, listCompiledActionCliCommands } from '../../../src/cli/actions/compiledCommands';
 import { loadActionCliPresentation } from '../../../src/cli/actions/commandPresentation';
+import { AGENT_DEFINITION as OH_MY_PI_DEFINITION } from '../../../../../packages/plugins/ohmypi/src/agent/definition';
+import { PLUGIN_MANIFEST as OH_MY_PI_MANIFEST } from '../../../../../packages/plugins/ohmypi/src/manifest';
 
 describe('bundled manifest locator publication', () => {
+  it('renders the same locator publication with and without authored Agent facts', () => {
+    const declaredAgent = OH_MY_PI_MANIFEST.contributes.agents?.[0];
+    expect(declaredAgent?.id).toBe('ohmypi');
+    expect(OH_MY_PI_DEFINITION.id).toBe('ohMyPi');
+    const plugin = {
+      pluginId: OH_MY_PI_MANIFEST.id,
+      pluginPackageId: 'ohmypi',
+      packageName: '@happier-dev/plugins-ohmypi',
+      packageVersion: '0.0.0',
+      manifest: OH_MY_PI_MANIFEST,
+    };
+
+    const fullScope = { pluginPackages: [{ ...plugin, agentId: OH_MY_PI_DEFINITION.id }] };
+    const daemonScope = { pluginPackages: [plugin] };
+    const published = renderCliBundledPluginManifestEntriesTs(fullScope);
+    const checked = renderCliBundledPluginManifestEntriesTs(daemonScope);
+
+    expect(published === checked, 'bundled command metadata must agree across scopes').toBe(true);
+    const publishedHelp = renderCliBundledActionCliHelpAssets(fullScope);
+    const checkedHelp = renderCliBundledActionCliHelpAssets(daemonScope);
+    expect(JSON.stringify(publishedHelp) === JSON.stringify(checkedHelp), 'bundled CLI help assets must agree across scopes').toBe(true);
+  });
+
   it('publishes demand-only help from the same canonical compiled models', async () => {
     const assets = renderCliBundledActionCliHelpAssets({ pluginPackages: [] });
     const help = assets.find((asset) => asset.relativePath.endsWith('generatedBundledActionCliHelp.ts'))!;

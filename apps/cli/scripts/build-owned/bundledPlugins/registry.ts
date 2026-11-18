@@ -23,7 +23,6 @@ const actionCliHelpDeclarations = listCompiledActionCliCommands().map((command) 
   projectActionCliHelpDeclaration(command, readActionCliPresentationEnvelopeKind(command))
 ));
 const { projectManifestAgentFields } = await import('../../../src/plugins/projection/registry/projectManifestAgentFields.ts');
-const { projectBuiltInAgentFields } = await import('../../../src/plugins/projection/registry/builtIn/agentIdentity.ts');
 const { readResolvedAgentTitle } = await import('../../../src/plugins/projection/registry/agentCommandTitle.ts');
 const { listAgentExecutionTargetsV1 } = await import('@happier-dev/protocol/agents/executionTargetV1');
 const { AGENT_PERMISSION_INTENTS_V1 } = await import('@happier-dev/protocol/runtime/permissionIntentV1');
@@ -131,7 +130,6 @@ export function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
     manifest: entry.manifest,
     provenance: 'first_party',
     source: { kind: 'bundled' },
-    ...(entry.agentId ? { bundledAgentId: entry.agentId } : {}),
   })))});`);
   lines.push('');
   lines.push("import type { ActionCliCommandPathDeclaration } from '../../../../cli/actions/commandPatterns';");
@@ -169,9 +167,8 @@ export function renderCliBundledPluginManifestAssets(params: Readonly<{
 export function renderCliBundledActionCliHelpAssets(params: Readonly<{ pluginPackages: readonly BundledPluginPackage[] }>): readonly Readonly<{ relativePath: string; out: string }>[] {
   const agents = params.pluginPackages.flatMap((plugin) => (plugin.manifest.contributes.agents ?? []).flatMap((definition) => {
     const fields = projectManifestAgentFields({ definition, pluginId: plugin.pluginId, provenance: 'first_party', source: { kind: 'bundled' } });
-    const projected = projectBuiltInAgentFields(fields, plugin.agentId ?? fields.id);
-    if (projected.identity && listAgentExecutionTargetsV1(projected.identity).length === 0) return [];
-    return [{ id: projected.id, pluginId: plugin.pluginId, identity: projected.identity, title: readResolvedAgentTitle(projected), runtimeSpec: projected.runtimeSpec ?? null }];
+    if (fields.identity && listAgentExecutionTargetsV1(fields.identity).length === 0) return [];
+    return [{ id: fields.id, pluginId: plugin.pluginId, identity: fields.identity, title: readResolvedAgentTitle(fields), runtimeSpec: fields.runtimeSpec ?? null }];
   }));
   return [{
     relativePath: 'src/plugins/projection/registry/sources/generatedBundledActionCliHelp.ts',

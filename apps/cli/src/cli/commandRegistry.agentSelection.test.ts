@@ -29,6 +29,18 @@ describe('Agent command declaration demand', () => {
     }
   });
 
+  it('selects the canonical Agent from a command with a different manifest local ID', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-command-selection-'));
+    try {
+      const registry = await ensureMergedAgentCommandRegistryLoaded({ happyHomeDir, commandRoot: 'ohmypi' });
+      expect(registry.catalogEntriesById.ohMyPi?.cliSubcommand).toBe('ohmypi');
+      expect(registry.catalogEntriesById.claude).toBeUndefined();
+      expect(findCommandDispatchDescriptor('ohmypi')?.handler).toBeTypeOf('function');
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
   it('leaves full discovery available after the selected read', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-full-discovery-'));
     try {

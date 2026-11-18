@@ -539,11 +539,13 @@ export async function ensureMergedAgentCommandRegistryLoaded(params: Readonly<{
     // Explicit ephemeral merged snapshot for the standalone CLI command
     // surface: it feeds only this command registry and is never written back
     // into any shared registry authority.
+    // Bundled command hints carry the manifest's local identity. The registration
+    // binding selects the canonical Agent during admission.
     const bundledCommand = params.commandRoot ? BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA.flatMap(plugin =>
-      plugin.agents.filter(agent => agent.cliSubcommand === params.commandRoot).map(agent => ({ pluginId: plugin.pluginId, agentId: agent.id }))) : [];
+      plugin.agents.filter(agent => agent.cliSubcommand === params.commandRoot).map(agent => ({ pluginId: plugin.pluginId, localId: agent.id }))) : [];
     const agentIdentity = params.commandRoot
       ? BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.find(binding => binding.registrationFamily === 'agents'
-        && bundledCommand.some(command => command.pluginId === binding.identity.pluginId && command.agentId === binding.implementationOwnerId))?.identity
+        && bundledCommand.some(command => command.pluginId === binding.identity.pluginId && command.localId === binding.identity.localId))?.identity
         ?? parseQualifiedPluginContributionKey(params.commandRoot) ?? undefined
       : undefined;
     let registry = await resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir ?? configuration.happyHomeDir,

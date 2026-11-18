@@ -11,14 +11,13 @@ export function projectPluginCommandDeclarations(params: Readonly<{
   manifest: CanonicalPluginManifest;
   provenance: ResolvedContributionProvenance;
   source: ResolvedContributionSource;
-  bundledAgentId?: string;
 }>): BundledPluginCommandMetadata {
   const { manifest, provenance, source } = params;
   return {
     pluginId: manifest.id,
     agents: (manifest.contributes.agents ?? []).flatMap((agent) => {
       if (!readAgentSessionCapabilities(agent) && !readAgentExecutionRunCapabilities(agent)) return [];
-      const routingId = params.bundledAgentId ?? resolveContributedAgentRoutingId({ pluginId: manifest.id, localId: agent.id, provenance });
+      const routingId = resolveContributedAgentRoutingId({ pluginId: manifest.id, localId: agent.id, provenance });
       return [{
         id: routingId,
         cliSubcommand: provenance === 'first_party' ? agent.id : routingId,

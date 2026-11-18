@@ -18,6 +18,7 @@ import { stateRevisionPath } from '@/plugins/store/registry/installationStateRev
 import { ensureMergedAgentCommandRegistryLoaded, findCommandDispatchDescriptor, listRegisteredCommandSurfaceEntries, resolveCommandCompletionCandidates } from './commandRegistry';
 import { projectBundledRootHelpEntries, resolveRootHelpEntries, resolveReadOnlyCommandCompletionDeclarations } from './rootHelp';
 import { renderRootHelpText } from './rootHelpText';
+import { resolveCliAgentHelpRows } from './helpDeclarationFacts';
 
 const temporaryDirectories: string[] = [];
 
@@ -32,6 +33,15 @@ afterEach(async () => {
 });
 
 describe('root help declaration projection', () => {
+  it('publishes the canonical Agent ID in demand-loaded help', async () => {
+    const rows = await resolveCliAgentHelpRows(await temporaryDirectory());
+    expect(rows.find(row => row.identity?.pluginId === 'happier.agent.ohmypi')).toMatchObject({
+      id: 'ohMyPi',
+      identity: { localId: 'ohmypi' },
+      runtimeSpec: { id: 'ohMyPi' },
+    });
+  });
+
   it('renders the exact same bytes as real bundled executable registration', async () => {
     const happyHomeDir = await temporaryDirectory();
     await ensureMergedAgentCommandRegistryLoaded({ happyHomeDir });
