@@ -35,24 +35,30 @@ describe('headless tmux Agent launch configuration', () => {
       });
   });
 
-  it('keeps the default only for an invocation with no Agent command', async () => {
+  // The tmux child is never an implicit default launch: it names the default
+  // Agent's command, like the daemon and resume launchers do.
+  it('names the default Agent for an invocation with no Agent command', async () => {
     await expect(resolveHeadlessTmuxAgentLaunchConfig([])).resolves.toEqual({
       agent: 'claude',
-      childArgs: ['--happy-starting-mode', 'remote'],
+      childArgs: ['claude', '--happy-starting-mode', 'remote'],
     });
   });
 
-  it('keeps the default for option-first invocation syntax', async () => {
+  it('names the default Agent for option-first invocation syntax, including --json', async () => {
     await expect(resolveHeadlessTmuxAgentLaunchConfig(['--verbose'])).resolves.toEqual({
       agent: 'claude',
-      childArgs: ['--verbose', '--happy-starting-mode', 'remote'],
+      childArgs: ['claude', '--verbose', '--happy-starting-mode', 'remote'],
+    });
+    await expect(resolveHeadlessTmuxAgentLaunchConfig(['--json'])).resolves.toEqual({
+      agent: 'claude',
+      childArgs: ['claude', '--json', '--happy-starting-mode', 'remote'],
     });
   });
 
   it('preserves explicit remote mode and rejects terminal mode at the host launch boundary', async () => {
     await expect(resolveHeadlessTmuxAgentLaunchConfig(['--happy-starting-mode', 'remote'])).resolves.toEqual({
       agent: 'claude',
-      childArgs: ['--happy-starting-mode', 'remote'],
+      childArgs: ['claude', '--happy-starting-mode', 'remote'],
     });
 
     await expect(resolveHeadlessTmuxAgentLaunchConfig(['--happy-starting-mode', 'local']))

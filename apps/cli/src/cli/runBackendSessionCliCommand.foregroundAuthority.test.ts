@@ -96,7 +96,8 @@ describe('foreground CLI runner authority scope', () => {
       manifest: fileStorePlugin.manifest, module: fileStorePlugin,
     }) : null;
     const implicitLocalTui = profileRouting && definitionId === undefined && !diagnosticDebug;
-    const restoreTty = implicitLocalTui ? setStdioTtyForTest({ stdin: true, stdout: true }) : () => {};
+    // An unnamed profile launch is a person at a terminal; the root refuses it from a pipe.
+    const restoreTty = profileRouting && !explicitProfile ? setStdioTtyForTest({ stdin: true, stdout: true }) : () => {};
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL',
       'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SESSION_AUTOSTART_DAEMON',
       HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY, HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,

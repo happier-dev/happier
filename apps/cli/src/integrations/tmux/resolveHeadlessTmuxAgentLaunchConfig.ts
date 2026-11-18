@@ -1,6 +1,7 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { CatalogAgentNotInstalledError } from '@/agent/catalog/registry';
 import {
+  resolveAgentCliSubcommand,
   resolveCatalogAgentId,
   resolveCatalogAgentIdForCliSubcommand,
 } from '@/agent/catalog/resolution';
@@ -53,9 +54,18 @@ function ensureHeadlessTmuxRemoteStartingModeArgs(argv: string[]): string[] {
 
 export async function resolveHeadlessTmuxAgentLaunchConfig(argv: string[]): Promise<HeadlessTmuxAgentLaunchConfig> {
   const agent = inferAgent(argv);
+  const first = typeof argv[0] === 'string' ? argv[0].trim() : '';
+  // The tmux child names the Agent it starts, as the daemon and resume
+  // launchers do, so it is never an implicit default launch the root refuses.
+  let namedArgv = argv;
+  if (!first || first.startsWith('-')) {
+    const command = resolveAgentCliSubcommand(agent);
+    if (!command) throw new CatalogAgentNotInstalledError(agent);
+    namedArgv = [command, ...argv];
+  }
 
   return {
     agent,
-    childArgs: ensureHeadlessTmuxRemoteStartingModeArgs(argv),
+    childArgs: ensureHeadlessTmuxRemoteStartingModeArgs(namedArgv),
   };
 }
