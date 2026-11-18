@@ -600,6 +600,12 @@ transitions. Returning the validated Action result succeeds the operation;
 throwing fails it; host-owned cancellation uses the invocation signal when
 supported. There is deliberately no `complete()` or `fail()` API.
 
+In unreleased 0.3, declare `operation.cancellation: 'supported'` when the handler
+uses `context.signal` to stop its underlying work. The host then exposes its
+existing Cancel control. Omitting the field or declaring `'unsupported'` keeps
+the operation non-cancellable. Supporting cancellation does not promise rollback;
+the host still reports the handler's actual terminal outcome.
+
 Tracking requires a daemon Action (a root `run` handler); a client-targeted
 Action cannot declare `operation`. Once accepted, tracking survives modal close,
 navigation, ordinary reconnect, and browser visibility changes while the same

@@ -9537,6 +9537,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Action operation declarations add optional
+`cancellation: 'unsupported' | 'supported'` to their existing closed envelope.
+Omission retains unsupported cancellation. Matching Protocol, SDK, plugin
+declaration and host readers load together under the unpublished direct cut;
+earlier strict development readers reject the field. This changes no persisted
+format and adds no migration, wire epoch or mixed-development adapter.
+
 Unreleased 0.3 command approval failures preserve the existing closed command result
 inside the existing execution `details` field. Matching approval readers retain exit
 code, stdout, stderr and optional truncation flags for `command_failed` and
