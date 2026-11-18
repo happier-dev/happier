@@ -57,7 +57,7 @@ async function readHumanRowsInTx(tx: Tx, input: Readonly<{
     ]);
     const currentRequests = requestRows.some(row => row.roundOrdinal === metadata.currentRoundOrdinal)
         ? requestRows.filter(row => row.roundOrdinal === metadata.currentRoundOrdinal)
-        : requestRows.filter(row => row.roundOrdinal === Math.max(0, ...requestRows.map(row => row.roundOrdinal)))
+        : requestRows.filter(row => row.roundOrdinal === Math.max(0, ...requestRows.map(row => row.roundOrdinal)) && row.required)
             .map(row => ({ ...row, roundOrdinal: metadata.currentRoundOrdinal }));
     const requests = currentRequests.map(projectRequest);
     const verdicts = verdictRows.map(row => ({ accountId: row.accountId, roundOrdinal: row.roundOrdinal,
