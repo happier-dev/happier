@@ -21,7 +21,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { readOptionSourceEmptyState } from './optionSourceEmptyState';
+import { isNothingToChoose, readOptionSourceEmptyState } from './optionSourceEmptyState';
 import {
     type WidgetSetupField,
     type WidgetSetupRow,
@@ -264,8 +264,8 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
     // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
     // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
-    if (choices && field.optionsSourceId !== undefined && field.inputType === undefined && field.allowCustomValue !== true
-        && props.optionsStatus === 'ready' && choicesOptions.length === 0 && value === undefined && !followsSurface(row)) {
+    if (field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
+        optionCount: choicesOptions.length, value, follows: followsSurface(row) })) {
         return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
             phone={props.phone} testID={props.testID} />;
     }

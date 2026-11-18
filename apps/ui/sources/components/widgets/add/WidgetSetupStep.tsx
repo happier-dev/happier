@@ -39,6 +39,7 @@ import {
     type WidgetSetupValue,
     type WidgetSetupSubmitResult,
 } from './widgetSetupModel';
+import { isNothingToChoose } from './optionSourceEmptyState';
 
 /** The preview well keeps one height while inputs change, so the step never jumps under the pointer. */
 const PREVIEW_MIN_HEIGHT_PX = 168;
@@ -312,7 +313,17 @@ export function WidgetSetupStep(props: Readonly<{
     // only resolves for each viewer once added; the card then says what it waits for rather than
     // drawing someone else's data.
     const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
-    const waitingText = finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
+    // The input that blocks may have nothing to choose yet: its row says so, and the preview and footer say nothing
+    // more (one message per state; DESIGN-1118-B Delta 1). The footer's Add stays disabled.
+    const blockerIndex = blocker ? setup.fields.findIndex((entry) => entry.field.path === blocker.path) : -1;
+    const blockerEntry = blockerIndex >= 0 ? setup.fields[blockerIndex] : undefined;
+    const blockerRequest = blockerIndex >= 0 ? requests[blockerIndex] : undefined;
+    const blockerState = blockerEntry && blockerRequest ? options.state(blockerRequest.field, blockerRequest) : null;
+    const blockerBinding = blockerEntry ? draft.bindings[blockerEntry.field.path] : undefined;
+    const blockerSaidOnRow = !!blockerEntry && !!blockerState && isNothingToChoose({ field: blockerEntry.field,
+        optionsStatus: blockerState.status, optionCount: blockerState.options.length,
+        value: blockerBinding?.kind === 'value' ? blockerBinding.value : undefined, follows: blockerBinding?.kind === 'context' });
+    const waitingText = blockerSaidOnRow ? '' : finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
         : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' });
     // A group's width as the same footprint a size has: one or both of the surface's two columns.
     const widthFootprint = (width: 'half' | 'full') => ({ columns: 2, columnSpan: width === 'half' ? 1 : 2, rowSpan: 1 });
@@ -358,7 +369,7 @@ export function WidgetSetupStep(props: Readonly<{
                 children: (
                     <View style={styles.waitingBody}>
                         <Icon name={setup.widget?.mark ?? 'squares-four'} size={ICON_SIZE.md} color={theme.colors.text.tertiary} />
-                        <Text style={styles.waiting} testID={`${props.testID}.previewWaiting`}>{waitingText}</Text>
+                        {waitingText ? <Text style={styles.waiting} testID={`${props.testID}.previewWaiting`}>{waitingText}</Text> : null}
                     </View>
                 ),
             }}
@@ -401,7 +412,7 @@ export function WidgetSetupStep(props: Readonly<{
         ...(props.footerAccessory && finishable ? { footerAccessory: props.footerAccessory } : {}),
         noteTestID: `${props.testID}.why`,
         error,
-        note: blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : props.blockedReason ?? props.notice ?? consequence,
+        note: blockerSaidOnRow ? null : blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : props.blockedReason ?? props.notice ?? consequence,
         ...(props.backLabel ? { backLabel: props.backLabel } : {}),
         primary: {
             testID: `${props.testID}.submit`,

@@ -496,6 +496,25 @@ describe('WidgetSetupStep discovery', () => {
         expect(submit).toHaveBeenCalledWith({ size: 'large', bindings: { filter: { kind: 'value', value: 'open' } } });
     });
 
+    it('says a required input with nothing to choose once, on its row: the preview and footer do not repeat it', async () => {
+        const { selectBuiltinWidgetCandidates } = await import('@/components/widgets/widgetCatalog');
+        const check = selectBuiltinWidgetCandidates().find(entry => entry.definition?.kind === 'builtin' && entry.definition.id === 'service_check')!;
+        // The Account has no saved Checks: the Check list's own private Automation read answers empty.
+        homes.answer(scope.serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+        homes.answer(scope.serverId, 'GET /v3/automations', { body: { automations: [], nextCursor: null } });
+        const setup = buildWidgetCandidateSetup({ candidate: check, scope: { ...scope, owner: { kind: 'home' } }, audience: 'personal', context: {},
+            mode: { kind: 'add', submitLabel: 'Add' }, submit: async () => ({ ok: true }), renderPreview: () => null });
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} presentation="pane" serverId={scope.serverId}
+            onDone={() => {}} testID="no-checks" />);
+        const row = () => screen.findAllByType(WidgetSetupFieldRow)[0]!;
+        await vi.waitFor(() => expect([row().props.optionsStatus, row().props.options]).toEqual(['ready', []]));
+        expect(screen.getTextContent()).toContain('projects.deployments.monitoring.widgetNoChecks');
+        expect(screen.findByTestId('no-checks.previewWaiting')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('widgetAdd.stillNeeded');
+        expect(screen.findByTestId('no-checks.submit')?.props.disabled).toBe(true);
+        await screen.unmount();
+    });
+
     it('draws no empty inputs column for a copy that asks for nothing, only its preview and size', async () => {
         const bare: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined, inputs: { fields: [] },
             sizeDeclaration: { sizes: ['small', 'medium'], defaultSize: 'medium' } };
