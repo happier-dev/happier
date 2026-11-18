@@ -76,6 +76,7 @@ const BoundReadyRow = React.memo(function BoundReadyRow(props: Readonly<{
     route?: string; pending: boolean; readUnavailableReason?: string;
     navigate: (route: string) => void; markRead: InboxModel['markRead'];
     pluginSessionRows?: readonly InboxPluginSessionRow[]; invokePluginSessionControl?: InboxModel['invokePluginSessionControl'];
+    showDivider?: boolean;
 }>) {
     const { route, navigate, markRead, serverId } = props;
     const sessionId = props.session.id;
@@ -87,7 +88,7 @@ const BoundReadyRow = React.memo(function BoundReadyRow(props: Readonly<{
         connected={getSessionStatus(props.session, nowMs, { presentationSource: props.presentationSource }).isConnected} sessionId={sessionId} serverId={serverId}
         title={props.title} subtitle={props.subtitle} statusWord={status.word} statusTone={status.tone} pending={props.pending}
         readUnavailableReason={props.readUnavailableReason} onOpen={open} onMarkRead={mark}
-        pluginSessionRows={props.pluginSessionRows} invokePluginSessionControl={props.invokePluginSessionControl} />;
+        pluginSessionRows={props.pluginSessionRows} invokePluginSessionControl={props.invokePluginSessionControl} showDivider={props.showDivider} />;
 });
 
 /**
@@ -201,7 +202,8 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     const page = presentation === 'screen';
     const wide = useIsTablet();
     const view: InboxView = page ? (props.view ?? 'needs_you') : 'needs_you';
-    const sectionSurface = page ? 'page' : 'flat';
+    // A phone's Inbox is a browse list: its page sections lie flat on the page, still ruled.
+    const sectionSurface = page ? (wide ? 'page' : 'pageFlat') : 'flat';
     const identityDisplay = useSessionListIdentityDisplay();
 
     const navigate = React.useCallback((route: string | InboxModel['automationAttentionItems'][number]['route']) => {
@@ -317,6 +319,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                     markRead={model.markRead}
                     pluginSessionRows={item.pluginSessionRows}
                     invokePluginSessionControl={model.invokePluginSessionControl}
+                    showDivider={showDivider}
                 />
             );
         }

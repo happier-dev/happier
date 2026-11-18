@@ -35,6 +35,8 @@ import { t } from '@/text';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EVENT_ICON_CONTAINER_SIZE = 20;
+/** The header's first line: the state chip's height, so the icon centres on the sentence beside it. */
+const ASK_HEADER_LINE_PX = 28;
 const TALK_SELECTORS = [
   'manager',
   'workers',
@@ -450,6 +452,9 @@ export function SessionAskRecordContent(
             color={theme.colors.text.secondary}
           />
         </View>
+        {/* The sentence and its chip share one column on the icon's right: a chip that wraps on a phone
+            starts under the sentence, never as an orphaned right-aligned line. */}
+        <View style={styles.headWrap}>
         <View style={styles.headline}>
           {group || !first ? (
             // One run of text, so a narrow phone wraps it as a sentence beside the chip.
@@ -503,8 +508,8 @@ export function SessionAskRecordContent(
         <TargetStatePill
           state={headerState}
           testID={`session-ask-record-state:${record.sourceRowId}`}
-          style={styles.headerChip}
         />
+        </View>
       </View>
       {group && targets.length > 0 ? (
         <View
@@ -573,20 +578,29 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s12,
   },
   bubbleAligner: userMessageBubbleAlignerStyle,
-  // A long summary chip drops under the sentence on a phone rather than squeezing it to a sliver.
+  // The icon stays on the sentence's first line; the sentence and chip wrap in their own column.
   row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: theme.space.s10,
+    minWidth: 0,
+  },
+  // A long summary chip drops under the sentence on a phone, on the sentence's edge; on one line the
+  // growing headline keeps it at the row's end.
+  headWrap: {
+    flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
+    alignContent: 'center',
     columnGap: theme.space.s10,
     rowGap: theme.space.s4,
     minWidth: 0,
-  },
-  headerChip: {
-    marginLeft: 'auto',
+    minHeight: ASK_HEADER_LINE_PX,
   },
   iconSlot: {
     width: EVENT_ICON_CONTAINER_SIZE,
+    height: ASK_HEADER_LINE_PX,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,

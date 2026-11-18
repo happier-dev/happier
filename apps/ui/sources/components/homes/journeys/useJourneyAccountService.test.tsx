@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { AccountDirectoryAuthMethodDiscovery } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { renderHook } from '@/dev/testkit';
 
-import { useJourneySignInRequest } from './useJourneyAccountService';
+import { t } from '@/text';
+
+import { resolveJourneyAccountNoun, useJourneySignInRequest } from './useJourneyAccountService';
 
 const discovery = {
     endpointUrl: 'https://accounts.example.test',
@@ -33,5 +35,14 @@ describe('Home journey sign-in request', () => {
         const hook = await renderHook(() => useJourneySignInRequest(discovery, true, 'use_service_as_home'));
         expect(hook.getCurrent()?.intent).toEqual({ kind: 'enter', target: { kind: 'explicit', homeServerIdentityId: 'srv_accounts' } });
         await hook.unmount();
+    });
+});
+
+describe('Home journey account noun', () => {
+    it('reads a service with no name of its own as one possessive sentence', () => {
+        expect(t('homesJourneys.signInOrCreate', { account: resolveJourneyAccountNoun({ isDefault: false, named: null }) }))
+            .toBe('Sign in or create your sign-in service account');
+        expect(resolveJourneyAccountNoun({ isDefault: false, named: 'Acme' })).toBe('Acme account');
+        expect(resolveJourneyAccountNoun({ isDefault: true, named: null })).toBe('Happier account');
     });
 });

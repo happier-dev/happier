@@ -26,6 +26,8 @@ export type HomesJourneysTranslation = Readonly<{
     happierAccount: string;
     /** …and on any other sign-in service. */
     serviceAccount: (params: Service) => string;
+    /** An unnamed service's account; the service fallback name already carries the possessive. */
+    signInServiceAccount: string;
 
     // "Already use Happier?" at rest.
     alreadyUseTitle: string;
@@ -177,6 +179,7 @@ export const en: HomesJourneysTranslation = {
     },
     happierAccount: 'Happier account',
     serviceAccount: ({ service }) => `${service} account`,
+    signInServiceAccount: 'sign-in service account',
 
     alreadyUseTitle: 'Already use Happier?',
     alreadyUseDescription: 'Find your Homes with your account, or connect straight to a Home you run. Nothing on this computer changes until you choose.',

@@ -8391,6 +8391,7 @@ const pt: HomesJourneysTranslation = {
     },
     happierAccount: 'conta Happier',
     serviceAccount: ({ service }) => `conta ${service}`,
+    signInServiceAccount: 'conta do serviço de início de sessão',
 
     alreadyUseTitle: 'Já usa o Happier?',
     alreadyUseDescription: 'Encontre os seus Homes com a sua conta ou ligue-se diretamente a um Home que gere. Nada muda neste computador até escolher.',

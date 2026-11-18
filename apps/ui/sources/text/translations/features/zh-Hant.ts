@@ -8293,6 +8293,7 @@ const zhHant: HomesJourneysTranslation = {
     },
     happierAccount: 'Happier 帳號',
     serviceAccount: ({ service }) => `${service} 帳號`,
+    signInServiceAccount: '登入服務帳號',
 
     alreadyUseTitle: '已經在用 Happier？',
     alreadyUseDescription: '用你的帳號找到你的 Home，或直接連線到你自己執行的 Home。在你做出選擇之前，這台電腦上不會有任何變更。',

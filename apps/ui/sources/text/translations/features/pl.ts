@@ -8422,6 +8422,7 @@ const pl: HomesJourneysTranslation = {
     },
     happierAccount: 'konto Happier',
     serviceAccount: ({ service }) => `konto ${service}`,
+    signInServiceAccount: 'konto w usłudze logowania',
 
     alreadyUseTitle: 'Już używasz Happier?',
     alreadyUseDescription: 'Znajdź swoje Home za pomocą konta albo połącz się bezpośrednio z Home, który prowadzisz. Na tym komputerze nic się nie zmieni, dopóki nie wybierzesz.',

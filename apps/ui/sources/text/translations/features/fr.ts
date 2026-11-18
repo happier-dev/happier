@@ -8413,6 +8413,7 @@ const fr: HomesJourneysTranslation = {
     },
     happierAccount: 'compte Happier',
     serviceAccount: ({ service }) => `compte ${service}`,
+    signInServiceAccount: 'compte du service de connexion',
 
     alreadyUseTitle: 'Tu utilises déjà Happier ?',
     alreadyUseDescription: 'Retrouve tes Homes avec ton compte, ou connecte-toi directement à un Home que tu gères. Rien ne change sur cet ordinateur tant que tu n’as pas choisi.',

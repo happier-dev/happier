@@ -9,6 +9,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
  * One section owner for the Inbox and Updates, in two host-selected shapes:
  * - `page` (the Inbox screen): a page section — sentence-case title, its one action in the section
  *   header's action slot, the rows in one sheet. Spacing comes from the page metrics.
+ * - `pageFlat` (the Inbox screen on a phone): the same page section lying flat on the page, its rows
+ *   still ruled — a phone's browse list is never one card per group (DESIGN "browse flat").
  * - `flat` (the sidebar popovers): the compact command-bar header above flat rows.
  */
 export const InboxSection = React.memo(function InboxSection(props: Readonly<{
@@ -22,12 +24,12 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
     meta?: React.ReactNode;
     /** Flat surface only: whether a section is rendered above this one. */
     spacingBefore?: 'following' | 'separated';
-    surface?: 'flat' | 'page';
+    surface?: 'flat' | 'page' | 'pageFlat';
     /** Page surface only: one windowed run of a long section's sheet (`ItemGroup virtualizedSegment`). */
     virtualizedSegment?: Readonly<{ first: boolean; last: boolean }>;
     children: React.ReactNode;
 }>) {
-    if (props.surface === 'page') {
+    if (props.surface === 'page' || props.surface === 'pageFlat') {
         return (
             <View testID={props.testID}>
                 <ItemGroup
@@ -40,6 +42,7 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
                     titleLeading={props.leading}
                     titleAccessory={props.meta}
                     virtualizedSegment={props.virtualizedSegment}
+                    {...(props.surface === 'pageFlat' ? { surface: 'none' as const } : {})}
                 >
                     {props.children}
                 </ItemGroup>

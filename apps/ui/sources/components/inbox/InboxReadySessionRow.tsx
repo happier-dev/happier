@@ -102,6 +102,7 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
             accessibilityActions={accessibilityActions}
             onAccessibilityAction={onAccessibilityAction}
             onPress={props.onOpen}
+            showDivider={props.showDivider}
             belowAccessory={props.pluginSessionRows?.length && props.invokePluginSessionControl ? (
                 <InboxPluginSessionLines rows={props.pluginSessionRows} invoke={props.invokePluginSessionControl}
                     testID={`${testIdPrefix}.plugin_rows`} />

@@ -8423,6 +8423,7 @@ const ru: HomesJourneysTranslation = {
     },
     happierAccount: 'аккаунт Happier',
     serviceAccount: ({ service }) => `аккаунт ${service}`,
+    signInServiceAccount: 'аккаунт в сервисе входа',
 
     alreadyUseTitle: 'Уже пользуетесь Happier?',
     alreadyUseDescription: 'Найдите свои Home через аккаунт или подключитесь напрямую к Home, которым управляете сами. На этом компьютере ничего не изменится, пока вы не выберете.',

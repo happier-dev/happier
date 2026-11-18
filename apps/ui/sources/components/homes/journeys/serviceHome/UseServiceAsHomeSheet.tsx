@@ -42,6 +42,9 @@ export function UseServiceAsHomeSheet(props: CustomModalInjectedProps) {
     return <UseServiceAsHomeBody onDone={props.onClose} />;
 }
 
+/** The sheet header's service mark. The facts' icon column takes its width so their text starts on the title's edge. */
+const SERVICE_MARK_PX = 36;
+
 /**
  * The body of "Use <service> as your Home": in its sheet, and in place as the Add a Home form's
  * pane. `onDone` runs when the sign-in finishes or the person goes back.
@@ -136,7 +139,7 @@ export function presentUseServiceAsHomeSheet(input: Readonly<{ serviceName: stri
         closeOnBackdrop: true,
         chrome: {
             kind: 'card',
-            leading: <AccountServiceMark url={input.serviceUrl} size={36} />,
+            leading: <AccountServiceMark url={input.serviceUrl} size={SERVICE_MARK_PX} />,
             title: t('homesJourneys.serviceAsHomeTitle', { service: input.serviceName }),
             subtitle: t(readViewportClass() === 'compact' ? 'homesJourneys.phone.serviceAsHomeLead' : 'homesJourneys.serviceAsHomeLead', { service: input.serviceName }),
             dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide },
@@ -155,13 +158,14 @@ const styles = StyleSheet.create((theme) => ({
     facts: {
         gap: theme.space.s12,
     },
+    // The header's mark column and its leading gap, so each fact's words share the title's text edge.
     fact: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: theme.space.s12,
+        gap: theme.space.s8,
     },
     factIcon: {
-        width: 20,
+        width: SERVICE_MARK_PX,
         alignItems: 'center',
         paddingTop: 1,
     },

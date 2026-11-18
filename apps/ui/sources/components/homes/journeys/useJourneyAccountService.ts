@@ -33,6 +33,13 @@ export type JourneyAccountService = Readonly<{
     accountNoun: string;
 }>;
 
+/** The service's account as a noun ("Happier account", "<Service> account"). */
+export function resolveJourneyAccountNoun(input: Readonly<{ isDefault: boolean; named: string | null }>): string {
+    if (input.isDefault) return t('homesJourneys.happierAccount');
+    // The fallback name "your sign-in service" already carries the possessive the sentences add.
+    return input.named === null ? t('homesJourneys.signInServiceAccount') : t('homesJourneys.serviceAccount', { service: input.named });
+}
+
 /**
  * The sign-in service this device finds its Homes with (its own selection, never a focused Home's
  * policy): "Already use Happier?", Add a Home and "Use <service> as your Home" all read it here, so
@@ -62,7 +69,7 @@ export function useJourneyAccountService(): JourneyAccountService {
             // delegation describes authentication, not the endpoint's role.
             hostsHome: discovery !== null,
             storage: resolveServiceHomeStorage(features?.capabilities.encryption),
-            accountNoun: isDefault ? t('homesJourneys.happierAccount') : t('homesJourneys.serviceAccount', { service: name }),
+            accountNoun: resolveJourneyAccountNoun({ isDefault, named }),
         };
     }, [discovery, entry, named, url]);
 }

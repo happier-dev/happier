@@ -8353,6 +8353,7 @@ const ja: HomesJourneysTranslation = {
     },
     happierAccount: 'Happier アカウント',
     serviceAccount: ({ service }) => `${service} アカウント`,
+    signInServiceAccount: 'サインインサービスのアカウント',
 
     alreadyUseTitle: 'すでに Happier を使っていますか？',
     alreadyUseDescription: 'アカウントで Home を見つけるか、自分で運用している Home に直接接続します。選ぶまで、このコンピューターでは何も変わりません。',

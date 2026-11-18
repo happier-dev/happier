@@ -8293,6 +8293,7 @@ const zhHans: HomesJourneysTranslation = {
     },
     happierAccount: 'Happier 账户',
     serviceAccount: ({ service }) => `${service} 账户`,
+    signInServiceAccount: '登录服务账户',
 
     alreadyUseTitle: '已经在用 Happier？',
     alreadyUseDescription: '用你的账户找到你的 Home，或直接连接到你自己运行的 Home。在你做出选择之前，这台电脑上不会有任何改变。',

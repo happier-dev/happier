@@ -152,6 +152,8 @@ function createModel(options: Readonly<{
     heldStep?: Readonly<{ invocationId: string; label: string; laneLabel?: string }>;
     /** Rows other owners contribute to the canonical item model (Discussion mentions, notices). */
     extraItems?: readonly InboxItem[];
+    /** Read-ready Sessions in Updates, in order (default one, `ready`). */
+    readySessionIds?: readonly string[];
 }> = {}): InboxModel {
     const needsYou = options.needsYou ?? true;
     const serverId = options.serverId ?? 'server-a';
@@ -162,14 +164,14 @@ function createModel(options: Readonly<{
         { candidate: candidate(stopped, ['permission_required'], serverId), pendingPermissions: [{ id: 'p-stopped' }], pendingUserActions: [] },
         { candidate: candidate(failed, ['failed'], serverId), pendingPermissions: [], pendingUserActions: [] },
     ] : [];
-    const readySession = storedSession('ready');
-    const ready = candidate(readySession, ['unread'], serverId);
-    const readyTarget = {
-        key: buildServerScopedSessionKey('ready', serverId),
-        sessionId: 'ready',
+    const readyIds = options.readySessionIds ?? ['ready'];
+    const readyCandidates = readyIds.map(id => candidate(storedSession(id), ['unread'], serverId));
+    const readyTargets = readyIds.map(id => ({
+        key: buildServerScopedSessionKey(id, serverId),
+        sessionId: id,
         serverId,
         readState: 'unread',
-    };
+    }));
     const approvals = needsYou ? (options.openApprovals ?? [{ id: 'approval-1', header: {} }]).map(artifact =>
         createInboxApprovalArtifactFixture({ id: artifact.id, createdAt: NOW - 60_000,
             serverId: typeof artifact.header.serverId === 'string' ? artifact.header.serverId : serverId,
@@ -195,8 +197,8 @@ function createModel(options: Readonly<{
     });
     const sessionPresentation = {
         sessionsNeedingAttention: sessionEntries,
-        readySessions: [ready],
-        markAllReadTargets: [readyTarget],
+        readySessions: readyCandidates,
+        markAllReadTargets: readyTargets,
         pendingRequestHydrationTargets: [],
     };
     const items = [...buildInboxItems({ workGroups, sessionPresentation: sessionPresentation as never,
@@ -210,7 +212,7 @@ function createModel(options: Readonly<{
         friendRequests: [UserProfileSchema.parse({ id: 'friend-1', username: 'friend', firstName: 'Friend', lastName: null,
             avatar: null, bio: null, status: 'pending', publicKey: null })],
         sessionPresentation,
-        targetBySessionAddress: new Map([[readyTarget.key, readyTarget]]),
+        targetBySessionAddress: new Map(readyTargets.map(target => [target.key, target])),
         actionOperationEntries: needsYou ? [{
             reason: 'failed',
             operation: { serverId: 'server-a', observation: 'available', isUnavailableProjection: false,
@@ -233,7 +235,7 @@ function createModel(options: Readonly<{
         spansHomes: true,
         ...attention,
         items,
-        sessionCandidates: [...sessionEntries.map(entry => entry.candidate), ready],
+        sessionCandidates: [...sessionEntries.map(entry => entry.candidate), ...readyCandidates],
         workflowAttention: options.workflowStale
             ? { ...attention.workflowAttention, available: true, phase: 'loaded', refreshFailed: true,
                 runIds: needsYou ? ['library-run'] : [], knownAt: NOW - 60_000 }
@@ -338,6 +340,16 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         expect(screen.tree.findAllByType(InboxWorkRow)).toHaveLength(2);
         await screen.unmount();
     });
+
+    it('rules every read-ready Session row but the last, like every other two-line Inbox row', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const model = createModel({ needsYou: false, readySessionIds: ['ready-a', 'ready-b', 'ready-c'] });
+        const screen = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
+        const rows = screen.tree.findAllByType(InboxWorkRow).filter(row => String(row.props.testID).includes('ready-'));
+        expect(rows.map(row => row.props.showDivider === true)).toEqual([true, true, false]);
+        await screen.unmount();
+    });
+
     it('explains an active backup on the same stored condition row', async () => {
         const { InboxContent } = await import('./InboxContent');
         const { InboxWorkRow } = await import('./InboxWorkRow');

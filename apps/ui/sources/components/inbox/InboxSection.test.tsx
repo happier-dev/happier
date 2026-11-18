@@ -38,4 +38,21 @@ describe('InboxSection', () => {
         expect(selected).toBeTruthy();
         expect(selected).not.toBe('transparent');
     });
+
+    it('lays a phone page section flat on the page, with no sheet around its rows (DESIGN: browse flat)', async () => {
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        const render = async (surface: 'page' | 'pageFlat') => {
+            const screen = await renderScreen(
+                <InboxSection testID="group" title="Today" surface={surface}>
+                    <InboxRow testID="row" selected={false} />
+                </InboxSection>,
+            );
+            const group = screen.tree.findAllByType(ItemGroup)[0];
+            const sheet = group?.props.surface ?? 'sheet';
+            await screen.unmount();
+            return sheet;
+        };
+        expect(await render('pageFlat')).toBe('none');
+        expect(await render('page')).toBe('sheet');
+    });
 });
