@@ -226,7 +226,7 @@ export function listWorkflowConditionValueOptions(
       eventIds.add(id);
       const facts = eventFieldFacts(field.schema);
       events.push({ id, title: field.schema.title ?? field.path.map(part => formatWorkflowFieldLabel(part)).join(' · '),
-        category: formatWorkflowTriggerEventIdentityV1(declaration.event), group: t('workflows.form.trigger.event'),
+        category: formatWorkflowTriggerEventIdentityV1(declaration.event), group: t('workflows.tabs.events'),
         reference, facts, typeLabel: typeLabelFor(facts) });
     }
   }
