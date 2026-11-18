@@ -49,13 +49,28 @@ vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
     return createRadixCjsModuleMock();
 });
-const events = vi.hoisted(() => ({ listeners: new Map<string, (event: { payload: unknown }) => void>(), callbacks: 0, subscriptions: 0 }));
+const events = vi.hoisted(() => ({
+    listeners: new Map<string, (event: { payload: unknown }) => void>(),
+    hostFocusEvents: new Set(['tauri://focus', 'tauri://blur']),
+    routeCallbacks: 0,
+    routeSubscriptions: 0,
+}));
 // Tauri event delivery is the native boundary; the capture hook, adapter and states stay real.
 vi.mock('@tauri-apps/api/event', () => ({ listen: async (event: string, handler: (event: { payload: unknown }) => void) => {
-    events.listeners.set(event, payload => { events.callbacks++; handler(payload); });
-    events.subscriptions++;
+    // The shared host focus watch is scoped to the webview, even when Capture parks.
+    const routeEvent = !events.hostFocusEvents.has(event);
+    events.listeners.set(event, payload => {
+        if (routeEvent) events.routeCallbacks++;
+        handler(payload);
+    });
+    if (routeEvent) events.routeSubscriptions++;
     let attached = true;
-    return () => { if (attached) { attached = false; events.subscriptions--; events.listeners.delete(event); } };
+    return () => {
+        if (!attached) return;
+        attached = false;
+        if (routeEvent) events.routeSubscriptions--;
+        events.listeners.delete(event);
+    };
 } }));
 
 describe('Capture permission route', () => {
@@ -71,7 +86,7 @@ describe('Capture permission route', () => {
             return 0;
         });
     });
-    afterEach(async () => { await standardCleanup(); portal.restore(); vi.useRealTimers(); setReducedMotionPreferenceOverride(null); browser?.window.close(); browser = null; vi.unstubAllGlobals(); events.listeners.clear(); events.callbacks = 0; events.subscriptions = 0; });
+    afterEach(async () => { await standardCleanup(); portal.restore(); vi.useRealTimers(); setReducedMotionPreferenceOverride(null); browser?.window.close(); browser = null; vi.unstubAllGlobals(); events.listeners.clear(); events.routeCallbacks = 0; events.routeSubscriptions = 0; });
 
     // Void UI handlers do not await native IPC or its lazy event-module import.
     // Poll committed output, flushing React without advancing the product clock.
@@ -138,7 +153,7 @@ describe('Capture permission route', () => {
         ['systemSelection', { status: 'system_selection', operationRef: 1, mode: 'recording' }],
         ['recording', { status: 'recording', operationRef: 1, origin: null, recording: { phase: 'recording',
             timing: { durationMs: 1000, activeSinceMs: Date.now() }, sourceRef: 'recording', result: null, error: null } }],
-    ] satisfies Array<[string, NativeCaptureSnapshot]>)('wires %s chrome and close/escape controls, retaining only its idle wake listener', async (kind, snapshot) => {
+    ] satisfies Array<[string, NativeCaptureSnapshot]>)('wires %s chrome and close/escape controls, retaining only the Capture wake subscription', async (kind, snapshot) => {
         browser = new JSDOM('<!doctype html><body></body>', { url: 'http://capture.test' });
         vi.stubGlobal('window', browser.window);
         vi.stubGlobal('document', browser.window.document);
@@ -200,20 +215,27 @@ describe('Capture permission route', () => {
             await pressTestInstanceAsync(host, 'Close capture');
         }
         expect(calls.filter(command => command === 'desktop_capture_window_hide')).toHaveLength(1);
-        expect([...events.listeners.keys()]).toEqual(['desktopCapture://window']);
-        expect(events.subscriptions).toBe(1);
+        const expectParkedCaptureSubscription = () => {
+            expect([...events.listeners.keys()].filter(event => !events.hostFocusEvents.has(event)))
+                .toEqual(['desktopCapture://window']);
+            expect(events.routeSubscriptions).toBe(1);
+        };
+        expectParkedCaptureSubscription();
         const hiddenCalls = calls.length;
         const hiddenRenders = renders;
-        const hiddenCallbacks = events.callbacks;
+        const hiddenCallbacks = events.routeCallbacks;
         expect(vi.getTimerCount()).toBe(0);
         await act(async () => {
+            for (const event of events.hostFocusEvents) {
+                events.listeners.get(event)?.({ payload: null });
+            }
             for (const event of ['desktopCapture://state', 'desktopCapture://permissions', 'desktopWindow://action-result']) {
                 events.listeners.get(event)?.({ payload: { status: 'idle' } });
             }
             await vi.advanceTimersByTimeAsync(60_000);
         });
         expect({ calls: calls.length - hiddenCalls, renders: renders - hiddenRenders,
-            callbacks: events.callbacks - hiddenCallbacks, timers: vi.getTimerCount() })
+            callbacks: events.routeCallbacks - hiddenCallbacks, timers: vi.getTimerCount() })
             .toEqual({ calls: 0, renders: 0, callbacks: 0, timers: 0 });
         replayed = new Promise<void>(resolve => { ready = resolve; });
         await act(async () => { events.listeners.get('desktopCapture://window')?.({ payload: 'start' }); await replayed; });
@@ -228,8 +250,7 @@ describe('Capture permission route', () => {
             await act(async () => { events.listeners.get('desktopCapture://window')?.({ payload: 'hidden' }); });
         }
         expect(calls.filter(command => command === 'desktop_capture_window_hide')).toHaveLength(2);
-        expect([...events.listeners.keys()]).toEqual(['desktopCapture://window']);
-        expect(events.subscriptions).toBe(1);
+        expectParkedCaptureSubscription();
     });
 
     it('shows a saved recording opening, its read failure with Retry, and closes from the failed window', async () => {
