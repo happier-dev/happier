@@ -29,6 +29,9 @@ to the native engine. You can supply selected slice IDs through the engine
 options. The native engine owns scheduling. Change-only or captured comparison
 reviews are unsupported by this reviewer.
 
+While a review runs, its output reports each slice as native work starts and
+finishes, with the slice's position and total supplied by the engine.
+
 ## Findings and Stop
 
 Each finding retains its full native record, including slice identity,

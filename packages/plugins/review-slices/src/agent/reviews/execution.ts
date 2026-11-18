@@ -34,7 +34,11 @@ export function createSliceExecutionRunFactory(): AgentExecutionRunRuntimeFactor
             instructions: review.instructions, signal,
             environment: { ...request.launchEnvironment?.values,
               ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])) },
-            onProgress: () => emit({ kind: 'run-progress' }),
+            onProgress: progress => {
+              emit({ kind: 'run-progress' });
+              if (progress) emit({ kind: 'output-delta', channel: 'reasoning',
+                text: `${progress.phase === 'start' ? 'Started' : 'Finished'} slice ${progress.featureId} (${progress.index}/${progress.total}).\n` });
+            },
           });
           const output: ReviewFindingsV2 = {
             runRef: { runId: request.runId, callId: request.runId, backendId: 'slices' },

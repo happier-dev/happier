@@ -15,7 +15,7 @@ export type SliceReviewResult = Readonly<{
 }>;
 
 export type RunSliceReviewInput = Readonly<{
-  exec: Pick<ExecService, 'run'>;
+  exec: Pick<ExecService, 'run' | 'spawn'>;
   fs: Pick<FileSystemService, 'getPluginDataDirectory'>;
   cwd: string;
   /** Plugin-owned configuration/repository subdirectory beneath the SDK root. */
@@ -24,7 +24,7 @@ export type RunSliceReviewInput = Readonly<{
   provider?: string;
   model?: string;
   instructions?: string;
-  onProgress?: () => void;
+  onProgress?: (progress?: Readonly<{ phase: 'start' | 'done'; featureId: string; index: number; total: number }>) => void;
   environment?: Readonly<Record<string, string>>;
   signal: AbortSignal;
 }>;
@@ -60,8 +60,38 @@ export async function runSliceReview(input: RunSliceReviewInput): Promise<SliceR
   const invoke = async (args: readonly string[]) => {
     checkCancellation(input.signal);
     input.onProgress?.();
-    const result = await input.exec.run({ executable: { kind: 'managedDependency', id: 'review-executable' },
-      args: [...args, ...common], cwd: input.cwd, env: input.environment }, { signal: input.signal, outputDelivery: 'invocation' });
+    const request = { executable: { kind: 'managedDependency', id: 'review-executable' } as const,
+      args: [...args, ...common], cwd: input.cwd, env: input.environment };
+    const options = { signal: input.signal, outputDelivery: 'invocation' } as const;
+    let result: PluginProcessResult;
+    if (args[0] === 'review') {
+      const child = await input.exec.spawn(request, options);
+      const decoder = new TextDecoder();
+      let pending = '';
+      const consume = (text: string) => {
+        pending += text;
+        let end: number;
+        while ((end = pending.indexOf('\n')) !== -1) {
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          // Native 0.8.4 progress.ts emits these ordered fields on stderr.
+          // Forward reported units only, never infer completion from log volume.
+          const match = /^clawpatch review feature-(start|done) index=(\d+) total=(\d+) feature=(\S+)(?:\s|$)/u.exec(line);
+          if (match) input.onProgress?.({ phase: match[1] === 'start' ? 'start' : 'done',
+            index: Number(match[2]), total: Number(match[3]), featureId: match[4]! });
+        }
+      };
+      const subscription = child.onOutput(chunk => {
+        if (chunk.stream === 'stderr') consume(decoder.decode(chunk.data, { stream: true }));
+      });
+      try {
+        result = await child.wait();
+        consume(decoder.decode() + '\n');
+      } finally {
+        subscription.dispose();
+        await child.dispose();
+      }
+    } else result = await input.exec.run(request, options);
     checkCancellation(input.signal);
     if (result.termination.requestedBy.kind === 'abort') throw new DOMException('Slice review cancelled', 'AbortError');
     return result;

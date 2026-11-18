@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService, PluginProcessOutput, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { runSliceReview } from './run.js';
 import { createSliceExecutionRunFactory } from './execution.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -28,13 +28,13 @@ function finding(id: string, featureId: string) {
     createdAt: '2026-11-17T00:00:00Z', updatedAt: '2026-11-17T00:00:00Z' };
 }
 
-async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' = 'success') {
+async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' = 'success', reviewCompletion?: Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'happier-slices-')); directories.push(directory);
   const controller = new AbortController();
   const state = join(directory, 'repository-a');
   const commands: string[][] = [];
   let selected: string[] = [];
-  const exec: Pick<ExecService, 'run'> = { async run(request, options) {
+  const exec: Pick<ExecService, 'run' | 'spawn'> = { async run(request, options) {
     const args = [...request.args ?? []]; commands.push(args);
     expect(request.executable).toEqual({ kind: 'managedDependency', id: 'review-executable' });
     expect(options?.signal?.aborted).toBe(false);
@@ -61,8 +61,27 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
       controller.abort();
       return { ...completed({}), termination: { observed: { kind: 'signal', signal: 'SIGTERM' }, requestedBy: { kind: 'abort' } } };
     }
+    await reviewCompletion;
     return mode === 'failed' ? completed({}, 1, 'clawpatch review start run=native-run features=2 jobs=2\n')
       : completed({ run: 'native-run', reviewed: 2, findings: 2 });
+  }, async spawn(request, options) {
+    let listener: ((chunk: PluginProcessOutput) => void) | undefined;
+    return { write: async () => {}, closeStdin: async () => {}, dispose: async () => {},
+      waitForExit: async () => completed({}).termination,
+      onOutput(callback) { listener = callback; return { dispose() { listener = undefined; } }; },
+      async wait() {
+        // Published 0.8.4 stderr progress is independent of final stdout JSON.
+        // Byte chunks exercise event framing rather than assuming one line per chunk.
+        const bytes = Buffer.from('clawpatch review feature-start index=1 total=2 feature=slice-a title=First slice\n'
+          + 'clawpatch review feature-done index=1 total=2 feature=slice-a findings=1 elapsed=1s\n'
+          + 'clawpatch review feature-start index=2 total=2 feature=slice-b title=Second slice\n'
+          + 'clawpatch review feature-done index=2 total=2 feature=slice-b findings=1 elapsed=1s\n');
+        for (let offset = 0; offset < bytes.length; offset++) {
+          listener?.({ sequence: offset, stream: 'stderr', data: bytes.subarray(offset, offset + 1) });
+        }
+        return exec.run(request, options);
+      },
+    };
   } };
   return { directory, state, commands, controller, exec, selected: () => selected,
     run: () => runSliceReview({ exec, fs: { getPluginDataDirectory: async () => state }, cwd: directory,
@@ -70,6 +89,42 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
 }
 
 describe('native slice review', () => {
+  it('streams both native slice starts and completions before the finite result is available', async () => {
+    let releaseReview = () => {};
+    const reviewCompletion = new Promise<void>(resolve => { releaseReview = resolve; });
+    const f = await fixture('success', reviewCompletion);
+    const context = { signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
+    const runtime = await createSliceExecutionRunFactory().open({ kind: 'create', runId: 'live-progress', cwd: f.directory,
+      profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Review the repository', structuredInput: {
+        scope: 'repository', engines: { slices: { provider: 'mock' } }, scmReviewScope: {
+          scope: 'repository', status: 'supported', worktreeRoot: f.directory,
+        },
+      } } }, context);
+    const events: AgentExecutionRunEvent[] = [];
+    const terminal = new Promise<void>(resolve => { runtime.watch(event => {
+      events.push(event); if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve();
+    }); });
+    try {
+      await vi.waitFor(() => {
+        const progress = events.filter(event => event.kind === 'output-delta' && event.channel === 'reasoning');
+        expect(progress).toHaveLength(4);
+        expect(progress).toMatchObject([
+          { text: expect.stringContaining('slice-a (1/2)') }, { text: expect.stringContaining('slice-a (1/2)') },
+          { text: expect.stringContaining('slice-b (2/2)') }, { text: expect.stringContaining('slice-b (2/2)') },
+        ]);
+      });
+      expect(events.some(event => event.kind === 'run-complete' || event.kind === 'run-failed'
+        || (event.kind === 'output-delta' && event.channel === 'assistant'))).toBe(false);
+    } finally {
+      releaseReview();
+      await terminal;
+      await runtime.dispose();
+    }
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const output = events.find(event => event.kind === 'output-delta' && event.channel === 'assistant');
+    if (!output || output.kind !== 'output-delta') throw new Error('Missing canonical review result');
+    expect(ReviewFindingsV2Schema.parse(JSON.parse(output.text)).findings).toHaveLength(2);
+  });
   it.each(['success', 'failed'] as const)('publishes substantive native findings for host normalization when the native result is %s', async mode => {
     const f = await fixture(mode);
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
@@ -83,7 +138,7 @@ describe('native slice review', () => {
     } } as unknown as AgentExecutionRunRuntimeContextV1;
     const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'host-run', cwd: f.directory,
       profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Find lost writes', structuredInput: {
-        engineIds: ['slices'], instructions: 'Find lost writes', scope: 'repository', engines: { slices: { provider: 'mock' } },
+        reviewers: [{ kind: 'engine', engineId: 'slices' }], instructions: 'Find lost writes', scope: 'repository', engines: { slices: { provider: 'mock' } },
         scmReviewScope: { kind: 'review_scm_scope.v1', scope: 'repository', status: 'supported', scmBackendId: 'git', scmMode: '.git',
           repositoryRoot: f.directory, worktreeRoot: f.directory, baseRef: { source: 'unavailable', ref: null },
           selectedPaths: [], committedPaths: [], uncommittedPaths: [], changedPaths: [], diagnostics: [],
