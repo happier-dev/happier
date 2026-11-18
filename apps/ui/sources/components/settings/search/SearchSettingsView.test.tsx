@@ -494,6 +494,20 @@ describe('SearchSettingsView', () => {
         expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
+    it('explains why the Account Action policy refused to clear the index', async () => {
+        const daemons = installDaemons({ enabled: true });
+        installActionSettings({ v: 1, actions: { 'memory.clear_index': { enabled: false } } });
+        const screen = await renderSearchSettings();
+        const { Modal } = await import('@/modal');
+        await enabledClearControl(screen);
+        const readsBefore = daemons.m1.statusReads;
+        await screen.pressByTestIdAsync('search-settings-clear-index');
+        await settledClear(screen);
+        expect(Modal.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
+        expect(daemons.m1.cleared).toBe(0);
+        expect(daemons.m1.statusReads).toBe(readsBefore);
+    });
+
     it('does not clear or refresh after canonical approval is rejected', async () => {
         const daemons = installDaemons({ enabled: true });
         const confirmation = createDeferred<boolean>();

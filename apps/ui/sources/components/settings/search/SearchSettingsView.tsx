@@ -33,6 +33,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { getDaemonMemoryStatusStateTranslationKey } from '@/sync/domains/memory/getDaemonMemoryStatusStateTranslationKey';
 import { presentDaemonMemoryStatus } from '@/sync/domains/memory/presentDaemonMemoryStatus';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -187,7 +188,10 @@ export const SearchSettingsView = React.memo(function SearchSettingsView() {
       if (!result.ok) {
         if (isActionApprovalDeclinedErrorCode(result.errorCode)
           || result.errorCode === 'action_account_scope_changed') return;
-        throw new Error(result.error);
+        // The daemon's untyped diagnostics stay behind the existing clear-failed copy.
+        const failure = { ...result, error: undefined };
+        Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('conversationSearch.clearFailed')));
+        return;
       }
       await refreshStatus(target);
     } catch {
