@@ -8,6 +8,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import { describeMachineIsolationPolicy } from './machineIsolationSummary';
+import { useMachineAuthority } from '@/components/machines/security/useMachineAuthority';
 
 const NO_SERVERS: readonly string[] = Object.freeze([]);
 
@@ -40,7 +41,8 @@ export function useMachineIsolationSummary(input: Readonly<{ serverId: string; m
     const language = usePreferredLanguage();
     const { policy } = useMachineIsolationPolicy({ serverId: input.serverId, machine: input.machine });
     const presets = useMachineIsolationPresets(input.serverId, policy);
+    const authority = useMachineAuthority({ serverId: input.serverId, machineId: input.machine.id });
     return React.useMemo(() => policy && presets.settled
-        ? describeMachineIsolationPolicy({ policy, machineName: input.machineName, nameOf: id => presets.byEntry.get(id)?.name ?? null })
-        : null, [policy, presets.settled, presets.byEntry, input.machineName, language]);
+        ? describeMachineIsolationPolicy({ policy, authority, machineName: input.machineName, nameOf: id => presets.byEntry.get(id)?.name ?? null })
+        : null, [policy, presets.settled, presets.byEntry, input.machineName, language, authority]);
 }

@@ -11,10 +11,13 @@ import { Modal } from '@/modal';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
+import { SharePrincipalNamesContext } from '@/components/sharing/sharePrincipalNames';
 import { ApprovalReviewFacts, type ApprovalReviewFactsInput } from './ApprovalReviewFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
-export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'>;
+export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'> & Readonly<{
+  principalNames?: ReadonlyMap<string, string>;
+}>;
 
 type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruction?: string }>;
 
@@ -22,7 +25,10 @@ type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruct
 export const ActionConfirmationReviewFacts = React.memo(function ActionConfirmationReviewFacts(
   props: ActionConfirmationReviewInput & Readonly<{ serverId: string | null; testID: string; summaryPlacement?: 'body' | 'host' }>,
 ) {
-  return <ApprovalReviewFacts {...props} />;
+  return <SharePrincipalNamesContext.Provider value={props.principalNames
+    ? { serverId: props.serverId, names: props.principalNames } : null}>
+    <ApprovalReviewFacts {...props} />
+  </SharePrincipalNamesContext.Provider>;
 });
 
 type ConfirmationReviewModalProps = CustomModalInjectedProps &
@@ -76,6 +82,7 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
           actionId={props.actionId}
           actionArgs={props.actionArgs}
           preview={props.preview}
+          principalNames={props.principalNames}
           serverId={props.serverId}
           testID="actions.confirmation-review"
           summaryPlacement={props.summaryPlacement}
@@ -130,6 +137,7 @@ export function confirmActionReview(
         actionId: input.actionId,
         actionArgs: input.actionArgs,
         preview: input.preview,
+        principalNames: input.principalNames,
         serverId: input.serverId,
         confirmLabel: input.confirmLabel,
         irreversible: input.irreversible,

@@ -10,6 +10,12 @@ import { projectSessionAccessPrincipal } from '@/components/sessions/access/proj
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
 
+/** Names already acknowledged by the resource's authorized sharing read, scoped to its confirmation. */
+export const SharePrincipalNamesContext = React.createContext<Readonly<{
+  serverId: string | null;
+  names: ReadonlyMap<string, string>;
+}> | null>(null);
+
 /**
  * Display names for exact principals, keyed by `sharePrincipalKey`, through the existing authorized
  * resolver. A Group reads with its Team ("Design, Acme"). An unresolved or unavailable identity is

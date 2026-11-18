@@ -5,6 +5,9 @@ import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamMembershipFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import * as React from 'react';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { ActionConfirmationReviewFacts } from './ActionConfirmationReview';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
 const harness = createHomeGovernanceHarness();
@@ -15,6 +18,24 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 describe('approval principal names', () => {
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
     afterEach(() => standardCleanup());
+
+    it('renders the grant recipient name in confirmation and approval Details instead of principal JSON', async () => {
+        const home = await harness.addHome({ name: 'Home', serverUrl: 'https://grant-details.test',
+            accountId: 'viewer', serverIdentityId: 'srv_grant' });
+        // A Machine manager may edit an existing grant without a friendship with its recipient.
+        // The sharing read already acknowledged the name; directory discovery can legitimately return no match.
+        harness.answer(home, 'POST /v1/session-access/principals/resolve', { body: { v: 1, principals: [] } });
+        const principal = { kind: 'account', accountId: 'recipient' };
+        {
+            const screen = await renderScreen(<ActionConfirmationReviewFacts actionId="machines.access.grant.set"
+                actionArgs={{ serverId: home, machineId: 'machine', principal, level: 'admin' }} preview={null}
+                principalNames={new Map([['account:recipient', 'ml5b-manager']])} serverId={home} testID="confirmation" />);
+            await flushHookEffects({ cycles: 25 });
+            expect(screen.getTextContent()).toContain('ml5b-manager');
+            expect(screen.getTextContent()).not.toContain(JSON.stringify(principal));
+            await screen.unmount();
+        }
+    });
 
     it('names a Team membership through the exact authorized member read for display and confirmation', async () => {
         const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://approval-member.test',

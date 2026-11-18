@@ -1,8 +1,9 @@
+import * as React from 'react';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
-import { readSharePrincipalNames, useScopedPrincipalNameRead } from '@/components/sharing/sharePrincipalNames';
+import { readSharePrincipalNames, SharePrincipalNamesContext, useScopedPrincipalNameRead } from '@/components/sharing/sharePrincipalNames';
 import { getTeamMember } from '@/sync/ops/teams/teamMemberOperations';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
@@ -37,8 +38,11 @@ export function useApprovalPrincipalName(reference: ApprovalActionReference | un
     const subject = approvalPrincipal(reference);
     const key = reference?.kind === 'teamMembership' ? JSON.stringify([reference.kind, reference.teamId, reference.id])
         : subject ? sharePrincipalKey(subject) : null;
+    const acknowledged = React.useContext(SharePrincipalNamesContext);
+    const name = serverId !== null && acknowledged?.serverId === serverId && key !== null
+        ? acknowledged.names.get(key) ?? null : null;
     // Keyed by the principal, not the reference object, so an equal reference does not re-read.
-    const reading = useScopedPrincipalNameRead(key, serverId,
+    const reading = useScopedPrincipalNameRead(name === null ? key : null, serverId,
         (scope, signal, isCurrent) => readApprovalPrincipalName(reference, scope, signal, isCurrent));
-    return { name: reading.value, resolving: reading.resolving };
+    return { name: name ?? reading.value, resolving: name === null && reading.resolving };
 }

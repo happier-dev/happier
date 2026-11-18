@@ -153,6 +153,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
                 trust.lead, trust.detail].join('\n\n');
         }
         return confirmActionReview({ actionId, actionArgs: input, preview,
+            principalNames: new Map(names.current),
             title: presentation.title ?? t('approvals.untitled'), summary: message,
             confirmLabel: presentation.confirmLabel ?? t('approvals.approve'), irreversible: presentation.destructive === true,
             serverId: context.serverId ?? scope?.serverId, ...(context.signal ? { signal: context.signal } : {}) });
