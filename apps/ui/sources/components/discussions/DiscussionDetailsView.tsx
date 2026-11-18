@@ -98,7 +98,7 @@ import {
     useServerCredentialAccountScopeBindings,
     type ServerCredentialAccountScopeBinding,
 } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { isSessionSurfaceVisible, useSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { createDiscussionVisibleReadController } from '@/sync/domains/discussions/discussionVisibleReadController';
@@ -1485,7 +1485,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
                 metaLeading={roster || presenceLabel ? <View style={styles.presenceRow}>
                             {roster ? <DiscussionRosterFaces roster={roster} serverId={props.scope.serverId} accountActors={participantProfiles.accounts} viewerAccountId={props.scope.accountId} accessibilityLabel={formatDiscussionRosterLine(summarizeDiscussionRoster(roster))} /> : null}
                             {presenceLabel ? <>
-                                <DiscussionPresenceFaces viewers={presentViewers} stale={presenceStale} />
+                                <DiscussionPresenceFaces serverId={props.scope.serverId} viewers={presentViewers} stale={presenceStale} />
                                 <Text testID="session-discussion-presence" accessibilityLiveRegion="polite" style={styles.headerMeta} numberOfLines={1}>{presenceLabel}</Text>
                                 {roster ? <Text style={styles.headerMeta}>·</Text> : null}
                             </> : null}
@@ -1673,7 +1673,7 @@ function DiscussionPhoneChrome(props: Readonly<{
 }
 
 /** The faces of the people in this conversation right now; the names are read from the line beside. */
-const DiscussionPresenceFaces = React.memo((props: Readonly<{ viewers: readonly SessionHumanPresenceViewer[]; stale: boolean }>) => {
+const DiscussionPresenceFaces = React.memo((props: Readonly<{ serverId: string; viewers: readonly SessionHumanPresenceViewer[]; stale: boolean }>) => {
     if (props.viewers.length === 0) return null;
     return <View
         testID="session-discussion-presence-faces"
@@ -1683,7 +1683,8 @@ const DiscussionPresenceFaces = React.memo((props: Readonly<{ viewers: readonly 
     >
         <AvatarStack size={20} entries={props.viewers.slice(0, PRESENCE_FACE_LIMIT).map((viewer) => ({
             key: viewer.account.accountId,
-            content: <Avatar id={viewer.account.accountId} imageUrl={viewer.account.avatarUrl} size={20} />,
+            content: <Avatar id={serverAccountScopeKeySuffix({ serverId: props.serverId, accountId: viewer.account.accountId })}
+                imageUrl={viewer.account.avatarUrl} size={20} />,
         }))} />
     </View>;
 });

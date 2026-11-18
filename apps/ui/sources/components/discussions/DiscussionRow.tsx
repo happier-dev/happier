@@ -15,7 +15,8 @@ import type { CollectionRequestRef } from '@/components/ui/lists/collection/coll
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
-import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { resolveAccountActorAvatar } from '@/sync/domains/account/accountActorPresentation';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
@@ -142,18 +143,10 @@ function readLatestSpeakerName(discussion: DiscussionOpenedSummaryV1): string {
 export function readDiscussionRowAccountAvatar(
     actor: DiscussionOpenedSummaryV1['latestMessage']['accountActor'],
     accountId: string,
-    viewerAccountId: string,
+    viewerScope: ServerAccountScope,
 ) {
-    if (actor?.accountId !== accountId) return { id: accountId, imageUrl: null };
-    const isFormer = classifyAccountActorLabelV1(actor, actor.accountId === viewerAccountId).kind === 'former';
-    return {
-        id: isFormer ? 'former-member' : accountId,
-        imageUrl: isFormer ? null : actor.profile?.avatarUrl ?? null,
-    };
-}
-
-export function readDiscussionRowAccountAvatarUrl(discussion: DiscussionOpenedSummaryV1, accountId: string, viewerAccountId: string): string | null {
-    return readDiscussionRowAccountAvatar(discussion.latestMessage.accountActor, accountId, viewerAccountId).imageUrl;
+    return resolveAccountActorAvatar({ serverId: viewerScope.serverId, accountId },
+        actor?.accountId === accountId ? { ...actor, serverId: viewerScope.serverId } : null, viewerScope);
 }
 
 /** The last message as one quiet line, "Mei: let's ask the bot…" (lab T2-A); null when it can't be opened. */
@@ -234,7 +227,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     word?: DiscussionListAttention['word'];
     agentName?: string | null;
     /** Qualified by the list's existing scoped approval join; the row never loads an inventory. */
-    serverId?: string;
+    serverId: string;
     approvalArtifactId?: string;
     statusWords?: boolean;
     presented?: boolean;
@@ -275,7 +268,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     const faceAvatar = (accountId: string) => readDiscussionRowAccountAvatar(
         participants?.find(candidate => candidate.accountId === accountId) ?? discussion.latestMessage.accountActor,
         accountId,
-        props.viewerAccountId,
+        { serverId: props.serverId, accountId: props.viewerAccountId },
     );
     const selected = props.selected ?? false;
     // In the column the second line is the conversation itself (its latest message); what needs the viewer

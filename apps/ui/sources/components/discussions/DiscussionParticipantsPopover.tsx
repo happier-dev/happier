@@ -33,7 +33,7 @@ import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorAvatar } from '@/sync/domains/account/accountActorPresentation';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import type { useDiscussionParticipantManagement } from './useDiscussionParticipantManagement';
@@ -63,14 +63,9 @@ const NO_SECTIONS: readonly SelectionListSectionDescriptor[] = Object.freeze([])
 export function resolveDiscussionOwnerTransferAvatar(
   actor: TranscriptAccountActor | null | undefined,
   accountId: string,
-  viewerAccountId: string,
+  scope: ServerAccountScope,
 ) {
-  return actor
-    ? resolveAccountActorPresentation(actor, {
-        serverId: actor.serverId,
-        accountId: viewerAccountId,
-      }).avatar
-    : { id: accountId, imageUrl: null };
+  return resolveAccountActorAvatar({ serverId: scope.serverId, accountId }, actor, scope);
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -124,7 +119,7 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
     viewerAccountId: string;
     accessibilityLabel: string;
     /** The Discussion's Home, so a Session participant shows its own Agent's mark. */
-    serverId?: string;
+    serverId: string;
   }> & (
     | Readonly<{ roster: DiscussionParticipantRoster; members?: undefined }>
     /** A New Discussion's chosen people and agents, before any roster exists. */
@@ -141,10 +136,10 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
     // The viewer sits last, as in the roster: the others are who you came to see.
     const ordered = [...people.filter((id) => id !== props.viewerAccountId), ...people.filter((id) => id === props.viewerAccountId)];
     const faces: AvatarStackEntry[] = ordered.map((accountId) => {
-      const actor = props.accountActors.get(accountId);
-      const avatar = actor ? resolveAccountActorPresentation(actor, { serverId: actor.serverId, accountId: props.viewerAccountId }).avatar : null;
+      const avatar = resolveAccountActorAvatar({ serverId: props.serverId, accountId }, props.accountActors.get(accountId),
+        { serverId: props.serverId, accountId: props.viewerAccountId });
       return { key: `account:${accountId}`,
-        content: <Avatar id={avatar?.id ?? accountId} imageUrl={avatar?.imageUrl ?? null} size={ROSTER_FACE_PX} /> };
+        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl ?? null} size={ROSTER_FACE_PX} /> };
     });
     // Each agent wears its own Agent's mark, as its rows and answers do; one not yet born (or not on this
     // device) keeps the neutral kind glyph.
@@ -413,7 +408,7 @@ export const DiscussionParticipantsPopover = React.memo(
                     <DiscussionOwnerLeaveResolution
                       management={management}
                       accountActors={props.accountActors}
-                      viewerAccountId={props.viewerAccountId}
+                      scope={props.scope}
                       resolveAccountLabel={props.resolveAccountLabel}
                       onLeft={() => {
                         setOpen(false);
@@ -465,7 +460,7 @@ function DiscussionOwnerLeaveResolution(
   props: Readonly<{
     management: DiscussionParticipantManagement;
     accountActors: ReadonlyMap<string, TranscriptAccountActor>;
-    viewerAccountId: string;
+    scope: ServerAccountScope;
     resolveAccountLabel: (accountId: string) => string | null;
     onLeft: () => void;
   }>,
@@ -495,7 +490,7 @@ function DiscussionOwnerLeaveResolution(
           const avatar = resolveDiscussionOwnerTransferAvatar(
             props.accountActors.get(candidate.accountId),
             candidate.accountId,
-            props.viewerAccountId,
+            props.scope,
           );
           return (
             <Item
@@ -1043,7 +1038,7 @@ export function DiscussionParticipantsPanel(
           <DiscussionOwnerLeaveResolution
             management={management}
             accountActors={props.accountActors}
-            viewerAccountId={props.viewerAccountId}
+            scope={props.scope}
             resolveAccountLabel={props.resolveAccountLabel}
             onLeft={() => props.onLeft?.()}
           />

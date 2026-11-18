@@ -16,7 +16,7 @@ import { Dimensions } from 'react-native';
 import { CollectionList } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { sessionCollaborationTranslations } from '@/text/translations/sessionCollaborationTranslations';
-import { buildDiscussionRowAccessibilityLabel, buildDiscussionRowSubtitle, DiscussionRow, readDiscussionRowAccountAvatar, readDiscussionRowAccountAvatarUrl, resolveDiscussionRowGlyph, resolveDiscussionRowSummary } from '@/components/discussions/DiscussionRow';
+import { buildDiscussionRowAccessibilityLabel, buildDiscussionRowSubtitle, DiscussionRow, readDiscussionRowAccountAvatar, resolveDiscussionRowGlyph, resolveDiscussionRowSummary } from '@/components/discussions/DiscussionRow';
 
 const labels = {
     you: 'You',
@@ -141,13 +141,13 @@ describe('DiscussionRow presentation', () => {
                 name: 'Retained Person', firstName: 'Retained', lastName: 'Person', username: 'retained',
                 avatarUrl: 'https://discussion-row.test/retained.png',
             } } } };
-        expect(readDiscussionRowAccountAvatarUrl(discussion, 'author', 'viewer')).toBeNull();
-        expect(readDiscussionRowAccountAvatar(discussion.latestMessage.accountActor, 'author', 'viewer')).toEqual({
+        const viewer = { serverId: 'discussion-home', accountId: 'viewer' };
+        const actor = discussion.latestMessage.accountActor;
+        expect(readDiscussionRowAccountAvatar(actor, 'author', viewer)).toEqual({
             id: 'former-member',
             imageUrl: null,
         });
-        expect(readDiscussionRowAccountAvatarUrl({ ...discussion, latestMessage: { ...discussion.latestMessage,
-            accountActor: { ...discussion.latestMessage.accountActor!, accessibility: 'current' } } }, 'author', 'viewer'))
+        expect(readDiscussionRowAccountAvatar({ ...actor, accessibility: 'current' }, 'author', viewer).imageUrl)
             .toBe('https://discussion-row.test/retained.png');
     });
 

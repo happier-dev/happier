@@ -41,6 +41,16 @@ export function resolveAccountActorPresentation(actor: TranscriptAccountActor, v
     };
 }
 
+/** Keep the same face while a Home-qualified Account's actor is loading. */
+export function resolveAccountActorAvatar(
+    scope: ServerAccountScope,
+    actor: TranscriptAccountActor | null | undefined,
+    viewerScope: ServerAccountScope | null,
+) {
+    return actor ? resolveAccountActorPresentation(actor, viewerScope).avatar
+        : { id: serverAccountScopeKeySuffix(scope), imageUrl: null };
+}
+
 /** The transcript's byline visibility policy, shared by turn attribution surfaces. */
 export function resolveVisibleAccountActorPresentation(input: Readonly<{
     actor: TranscriptAccountActor | null | undefined;

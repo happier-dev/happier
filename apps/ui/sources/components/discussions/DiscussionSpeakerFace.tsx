@@ -7,7 +7,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorAvatar } from '@/sync/domains/account/accountActorPresentation';
 import {
   readDiscussionExternalSource,
   resolveDiscussionWorkflowAttribution,
@@ -87,23 +87,18 @@ export const DiscussionSpeakerFace = React.memo(function DiscussionSpeakerFace(
     );
   }
   const actor = message.accountActor;
-  const faceAccountId =
-    actor !== null && actor.accountId === message.authorAccountId
-      ? actor.accountId
-      : message.authorAccountId;
+  const faceAccountId = message.authorAccountId;
   if (!faceAccountId) return null;
-  const avatar =
-    actor !== null && actor.accountId === message.authorAccountId
-      ? resolveAccountActorPresentation(
-          { ...actor, serverId: props.serverId },
-          { serverId: props.serverId, accountId: props.viewerAccountId },
-        ).avatar
-      : null;
+  const avatar = resolveAccountActorAvatar(
+    { serverId: props.serverId, accountId: faceAccountId },
+    actor?.accountId === faceAccountId ? { ...actor, serverId: props.serverId } : null,
+    { serverId: props.serverId, accountId: props.viewerAccountId },
+  );
   return (
     <View testID={testID}>
       <Avatar
-        id={avatar?.id ?? faceAccountId}
-        imageUrl={avatar?.imageUrl ?? null}
+        id={avatar.id}
+        imageUrl={avatar.imageUrl ?? null}
         size={props.size}
       />
     </View>

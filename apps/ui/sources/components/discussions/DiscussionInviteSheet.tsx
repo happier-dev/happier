@@ -49,7 +49,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import { useExecutableParticipantSections } from './useExecutableParticipantSections';
 import { t } from '@/text';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorAvatar, resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 
 type Mutation =
   | Readonly<{
@@ -79,18 +79,24 @@ export function presentDiscussionAccessPrincipal(input: Readonly<{
   scope: ServerAccountScope;
   viewerProfile: ReturnType<typeof useShareViewerProfile>;
 }>): SharePrincipalPresentation {
-  if (input.ref.kind !== 'account' || !input.actor) {
-    return presentSharePrincipal({ ref: input.ref, name: input.display?.name, username: input.display?.username,
+  if (input.ref.kind !== 'account') {
+    return presentSharePrincipal({ ref: input.ref, name: input.display?.name, username: input.display?.username });
+  }
+  if (!input.actor) {
+    const principal = presentSharePrincipal({ ref: input.ref, name: input.display?.name, username: input.display?.username,
       viewerAccountId: input.scope.accountId,
-      ...(input.ref.kind === 'account' && input.ref.accountId === input.scope.accountId ? { profile: input.viewerProfile } : {}) });
+      ...(input.ref.accountId === input.scope.accountId ? { profile: input.viewerProfile } : {}) });
+    const { id } = resolveAccountActorAvatar({ serverId: input.scope.serverId, accountId: input.ref.accountId }, null, input.scope);
+    return { ...principal, avatar: { ...principal.avatar, id } };
   }
   const actor = { ...input.actor, serverId: input.scope.serverId };
   const classification = classifyAccountActorLabelV1(actor, actor.accountId === input.scope.accountId);
   const presentation = resolveAccountActorPresentation(actor, input.scope);
   const profile = classification.kind === 'former' || classification.kind === 'unnamed' ? null : actor.profile;
-  return presentSharePrincipal({ ref: input.ref, name: presentation.name,
+  const principal = presentSharePrincipal({ ref: input.ref, name: presentation.name,
     username: classification.kind === 'profile' ? actor.profile?.username ?? null : null,
     profile, avatarUrl: presentation.avatar.imageUrl, viewerAccountId: input.scope.accountId });
+  return { ...principal, avatar: { ...principal.avatar, id: presentation.avatar.id } };
 }
 
 /** One message per Discussion grant refusal; codes stay the Action host's, words stay here. */

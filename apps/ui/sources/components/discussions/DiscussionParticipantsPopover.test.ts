@@ -23,7 +23,7 @@ describe('resolveDiscussionOwnerTransferAvatar', () => {
         lastName: 'Name',
         avatarUrl: 'https://example.test/retained.png',
       },
-    }, 'former-account', 'viewer')).toEqual({
+    }, 'former-account', { serverId: 'server-1', accountId: 'viewer' })).toEqual({
       id: 'former-member',
       imageUrl: null,
     });
