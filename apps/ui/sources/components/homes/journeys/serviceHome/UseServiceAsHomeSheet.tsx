@@ -149,9 +149,11 @@ export function presentUseServiceAsHomeSheet(input: Readonly<{ serviceName: stri
 }
 
 const styles = StyleSheet.create((theme) => ({
+    // The header band's edge (its 16 inset): the mark and the body's words share it, and the facts' words
+    // the title's.
     body: {
         gap: 14,
-        paddingHorizontal: theme.space.s20,
+        paddingHorizontal: theme.space.s16,
         paddingTop: theme.space.s4,
         paddingBottom: theme.space.s20,
     },
