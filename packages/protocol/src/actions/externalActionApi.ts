@@ -8,7 +8,7 @@ import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WorkflowActionIdV1Schema, isProjectSessionDefaultsPreparationReadActionIdV1, isSessionSpawnHomeDefaultsReadEffectV1 } from './actionIds.js';
 import { ProjectSessionDefaultsAdmissionV1Schema, ProjectSessionDefaultsContextSelectionV1Schema, ProjectSessionDefaultsGetInputV1Schema, type ProjectSessionDefaultsAdmissionV1 } from '../projects/projectSessionDefaultsSelectionV1.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
@@ -1589,6 +1589,15 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
 })));
 export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof ExternalActionExecutionAuthorizationBindingV1Schema>
   & Readonly<{ deploymentNativeAdmission?: import('../deployments/deploymentCandidatePublicationV1.js').DeploymentNativeAdmissionV1 }>;
+
+/** Public defaults preparation follows the original Project selection or a signed spawn's Home projection. */
+export function isExternalActionProjectSessionDefaultsReadAdmittedV1(
+  binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
+): boolean {
+  return (binding.projectSessionDefaultsAdmission !== undefined
+    && isProjectSessionDefaultsPreparationReadActionIdV1(effectActionId))
+    || ('authentication' in binding && isSessionSpawnHomeDefaultsReadEffectV1(binding.actionId, effectActionId));
+}
 
 /** Existing finite roots and declared runtime work share one original-root wake bridge. */
 export function isExternalActionManagedWakeRootV1(root: Pick<ExternalActionExecutionAuthorizationBindingV1,

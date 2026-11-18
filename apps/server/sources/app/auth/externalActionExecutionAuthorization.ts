@@ -8,7 +8,7 @@ import { isManagedReferenceCensusActionIdV1 } from '@happier-dev/protocol/machin
 import { MachineDeploymentReferencesInputV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePoolListInputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
-import { isProjectSessionDefaultsPreparationReadActionIdV1, isSessionSpawnHomeDefaultsReadEffectV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnHomeDefaultsReadEffectV1 } from '@happier-dev/protocol/actions/actionIds';
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionSharingIds,
     isPluginCollectionSharingActionIdV1 } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
@@ -99,7 +99,7 @@ import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissi
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
 import { ProjectSourcesReadInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, bindExternalActionExecutionAuthorizationHttpPathV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, isExternalActionResolvedTargetAllowedV1, isExternalActionWorkflowActionIdV1, isExternalActionMachineWorkflowActionIdV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionTargetV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, bindExternalActionExecutionAuthorizationHttpPathV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, isExternalActionProjectSessionDefaultsReadAdmittedV1, isExternalActionResolvedTargetAllowedV1, isExternalActionWorkflowActionIdV1, isExternalActionMachineWorkflowActionIdV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionTargetV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRpcRequestV1, verifyExternalActionMachineRequestV1, isExternalActionAuthorizationBoundToEnvelope, type ExternalActionMachineRpcEventV1, type DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1470,7 +1470,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
-        projectSessionDefaults: isAdmittedProjectSessionDefaultsRead(binding, effectActionId),
+        projectSessionDefaults: isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, effectActionId),
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
@@ -2098,15 +2098,14 @@ function isArtifactJsonUpdateHttpPurpose(proof: ExternalActionExecutionRequestPr
 }
 
 /** Restricted PATs spend exact template HTTP purposes. */
-async function readBotTemplateHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean | null> {
     const root = verified.binding.actionId;
     if (!isBotTemplateRestrictedPatHttpPurposeRootActionIdV1(root)) return null;
     const restrictedPat = !('authentication' in verified.binding)
         && isApiTokenGrantRestrictedV1(verified.binding.grant);
     if (!restrictedPat) return null;
-    if (verified.binding.projectSessionDefaultsAdmission !== undefined
-        && isProjectSessionDefaultsPreparationReadActionIdV1(verified.effectActionId))
+    if (verified.signedChildPurpose.sibling.projectSessionDefaults)
         return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (verified.effectActionId !== root || proof.reviewedChild) return false;
     const method = proof.method.toUpperCase();
@@ -3121,22 +3120,13 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
     return readDeploymentNativeTransition(verified.binding, verified.effectActionId, proof) !== null;
 }
 
-function isAdmittedProjectSessionDefaultsRead(binding: ExternalActionExecutionAuthorizationBindingV1,
-    effectActionId: string): boolean {
-    return binding.projectSessionDefaultsAdmission !== undefined
-        && isProjectSessionDefaultsPreparationReadActionIdV1(effectActionId)
-        || 'authentication' in binding && binding.authentication.kind === 'account'
-            && isSessionSpawnHomeDefaultsReadEffectV1(binding.actionId, effectActionId);
-}
-
-/** A signed Account root spends its declared operation and required preparation reads. */
+/** A signed root spends its declared operation and required preparation reads. */
 async function isProjectSessionDefaultsHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const selection = verified.binding.projectSessionDefaultsAdmission;
     const effect = verified.effectActionId;
     if (isSessionSpawnHomeDefaultsReadEffectV1(verified.binding.actionId, effect)) {
-        return isAdmittedProjectSessionDefaultsRead(verified.binding, effect)
-            && isAccountActionHttpOperation(effect, proof)
+        return isAccountActionHttpOperation(effect, proof)
             && sameManagedInput(proof.routeInput ?? proof.body, { projection: 'session_defaults' });
     }
     if (!selection) return false;
@@ -3222,7 +3212,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         return false;
     }
     if (root === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
-        || isAdmittedProjectSessionDefaultsRead(verified.binding, verified.effectActionId))
+        || verified.signedChildPurpose.sibling.projectSessionDefaults)
         return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;

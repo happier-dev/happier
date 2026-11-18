@@ -1,4 +1,4 @@
-import { isSessionSpawnHomeDefaultsReadEffectV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isExternalActionProjectSessionDefaultsReadAdmittedV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedSessionDefaultsContextLoaderV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -45,10 +45,10 @@ export function createCliManagedSessionDefaultsContextLoader(input: Readonly<{
   const privateAccountAvailable = Boolean(requester) || hasStoredSessionCredentialProvenance(input.credentials)
     && !context.externalActionCredential && !context.externalActionExecutionAuthorization;
   const binding = context.externalActionExecutionAuthorization?.binding;
-  const scopedDefaultsAvailable = privateAccountAvailable || binding?.projectSessionDefaultsAdmission !== undefined;
-  const homeAvailable = scopedDefaultsAvailable
-    || (binding !== undefined && 'authentication' in binding && binding.authentication.kind === 'account'
-      && isSessionSpawnHomeDefaultsReadEffectV1(binding.actionId, 'home.governance.get'));
+  const teamAvailable = privateAccountAvailable
+    || (binding !== undefined && isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, 'teams.get'));
+  const homeAvailable = privateAccountAvailable
+    || (binding !== undefined && isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, 'home.governance.get'));
   return {
     ...(privateAccountAvailable ? {
       readPersonalDefaults: (project: Parameters<NonNullable<ManagedSessionDefaultsContextLoaderV1['readPersonalDefaults']>>[0]) =>
@@ -60,7 +60,7 @@ export function createCliManagedSessionDefaultsContextLoader(input: Readonly<{
       const failure = ActionExecuteFailureSchema.safeParse(raw);
       return failure.success ? failure.data : ProjectSourcesReadOutputV1Schema.parse(raw);
     },
-    ...(scopedDefaultsAvailable ? {
+    ...(teamAvailable ? {
       readTeam: async (teamId: string) => {
         const raw = await home.homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId }, context,
           ...(input.signal ? { signal: input.signal } : {}) });

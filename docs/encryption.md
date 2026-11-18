@@ -2508,9 +2508,9 @@ private Account-row envelope when the Account changes encryption mode.
 A signed creation without requester Account context omits that private row and private
 member preferences; it does not read them with the Machine custodian's credentials.
 Public defaults still use the original signed creation selection and each resource's
-normal reader admission. A no-box creation without an admitted Project selection has
-no Home or Team defaults reader. A signed Account spawn may read only Home's
-session-defaults projection through its admitted child purpose. Retained recovery skips
+normal reader admission. A signed Account or terminal spawn may read Home's
+`session_defaults` projection through its admitted child purpose. A no-box PAT uses
+public defaults from its admitted Project selection. Retained recovery skips
 optional defaults reads; failures of an optional layer become typed creation-context notes
 without disclosing private content or refusing the spawn.
 Explicit Saved Secret references retain their existing
