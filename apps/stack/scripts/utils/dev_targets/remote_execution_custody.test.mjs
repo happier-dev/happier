@@ -780,7 +780,7 @@ test('a remote script cut short on stdin never runs, and a complete one leaves t
   const script = `printf 'script-ran\\n'; read -r control; printf 'control=%s\\n' "$control"; : > ${quote(marker)}`;
   // Without a lifetime pipe the payload reads custody's stdin directly, so it
   // observes exactly the bytes that follow the declared script length.
-  const env = { ...process.env, HAPPIER_REMOTE_EXEC_SCRIPT_STDIN: '1' };
+  const env = { ...process.env, HAPPIER_REMOTE_EXEC_SCRIPT_STDIN: '1', HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS: '30' };
   const run = (id, input) => spawnSync('/bin/bash', [custody, 'run', join(root, `remote-exec/${id}.pid`), id, '/bin/bash', '-c'],
     { env, input, encoding: 'utf8' });
 
@@ -793,6 +793,22 @@ test('a remote script cut short on stdin never runs, and a complete one leaves t
   assert.equal(complete.status, 0, complete.stderr);
   assert.equal(complete.stdout, 'script-ran\ncontrol=following-input\n');
   await access(marker);
+});
+
+test('a remote script frame that never arrives fails fast with a named cause instead of hanging', { skip: process.platform === 'win32', timeout: 15000 }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-remote-script-wait-' });
+  // The controller holds the lifetime pipe open but never sends the frame.
+  const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/silent.pid'), 'silent', '/bin/bash', '-c'], {
+    env: { ...process.env, HAPPIER_REMOTE_EXEC_SCRIPT_STDIN: '1', HAPPIER_REMOTE_EXEC_LIFELINE: '1',
+      HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => { child.stdin.destroy(); if (child.exitCode === null) child.kill('SIGKILL'); });
+  let error = '';
+  child.stderr.on('data', chunk => { error += chunk; });
+  const [code] = await once(child, 'close');
+  assert.equal(code, 255, error);
+  assert.match(error, /remote script frame did not arrive within 1 s/u);
 });
 
 test('control input reaches the admitted payload and EOF cancels its process tree', { skip: process.platform === 'win32' }, async t => {

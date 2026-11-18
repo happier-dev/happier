@@ -24,19 +24,35 @@ if [ "$mode" = run ] && [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ]; then
   # Quoted into the SSH command it would exceed the per-argument exec limit
   # (Linux MAX_ARG_STRLEN, 128 KiB). Read exactly that count so the lifeline
   # stays unread; macOS bash 3.2 lacks read -N and reads byte by byte instead.
-  IFS= read -r remote_script_bytes || remote_script_bytes=
+  # The controller sends the frame as soon as SSH starts, so its arrival is
+  # bounded by the SSH liveness window the controller passes (keepalive
+  # interval x count); a controller that never sends it fails here, named,
+  # instead of leaving this custody blocked on the open lifetime pipe.
+  remote_script_wait=${HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS-}
+  case "$remote_script_wait" in
+    ''|*[!0-9]*|0) printf '%s\n' '[preferred-execution] remote script frame has no arrival window (HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS)' >&2; exit 255 ;;
+  esac
+  remote_script_missing() {
+    if [ "$1" -gt 128 ]; then
+      printf '[preferred-execution] remote script frame did not arrive within %s s; the controller never sent it\n' "$remote_script_wait" >&2
+    else
+      printf '%s\n' "$2" >&2
+    fi
+    exit 255
+  }
+  IFS= read -r -t "$remote_script_wait" remote_script_bytes || remote_script_missing $? '[preferred-execution] remote script frame is malformed'
   case "$remote_script_bytes" in
     ''|*[!0-9]*) printf '%s\n' '[preferred-execution] remote script frame is malformed' >&2; exit 255 ;;
   esac
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
-    LC_ALL=C IFS= read -r -N "$remote_script_bytes" remote_script
+    LC_ALL=C IFS= read -r -t "$remote_script_wait" -N "$remote_script_bytes" remote_script
   else
-    LC_ALL=C IFS= read -r -d '' -n "$remote_script_bytes" remote_script
-  fi || { printf '%s\n' '[preferred-execution] remote script ended before its declared length' >&2; exit 255; }
+    LC_ALL=C IFS= read -r -t "$remote_script_wait" -d '' -n "$remote_script_bytes" remote_script
+  fi || remote_script_missing $? '[preferred-execution] remote script ended before its declared length'
   set -- "$@" "$remote_script"
   unset remote_script remote_script_bytes
 fi
-unset HAPPIER_REMOTE_EXEC_SCRIPT_STDIN
+unset HAPPIER_REMOTE_EXEC_SCRIPT_STDIN HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS
 
 exec_worker_payload() {
   # All Linux worker payloads share scheduling, including unclassified commands
