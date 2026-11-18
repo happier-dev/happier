@@ -2,8 +2,8 @@
 //!
 //! The Agent is created with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`, so its console is the
 //! pseudoconsole: its input is the input pipe, the console's rendering (VT) is the output
-//! pipe. The holder inherits the Session's Job from the runner and so does the Agent
-//! (custody stays with the process-custody helper). After the Agent exits, closing the
+//! pipe. The holder runs in its own kill-on-close Job, created outside the runner's Job by
+//! the process-custody helper's `held-launch`, and the Agent inherits it. After the Agent exits, closing the
 //! pseudoconsole flushes the remaining rendering and ends the output pipe.
 
 use std::ffi::c_void;

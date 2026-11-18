@@ -2,8 +2,8 @@
 //! SYSTEM) that rejects remote clients. Pipe handles are overlapped so one reader
 //! thread and one writer thread can use a connection at the same time (synchronous
 //! handles serialize all I/O on a file object). The Agent starts in a new process
-//! group; tree custody stays with the session's existing Job (the process-custody
-//! helper), which the holder and Agent inherit from the runner.
+//! group; tree custody is the holder's own kill-on-close Job, which the process-custody
+//! helper's `held-launch` creates outside the runner's Job and the Agent inherits.
 
 use std::ffi::c_void;
 use std::io::{self, Read, Write};
@@ -79,7 +79,7 @@ pub fn exit_json(status: io::Result<ExitStatus>) -> Value {
 }
 
 /// Windows has no process-group signal. KILL/TERM end the Agent root; its
-/// descendants are ended by the session Job owner (the existing custody helper).
+/// descendants end with the holder's kill-on-close Job (created by `held-launch`).
 pub fn signal_agent_group(agent_pid: u32, signal: &str) -> Result<(), String> {
     if !matches!(signal, "TERM" | "SIGTERM" | "KILL" | "SIGKILL") {
         return Err("unsupported_signal".into());
