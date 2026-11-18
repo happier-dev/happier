@@ -193,6 +193,17 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText: scrolledScreen })).toBe(true);
     });
 
+    it('stages the prompt when the first visible draft row starts with a status glyph', () => {
+      const firstRow = '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen';
+      const draftRow = '· Check the affected tests';
+      const policy = createClaudePromptSubmitVerificationPolicy();
+
+      expect(policy.isPromptStagedBeforeSubmit({
+        promptText: promptText.replace(firstRow, draftRow),
+        screenText: scrolledScreen.replace(firstRow, draftRow),
+      })).toBe(true);
+    });
+
     it('treats the prompt as sent once the composer is empty again', () => {
       const policy = createClaudePromptSubmitVerificationPolicy();
       const afterSubmit = [

@@ -1505,6 +1505,46 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
 
     expect(state.composerContent).toBe(VISIBLE_WINDOW);
   });
+
+  it('includes a first draft row that starts with a status glyph inside the rules', () => {
+    const firstRow = '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen';
+    const draftRow = '· Check the affected tests';
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER.replace(firstRow, draftRow));
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.replace(firstRow, draftRow));
+  });
+
+  it('stops reading the draft at a status glyph when the bottom rule is missing', () => {
+    const screen = CLAUDE_2_1_327_SCROLLED_COMPOSER
+      .replace(/\n─+\n/, '\n')
+      .replace('  Antritt, Ziel,', '  · Antritt, Ziel,');
+    const state = parseClaudeScreenState(screen);
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.split('\n')[0]);
+  });
+
+  it('includes a prompt-shaped quote inside the scrolled box', () => {
+    const lastRow = 'gefüllt sind, und noch einmal am Ende.';
+    const quote = '> zitiert';
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER.replace(lastRow, quote));
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.replace(lastRow, quote));
+  });
+
+  it('prefers a newer prompt below the scrolled box', () => {
+    const state = parseClaudeScreenState(`${CLAUDE_2_1_327_SCROLLED_COMPOSER}\n❯ newer draft`);
+
+    expect(state.composerContent).toBe('newer draft');
+  });
+
+  const usageWaitRow = '    Continuing automatically at 5:10pm · esc to cancel';
+
+  it.each([
+    ['inside the box', CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('  gefüllt sind, und noch einmal am Ende.', usageWaitRow), false],
+    ['below the box', CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('  Opus 5.5\n', `${usageWaitRow}\n  Opus 5.5\n`), true],
+  ])('classifies a usage-limit wait row %s by its position', (_position, screen, visible) => {
+    expect(parseClaudeScreenState(screen).usageLimitWaitVisible).toBe(visible);
+  });
 });
 
 // Live capture 2026-06-12 11:50 (orchestrator runner pid 58731, zellij dump): the AGENTS panel
