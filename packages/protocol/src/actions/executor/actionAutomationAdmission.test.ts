@@ -40,6 +40,19 @@ it('marks an automatic before wait check unavailable when its Machine is missing
   }] });
 });
 
+it('matches a Machine subject from the admitted external target', async () => {
+  const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'machine' };
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
+    automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+    ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
+    subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+  }] }), settle: async () => {} });
+  const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf matched' },
+    executionPlacement: 'machine', context: { authority: 'account_automation', serverIdentityId: subject.serverId,
+      externalActionTarget: subject } });
+  expect(selection.before.map(row => row.automationId)).toEqual(['own']);
+});
+
 it('checks pinned child revisions without rematerializing or reconciling unchanged consent', async () => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const root = WorkflowDefinitionV1Schema.parse({ version: 1,

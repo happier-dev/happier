@@ -7,6 +7,7 @@ import { ExternalActionExecutionAuthorizationBindingV1Schema, ExternalActionExec
   ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema, type ExternalActionExecutionAuthorizationBindingV1,
   type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -120,7 +121,8 @@ describe('installed own Machine isolation status admission', () => {
     const beforeAutomation = actionId === 'machines.command.run' ? {
       automationId: 'automation-before', triggerId: 'before', triggerRevision: 1,
       workflowId: 'workflow-before', workflowRevision: 1, ownerAccountId: 'requester',
-      actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
+      actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse', subjectKind: 'machine',
+      subjectKey: automationSubjectKeyV1({ kind: 'machine', serverId: f.homeServerIdentityId, machineId: f.machineId }),
     } as const : null;
     const authEnv = createEnvKeyScope(['HANDY_MASTER_SECRET', 'HAPPIER_SERVER_IDENTITY_ID']);
     authEnv.patch({ HANDY_MASTER_SECRET: 'machine-status-composed-test', HAPPIER_SERVER_IDENTITY_ID: '' });

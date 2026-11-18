@@ -150,6 +150,10 @@ export function projectActionAutomationSubjectsV1(args: ActionAutomationSelectAr
     subjects.push({ role: 'operand', subject: { kind: 'session', serverId: target.serverId, sessionId: target.sessionId } });
   }
   const serverId = args.context.serverIdentityId ?? args.context.serverId;
+  const externalTarget = args.context.externalActionTarget;
+  if (serverId && externalTarget?.kind === 'machine') subjects.push({ role: 'operand', subject: {
+    kind: 'machine', serverId, machineId: externalTarget.machineId,
+  } });
   if (serverId && args.approvalScope) {
     const scope = args.approvalScope;
     subjects.push({ role: 'operand', subject: scope.kind === 'machine'
