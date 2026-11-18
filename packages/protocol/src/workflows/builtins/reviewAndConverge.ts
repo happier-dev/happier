@@ -58,6 +58,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
           const bindings: Record<string, WorkflowActionFieldBindingV1> = Object.fromEntries(Object.entries(leafInput)
             .filter(([, value]) => value !== undefined).map(([key, value]) => [key, literal(StrictJsonValueSchema.parse(value))]));
           return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start',
+            ...(reviewer.roleId ? { execution: { roleId: reviewer.roleId } } : {}),
             input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(reviewer)]),
               instructions: { kind: 'text' as const,
                 document: { text: `${instructions}\n\n${references.map(reference => reference.token).join('\n\n')}`, references },

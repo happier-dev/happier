@@ -1076,6 +1076,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   async function prepareStart(args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
     combined?: WorkflowCombinedRunStartV1, approvalOnly = false,
     approvalPresentationDeps?: Pick<ActionExecutorDeps, 'homeDomainAction'>): Promise<PreparedStart | CloudApproval> {
+    // A new Workflow admits its own leaves; the caller's leaf stamp belongs
+    // only to dispatch of the original admitted Action.
+    const { agentStartWorkDepth: _parentStartDepth, agentStartWorkspaceWrites: _parentWorkspaceWrites,
+      reviewReviewerLaunchInputs: _parentReviewLaunchInputs, ...caller } = args.context;
+    args = { ...args, context: caller };
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     if (combined) {
       const reviewedHost = combined.parent.input.machineId;

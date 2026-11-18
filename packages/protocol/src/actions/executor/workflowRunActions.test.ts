@@ -1897,7 +1897,7 @@ describe('shared Account workflow run owner', () => {
     });
     const args = { actionId: 'workflow.run.start' as const,
       input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition: REVIEW_AND_CONVERGE_WORKFLOW_V1 },
-        inputs: { engines: ['agent:happier.agent.codex/codex'], ...(scenario === 'source' ? {} : { reviewSession: target }) } }),
+        inputs: { reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.codex/codex' }], ...(scenario === 'source' ? {} : { reviewSession: target }) } }),
       context: { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
         ...(scenario === 'originless' ? {} : { defaultSessionId: source.sessionId }),
         externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } };
@@ -2142,14 +2142,16 @@ describe('shared Account workflow run owner', () => {
       details: { code: 'target_unavailable', reason: 'workspace_unavailable', errorCode: code } });
   });
   it.each([
-    ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { engines: ['agent:happier.agent.codex/codex'] }, 4, undefined],
+    ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.codex/codex' }] }, 4, undefined],
     ['Plan with a panel', PLAN_WITH_A_PANEL_WORKFLOW_V1, { request: 'Plan the change', engines: ['agent:happier.agent.codex/codex'] }, 4, undefined],
     ...(['review.start', 'subagents.plan.start'] as const).map(actionId => [actionId, {
       version: 1, defaults: {}, blocks: [
         { kind: 'wait', id: 'choose', document: { text: 'Choose engines', references: [], attachments: [] },
-          result: { kind: 'json', schema: { type: 'array', items: { type: 'string' } } } },
+          result: { kind: 'json', schema: { type: 'array', items: actionId === 'review.start'
+            ? { type: 'object', properties: { kind: { const: 'engine' }, engineId: { type: 'string' } }, required: ['kind', 'engineId'] }
+            : { type: 'string' } } } },
         { kind: 'action', id: 'panel', actionId, input: {
-          [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: {
+          [actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys']: {
             kind: 'result', producer: { blockId: 'choose', scope: { kind: 'current' } }, path: [],
           },
           ...(actionId === 'review.start' ? { sessionId: { kind: 'origin_session_id' } }
@@ -2157,7 +2159,7 @@ describe('shared Account workflow run owner', () => {
           instructions: { kind: 'literal', value: 'Plan or review the change' },
         } },
       ],
-    }, {}, 2, actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys'] as const),
+    }, {}, 2, actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys'] as const),
   ] as const)('preserves proved authority for agent-started %s with invoke-time choices', async (name, authored, inputs, workDepthLimit, deferredInputField) => {
     let committed: ReturnType<typeof runSnapshot> | undefined;
     const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
@@ -3194,7 +3196,7 @@ describe('shared Account workflow run owner', () => {
     expect(writes).toBe(1);
   });
 
-  it('refuses a replay under current Agent-start policy before admitting another Run', async () => {
+  it.each([false, true])('refuses a replay under current Agent-start policy before admitting another Run (parent stamped: %s)', async stamped => {
     let writes = 0;
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
       if (operation.operation === 'get' && operation.runId === runId) return runSnapshot();
@@ -3211,6 +3213,9 @@ describe('shared Account workflow run owner', () => {
       runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition, replay: { runId } },
     }), context: { surface: 'agent', authority: 'account_automation', callerPermissionMode: 'default',
       defaultSessionId: 'origin-1', actionCaller: { kind: 'session', sessionId: 'origin-1', starterDepth: 0, turnDepth: 0 },
+      ...(stamped ? { executionRunWorkflowRunId: 'parent-run', agentStartWorkDepth: 0,
+        actionCaller: { kind: 'workflowRun' as const, runId: 'parent-run', authorization: {
+          principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } } } : {}),
       sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({ allowBackendTargetOverride: false }),
       externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } },
     } })).rejects.toMatchObject({ code: 'definition_exceeds_authority', details: { cause: {

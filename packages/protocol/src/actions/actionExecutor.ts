@@ -14,6 +14,7 @@ import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 } from '../teams/credentials/action
 import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
+import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
@@ -2938,8 +2939,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && (!ctx.actionCaller || ctx.actionCaller.kind === 'host') && agentStartAction
       && roleSelected
       && Boolean(ctx.agentStartContext);
-    const admittedWorkflowLeafStart = readAdmittedWorkflowLeafStartDepthV1(actionId, ctx) !== undefined;
-    if ((isAgentCaller(ctx) && !admittedWorkflowLeafStart && (agentStartAction || roleTargetAction || selectorGoalMutation)) || userRoleStart || automationRoleStart) {
+    const admittedWorkflowLeafDepth = readAdmittedWorkflowLeafStartDepthV1(actionId, ctx);
+    const admittedWorkflowLeafStart = admittedWorkflowLeafDepth !== undefined;
+    if ((isAgentCaller(ctx) && (!admittedWorkflowLeafStart || actionId === 'review.start') && (agentStartAction || roleTargetAction || selectorGoalMutation)) || userRoleStart || automationRoleStart) {
       const targetSessionId = roleTargetAction || selectorGoalMutation || actionId === 'session.goal.set'
         ? readRecord(admittedInput).sessionId : undefined;
       const caller = userRoleStart ? { ok: true as const, effectiveCallerMode: 'yolo' }
@@ -2949,7 +2951,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const ceiling = typeof caller.effectiveCallerMode === 'string'
         ? parseAgentPermissionIntentV1Alias(caller.effectiveCallerMode) : null;
       if (!ceiling) return classifyExecutionRunStartPreDispatchFailure(actionId, causalPermissionAuthorityFailure());
-      const resolved = await resolveActionAgentStartContextV1(deps,
+      const resolved = admittedWorkflowLeafStart ? ctx.agentStartContext : await resolveActionAgentStartContextV1(deps,
         { ...ctx, callerPermissionMode: caller.effectiveCallerMode }, typeof targetSessionId === 'string' ? targetSessionId : undefined);
       if (resolved && 'ok' in resolved) return classifyExecutionRunStartPreDispatchFailure(actionId, resolved);
       // This fact comes from the authenticated Action caller, never authored input.
@@ -2972,7 +2974,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const reviewReviewerLaunchInputs: Record<number, NonNullable<ActionExecutorContext['reviewReviewerLaunchInputs']>[number]> = {};
         if (reviewRoster) admittedInput = starts.effectiveInput;
         for (const [requestIndex, start] of starts.requests.entries()) {
-          const admission = admitActionAgentStartV1(ctx, start, startContext);
+          const frozenRole = (start.kind === 'execution_run' || start.kind === 'spawn_new') && start.roleId
+            ? startContext?.roles[start.roleId] : undefined;
+          const frozenStamp: StampedStartV1 | undefined = admittedWorkflowLeafDepth === undefined
+            || (start.kind !== 'execution_run' && start.kind !== 'spawn_new') ? undefined
+            : { workDepth: admittedWorkflowLeafDepth,
+                ...(frozenRole ? { roleId: frozenRole.roleId, workspaceWrites: frozenRole.workspaceWrites,
+                  ...(frozenRole.runsAs.kind === 'background_run' ? { intent: frozenRole.runsAs.intent } : {}) } : {}),
+              };
+          const admission = frozenStamp ? { ok: true as const, stamped: frozenStamp }
+            : admitActionAgentStartV1(ctx, start, startContext);
           if (!admission.ok) return classifyExecutionRunStartPreDispatchFailure(actionId, admission.error);
           if (start.kind === 'execution_run' || start.kind === 'spawn_new') {
             const reviewerIndex = reviewPositions?.[requestIndex];
@@ -6153,8 +6164,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             dependencyInput.backendTargetKey = backendTargetKeys[0];
           }
           // A review's Team credential model needs exactly one engine, named as its Agent target.
-          const engineIds = actionIdRaw === 'review.start' && Array.isArray(dependencyInput.engineIds)
-            ? dependencyInput.engineIds.filter((value): value is string => typeof value === 'string') : [];
+          const engineIds = actionIdRaw === 'review.start' && Array.isArray(dependencyInput.reviewers)
+            ? dependencyInput.reviewers.flatMap(value => {
+              const reviewer = readRecord(value);
+              return reviewer.kind === 'engine' && typeof reviewer.engineId === 'string' ? [reviewer.engineId] : [];
+            }) : [];
           if (!normalizeId(dependencyInput.backendTargetKey) && engineIds.length === 1) {
             const engineTargetKey = tryNormalizeExecutionBackendOptionValue(engineIds[0]!);
             if (engineTargetKey) dependencyInput.backendTargetKey = engineTargetKey;

@@ -255,7 +255,10 @@ export const ReviewStartInputSchema = lazyZodSchema(() => z.pipe(
 export type ReviewStartInput = z.infer<typeof ReviewStartInputSchema>;
 
 /** A composed pass delegates executable admission to its concrete Workflow leaves. */
-export function requiresReviewWorkflowCompositionV1(input: Pick<ReviewStartInput, 'reviewRound' | 'steps' | 'then' | 'reviewers'>): boolean {
+export function requiresReviewWorkflowCompositionV1(input: Readonly<{
+  reviewRound?: unknown; steps?: unknown; then?: unknown; reviewers?: unknown;
+}>): boolean {
+  const reviewers = Array.isArray(input.reviewers) ? input.reviewers : undefined;
   return !input.reviewRound && (input.steps !== undefined || input.then === 'fix'
-    || input.reviewers.length !== 1 || input.reviewers[0]?.kind !== 'engine');
+    || reviewers !== undefined && (reviewers.length !== 1 || reviewers[0]?.kind !== 'engine'));
 }

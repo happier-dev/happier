@@ -9,6 +9,7 @@ import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
+import { ActionIdSchema } from '../actions/actionIds.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actions/actionCatalog.js';
 import { projectDiscussionModelParticipantLaunchV1 } from '../discussions/modelParticipantLaunch.js';
 
@@ -28,6 +29,21 @@ function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Inp
 }
 
 describe('accepted Workflow selection bindings', () => {
+  it('leaves a composed Review starter to its concrete child materialization', async () => {
+    const address = { serverId: 'home', sessionId: 'origin' };
+    const result = await materialize({ definition: REVIEW_AND_CONVERGE_WORKFLOW_V1,
+      context: { ...context, inputs: { reviewSession: address, reviewers: [
+        { kind: 'engine', engineId: buildBackendTargetKeyV2(agentTarget) },
+        { kind: 'engine', engineId: buildBackendTargetKeyV2(agentTarget) },
+      ] } }, roleSelection: { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(agentTarget) } },
+      effects: { resolveTargetAvailability: available,
+        resolveSessionTarget: async () => ({ address, machineId: 'machine' }),
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))),
+      },
+    });
+    expect(result).toMatchObject({ ok: true, agentStartLeaves: [] });
+  });
+
   it('admits a launch Profile on a background step, which its Run start carries, without a Session transcript choice', async () => {
     const agentKey = 'agent:happier.agent.codex/codex';
     const profile = LaunchProfileV2Schema.parse({ ...emptyProfile('run-profile'), codingPromptBehaviorOverrides: {},

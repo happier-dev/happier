@@ -33,6 +33,7 @@ import type { WorkflowTargetUnavailableDetailsV1 } from './workflowProgressV1.js
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { resolveWorkflowContextInputsV1, workflowInputErrorV1, WorkflowInputErrorV1, type ResolveWorkflowSessionTargetV1, type WorkflowResolvedSessionTargetV1 } from './workflowStartPreparationV1.js';
+import { requiresReviewWorkflowCompositionV1 } from '../reviews/reviewStart.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -270,6 +271,7 @@ function projectActionStart(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineI
     }) };
   }
   if (!leaf.actionId || !isAgentStartActionV1(leaf.actionId)) return { leaves: [] };
+  if (leaf.actionId === 'review.start' && requiresReviewWorkflowCompositionV1(leaf.actionInput ?? {})) return { leaves: [] };
   const selection = leaf.selection;
   const baseline = { machineId: snapshot.machineId, directory: snapshot.workspaceTarget.project.directory };
   const actionInput = { ...leaf.actionInput };
@@ -378,6 +380,13 @@ export async function readWorkflowAcceptedAgentStartLeavesV1(snapshot: Pick<Work
   return result;
 }
 
+/** Concrete Action selections already passed admission; deferred authority binds at invocation. */
+export function readWorkflowAcceptedActionStartDepthV1(snapshot: Pick<WorkflowAcceptedSnapshotV1,
+  'machineId' | 'workspaceTarget' | 'workDepth'>, leaf: WorkflowMaterializedLeafV1): number | undefined {
+  const starts = projectActionStart(snapshot, leaf).leaves;
+  return starts.length > 0 && starts.every(start => !hasUnresolvedValue(start.facts)) ? snapshot.workDepth : undefined;
+}
+
 function boundValue(reference: WorkflowActionValueReferenceV1, context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem): JsonValue | Unresolved {
   if (reference.kind === 'literal') return reference.value;
   if (reference.kind === 'input') {
@@ -437,7 +446,7 @@ function hasUnresolvedValue(value: unknown): boolean {
 }
 export { hasUnresolvedValue as hasUnresolvedWorkflowValueV1 };
 
-/** Host-only Run admission; concrete Action children still require ordinary admission at the frozen Run depth. */
+/** Host-only Run admission; unresolved Action choices finish admission at invocation. */
 export function readWorkflowRunLeafStartRequestV1(leaf: MaterializedWorkflowLeafV1): Extract<AgentStartRequestV1, { kind: 'workflow_run_leaf' }> {
   if (leaf.kind === 'action' && Object.values(leaf.facts).some(value =>
     value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'unresolved')) {

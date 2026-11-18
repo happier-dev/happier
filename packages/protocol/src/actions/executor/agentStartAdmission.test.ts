@@ -18,6 +18,23 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('does not spend an accepted native Review stamp on a separate Session target', async () => {
+    const executor = createActionExecutor({});
+    expect(await executor.execute('review.start', {
+      scope: 'repository', instructions: 'Review once.', reviewRound: { reviewId: 'review', roundOrdinal: 1 },
+      reviewers: [{ kind: 'engine', engineId: 'agent:native.agent/agent' },
+        { kind: 'session', session: { serverId: 'home', sessionId: 'foreign-session' } }],
+    }, { surface: 'agent', authority: 'account_automation', callerPermissionMode: 'read-only',
+      executionRunWorkflowRunId: 'workflow', agentStartWorkDepth: 1,
+      actionCaller: { kind: 'workflowRun', runId: 'workflow', authorization: {
+        principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } },
+      sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      agentStartContext: { caller: { kind: 'originless', runId: 'workflow', runDepth: 1 },
+        baseline: { machineId: 'machine', directory: '/repo' }, ledSubtreeSessionIds: [], roles: {},
+        workDepthLimit: 1, callerPermissionCeiling: 'read-only' },
+    })).toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+  });
+
   it.each(['session.spawn_new', 'execution.run.start'] as const)(
     'admits a Workflow native Connected choice through the %s wire shape', actionId => {
       const resolved = resolveActionAgentStartRequestsV1({ actionId,
@@ -522,6 +539,17 @@ describe('canonical Action agent-start adapter', () => {
     if (!result.ok) throw new Error('expected_inherited_review_target');
     expect(result.effectiveInput).toMatchObject({ reviewers: [{ kind: 'engine', engineId: 'agent:role.agent/agent' }] });
     expect(result.effectiveInput).not.toHaveProperty('backendTarget');
+  });
+
+  it('projects an accepted Review Role engine over its authored engine', () => {
+    const result = resolveActionAgentStartRequestsV1({ actionId: 'review.start', input: {
+      instructions: 'Review once', reviewers: [{ kind: 'engine', engineId: 'agent:native.agent/agent', connectedServices: null }],
+    }, context: {}, baseline: { machineId: 'run-machine', directory: '/repo' },
+      effectiveSelection: { selection: { agentTarget: roleTarget }, overrideEngine: true } });
+    expect(result).toMatchObject({ ok: true,
+      effectiveInput: { reviewers: [{ kind: 'engine', engineId: 'agent:role.agent/agent', connectedServices: null }] },
+      requests: [{ kind: 'execution_run', facts: { agentTarget: roleTarget, connectedServices: null } }],
+    });
   });
 
   it('admits known spawn policy facts while its nonauthority initial input remains dynamic', () => {

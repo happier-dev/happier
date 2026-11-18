@@ -37,7 +37,7 @@ import { decodeLegacyReviewStartInput, ReviewEngineReviewerSelectionV1Schema, Re
 
 /** Native Workflow leaves already admitted by materialization retain that host-stamped depth. */
 export function readAdmittedWorkflowLeafStartDepthV1(actionId: string, context: ActionExecutorContext): number | undefined {
-    return (actionId === 'execution.run.start' || actionId === 'session.spawn_new')
+    return isAgentStartActionV1(actionId)
         && context.actionCaller?.kind === 'workflowRun'
         && context.executionRunWorkflowRunId === context.actionCaller.runId
         ? context.agentStartWorkDepth : undefined;
@@ -323,6 +323,8 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         return { ok: false, errorCode: 'invalid_parameters' };
     }
     if (actionId === 'review.start') {
+        if (isUnresolvedStartFact(selectedInput.reviewers)) return { ok: false, errorCode: 'target_unavailable',
+            knownFacts: selectedFacts(executionRunStartFactsV1(selectedInput, unresolved, context, baseline)) };
         const roster = z.array(z.unknown()).safeParse(selectedInput.reviewers);
         if (!roster.success) return { ok: false, errorCode: 'invalid_parameters' };
         const requests: AgentStartRequestV1[] = [];
@@ -371,7 +373,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
                     backendTarget: readExecutionRunStartTargetV1(engineId), intent: 'review',
                 });
             }
-            const nativeSelection = selected ? { selection: {
+            const nativeSelection = selected ? { ...params.effectiveSelection, selection: {
                 ...selected,
                 ...(reviewer.kind === 'engine' && typeof nativeInput.launchProfileId === 'string'
                     ? { profileId: nativeInput.launchProfileId } : {}),
@@ -390,7 +392,9 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
                 const effectiveSelection = Object.fromEntries(Object.keys(ReviewEngineReviewerSelectionV1Schema.shape)
                     .filter(key => resolved.effectiveInput[key] !== undefined)
                     .map(key => [key, resolved.effectiveInput[key]]));
-                reviewers.push({ ...reviewer, ...effectiveSelection });
+                const target = readAgentStartTargetV1(resolved.effectiveInput.backendTarget);
+                reviewers.push({ ...reviewer, ...effectiveSelection,
+                    ...(target ? { engineId: buildBackendTargetKeyV2(target) } : {}) });
             }
         }
         if (deferredTarget) return { ...deferredTarget, knownRequests: requests };
