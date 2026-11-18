@@ -100,6 +100,7 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { PluginLocalizedStringV2 } from '../manifest.js';
+import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
 
 export type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{
     cwd: string;
@@ -774,6 +775,8 @@ export type BackendCommandRunResult = Readonly<{
 }>;
 
 export type BackendRuntimeServices = Readonly<{
+    /** Host-recorded Project files clone source; guest Git configuration cannot replace it. */
+    projectFilesSource?: ScmCredentialFreeRepositorySelectorV1;
     /** Host-private authentication; only credential-free HTTP reaches workspace Git. */
     repositoryTransport?: Readonly<{
         readonly requiresConnectedAccount: boolean;

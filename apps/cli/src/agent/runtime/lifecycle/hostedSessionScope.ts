@@ -4,6 +4,7 @@ import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { SessionRuntimeConfiguration } from '@/configuration/sessionRuntimeConfiguration';
 import type { TranscriptRecoveryCoordinator } from '@/api/session/recovery/TranscriptRecoveryCoordinator';
+import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
 
 /**
  * The Session a piece of runner work belongs to. One process can host several
@@ -35,6 +36,8 @@ export type HostedSessionScope = {
   workingDirectory?: string;
   /** Where this Session's workspace lives; bound by the placement owner (absent = this Machine's disk). */
   workspaceSource?: WorkspaceSource;
+  /** Host-recorded Project files clone source; never sourced from guest Git config. */
+  projectFilesSource?: ScmCredentialFreeRepositorySelectorV1;
   /**
    * Ends this Session's command in a process that hosts several Sessions (set by the session host
    * when it adds the Session). Absent in a one-Session runner: its command ends the process.
@@ -107,6 +110,12 @@ export function bindHostedSessionWorkingDirectory(directory: string): void {
 export function bindHostedSessionWorkspaceSource(source: WorkspaceSource): void {
   const scope = hostedSessionScope.getStore();
   if (scope) scope.workspaceSource = source;
+}
+
+/** Bind the immutable Project files clone source admitted in the Session recipe. */
+export function bindHostedSessionProjectFilesSource(source: ScmCredentialFreeRepositorySelectorV1): void {
+  const scope = hostedSessionScope.getStore();
+  if (scope) scope.projectFilesSource = source;
 }
 
 /** The current Session's working directory; the process cwd outside a Session. */

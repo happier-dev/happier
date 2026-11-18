@@ -267,7 +267,7 @@ import {
 } from '@/plugins/runtime/providerBindings/handoff';
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
-import { bindHostedSessionId, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindHostedSessionId, bindHostedSessionProjectFilesSource, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindPlacedSessionWorkspaceSource } from '@/workspaces/source/placedSessionWorkspaceSource';
 import { bindHostedSessionStop } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import {
@@ -1282,6 +1282,10 @@ async function runHostedSessionRuntime(
   const sessionCreationCorrespondence = runtimeOpts.sessionCreationCorrespondence
     ? SessionCreationCorrespondenceV1Schema.parse(runtimeOpts.sessionCreationCorrespondence)
     : null;
+  const recordedProjectFilesSource = sessionCreationCorrespondence?.recipe.projectFiles?.kind === 'git_clone'
+    ? sessionCreationCorrespondence.recipe.projectFiles.source
+    : undefined;
+  if (recordedProjectFilesSource) bindHostedSessionProjectFilesSource(recordedProjectFilesSource);
   if (
     sessionCreationCorrespondence !== null
     && sessionCreationCorrespondence.sessionCreationTag !== sessionTag

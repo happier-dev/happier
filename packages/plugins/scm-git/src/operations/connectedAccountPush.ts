@@ -1,9 +1,21 @@
 import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { ScmHostingProviderKindSchema } from '@happier-dev/plugin-sdk/scm/hosting';
 import { readCurrentHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { GIT_INSTALLABLE_DEP_ID } from '../installables/gitInstallable.js';
 import { runScmCommand, type ScmExecResult } from '../runtime.js';
 import { resolveDefaultPullRequestStatusProjectionRegistry } from './pullRequestStatusProjection.js';
+
+function normalizeRemoteUrl(raw: string): string | null {
+    try {
+        const parsed = new URL(raw.trim());
+        if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+        parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
 
 /** The target has no account credential; both push entry points use the host's private transport. */
 export async function runGitPushWithConnectedAccount(input: Readonly<{
@@ -14,22 +26,30 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
     if (!transport?.requiresConnectedAccount) return runScmCommand(input.command);
     const authRequired = (): ScmExecResult => ({ success: false, exitCode: 128, stdout: '',
         stderr: 'fatal: Authentication failed: connect a Git account with repository access and use HTTPS.' });
+    const destinationMismatch = (): ScmExecResult => ({ success: false, exitCode: 128, stdout: '',
+        stderr: 'fatal: Git push destination differs from the host-recorded Project files source.',
+        errorCode: SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED });
     if (!input.remote) return authRequired();
-    // Push only to the checkout's fetch URL. Git otherwise fans a push out to
-    // every configured pushurl, which an agent can add while the host transport is open.
-    const configured = await runScmCommand({ ...input.command, args: ['remote', 'get-url', input.remote] });
+    const recordedSource = readCurrentBackendRuntimeServices()?.projectFilesSource;
+    const sourceUrl = recordedSource?.repository.cloneUrl
+        ?? (recordedSource ? `${recordedSource.provider.baseUrl.replace(/\/+$/, '')}/${recordedSource.repository.nameWithOwner}` : undefined);
+    const normalizedSourceUrl = sourceUrl ? normalizeRemoteUrl(sourceUrl) : null;
+    if (!normalizedSourceUrl) return destinationMismatch();
+    // Read the effective push destination after Git's insteadOf/pushurl rules. A guest can edit
+    // this config, so every destination must match the immutable host-recorded recipe source.
+    const configured = await runScmCommand({ ...input.command, args: ['remote', 'get-url', '--push', '--all', input.remote] });
     if (!configured.success) return configured;
-    const sourceUrl = configured.stdout.split(/\r?\n/).map(url => url.trim()).find(Boolean);
-    if (!sourceUrl) return authRequired();
+    const destinations = configured.stdout.split(/\r?\n/).map(url => url.trim()).filter(Boolean);
+    if (destinations.length !== 1 || normalizeRemoteUrl(destinations[0]) !== normalizedSourceUrl) return destinationMismatch();
     const registry = await resolveDefaultPullRequestStatusProjectionRegistry();
     const runtimeServices = readCurrentHostingProviderRuntimeServices();
     const repositories: { url: string; authorizationHeader: string }[] = [];
-    const detected = registry.detectRemote({ remoteName: input.remote, remoteUrl: sourceUrl });
+    const detected = registry.detectRemote({ remoteName: input.remote, remoteUrl: sourceUrl! });
     if (detected.kind !== 'resolved') return authRequired();
     const kind = ScmHostingProviderKindSchema.safeParse(detected.provider.kind);
     if (!kind.success) return authRequired();
     let parsed: URL;
-    try { parsed = new URL(sourceUrl); } catch { return authRequired(); }
+    try { parsed = new URL(sourceUrl!); } catch { return authRequired(); }
     if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) return authRequired();
     const capability = registry.getRepositoryClone(detected.providerId);
     const authentication = await capability?.resolveCloneAuthentication?.({ provider: {
@@ -38,8 +58,9 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
         urlSafety: { ...detected.provider.urlSafety, allowedSchemes: [...(detected.provider.urlSafety?.allowedSchemes ?? ['https:'])] },
     }, ...(runtimeServices ? { runtimeServices } : {}) });
     if (authentication?.kind !== 'available') return authRequired();
-    repositories.push({ url: sourceUrl, authorizationHeader: authentication.authorizationHeader });
-    const args = input.command.args.map(arg => arg === input.remote ? sourceUrl : arg);
+    repositories.push({ url: sourceUrl!, authorizationHeader: authentication.authorizationHeader });
+    // Preserve the remote name so Git updates refs/remotes/<name>; the host transport supplies
+    // the credential and rewrites only the matching source URL for the admitted command.
     return transport.run({ repositories,
-        command: { ...input.command, args, command: 'git', installableKey: GIT_INSTALLABLE_DEP_ID } });
+        command: { ...input.command, args: input.command.args, command: 'git', installableKey: GIT_INSTALLABLE_DEP_ID } });
 }

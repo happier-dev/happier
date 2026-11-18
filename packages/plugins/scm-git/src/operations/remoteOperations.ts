@@ -68,7 +68,7 @@ export async function evaluateGitPushConfiguration(input: { context: ScmBackendC
 }
 
 function commandCode(command: ScmExecResult) {
-    return getScmCommandIndeterminateErrorCode(command) ?? mapGitErrorCode(`${command.stderr}\n${command.stdout}`);
+    return command.errorCode ?? getScmCommandIndeterminateErrorCode(command) ?? mapGitErrorCode(`${command.stderr}\n${command.stdout}`);
 }
 
 function warning(input: { command: ScmExecResult; effect: ScmOperationEffect; errorCode: ScmOperationErrorCode; error: string; repositoryState?: ScmOperationRepositoryState; recoveryStash?: RecoveryStash }): ScmRemoteResponse {

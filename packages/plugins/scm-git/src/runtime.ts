@@ -21,7 +21,7 @@ import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 
 const SAFE_GIT_ALLOW_PROTOCOL = 'https:ssh:git:file';
 
-export type ScmExecResult = BackendCommandRunResult;
+export type ScmExecResult = BackendCommandRunResult & Readonly<{ errorCode?: ScmOperationErrorCode }>;
 
 /** The host owns Session scope; standalone callers use their one process environment. */
 export function readScmEnvironment(): Readonly<Record<string, string | undefined>> {

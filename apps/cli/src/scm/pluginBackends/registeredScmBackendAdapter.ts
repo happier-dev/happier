@@ -1,4 +1,4 @@
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createScmRepositoryFileSystem } from '@/scm/repositoryFileSystem';
 import { runAuthenticatedScmRepositoryCommand } from '@/scm/repositoryTransport';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
@@ -128,6 +128,7 @@ function createScmBackendRuntimeServices(
         }));
     };
     return { readEnvironment: sessionProcessEnvironment, runCommand, runCommandStreaming: runCommand,
+        get projectFilesSource() { return readHostedSessionScope()?.projectFilesSource; },
         get repositoryTransport() { return {
             requiresConnectedAccount: currentWorkspaceSource().kind === 'target',
             run: ({ repositories, command }: Parameters<NonNullable<ScmBackendRuntimeServices['repositoryTransport']>['run']>[0]) =>
