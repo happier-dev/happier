@@ -223,7 +223,7 @@ describe('MachineAdministrationTargetSelector', () => {
         try {
             const chip = screen.findHostByTestId('page.target.chip');
             expect(chip?.props.accessibilityLabel ?? chip?.props['aria-label']).toContain('Machine B');
-            expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'common.machine')).not.toHaveLength(0);
+            expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'sessionsList.filtersMachine')).not.toHaveLength(0);
             expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'Machine B')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });

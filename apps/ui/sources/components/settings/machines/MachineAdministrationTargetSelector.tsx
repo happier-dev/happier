@@ -395,7 +395,7 @@ export function useMachineAdministrationTargetFilter(
     const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'machine-administration-target';
     const namedByPage = React.useContext(MachineScopeNamedByPageContext) && props.chipLabel === undefined;
-    const groupTitle = namedByPage ? t('common.machine') : props.groupTitle ?? t('settingsProviders.detail.targetMachine');
+    const groupTitle = namedByPage ? t('sessionsList.filtersMachine') : props.groupTitle ?? t('settingsProviders.detail.targetMachine');
     const current = presentCurrentTarget(
         props.selection.state,
         props.unselectedTitle,
