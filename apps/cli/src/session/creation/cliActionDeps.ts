@@ -791,7 +791,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const { permissionMode, modelSelection, connectedServices } = defaults;
       const retainsConfiguration = sourceContext !== undefined || configurationSnapshot?.providerSessionResume !== undefined;
       const selectedApprovalProfileId = retainsConfiguration ? approvalProfileId : defaults.approvalProfileId;
-      const selectedApprovalProfileTeamOrGroupDerived = retainsConfiguration ? undefined : defaults.approvalProfileTeamOrGroupDerived;
+      const selectedApprovalProfileTeamOrGroupDerived = defaults.approvalProfileTeamOrGroupDerived;
       const selectedPrimaryTeamId = primaryTeamId ?? defaults.primaryTeamId;
       const configurationWithNativeSandbox = (nativeSandbox: typeof defaults.nativeSandbox) =>
         withSessionNativeSandbox(configurationSnapshot, nativeSandbox);

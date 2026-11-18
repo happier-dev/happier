@@ -215,7 +215,7 @@ describe('Session spawn defaults at admission', () => {
     { name: 'unadmitted cross-Account request refuses', surface: 'mcp' as const, layer: 'unadmitted', permission: 'read-only', modelId: 'member-model' },
     { name: 'retired requester snapshot refuses', surface: 'mcp' as const, layer: 'retired', permission: 'read-only', modelId: 'member-model' },
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
-    { name: 'native recovery preserves authored facets when optional Account defaults are unavailable', surface: 'mcp' as const, layer: 'recovery', permission: 'read-only', modelId: 'retained-model' },
+    { name: 'attached native recovery retains approval provenance and authored facets without Account defaults', surface: 'mcp' as const, layer: 'recovery', permission: 'read-only', modelId: 'retained-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'CLI creation preparation reaches saved member defaults', surface: 'cli' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'cold CLI preparation shares one Account settings read with admission', surface: 'cli' as const, layer: 'member', cold: true, permission: 'read-only', modelId: 'member-model' },
@@ -443,11 +443,14 @@ describe('Session spawn defaults at admission', () => {
       ? executor.execute('session.spawn_new', voiceInput.input, { surface: 'voice', authority: 'present_user',
         serverId: 'home', actionRequestId: 'voice-member-defaults', bypassApprovals: true })
       : deps.sessionSpawnNew!({ ...input, creationKey: input.creationKey,
+      ...(testCase.layer === 'recovery' ? { admittedInput: input, approvalProfileId: 'custom:team-profile' } : {}),
       invokeAgentReadinessAction: (actionId, request) => executor.execute(actionId, request, { surface: 'cli',
         authority: 'present_user', serverId: 'home', bypassApprovals: true }), actionCaller: { kind: 'host' }, callerSurface: testCase.surface,
       sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: input.creationKey! }),
       context: { surface: testCase.surface, authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: 'home', actionRequestId: `defaults-${testCase.layer}`, bypassApprovals: true,
+        ...(testCase.layer === 'recovery' ? { defaultSessionId: 'parent', approvalProfileId: 'custom:team-profile',
+          approvalProfileTeamOrGroupDerived: true } : {}),
         ...(externalAuthorization ? { externalActionExecutionAuthorization: externalAuthorization } : {}),
         ...(externalAuthorization && testCase.layer !== 'unadmitted'
           ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) } });
@@ -484,7 +487,12 @@ describe('Session spawn defaults at admission', () => {
     // cutover's source read; preparation must not add a second acquisition.
     if ('cold' in testCase) expect(settingsReads).toBe(2);
     expect(launched[0]).not.toHaveProperty('accountSettingsContext');
-    if (testCase.layer === 'recovery') { expect(reads).toEqual([]); return; }
+    if (testCase.layer === 'recovery') {
+      expect(launched[0]).toMatchObject({ approvalProfileId: 'custom:team-profile', approvalProfileTeamOrGroupDerived: true,
+        sessionCreationCorrespondence: { recipe: { approvalProfileId: 'custom:team-profile', approvalProfileTeamOrGroupDerived: true } } });
+      expect(reads).toEqual([]);
+      return;
+    }
     if (testCase.layer.startsWith('approval-')) {
       const approvalProfileId = testCase.layer === 'approval-null' ? null
         : testCase.layer === 'approval-team' ? 'custom:team-profile' : 'custom:machine-profile';
