@@ -10,6 +10,7 @@ import {
   useDeploySuggestionCards,
 } from '@/components/projects/starters/auto/DeploySuggestionCards';
 import type { TranscriptDeploySuggestionCheck } from '@/components/sessions/transcript/references/transcriptDeploySuggestionReference';
+import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -69,6 +70,24 @@ export const DeploySuggestionCheckToolBody = React.memo(
     );
   },
 );
+
+/**
+ * The transcript's check result with its Use this setup wired to Deploy an app: the dialog opens on Describe your app
+ * with the chosen card applied and the person's original description (deploy auto-mode U10, F4). The opener lives in
+ * this leaf, so ordinary tool rows mount no dialog wiring.
+ */
+export function DeploySuggestionCheckResult(props: Readonly<{ check: TranscriptDeploySuggestionCheck }>) {
+  const openNewApp = useOpenNewApp();
+  const { check } = props;
+  const onUse = React.useCallback((choice: DeploySuggestionChoice) => {
+    openNewApp(null, null, { startOn: 'describe', suggestion: {
+      description: check.description ?? choice.recommendation.whatToBuild,
+      recommendation: choice.recommendation,
+      catalog: choice.catalog,
+    } });
+  }, [check.description, openNewApp]);
+  return <DeploySuggestionCheckToolBody check={check} onUse={onUse} />;
+}
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s12 },

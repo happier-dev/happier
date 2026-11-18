@@ -25,8 +25,7 @@ import { resolveToolActionFailure, type ToolActionFailurePresentation } from '@/
 import { readThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
 import { ThemeActionResult } from './ThemeActionResult';
 import { readTranscriptDeploySuggestionCheck } from '@/components/sessions/transcript/references/transcriptDeploySuggestionReference';
-import { DeploySuggestionCheckToolBody, type DeploySuggestionChoice } from './DeploySuggestionCheckToolBody';
-import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
+import { DeploySuggestionCheckResult } from './DeploySuggestionCheckToolBody';
 
 
 import { resolveMcpToolTitle } from '@happier-dev/session-core/tools';
@@ -160,23 +159,14 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messa
     const actionFailure = resolveToolActionFailure(tool);
     const projectCommandCall = readTranscriptProjectCommandCall(tool);
     const machineResourcesCall = projectCommandCall ? null : readTranscriptMachineResourcesCall(tool);
-    const suggestionCheck = readTranscriptDeploySuggestionCheck(tool);
-    const openNewApp = useOpenNewApp();
-    const onUseSuggestion = React.useCallback((choice: DeploySuggestionChoice) => {
-        if (!suggestionCheck) return;
-        openNewApp(null, null, { startOn: 'describe', suggestion: {
-            description: suggestionCheck.description ?? choice.recommendation.whatToBuild,
-            recommendation: choice.recommendation,
-            catalog: choice.catalog,
-        } });
-    }, [openNewApp, suggestionCheck]);
 
     if (detailLevel === 'summary' && !find.active) {
         // An acknowledged section move reads as what happened, with its Undo on the header (lab `clsections:agent`).
         const sectionMove = readSessionSectionMoveFact(tool);
         if (sectionMove) return <SessionSectionMoveResult fact={sectionMove} serverId={serverId} />;
         // A checked setup suggestion reads as the same cards the Describe your app step shows (deploy auto-mode U10).
-        if (suggestionCheck) return <DeploySuggestionCheckToolBody check={suggestionCheck} onUse={onUseSuggestion} />;
+        const suggestionCheck = readTranscriptDeploySuggestionCheck(tool);
+        if (suggestionCheck) return <DeploySuggestionCheckResult check={suggestionCheck} />;
         // The row header already says what the call is (title and line); the body adds only its outcome.
         const outcome = actionFailure
             ? <ActionFailureCode failure={actionFailure} />
