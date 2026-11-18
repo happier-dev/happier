@@ -185,6 +185,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         || code === 'space_reorder_not_applied'
         || code === 'saved_view_reorder_not_applied') return t('entityDragDrop.reasons.generic');
     if (code === 'project_workspace_unavailable') return t('terminalEmbedded.errors.projectWorkspaceUnavailable');
+    if (code === 'terminal_busy') return t('terminalEmbedded.errors.busy');
     const nativeFailure = describeMachineNativeFailureCode(code, record.details, record.failure);
     if (nativeFailure) return nativeFailure;
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');

@@ -1563,6 +1563,7 @@ describe('ApprovalDetailScreen', () => {
     const reasonOf = async (errorCode: string) => {
       const request = ApprovalRequestV2Schema.parse({
         ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 2,
+        automaticChecks: undefined,
         decision: { kind: 'approve', decidedAtMs: 2 },
         execution: { executedAtMs: 2, ok: false, errorCode, error: errorCode, effectAttempted: true },
       });
@@ -1572,6 +1573,7 @@ describe('ApprovalDetailScreen', () => {
     };
 
     expect(await reasonOf('plugin_change_daemon_unavailable')).toBe('approvals.pluginChangeDaemonUnavailable');
+    expect(await reasonOf('terminal_busy')).toBe('terminalEmbedded.errors.busy');
     expect(await reasonOf('executor_failed')).toBe('approvals.failureNoReason');
   });
 
