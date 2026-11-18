@@ -1921,7 +1921,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             testIDPrefix={`${testIDPrefix}-invocations`}
             invocations={activityInvocations}
             loaded={props.invocationsLoaded}
-            selectedInvocationId={props.selectedInvocationId}
+            // A phone list has no step open beside it, so the opening selection never rests on a row.
+            selectedInvocationId={phone ? null : props.selectedInvocationId}
             onSelectInvocation={selectInvocation}
             presentation={activityPresentation}
             rowInsetStyle={phone ? styles.documentInsetPhone : styles.documentInset}

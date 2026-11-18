@@ -993,6 +993,12 @@ describe('WorkflowRunContent', () => {
     // Its pages live in the phone bar and a settled Run folds its source action, so no empty switch band holds a gap.
     expect(phone.findByTestId('workflow-run-view:activity')).toBeNull();
     expect(phone.findByTestId('workflow-run-view-switch')).toBeNull();
+    // WAVE-ACCEPT-1117C: the Run's headline says "Failed"; the failed row says it by its glyph, not a second word.
+    expect(phone.findByTestId('workflow-run-invocations-word-failed')).toBeNull();
+    // A phone list has no step open beside it, so the opening selection does not rest on a row.
+    const phoneSelected = await renderContent({ ...offline, selectedInvocationId: invocation.id, selectedInvocationProgress: progress });
+    expect(phoneSelected.findByTestId('workflow-run-invocations-row-failed')).not.toBeNull();
+    expect(phoneSelected.findByTestId('workflow-run-invocations-row-failed')?.props.current).toBeUndefined();
     viewport.window = { width: 1440, height: 900 };
     const nothingOpen = await renderContent({ ...offline, selectedInvocationId: null });
     expect(nothingOpen.findByTestId('workflow-run-failure-next')?.props.children).toBe(reconnect);

@@ -512,7 +512,7 @@ describe('managed workflow Run presentation', () => {
         const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: false,
             failure: { step: 'Publish summary' },
-        })).toBe('Publish summary failed. Completed work is kept.');
+        })).toBe('Publish summary didn’t finish. Completed work is kept.');
         expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is kept.');
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'cancelled', workflowCustodyState: 'settled' }, coverage,
             failure: { step: 'Publish summary' },
@@ -529,7 +529,7 @@ describe('managed workflow Run presentation', () => {
             expect(formatWorkflowRunOutcomeSentence({ run, coverage: nothingDone, historyComplete: true }), state)
                 .toBe(t('workflows.run.nothingFinishedSentence'));
             expect(formatWorkflowRunOutcomeSentence({ run, coverage: someDone, historyComplete: true, failure }), state)
-                .toBe('Close preview failed. Completed work is kept.');
+                .toBe('Close preview didn’t finish. Completed work is kept.');
         }
         const interrupted = createWorkflowRunSummaryFixture({ state: 'interrupted' });
         expect(formatWorkflowRunOutcomeSentence({ run: interrupted, coverage: nothingDone, historyComplete: true,
@@ -549,7 +549,7 @@ describe('managed workflow Run presentation', () => {
         expect(word).toBe(t('workflows.runState.interrupted'));
         expect(formatWorkflowRunOutcomeSentence({ run, coverage,
             failure: { step: 'Check the release summary', lifecycle: 'failed' },
-        })).toBe('Check the release summary failed. Completed work is kept.');
+        })).toBe('Check the release summary didn’t finish. Completed work is kept.');
         expect(formatWorkflowRunOutcomeSentence({ run, coverage,
             failure: { step: 'Check the release summary', lifecycle: 'outcome_uncertain' },
         })).toBe('Check the release summary was interrupted. Completed work is retained.');

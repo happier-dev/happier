@@ -242,7 +242,8 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         const previous = index > 0 ? props.invocations[index - 1] : undefined;
         const next = props.invocations[index + 1];
         const day = previous !== undefined && sameDay(Date.parse(previous.createdAt), recordedAt) ? null : formatDayLabel(recordedAt);
-        const word = finished || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
+        // A failed step is said by its rose glyph too: the Run's outcome already says "Failed", once per surface.
+        const word = finished || invocation.lifecycle === 'failed' || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
             <Text testID={`${testIDPrefix}-word-${invocation.id}`} numberOfLines={1} style={[styles.word, speaks ? styles.wordSpeaking : null,
                 { color: speaks ? theme.colors.state[presentation.variant].foreground : theme.colors.text.secondary }]}>
                 {stateLabel}
