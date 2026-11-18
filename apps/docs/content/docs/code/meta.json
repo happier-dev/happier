@@ -5,6 +5,7 @@
     "files-and-editor",
     "diffs",
     "git",
+    "reviews",
     "review-comments",
     "pull-requests",
     "prs-and-issues"

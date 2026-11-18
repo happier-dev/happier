@@ -1,0 +1,91 @@
+---
+title: Reviews
+description: Choose reviewers for a captured change, inspect their findings, and start another round when the code changes.
+---
+
+Use a Review to collect findings about the same change from several reviewers,
+then decide what to fix. A Review keeps its findings and rounds together; an
+individual reviewer's run supplies analysis, rather than deciding what you accept.
+
+## Availability
+
+This guide describes **unreleased 0.3 development behavior**. Use matching app,
+server, daemon and plugin versions. Integrated runtime and platform validation
+is still in progress.
+
+Starting an executable reviewer needs a reachable Machine, permission to start
+analysis there, and working access for the selected Agent or review plugin.
+The existing [Subagents feature](/extras/feature-flags#features-you-can-turn-on-yourself)
+must be enabled. Reading a shared Review does not grant access to its Machine
+or source Session.
+
+## Start a Review
+
+Open the review start flow from [Work](/sessions/work) or the selected
+[changes](/code/diffs). Check the subject before starting: a captured Session
+or turn comparison is different from the worktree's current changes.
+
+In **Who**, choose the reviewers and their model, role and connection where
+offered. Each selection has its own launch choices. Add a step when you want
+another stage of review or verification. A generic coding Agent can review
+without native JSON output support; Happier asks for structured findings and
+uses its existing repair turn if needed. A final parsing failure is visible.
+
+Setup and unsupported-scope reasons belong to the selected reviewer. Repair its
+setup or choose another reviewer. Happier does not silently replace a captured
+comparison with the ambient checkout. In particular,
+[CodeRabbit](/agents/coderabbit) cannot review exact files or captured endpoints
+through this integration.
+
+Leave transcript input off for a code-only review. When offered, explicitly
+include the source Session's transcript to let the reviewer check claims made
+there alongside the code. You need access to that Session. Partial transcript
+coverage stays partial. Happier does not store the copied transcript in Review
+records, retained Run prompts or diagnostic logs; the Agent's ordinary native
+local history may retain its prompt.
+
+Choose **Report only** or **Fix in this session**, and enable **Walk me through it**
+if you want an explanation alongside the findings. Engine-specific options stay
+with that reviewer. If DeepSec asks for a cost estimate, accept it for this
+start; that consent is not a saved preference. See the
+[DeepSec guide](/agents/deepsec) for model-access restrictions.
+
+## Read findings and coverage
+
+Open **Reviews** to return to retained Reviews. Read each reviewer's completion
+and coverage as well as the finding count: zero findings means a clean review
+only when analysis completed. Failed or incomplete analysis can still supply
+useful findings. An unsupported or missing result is not a clean result.
+
+A finding can retain a location, explanation, suggested fix and plugin evidence.
+Its relation to the selected changes comes from captured code evidence.
+Insufficient or conflicting evidence stays unknown. A **Seen before** link or
+an older Review does not prove that the issue predates the change.
+
+Choose **Implement fix**, **Ignore**, **Decide later** or **Ask for clarification**
+for a finding. A reviewer's verdict and its native evidence remain separate
+from your decision. [Manual review comments](/code/review-comments) still let
+you annotate exact lines and send selected notes to an Agent.
+
+## Stop, recover and review again
+
+Stop cancels the selected work. Findings already returned remain subject to
+their reported coverage; cancellation does not establish successful completion.
+Fix an authentication or setup failure on the executing Machine, then retry
+explicitly. For CodeRabbit rate limits, wait for the vendor's reported recovery
+time and retry; Happier does not automatically repeat the review.
+
+Start a **New round** when you want another pass on changed code. Resumable
+Agents may offer follow-up; single-run engines start again. Optional
+[Slice review](/agents/slice-review) examines repository Hunts and retains its
+native slice state outside the repository. [Panel review](/agents/panel-review)
+preserves native member attribution and stops its per-run daemon when finished
+or cancelled. Neither plugin owns your finding decisions.
+
+## Related
+
+- [Diffs and review](/code/diffs)
+- [Work](/sessions/work)
+- [CodeRabbit](/agents/coderabbit)
+- [DeepSec](/agents/deepsec)
+- [Review comments](/code/review-comments)

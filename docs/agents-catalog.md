@@ -981,9 +981,11 @@ support is unknown. Voice reads the same descriptor's published context window;
 an absent window does not acquire a default. An unreadable catalog, or a failed
 refresh with no selected-model fact, returns `model_catalog_unavailable`.
 Typed snapshot or transport failures retain their cause. Only the separate
-structured-output admission gate requires supported structured output and returns
-`model_structured_output_unsupported` for unknown or unsupported capability;
-reading a model fact does not make that admission decision.
+structured-output admission gate requires supported structured output for intents
+that require native schema delivery, returning `model_structured_output_unsupported`
+for unknown or unsupported capability. Generic Review instead retains its shared
+prompt/parser/repair fallback; unknown native support does not exclude a reviewer.
+Reading a model fact does not make that admission decision.
 A launch profile used only for prompt composition does not
 become an independent environment selection for this probe.
 
