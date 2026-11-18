@@ -61,13 +61,13 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationNotificationDestinationSetupInputV1Schema },
             resultSchema: ConversationNotificationDestinationSetupResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         setup: {
             required: true,
             input: { kind: 'contributorDefined' },
             resultSchema: ConversationProviderSetupOutcomeV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         /**
          * Optional, provider-owned remote remediation for a safe setup result
@@ -80,25 +80,25 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             required: false,
             input: { kind: 'contributorDefined' },
             resultSchema: ConversationProviderSetupRemediationResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'writesRemote' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'writesRemote' },
         },
         connectionTest: {
             required: true,
             input: { kind: 'protocolDefined', schema: ConversationConnectionTestInputV1Schema },
             resultSchema: ConversationConnectionTestResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         endpointResolve: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationEndpointResolveInputV1Schema },
             resultSchema: ConversationEndpointResolveResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         principalResolve: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationPrincipalResolveInputV1Schema },
             resultSchema: ConversationPrincipalResolveResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         observationsPoll: {
             required: false,
