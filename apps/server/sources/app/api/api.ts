@@ -1,5 +1,6 @@
 import { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
+import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
 import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -107,7 +108,7 @@ export function resolveApiListenHost(env: Record<string, string | undefined>): s
     return host.length > 0 ? host : '0.0.0.0';
 }
 
-export const DEFAULT_API_CORS_MAX_AGE_SECONDS = 600;
+export const DEFAULT_API_CORS_MAX_AGE_SECONDS = SERVER_CONFIG.HAPPIER_API_CORS_MAX_AGE_SECONDS.default;
 export const API_CORS_ALLOWED_HEADERS = [
     CHANGES_AFTER_CURSOR_HTTP_HEADER,
     'authorization',

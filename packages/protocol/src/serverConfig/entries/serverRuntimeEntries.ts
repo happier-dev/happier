@@ -159,7 +159,9 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     },
     HAPPIER_API_CORS_MAX_AGE_SECONDS: {
         type: 'int',
-        default: 600,
+        // Chromium honours at most 2 h. Every distinct API URL a cross-origin web app reads is
+        // preflighted, so a short cache charges a reopened app one extra round trip per URL.
+        default: 7200,
         bounds: { min: 0 },
         sensitivity: 'plain',
         apply: 'restart',

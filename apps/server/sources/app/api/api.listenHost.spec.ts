@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fastify from 'fastify';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import {
   ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
   SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
@@ -32,8 +33,11 @@ describe('resolveApiListenHost', () => {
 });
 
 describe('resolveApiCorsMaxAgeSeconds', () => {
-  it('uses a conservative default preflight cache duration', () => {
-    expect(resolveApiCorsMaxAgeSeconds({})).toBe(DEFAULT_API_CORS_MAX_AGE_SECONDS);
+  it('lets browsers keep a preflight answer as long as Chromium honours one (2 h), from the registry default', () => {
+    // Every distinct API URL from a cross-origin web app (app → api) is preflighted;
+    // a 10-minute cache made each reopen after a short break pay one extra round trip per URL.
+    expect(DEFAULT_API_CORS_MAX_AGE_SECONDS).toBe(SERVER_CONFIG.HAPPIER_API_CORS_MAX_AGE_SECONDS.default);
+    expect(resolveApiCorsMaxAgeSeconds({})).toBe(7200);
   });
 
   it('accepts a non-negative override', () => {
