@@ -3602,6 +3602,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return { workspaceRefs: projectProjectListV1({ serverId: accountContext.serverId, workspaceRefs: rows.workspaceRefs,
         organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier }).items.map(item => item.ref) };
     },
+    // The Check widget's choices: the Account's saved Checks named as its Checks list names them.
+    savedHealthChecksList: async (args, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      if (!areServerProfileIdentifiersEquivalent(args.serverId, accountContext.serverId)) {
+        return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      }
+      const { listSavedServiceCheckOptions } = await import('@/components/store/inventory/savedCheckOptions');
+      const result = await listSavedServiceCheckOptions(args, context?.signal);
+      accountContext.assertCurrent();
+      return result;
+    },
     projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_account_access_denied' };
       const client = createUiProjectAccountRowsClient(accountContext);

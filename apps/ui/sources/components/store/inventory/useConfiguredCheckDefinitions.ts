@@ -27,6 +27,25 @@ export function configuredCheckDefinitionKey(automationId: string, triggerId: st
     return JSON.stringify([automationId, triggerId]);
 }
 
+/**
+ * The Account material that opens saved Check definitions, for the captured Account only: plain Accounts open with no
+ * material, E2EE Accounts with their current material, and an Account whose material is unavailable gets null.
+ */
+export async function openConfiguredCheckContentAccess(lifetime: ServerAccountScopeLifetime,
+    signal: AbortSignal): Promise<PluginEventAutomationStoredContentAccess | null> {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(lifetime.scope.serverId, signal);
+    try {
+        const currentness = await fetchAccountEncryptionCurrentness(account.credentials, {
+            request: (path, init) => account.request(path, { ...init, signal }, { includeAuth: false }),
+            signal,
+        });
+        account.assertCurrent();
+        const material = resolveAutomationRunDetailAccountMaterial({ credentials: account.credentials, accountCurrentness: currentness });
+        return material.kind === 'available' ? { mode: currentness.mode, ...(material.material ? { material: material.material } : {}) } : null;
+    } finally { account.dispose(); }
+}
+
 /** One presented Account page lends its private definitions to Checks; it never opens a detail per row. */
 export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifetime | null, presented: boolean,
     automations: readonly AutomationDefinition[]) {
@@ -48,20 +67,9 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
         if (!needsContent || !lifetime?.isCurrent()) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
-        void (async () => {
-            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-            const account = await captureLazyActionAccountContext(lifetime.scope.serverId, controller.signal);
-            try {
-                const currentness = await fetchAccountEncryptionCurrentness(account.credentials, {
-                    request: (path, init) => account.request(path, { ...init, signal: controller.signal }, { includeAuth: false }),
-                    signal: controller.signal,
-                });
-                account.assertCurrent();
-                const material = resolveAutomationRunDetailAccountMaterial({ credentials: account.credentials, accountCurrentness: currentness });
-                if (!controller.signal.aborted && lifetime.isCurrent()) setOpened({ lifetime, access: material.kind === 'available'
-                    ? { mode: currentness.mode, ...(material.material ? { material: material.material } : {}) } : null });
-            } finally { account.dispose(); }
-        })().catch(() => { if (!controller.signal.aborted && lifetime.isCurrent()) setOpened({ lifetime, access: null }); });
+        void openConfiguredCheckContentAccess(lifetime, controller.signal).then(access => {
+            if (!controller.signal.aborted && lifetime.isCurrent()) setOpened({ lifetime, access });
+        }).catch(() => { if (!controller.signal.aborted && lifetime.isCurrent()) setOpened({ lifetime, access: null }); });
         return () => { controller.abort(); retirement.dispose(); setOpened(null); };
     }, [lifetime, needsContent]);
     const sources = React.useMemo(() => {

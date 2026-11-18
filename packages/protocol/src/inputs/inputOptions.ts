@@ -40,6 +40,7 @@ import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } 
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
 import { readUsageScopeOptions } from '../usage/usageFilterOptions.js';
+import { SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1, resolveSavedHealthCheckOptionsV1 } from './savedHealthCheckOptions.js';
 import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
 import { DesktopDisplaysListResultSchema } from '../actions/specs/desktopShell.js';
 import { BrowserExtensionsListResultV1Schema } from '../actions/browserExtensionActions.js';
@@ -526,6 +527,10 @@ export async function resolveInputOptions(params: Readonly<{
 
   if (optionsSourceId === DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1) {
     return await resolveDeploymentTelemetryRouteOptionsV1({ deps, ctx, input, readFailure: params.readFailure });
+  }
+
+  if (optionsSourceId === SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1) {
+    return await resolveSavedHealthCheckOptionsV1({ deps, ctx, readFailure: params.readFailure });
   }
 
   if (optionsSourceId === 'machines.volumes.available') {

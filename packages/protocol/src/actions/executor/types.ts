@@ -2326,6 +2326,12 @@ export type ActionExecutorDeps = Readonly<{
    * private Project rows and admission as `projectsList`, and answers a failure envelope when they are not admitted.
    */
   projectWorkspaceRefs?: (args: Readonly<{ serverId?: string }>, context?: ActionExecutorContext) => Promise<unknown>;
+  /**
+   * The Account's saved Checks named as its Checks list names them, for the Check widget's choices. Only a host that
+   * opens the Account's private Check definitions supplies it; the read decides nothing about results.
+   */
+  savedHealthChecksList?: (args: Readonly<{ serverId: string }>, context?: ActionExecutorContext) => Promise<
+    import('../../inputs/savedHealthCheckOptions.js').SavedHealthChecksListResultV1 | ActionExecuteFailure>;
   projectsContextUpdate?: (args: ProjectContextUpdateInputV1, context?: ActionExecutorContext) => Promise<ProjectContextUpdateOutputV1>;
   projectsVisibilitySet?: (args: import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetOutputV1>;
   projectsOrganizationUpdate?: (args: import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateOutputV1>;

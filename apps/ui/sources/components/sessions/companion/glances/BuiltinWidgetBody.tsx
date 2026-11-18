@@ -8,6 +8,7 @@ import { UsageWidgetBody } from '@/components/settings/usage/widgets/UsageWidget
 import { isUsageBuiltinWidgetId } from '@/components/settings/usage/widgets/usageBuiltinWidgetId';
 import { YourHomeWidgetBody } from '@/components/hub/yourHome/YourHomeWidgetBody';
 import { MachineWidgetBody, isMachineBuiltinWidgetId } from '@/components/machines/widgets/MachineWidgetBody';
+import { ServiceCheckWidgetBody } from '@/components/projects/deployments/ServiceCheckWidget';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -39,6 +40,9 @@ export function BuiltinWidgetBody(props: Readonly<{ id: BuiltinWidgetIdV1;
     // The active Home's machines and sessions: an App read with no inputs.
     if (props.target.kind === 'app' && props.id === 'your_home') return <YourHomeWidgetBody testID={props.testID} />;
     if (props.target.kind === 'app' && props.id === 'local_services_app') return <AppLocalServicesGlance serverId={props.serverId} testID={props.testID} />;
+    // One saved Check: an App read whose admitted input names the Check.
+    if (props.target.kind === 'app' && props.id === 'service_check') return <ServiceCheckWidgetBody input={props.input}
+        serverId={props.serverId} testID={props.testID} />;
     if (props.target.kind === 'project' && isProjectSurfaceBuiltinWidgetIdV1(props.id)) return <ProjectBuiltinWidgetBody
         id={props.id} target={props.target} serverId={props.serverId} testID={props.testID} />;
     if (props.target.kind === 'workspace' && !isProjectSurfaceBuiltinWidgetIdV1(props.id)) return <ProjectBuiltinWidgetBody id={props.id}

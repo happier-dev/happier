@@ -11,6 +11,7 @@ const BUILTIN_PROMPT_KEYS = {
   'Which workspace?': 'widgetAdd.prompts.workspace',
   'Which checkout?': 'widgetAdd.prompts.checkout',
   'Which machine?': 'widgetAdd.prompts.machine',
+  'Which check?': 'projects.deployments.monitoring.widgetChooseCheck',
 } as const satisfies Record<string, TranslationKeyNoParams>;
 
 /**
@@ -80,6 +81,7 @@ const BUILTIN_LABEL_KEYS = {
   Source: 'widgetAdd.inputLabels.source',
   Machine: 'widgetAdd.inputLabels.machine',
   Volume: 'machines.widgets.inputs.volume',
+  Check: 'projects.deployments.monitoring.widgetTitle',
   Range: 'machines.widgets.inputs.range',
   Scope: 'machines.widgets.inputs.scope',
   Style: 'machines.widgets.inputs.style',

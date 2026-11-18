@@ -505,10 +505,27 @@ export function serviceCheckKeyFlowCauseText(config: TelemetryKeyFlowConfigV1, r
   const measured = result.measurements;
   const window = formatServiceCheckPeriod(config.windowMs);
   if (!measured || measured.value === undefined) return result.status === 'unknown' ? t(`${k}.keyFlowNoTraffic`, { window }) : null;
-  const measure = config.measure.kind === 'route'
+  return t(`${k}.keyFlowMeasured`, { measure: keyFlowMeasureWord(config), value: formatServiceCheckKeyFlowValue(config, measured.value), window,
+    limit: formatServiceCheckKeyFlowValue(config, config.threshold.value) });
+}
+
+/** What a Key flow measures, in one word: its latency statistic ("p95"), its error rate, its runtime metric or spend. */
+function keyFlowMeasureWord(config: TelemetryKeyFlowConfigV1): string {
+  const k = 'projects.deployments.monitoring' as const;
+  return config.measure.kind === 'route'
     ? (config.measure.statistic === 'errorRate' ? t(`${k}.keyFlowErrors`) : config.measure.statistic)
     : config.measure.kind === 'runtime' ? config.measure.metricName : t(`${k}.keyFlowSpend`);
-  return t(`${k}.keyFlowMeasured`, { measure, value: formatServiceCheckKeyFlowValue(config, measured.value), window,
+}
+
+/**
+ * A Key flow's latest result as a glance says it under its figure: what it measures, over which window and against
+ * which limit ("p95 · last 10 min · limit 800 ms"), or that nothing reached the collector in its window.
+ */
+function keyFlowRuleText(config: TelemetryKeyFlowConfigV1, result: RetainedCheck['result']): string | null {
+  const k = 'projects.deployments.monitoring' as const;
+  const window = formatServiceCheckPeriod(config.windowMs);
+  if (result.measurements?.value === undefined) return result.status === 'unknown' ? t(`${k}.keyFlowNoTraffic`, { window }) : null;
+  return t(`${k}.keyFlowWindowLimit`, { measure: keyFlowMeasureWord(config), window,
     limit: formatServiceCheckKeyFlowValue(config, config.threshold.value) });
 }
 
@@ -544,6 +561,19 @@ export function formatServiceCheckLatency(ms: number): string {
 export function formatServiceCheckPeriod(ms: number): string {
   return ms % 3_600_000 === 0 ? formatServiceCheckUnit(ms / 3_600_000, 'hour')
     : ms % 60_000 === 0 ? formatServiceCheckUnit(ms / 60_000, 'minute') : formatServiceCheckUnit(ms / 1000, 'second');
+}
+
+/**
+ * What a saved Check is called wherever it is listed or picked: a named Key flow by its name ("Checkout"), every other
+ * check by what it checks (a host, a path, routes), else its saved name. `identifier` says the title is an address.
+ */
+export function serviceCheckTitle(
+  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'keyFlow'> | null,
+  savedName: string,
+): Readonly<{ title: string; identifier: boolean }> {
+  const name = definition?.keyFlow?.name;
+  return name ? { title: name, identifier: false }
+    : definition?.targetLabel != null ? { title: definition.targetLabel, identifier: true } : { title: savedName, identifier: false };
 }
 
 type ListedCheck = Readonly<{
@@ -583,6 +613,10 @@ export type ServiceCheckListFacts = Readonly<{
   collectorTrend: ServiceCheckCollectorTrend | null;
   /** The shown target's usual response: the average over its passing results in the bars' window. */
   usualMs: number | null;
+  /** The shown target's latest figure in its own words: a Key flow's measured value, else its response time. */
+  valueText: string | null;
+  /** Under that figure, a Key flow's rule ("p95 · last 10 min · limit 800 ms") or its no-traffic window; null otherwise. */
+  ruleText: string | null;
   uptimePercent: number | null;
   failingSince: number | null;
   causeText: string | null;
@@ -610,10 +644,10 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
   const newest = recent?.results[0]?.observedAt;
   const collectorTrend = keyFlow && observerMachineId !== null && newest !== undefined
     ? { collectorMachineId: observerMachineId, config: keyFlow, until: newest } : null;
+  const named = serviceCheckTitle(definition ? { targetLabel: definition.targetLabel, keyFlow } : null, row.native.name);
   return {
-    // A named Key flow is its name ("Checkout"); every other check is named by what it checks, else its saved name.
-    title: keyFlow?.name ?? definition?.targetLabel ?? row.native.name,
-    titleIdentifier: !keyFlow?.name && definition?.targetLabel != null,
+    title: named.title,
+    titleIdentifier: named.identifier,
     kind: definition?.name ?? null,
     every: definition ? formatServiceCheckPeriod(definition.periodMs) : null,
     lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]
@@ -625,6 +659,10 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     response24h: recent && !keyFlow ? serviceCheckResponseSeries(recent, SERVICE_CHECK_RESPONSE_WINDOW_MS) : [],
     collectorTrend,
     usualMs: usual.length === 0 ? null : usual.reduce((sum, value) => sum + value, 0) / usual.length,
+    valueText: keyFlow ? (shown?.result.measurements?.value === undefined ? null
+      : formatServiceCheckKeyFlowValue(keyFlow, shown.result.measurements.value))
+      : shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs),
+    ruleText: keyFlow && shown ? keyFlowRuleText(keyFlow, shown.result) : null,
     uptimePercent: facts.uptimePercent,
     failingSince: recent?.failingSince ?? null,
     // A Key flow says its measurement; an unknown one says nothing reached the collector (quiet, never a failure tone).

@@ -13,6 +13,7 @@ import { USAGE_QUERY_INPUT_FIELDS, USAGE_MULTI_BREAKDOWN_INPUT_FIELD, UsageAccou
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import type { InputFieldHint } from '../inputs/inputFields.js';
+import { SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1, SavedHealthCheckRefV1Schema } from '../inputs/savedHealthCheckOptions.js';
 
 export { USAGE_BREAKDOWN_DIMENSION_HEADING, readUsageBreakdownsInstanceTitleV1 } from './usageBreakdownTitleV1.js';
 
@@ -39,10 +40,14 @@ export type MachineBuiltinWidgetIdV1 = (typeof MACHINE_BUILTIN_WIDGET_IDS_V1)[nu
 /** No-input Home reads; a separate Services identity preserves saved Session-scoped copies. */
 export const HOME_BUILTIN_WIDGET_IDS_V1 = ['your_home', 'local_services_app'] as const;
 export type HomeBuiltinWidgetIdV1 = (typeof HOME_BUILTIN_WIDGET_IDS_V1)[number];
-export type BuiltinWidgetIdV1 = SessionBuiltinWidgetIdV1 | ProjectBuiltinWidgetIdV1 | UsageBuiltinWidgetIdV1 | MachineBuiltinWidgetIdV1 | HomeBuiltinWidgetIdV1;
+/** One saved Check, drawn by the Check owners (D32 key flows and every other kind). */
+export const HEALTH_BUILTIN_WIDGET_IDS_V1 = ['service_check'] as const;
+export type HealthBuiltinWidgetIdV1 = (typeof HEALTH_BUILTIN_WIDGET_IDS_V1)[number];
+export type BuiltinWidgetIdV1 = SessionBuiltinWidgetIdV1 | ProjectBuiltinWidgetIdV1 | UsageBuiltinWidgetIdV1 | MachineBuiltinWidgetIdV1 | HomeBuiltinWidgetIdV1
+    | HealthBuiltinWidgetIdV1;
 /** Saved executable declarations accept only identities owned by this catalog. */
 export const BuiltinWidgetIdV1Schema = z.enum([...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1,
-    ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1]);
+    ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1]);
 
 /** Copied public presentation declarations, not a second catalog or disclosure-policy owner. */
 function usagePublicPresentation(id: UsageBuiltinWidgetIdV1) {
@@ -164,6 +169,7 @@ const nativeMetadata = {
     machine_activity: { title: 'Activity', titleKey: 'machines.widgets.machine_activity', descriptionKey: 'machines.widgets.body.purpose.machine_activity', icon: 'clock' },
     machine_cleanup_suggestion: { title: 'Suggestion', titleKey: 'machines.widgets.machine_cleanup_suggestion', descriptionKey: 'machines.widgets.body.purpose.machine_cleanup_suggestion', icon: 'sparkle' },
     your_home: { title: 'Your Home', titleKey: 'homeWidgets.yourHomeTitle', descriptionKey: 'homeWidgets.yourHomeDescription', icon: 'house' },
+    service_check: { title: 'Check', titleKey: 'projects.deployments.monitoring.widgetTitle', descriptionKey: 'projects.deployments.monitoring.widgetDescription', icon: 'pulse' },
 } as const;
 
 /** Gallery/default block titles and input schemas use the same declaration that admits the copy. */
@@ -291,6 +297,15 @@ function machineWidgetContract(id: MachineBuiltinWidgetIdV1): WidgetInputDescrip
         sizeDeclaration: { sizes: fourSizes ? ['small', 'medium', 'wide', 'full'] : nativeSizeDeclaration.sizes, defaultSize } };
 }
 
+/** The Check widget names one saved Check by its address; its name, rule and results stay in the viewer's own reads. */
+const serviceCheckInputs: WidgetInputDescriptorV1 = {
+    inputs: { fields: [{ path: 'check', title: 'Check', prompt: 'Which check?', widget: 'select', contextMode: 'own', required: true,
+        optionsSourceId: SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1 }] },
+    inputSchema: lazyDefinition(() => PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(z.strictObject({
+        check: SavedHealthCheckRefV1Schema,
+    }), { target: 'draft-7' }))),
+};
+
 /** Descriptor projection only: execution, data and Actions stay with the existing native domains. */
 type NativeDescriptor = WidgetInputDescriptorV1 & Readonly<{
     sizeDeclaration: WidgetSizeDeclarationV1;
@@ -325,6 +340,11 @@ export const BUILTIN_WIDGET_DESCRIPTORS_V1 = lazyDefinition(() => Object.freeze(
     ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
     // An App read with no inputs, at the four sizes the lab composes.
     sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full'], defaultSize: 'medium' } satisfies WidgetSizeDeclarationV1,
+    key: `builtin:${id}`, target: 'app', homeDefault: 'available', availability: 'available',
+})), ...HEALTH_BUILTIN_WIDGET_IDS_V1.map((id): NativeDescriptor => Object.freeze({
+    ...serviceCheckInputs, ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
+    // A glance at one Check (state, latest value, recent bars): a card, never a page-wide block.
+    sizeDeclaration: { sizes: ['small', 'medium', 'wide'], defaultSize: 'medium' } satisfies WidgetSizeDeclarationV1,
     key: `builtin:${id}`, target: 'app', homeDefault: 'available', availability: 'available',
 }))]));
 export type BuiltinWidgetDescriptorV1 = NativeDescriptor;

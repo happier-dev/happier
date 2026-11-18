@@ -38,6 +38,11 @@ export type HappierDataMetricProps = Readonly<{
   showLabel?: boolean;
   /** One quiet line under the number ("plans + pay-as-you-go"). */
   caption?: string;
+  /**
+   * The number is a state that needs the person (a check over its limit, a target that cannot answer): drawn in that
+   * state's text ink. Absent, the number stays ink; a figure is never coloured for being high or low on its own.
+   */
+  tone?: 'warning' | 'danger';
   /** Visible ink only ("721M"); assistive technology keeps the exact value. */
   valueFormatter?: (value: number) => string;
   theme: HappierUiTheme;
@@ -68,6 +73,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
   const spokenValue = props.unit ? `${preciseValue} ${props.unit}` : preciseValue;
   const size = props.size ?? 'default';
   const comparisonColor = props.theme.colors.text;
+  const valueColor = props.tone ? props.theme.statusText?.[props.tone] ?? props.theme.colors[props.tone] : props.theme.colors.text;
   const valueStyle =
     size === 'hero'
       ? {
@@ -75,7 +81,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
             HAPPIER_DATA_METRICS.heroValue,
             typography,
           ),
-          color: props.theme.colors.text,
+          color: valueColor,
         }
       : size === 'stat'
         ? {
@@ -83,9 +89,9 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
               HAPPIER_DATA_METRICS.statValue,
               typography,
             ),
-            color: props.theme.colors.text,
+            color: valueColor,
           }
-        : text.metric;
+        : props.tone ? { ...text.metric, color: valueColor } : text.metric;
   const inlineUnit = size !== 'default' && props.unit;
   // A number is bound to the unit that follows it, so a narrow cell wraps between "3 h" and
   // "22 min" and never leaves "min" alone on a line.
