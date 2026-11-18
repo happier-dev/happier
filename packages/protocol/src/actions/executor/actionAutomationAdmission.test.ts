@@ -28,6 +28,18 @@ it('visibly skips own Action checks without an invoking Machine', async () => {
   })) });
 });
 
+it('marks an automatic before wait check unavailable when its Machine is missing', async () => {
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
+    automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+    ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
+  }] }), settle: async () => {} });
+  const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf bypass' },
+    executionPlacement: 'machine', context: { authority: 'account_automation', serverIdentityId: 'home' } });
+  expect(selection).toMatchObject({ status: 'unavailable', before: [], after: [], notices: [{
+    code: 'action_automations_not_checked', reason: 'machineRequired',
+  }] });
+});
+
 it('checks pinned child revisions without rematerializing or reconciling unchanged consent', async () => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const root = WorkflowDefinitionV1Schema.parse({ version: 1,

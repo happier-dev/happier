@@ -77,4 +77,27 @@ describe('workflow effect Actions', () => {
     expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', requestId: envelope.requestId });
     expect(effects).toBe(0);
   });
+
+  it('fails closed when automatic admission reports an unavailable before check', async () => {
+    let effects = 0;
+    const actionId = 'machines.command.run' as const;
+    const input = { command: 'printf bypass' };
+    const envelope = { v: 1 as const, requestId: 'external-unavailable', target: { kind: 'machine' as const, machineId: 'machine' }, input };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admission', binding: {
+      serverIdentityId: 'home', accountId: 'owner', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      machineId: 'machine', installationId: 'installation', actionId,
+      requestId: envelope.requestId, target: envelope.target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const executor = createActionExecutor({ actionAutomations: {
+      select: async () => ({ status: 'unavailable' as const, subjects: [], before: [], after: [], notices: [] }),
+      settle: async () => {},
+    }, machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; } });
+    const result = await executor.execute(actionId, input, { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      bypassApprovals: true, actionRequestId: envelope.requestId, runtimeAccountId: 'owner', serverId: 'home',
+      serverIdentityId: 'home', externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization });
+    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', requestId: envelope.requestId });
+    expect(effects).toBe(0);
+  });
 });

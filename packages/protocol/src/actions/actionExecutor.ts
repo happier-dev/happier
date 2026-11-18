@@ -3359,6 +3359,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
           throw error;
         }
+        if (selection.status === 'unavailable' && ctx.authority === 'account_automation'
+          && (ctx.externalActionExecutionAuthorization !== undefined || ctx.externalActionCredential !== undefined)) {
+          return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        }
         ctx = withInvocationRequestId(ctx);
         ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({
           actionId, context: ctx, selection, port: deps.actionAutomations,

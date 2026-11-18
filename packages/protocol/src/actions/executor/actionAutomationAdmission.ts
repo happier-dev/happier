@@ -321,7 +321,15 @@ export function createActionAutomationPortV1(options: Readonly<{
         if (own ? row.subjectKey !== undefined && !matchedSubject : !row.reachesOthers || !matchedSubject) continue;
         const skip = (reason: string) => notices.push({ code: 'action_automation_skipped', reason,
           automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
-        if (!machineId) { skip('machineRequired'); continue; }
+        if (!machineId) {
+          // A person may explicitly override a light check, but an automatic
+          // before/wait admission cannot turn a missing Machine into success.
+          if (args.context.authority === 'account_automation' && row.phase === 'before' && row.mode !== 'notify') {
+            return Object.freeze({ status: 'unavailable' as const, subjects, before: [], after: [],
+              notices: [{ code: 'action_automations_not_checked' as const, reason: 'machineRequired' }] });
+          }
+          skip('machineRequired'); continue;
+        }
         const references = own ? [] : [...(consents.get(consentKey(row))?.values() ?? [])];
         // Equal revisions avoid a Workflow read at the incumbent private consent
         // owner. Ordering never proves consent current; every candidate is opened there.
