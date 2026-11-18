@@ -155,6 +155,12 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   rowPaddingVerticalPx: 14,
   rowMinHeightPx: 52,
   /**
+   * A browse row: a record in a collection that indexes entities on the page (Services, Machines, Checks) keeps
+   * the row's 52 floor but sits on s8, denser than a sheet's preference row (pfc-system `sy-row`/`sy-tr`,
+   * approved pfc-redesign round 4 and monitoring-1115: a two-line record row is 54, not 66).
+   */
+  browseRowPaddingVerticalPx: 8,
+  /**
    * A page row's leading column: one icon size in a fixed column, so the titles
    * of every sheet start on one edge (phone: 68) whether a row carries a glyph,
    * an identity mark or nothing. The glyph fills the column: beside a title and

@@ -1260,6 +1260,8 @@ const pageRowContentStyle: HappierPortableStyle = {
   gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
   minHeight: HAPPIER_PAGE_METRICS.rowMinHeightPx,
 };
+/** A record row that indexes entities (not a catalog row) keeps the page row's floor on the browse rhythm. */
+const pageBrowseRowStyle: HappierPortableStyle = { paddingVertical: HAPPIER_PAGE_METRICS.browseRowPaddingVerticalPx };
 const pageRowGlyphStyle: HappierPortableStyle = { width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, alignItems: 'center' };
 const pageRowTrailingStyle: HappierPortableStyle = { paddingRight: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx - 1 };
 /** A title that may wrap keeps its age on its first line, like the lab's phone list. */
@@ -1663,6 +1665,7 @@ function ListCells<Item>(props: Readonly<{
     <View pointerEvents={layer?.content} {...(catalog ? { onLayout: onCatalogRowLayout } : {})} style={[listRowContentStyle,
       page ? (pageRowInsetPx === HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx ? pageRowContentStyle
         : [pageRowContentStyle, { paddingLeft: pageRowInsetPx - 1 }]) : props.wrapTitle || (catalog && !props.travelling) ? { minHeight: props.height } : { height: props.height },
+      page && !catalog ? pageBrowseRowStyle : null,
       // A page row with nothing after it ends on the page row's inset, where a sub-heading's action ends.
       page && props.ownsTrailingInset ? (pageRowInsetPx === HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx ? pageRowTrailingStyle
         : { paddingRight: pageRowInsetPx - 1 }) : null,
