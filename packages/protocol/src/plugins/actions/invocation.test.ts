@@ -297,6 +297,21 @@ describe('createPluginActionInvocation', () => {
       .resolves.toMatchObject({ status: 'failed', code: data.code, retryable: false, data });
   });
 
+  it.each(['selection', 'currentness'] as const)('reports an unavailable Action %s check with its safe cause', async phase => {
+    const error = new TypeError('private Action selection detail');
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => {
+        if (phase === 'selection') throw error;
+        return { ...currentIntentResolution(), isCurrent: () => { throw error; } };
+      },
+    });
+    const result = await gate.admit({ input: {}, surface: 'ui', invocationSurface: 'ui' });
+    expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_action_selection_unavailable',
+      data: { details: { failureCause: { phase: `action.${phase}`, errorClass: 'TypeError' } } },
+    });
+    expect(JSON.stringify(result)).not.toContain(error.message);
+  });
+
   it('resolves admission once and prompts once for a non-safe client Action', async () => {
     const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
       status: 'approved' as const,
@@ -945,7 +960,8 @@ describe('createPluginActionInvocation', () => {
     const result = await createInvocation().invoke(null, { preDispatch: () => { throw error; }, handler });
     expect(result).toMatchObject(typed ? {
       status: 'failed', code: 'deployment_access_denied', data: { failureCause }, actionHandlerInvocation: 'notStarted',
-    } : { status: 'unavailable', code: 'plugin_action_pre_dispatch_unavailable', actionHandlerInvocation: 'notStarted' });
+    } : { status: 'unavailable', code: 'plugin_action_pre_dispatch_unavailable', actionHandlerInvocation: 'notStarted',
+      data: { failureCause: { phase: 'action.pre_dispatch', errorClass: 'Error' } } });
     expect(handler).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('private admission detail');
   });

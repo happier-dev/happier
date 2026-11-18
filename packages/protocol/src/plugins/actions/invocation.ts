@@ -619,16 +619,6 @@ function presentUserDeferred(artifactId: string): PluginActionPresentUserGateRes
   return Object.freeze({ status: 'deferred', artifactId });
 }
 
-function isPresentUserResolutionCurrent<TAction>(
-  resolution: PluginActionPresentUserGateResolved<TAction>,
-): boolean {
-  try {
-    return resolution.isCurrent?.() !== false;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Whether one invocation needs a live present-user decision. This is the one
  * requirement rule: the gate applies it at admission, and a present-user host
@@ -786,24 +776,25 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
     reviewedChildContext?: ActionExecutorContext;
   }>): Promise<PluginActionPresentUserGateResult<TAction>>;
 }> {
-  const resolve = async (): Promise<PluginActionPresentUserGateResolution<TAction>> => {
+  const readResolved = async (): Promise<PluginActionPresentUserGateResolved<TAction> | PluginActionPresentUserGateResult<TAction>> => {
+    let resolution: PluginActionPresentUserGateResolution<TAction>;
     try {
-      return await deps.resolve();
+      resolution = await deps.resolve();
     } catch (error) {
       const pluginError = readPluginActionError(error);
       if (pluginError) return Object.freeze({ status: 'failed' as const, ...pluginError });
-      return Object.freeze({
-        status: 'unavailable' as const,
-        code: 'plugin_action_selection_unavailable',
+      return presentUserUnavailable('plugin_action_selection_unavailable', undefined, undefined, {
+        failureCause: { ...projectActionFailureCauseV1(error, 'action.selection') },
       });
     }
-  };
-  const readResolved = async (): Promise<PluginActionPresentUserGateResolved<TAction> | PluginActionPresentUserGateResult<TAction>> => {
-    const resolution = await resolve();
     if (resolution.status === 'failed') return resolution;
     if (resolution.status === 'unavailable') return presentUserUnavailable(resolution.code, resolution.message);
-    if (!isPresentUserResolutionCurrent(resolution)) {
-      return presentUserUnavailable('plugin_action_generation_retired');
+    try {
+      if (resolution.isCurrent?.() === false) return presentUserUnavailable('plugin_action_generation_retired');
+    } catch (error) {
+      return presentUserUnavailable('plugin_action_selection_unavailable', undefined, undefined, {
+        failureCause: { ...projectActionFailureCauseV1(error, 'action.currentness') },
+      });
     }
     return resolution;
   };
@@ -1086,6 +1077,7 @@ export function createPluginActionInvocation(params: Readonly<{
             return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',
               'Plugin action invocation could not be admitted',
+              { failureCause: { ...projectActionFailureCauseV1(settlement.error, 'action.pre_dispatch') } },
             );
           }
           if (!params.isCurrent() || params.occurrenceSignal.aborted) {
