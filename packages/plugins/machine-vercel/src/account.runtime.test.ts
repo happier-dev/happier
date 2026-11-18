@@ -261,16 +261,30 @@ describe('activated Vercel vendor Connected Account', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('materializes only exact API authorization through the existing credential owner', async () => {
-    const h = await host();
+  it('materializes Gateway credentials only for the exact Gateway origin', async () => {
+    const h = await host({ values: { teamId } });
     try {
       expect(await h.runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.vercel.com', headerNames: ['authorization'] }, h.read))
         .toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer ' + secret } });
+      const gateway = {
+        kind: 'httpHeaders' as const, origin: 'https://ai-gateway.vercel.sh',
+        headerNames: ['Authorization', 'X-Vercel-AI-Gateway-Team'],
+      };
       for (const request of [
         { kind: 'httpHeaders' as const, origin: 'https://foreign.example', headerNames: ['authorization'] },
+        { ...gateway, origin: 'https://ai-gateway.vercel.sh.attacker.example' },
+        { ...gateway, origin: 'https://api.vercel.com' },
         { kind: 'httpHeaders' as const, origin: 'https://api.vercel.com', headerNames: ['cookie'] },
         { kind: 'environment' as const, keys: ['VERCEL_TOKEN'] },
       ]) await expect(h.runtime.materialize(request, h.read)).rejects.toMatchObject({ code: 'credential_unavailable' });
+      expect(await h.runtime.materialize(gateway, h.read)).toEqual({
+        kind: 'httpHeaders', headers: { authorization: 'Bearer ' + secret, 'x-vercel-ai-gateway-team': teamId },
+      });
+      expect(await h.runtime.materialize({ ...gateway, headerNames: ['authorization'] }, h.read))
+        .toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer ' + secret } });
+      await expect(h.runtime.materialize(gateway, {
+        ...h.read, configuration: { ...h.read.configuration, values: {} },
+      })).rejects.toMatchObject({ code: 'credential_unavailable' });
       expect(h.requests).toHaveLength(0);
       h.retained.clear();
       expect(await h.runtime.status(h.read)).toMatchObject({ status: 'reconnectRequired' });

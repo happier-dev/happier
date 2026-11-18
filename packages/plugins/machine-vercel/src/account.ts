@@ -9,6 +9,9 @@ import { diagnostic, discover, identifier, object, operationSignal, origin, pars
 import { refreshVercelOAuth, revokeVercelOAuth, vercelOAuthMode, vercelOAuthStatus } from './oauth.js';
 
 export const ACCOUNT_ID = 'vercel-account';
+const gatewayOrigin = 'https://ai-gateway.vercel.sh';
+const gatewayTeamHeader = 'x-vercel-ai-gateway-team';
+
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountHealthResult> {
   const signal = operationSignal(context, options?.signal);
   signal.throwIfAborted();
@@ -48,16 +51,29 @@ async function materialize(
     }
     return { kind: 'environment', env };
   }
-  if (request.kind !== 'httpHeaders' || request.origin !== origin
-    || request.headerNames.some(name => name.toLowerCase() !== 'authorization')) throw new PluginError({ code: 'credential_unavailable' });
-  if (request.headerNames.length === 0) return { kind: 'httpHeaders', headers: {} };
+  if (request.kind !== 'httpHeaders' || (request.origin !== origin && request.origin !== gatewayOrigin)) {
+    throw new PluginError({ code: 'credential_unavailable' });
+  }
+  const headerNames = request.headerNames.map(name => name.toLowerCase());
+  const allowsTeamHeader = request.origin === gatewayOrigin;
+  if (headerNames.some(name => name !== 'authorization' && !(allowsTeamHeader && name === gatewayTeamHeader))) {
+    throw new PluginError({ code: 'credential_unavailable' });
+  }
+  if (headerNames.length === 0) return { kind: 'httpHeaders', headers: {} };
+  const headers: Record<string, string> = {};
+  if (headerNames.includes(gatewayTeamHeader)) {
+    const scope = scopeOf(context);
+    if (!scope) throw new PluginError({ code: 'credential_unavailable' });
+    headers[gatewayTeamHeader] = scope.teamId;
+  }
   try {
     const token = await context.credentials.get('token', { signal });
     // Only a sign-in grant expires; personal tokens carry no expiry here.
     const expiry = await context.credentials.get('expiresAtMs', { signal });
     signal.throwIfAborted();
     if (!validToken(token) || (expiry !== null && !(Number(expiry) > Date.now()))) throw new PluginError({ code: 'credential_unavailable' });
-    return { kind: 'httpHeaders', headers: { authorization: `Bearer ${token}` } };
+    if (headerNames.includes('authorization')) headers.authorization = `Bearer ${token}`;
+    return { kind: 'httpHeaders', headers };
   } catch {
     signal.throwIfAborted();
     throw new PluginError({ code: 'credential_unavailable' });
