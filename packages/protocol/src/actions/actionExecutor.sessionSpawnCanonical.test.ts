@@ -518,7 +518,7 @@ describe('session.spawn_new canonical execution', () => {
     });
   });
 
-  it.each(['omitted', 'pool', 'explicit', 'native', 'otherAgent', 'otherMachine'] as const)(
+  it.each(['omitted', 'pool', 'explicit', 'native', 'inheritedNative', 'otherAgent', 'otherMachine'] as const)(
     'resolves a Session child Connected choice at canonical admission: %s', async choice => {
     const inherited = { v: 2 as const, bindingsByServiceId: {
       'acme.auth/subscription': choice === 'pool'
@@ -540,7 +540,8 @@ describe('session.spawn_new canonical execution', () => {
       defaultSessionId: 'parent-session', actionCaller: agentStartContext.caller,
       agentStartContext: { ...agentStartContext, baseline: { ...agentStartContext.baseline,
         machineId: choice === 'otherMachine' ? 'other-machine' : canonicalInput.executionTarget.machineId, configuration: {
-        agentTarget: { ...target, identity: { ...target.identity, localId: 'reviewer' } }, connectedServices: inherited,
+        agentTarget: { ...target, identity: { ...target.identity, localId: 'reviewer' } },
+        connectedServices: choice === 'inheritedNative' ? null : inherited,
       } } }, callerPermissionMode: 'default',
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
       sessionInputSource: { sourceSessionId: 'parent-session', sourceTurnId: 'parent-turn-1', via: 'action' },
@@ -548,7 +549,7 @@ describe('session.spawn_new canonical execution', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(launched?.connectedServices).toEqual(choice === 'pool' ? { v: 2, bindingsByServiceId: {
       'acme.auth/subscription': { source: 'connected', selection: 'group', groupId: 'parent-pool' },
-    } } : choice === 'omitted' ? inherited
+    } } : choice === 'inheritedNative' ? { v: 2, bindingsByServiceId: {} } : choice === 'omitted' ? inherited
       : choice === 'otherAgent' || choice === 'otherMachine' ? undefined : explicit);
   });
 

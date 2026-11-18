@@ -7928,7 +7928,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (authored.executionTarget === undefined || authored.agentTarget === undefined) {
         // Both intercepted and direct invocations resolve inherited choices at
         // the authenticated start owner before strict creation-input parsing.
-        const startContext = await resolveActionAgentStartContextV1(deps, ctx);
+        const permission = resolveAgentEffectivePermission(ctx);
+        if (!permission.ok) return settlePrepareResult(actionId, permission.error);
+        const startContext = await resolveActionAgentStartContextV1(deps,
+          { ...ctx, callerPermissionMode: permission.effectiveCallerMode });
         if (startContext && 'ok' in startContext) return settlePrepareResult(actionId, startContext);
         if (!startContext) return settlePrepareResult(actionId,
           actionStartTargetUnavailableV1(ctx, 'agent_start_context', 'agent_start_context_unavailable'));

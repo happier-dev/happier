@@ -117,6 +117,10 @@ export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTa
         : actionId === 'execution.run.start' ? 'backendTarget'
             : actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys';
 }
+/** Session creation represents native credentials as empty bindings; Runs retain their native null choice. */
+function projectStartConnectedServicesV1<Connected>(value: Connected, kind: 'spawn_new' | 'execution_run') {
+    return kind === 'spawn_new' && value === null ? { v: 2 as const, bindingsByServiceId: {} } : value;
+}
 /** Workflow selection fields shared by static validation and native admission. */
 export function projectActionWorkflowSelectionInputV1(
     actionId: string,
@@ -136,7 +140,9 @@ export function projectActionWorkflowSelectionInputV1(
                 : [buildBackendTargetKeyV2(selected.agentTarget)];
     }
     for (const key of ['permissionMode', 'allowedTools', 'unlistedTools', 'connectedServices', 'capabilitySelection', 'transcriptStorage'] as const) {
-        if (projected[key] === undefined && selected[key] !== undefined) projected[key] = selected[key];
+        if (projected[key] === undefined && selected[key] !== undefined) projected[key] = key === 'connectedServices'
+            ? projectStartConnectedServicesV1(selected.connectedServices, actionId === 'session.spawn_new' ? 'spawn_new' : 'execution_run')
+            : selected[key];
     }
     const profileField = actionId === 'session.spawn_new' ? 'profileId' : 'launchProfileId';
     if (projected[profileField] === undefined && selected.profileId !== undefined
@@ -591,7 +597,7 @@ export function readAgentStartTargetV1(value: unknown) {
 }
 export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknown>>, stamped: Extract<ReturnType<typeof admitAgentStartV1>, {
     ok: true;
-}>['stamped'], kind: 'spawn_new' | 'execution_run', context: AgentStartContextV1) {
+}>['stamped'], kind: 'spawn_new' | 'execution_run', context: AgentStartContextV1): Record<string, unknown> {
     const baseline = context.caller.kind === 'session' ? context.baseline : { machineId: context.baseline.machineId, directory: context.baseline.directory };
     const selected = stamped.roleId && stamped.engine
         ? projectAgentStartSelectionV1(input, { ...stamped, engine: stamped.engine }, kind, baseline)
@@ -609,7 +615,7 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
         }, machineId !== undefined && machineId !== baseline.machineId ? undefined : baseline.configuration);
         return { ...selected,
             ...(inherited.profileId !== undefined ? { [profileField]: inherited.profileId } : {}),
-            ...(inherited.connectedServices !== undefined ? { connectedServices: inherited.connectedServices } : {}),
+            ...(inherited.connectedServices !== undefined ? { connectedServices: projectStartConnectedServicesV1(inherited.connectedServices, kind) } : {}),
         };
     } catch (error) {
         if (error instanceof AgentStartBaselineSelectionErrorV1 && target) {

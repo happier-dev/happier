@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { accountSettingsParse, admitAgentStartV1, buildBackendTargetKeyV2, BUILT_IN_ROLES_V1, ConnectedServiceBindingsV2Schema, createRoleSourceReaderV1, resolveRolesSnapshotV1, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol';
 import { resolveCliAgentStartContextV1 } from './resolveCliAgentStartContextV1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 const backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const;
 const input = {
@@ -19,6 +20,34 @@ function requireContext(value: Parameters<typeof resolveCliAgentStartContextV1>[
 }
 
 describe('host agent-start snapshots', () => {
+  it('inherits native Agent choices with the same admitted permission as an explicit spawn', async () => {
+    // Native applied selection and Session creation are the external boundaries;
+    // Action preparation, permission resolution and host context remain real.
+    const executor = createActionExecutor({
+      resolveAgentStartContext: async context => resolveCliAgentStartContextV1({
+        ...input, callerPermissionMode: context.callerPermissionMode ?? null,
+      }),
+      sessionSpawnNew: async () => ({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }),
+    });
+    const context = {
+      surface: 'agent' as const, authority: 'account_automation' as const,
+      serverId: 'home', runtimeAccountId: 'owner', defaultSessionId: input.sessionId,
+      actionCaller: { kind: 'session' as const, sessionId: input.sessionId, starterDepth: input.starterDepth, turnDepth: input.turnDepth },
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
+      sessionInputSource: { sourceSessionId: input.sessionId, sourceTurnId: 'native-turn', via: 'mcp' as const },
+      bypassApprovals: true,
+    };
+    const creation = { creationKey: 'explicit-child', directory: { kind: 'managed' as const },
+      connectedServices: { v: 2 as const, bindingsByServiceId: {} } };
+    const explicit = await executor.execute('session.spawn_new', { ...creation,
+      executionTarget: { serverId: 'home', machineId: input.machineId },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    }, context);
+    expect(explicit, JSON.stringify(explicit)).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+    const inherited = await executor.execute('session.spawn_new', { ...creation, creationKey: 'inherited-child' }, context);
+    expect(inherited, JSON.stringify(inherited)).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+  });
+
   it('preserves applied native authentication in the Session baseline instead of reopening Account defaults', () => {
     const context = requireContext({ ...input, metadata: { connectedServices: {
       v: 2, bindingsByServiceId: { 'example.accounts/service': { source: 'connected', profileId: 'pending' } },

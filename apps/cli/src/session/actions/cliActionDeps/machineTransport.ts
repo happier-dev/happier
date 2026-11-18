@@ -2,7 +2,6 @@ import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalAction
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
-import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -225,7 +224,7 @@ export function createCliMachineActionTransport(
     }
     // Opened requester custody is host-private. Sending it back through a
     // serialized self-RPC drops its private readers; spend it at this installed owner.
-    const [{ readRequesterAccountActionContext }, { callExactMachineRpc, callMachineRpc }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/session/transport/rpc/machineRpc")]);
+    const [{ readRequesterAccountActionContext, readRequesterAccountActionTransportContext }, { callExactMachineRpc, callMachineRpc }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/session/transport/rpc/machineRpc")]);
     const requester = readRequesterAccountActionContext(input.context?.externalActionExecutionAuthorization);
     const normalSyncRoot = input.context?.externalActionExecutionAuthorization;
     if (direct?.workspaceSyncPreflightTarget && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
@@ -373,15 +372,16 @@ export function createCliMachineActionTransport(
     }
     const invoke = input.exactMachine ? callExactMachineRpc : callMachineRpc;
     const requestId = input.requestId ?? input.context?.actionRequestId;
+    const transportRequester = readRequesterAccountActionTransportContext(input.context?.externalActionExecutionAuthorization);
     const reviewedCreationRead = input.effectActionId === readSessionActionChildCreationRpcEffectV1(input.method,
-      requester?.authorization.binding, undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined);
-    const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: requester?.authorization.binding.actionId,
+      transportRequester?.authorization.binding, undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined);
+    const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: transportRequester?.authorization.binding.actionId,
       effectActionId: input.effectActionId, method: input.method });
-    const reviewedReadiness = readSessionAgentReadinessChildActionV1(requester?.authorization.binding,
+    const reviewedReadiness = readSessionAgentReadinessChildActionV1(transportRequester?.authorization.binding,
       readHostAdmittedReviewedChildV1(input.context) ?? undefined);
-    const readinessEffect = reviewedReadiness && resolveMachineRpcExternalActionEffectV1(input.method, requester?.authorization.binding,
+    const readinessEffect = reviewedReadiness && resolveMachineRpcExternalActionEffectV1(input.method, transportRequester?.authorization.binding,
       undefined, readHostAdmittedReviewedChildV1(input.context) ?? undefined) === input.effectActionId;
-    const credentials = reviewedCreationRead || reviewedSetupPlanRead || readinessEffect ? requester!.credentials : params.credentials;
+    const credentials = reviewedCreationRead || reviewedSetupPlanRead || readinessEffect ? transportRequester!.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,

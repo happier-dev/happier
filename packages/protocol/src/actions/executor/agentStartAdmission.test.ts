@@ -18,6 +18,21 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it.each(['session.spawn_new', 'execution.run.start'] as const)(
+    'admits a Workflow native Connected choice through the %s wire shape', actionId => {
+      const resolved = resolveActionAgentStartRequestsV1({ actionId,
+        input: actionId === 'session.spawn_new'
+          ? { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' } }
+          : { intent: 'task', instructions: 'Work', permissionMode: 'no_tools', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' },
+        context: {}, baseline: { machineId: 'machine', directory: '/repo' },
+        effectiveSelection: { selection: { agentTarget: nativeTarget, connectedServices: null }, overrideEngine: true },
+      });
+      expect(resolved, JSON.stringify(resolved)).toMatchObject({ ok: true });
+      if (!resolved.ok) throw new Error(resolved.errorCode);
+      expect(resolved.effectiveInput.connectedServices).toEqual(actionId === 'session.spawn_new'
+        ? { v: 2, bindingsByServiceId: {} } : null);
+    },
+  );
   it('keeps the retained V1 control on the same Workflow Action projection path', () => {
     const modelSelection = SessionModelSelectionSchema.parse({ v: 1, updatedAt: 5, ref: {
       agentTargetKey: 'agent:native.agent/agent', modelId: 'selected-model', providerConnectionId: null,

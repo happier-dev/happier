@@ -68,7 +68,7 @@ import {
   type SocketRpcContent,
 } from '@happier-dev/sync-client';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
-import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
@@ -573,7 +573,7 @@ export async function callExactMachineRpc(params: Readonly<{
           if (!child.success || !normalized?.success || !readHostReviewedChildOperationV1(params.externalAction.context,
             child.data, projectNativeJsonValueForTransport(normalized.data))) throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived');
         }
-        const requester = readRequesterAccountActionContext(moveAuthorization);
+        const requester = readRequesterAccountActionTransportContext(moveAuthorization);
         if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
         if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
         if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');

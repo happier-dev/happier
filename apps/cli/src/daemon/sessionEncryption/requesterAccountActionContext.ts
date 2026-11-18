@@ -82,9 +82,8 @@ export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, strin
 
 /** Host-local custody facet; strict parsing/JSON forwarding cannot carry credentials or settings. */
 export function readRequesterAccountActionContext(authorization?: ExternalActionExecutionAuthorizationV1): RequesterAccountActionContext | null {
-  const projection: (ExternalActionRequesterAccountProjectionV1 & { [requesterActionContext]?: RequesterAccountActionContext }) | undefined
-    = authorization?.requesterAccountProjection;
-  return projection?.[requesterActionContext] ?? null;
+  const context = readRequesterAccountCarrierContext(authorization);
+  return context && 'savedSecretOperationContext' in context ? context : null;
 }
 
 /** Select private author custody once; a signed requester cannot inherit the daemon Account. */
@@ -106,7 +105,7 @@ export function rebindRequesterAccountActionContext(
   previous: ExternalActionExecutionAuthorizationV1,
   retainedContext?: RequesterAccountActionContext,
 ): ExternalActionExecutionAuthorizationV1 {
-  const context = retainedContext ?? readRequesterAccountActionContext(previous);
+  const context = retainedContext ?? readRequesterAccountCarrierContext(previous);
   if (!context) return authorization;
   const source = retainedContext ? authorization.requesterAccountProjection! : previous.requesterAccountProjection!;
   const descriptors = Object.getOwnPropertyDescriptors(source);

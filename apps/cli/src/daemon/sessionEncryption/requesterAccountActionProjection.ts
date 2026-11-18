@@ -10,7 +10,7 @@ import { readApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCu
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { requesterAccountEncryptionMode, rebindRequesterAccountActionContext, createAdmittedRequesterAccountActionContext, createRequesterEncryptionResolver } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { requesterAccountEncryptionMode, requesterActionContext, rebindRequesterAccountActionContext, createAdmittedRequesterAccountActionContext, createRequesterEncryptionResolver, type RequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
@@ -398,7 +398,6 @@ async function projectAdmittedAccountCustody(
         ? createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
           ...(encryption?.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) }) : undefined });
     Object.defineProperty(projection, requesterDeploymentArtifacts, { value: artifacts, enumerable: false });
-    Object.freeze(projection);
     const carrier: ExternalActionExecutionAuthorizationV1 = { ...parsed.data };
     const requesterHttpProjection = input.authorization.requesterHttpProjection;
     if (requesterHttpProjection) {
@@ -409,6 +408,11 @@ async function projectAdmittedAccountCustody(
     // Private ports must not enter JSON, signed wire bodies, approval records,
     // logs, or RPC forwarding. Strict wire parsing also drops this local facet.
     Object.defineProperty(carrier, 'requesterAccountProjection', { value: projection, enumerable: false });
+    Object.defineProperty(projection, requesterActionContext, { enumerable: false, value: Object.freeze({
+      authorization: carrier, credentials: bootstrap.credentials, isCurrent,
+      resolveEncryption: createRequesterEncryptionResolver(bootstrap.credentials, input.serverIdentityId, isCurrent),
+    } satisfies RequesterAccountActionTransportContext) });
+    Object.freeze(projection);
     return Object.freeze(carrier);
   } catch (error) { refuseExternalActionPhase(phase, stamp.machineId, error, {
     ...readSessionInputAdmissionDiagnostic(input.authorization.binding), refusalBranch: 'exception',

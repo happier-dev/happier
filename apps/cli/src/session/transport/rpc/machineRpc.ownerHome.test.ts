@@ -8,11 +8,31 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcEr
 import type { ClientToServerEvents, ServerToClientEvents } from '@/api/types';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { callMachineRpc } from './machineRpc';
+import nacl from 'tweetnacl';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { readRequesterAccountActionContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 
 const homes: Array<Readonly<{ close(): Promise<void> }>> = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => home.close())); });
 
-async function createHome(ownerToken: string | null) {
+async function createHome(ownerToken: string | null, installationPublicKey?: string, secret?: Uint8Array) {
+  const accountMode = secret ? 'e2ee' : 'plain';
+  const codec = secret ? createMachineContentCodec({ encryptionKey: secret, encryptionVariant: 'legacy' }) : null;
+  const content: SocketRpcContent = codec?.mode === 'e2ee' ? { mode: 'e2ee', cipher: {
+    encryptRaw: async value => codec.encodeRpc(value), decryptRaw: async value => codec.decodeRpc(value),
+  } } : { mode: 'plain' };
   const requests: Array<Readonly<{ path: string | undefined; authorization: string | undefined }>> = [];
   const calls: string[] = [];
   const socketTokens: unknown[] = [];
@@ -21,11 +41,17 @@ async function createHome(ownerToken: string | null) {
     response.setHeader('Content-Type', 'application/json');
     if (ownerToken === null || request.headers.authorization !== `Bearer ${ownerToken}`) {
       response.writeHead(401).end('{}');
+    } else if (request.url === '/v1/account/encryption/currentness') {
+      response.end(JSON.stringify({ mode: accountMode, version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 1 }));
+    } else if (request.url === '/v1/account/encryption') {
+      response.end(JSON.stringify({ mode: accountMode, updatedAt: 1 }));
     } else if (request.url === '/v1/machines?includeRevoked=true') {
       response.end(JSON.stringify([{ id: 'old', replacedByMachineId: 'current' }, { id: 'current' }]));
     } else if (request.url === '/v1/machines/old' || request.url === '/v1/machines/current') {
       response.end(JSON.stringify({ machine: { id: request.url.endsWith('/old') ? 'old' : 'current',
-        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } }));
+        ...(installationPublicKey ? { installationId: 'installation', installationPublicKey } : {}),
+        ...(secret ? { dataEncryptionKey: null } : { storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } }));
     } else { response.writeHead(404).end('{}'); }
   });
   const socketServer = new Server<ClientToServerEvents, ServerToClientEvents>(http, { path: '/v1/updates' });
@@ -35,11 +61,12 @@ async function createHome(ownerToken: string | null) {
     next(ownerToken !== null && token === ownerToken ? undefined : new Error('Unauthorized fixture Account'));
   });
   socketServer.on('connection', socket => {
-    socket.on(SOCKET_RPC_EVENTS.CALL, (request, acknowledge) => {
+    socket.on(SOCKET_RPC_EVENTS.CALL, async (request, acknowledge) => {
       calls.push(request.method);
+      const opened = await socketRpcCodec.decodeRequestParams(content, request.params, request.method);
       acknowledge(request.method === 'old:status'
         ? { ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
-        : { ok: true, result: { status: 'running' } });
+        : { ok: true, result: await socketRpcCodec.encodeResponse(content, { status: 'running' }, opened.callId) });
     });
   });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
@@ -52,6 +79,74 @@ async function createHome(ownerToken: string | null) {
 }
 
 describe('Machine RPC replacement Home custody', () => {
+  it.each([
+    { foreignRuntime: false, accountMode: 'plain' as const },
+    { foreignRuntime: true, accountMode: 'plain' as const },
+    { foreignRuntime: true, accountMode: 'e2ee' as const },
+  ])('executes a reviewed Session readiness inventory with its original issuer Account custody ($accountMode, foreign runtime: $foreignRuntime)', async ({ foreignRuntime, accountMode }) => {
+    const secret = new Uint8Array(32).fill(43);
+    const credentials = { token: 'captured-session-account', encryption: accountMode === 'plain' ? null : { type: 'legacy' as const, secret } };
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'), accountMode === 'e2ee' ? secret : undefined);
+    // Same real loopback path supplies a known-good ordinary control first.
+    expect(await callMachineRpc({ credentials, serverUrl: owner.url, machineId: 'current', method: 'status', request: {} }))
+      .toEqual({ status: 'running' });
+    const input = getActionSpec('session.spawn_new').inputSchema.parse({
+      executionTarget: { serverId: 'srv_readiness_home', machineId: 'current' }, directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      organizationPlacement: { sectionId: 'section', tagIds: [] },
+    });
+    const encryptionBinding = { serverIdentityId: 'srv_readiness_home', accountId: 'session-account', actionId: 'session.spawn_new' as const,
+      authentication: { kind: 'account' as const, tokenEpoch: 0 }, requestId: 'session-spawn',
+      target: { kind: 'machine' as const, machineId: 'current' } };
+    const envelope = accountMode === 'plain'
+      ? { v: 1 as const, requestId: encryptionBinding.requestId, target: encryptionBinding.target, input }
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        binding: encryptionBinding, input, material: { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) },
+        randomBytes: nacl.randomBytes });
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
+      accountId: 'session-account', custodianAccountId: 'session-account', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: accountMode, serverIdentityId: 'srv_readiness_home', machineId: 'current', installationId: 'installation',
+      actionId: 'session.spawn_new', requestId: envelope.requestId, target: envelope.target,
+      ...(envelope.v === 2 ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      sessionActionSource: { machineId: 'current', installationId: 'installation' },
+      sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+        requestId: envelope.requestId, sourceTurnId: 'turn', callerPermissionMode: null },
+    } });
+    let live = true;
+    const projected = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: 'srv_readiness_home',
+      bootstrap: { credentials, serverHttpBaseUrl: owner.url,
+        attribution: { accountId: 'session-account', serverId: 'srv_readiness_home', machineId: 'current', installationId: 'installation' },
+        getBoundSessionId: () => 'parent', isCurrent: async () => live } });
+    if (!projected) throw new Error('Expected original Session Account projection');
+    const rebound = rebindRequesterAccountActionContext(projected, projected);
+    expect(readRequesterAccountActionContext(rebound)).toBeNull();
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: rebound,
+      serverId: 'srv_readiness_home', serverIdentityId: 'srv_readiness_home', serverHttpBaseUrl: owner.url, target: envelope.target,
+      installationId: 'installation', privateKey: keys.secretKey, rootAdmitted: true });
+    if (!authorization) throw new Error('Expected original Home HTTP projection');
+    const transport = createCliMachineActionTransport({ credentials: foreignRuntime ? { token: 'foreign-daemon', encryption: null } : credentials,
+      serverId: 'srv_readiness_home', serverIdentityId: 'srv_readiness_home', serverHttpBaseUrl: owner.url,
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: keys.secretKey });
+    const child = SESSION_AGENT_READINESS_CHILDREN_V1.inventory;
+    const childInput = getActionSpec(child.action).inputSchema.parse({ machineId: 'current', serverId: 'srv_readiness_home', agentId: 'codex', refresh: true });
+    const invoke = () => invokeHostReviewedChildV1({ parent: { actionId: 'session.spawn_new', input },
+      context: { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'session-account',
+        externalActionExecutionAuthorization: authorization, externalActionTarget: envelope.target, originalActionEnvelope: envelope },
+      reviewAdmitted: true, child: { action: child.action, role: child.role, input: childInput },
+      execute: async (_input, context) => ({ ok: true, result: await runWithServerHttpBaseUrl(owner.url, () => transport.callMachineAction({
+        machineId: 'current', method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+        request: { machineId: 'current', selection: 'agents' }, context, effectActionId: child.action })) }),
+    });
+    await expect(invoke()).resolves.toEqual({ ok: true, result: { status: 'running' } });
+    expect(owner.socketTokens).toEqual([credentials.token, credentials.token]);
+    expect(owner.calls).toEqual(['current:status', `current:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`]);
+    expect(JSON.stringify(authorization)).not.toContain(credentials.token);
+    live = false;
+    await expect(invoke()).rejects.toMatchObject({ code: 'machine_target_not_current', reason: 'requester_not_current' });
+    expect(owner.calls).toHaveLength(2);
+  });
   it('keeps the replacement lookup and successful retry on the captured Home', async () => {
     const credentials = { token: 'captured-owner-account', encryption: null } as const;
     const owner = await createHome(credentials.token);
