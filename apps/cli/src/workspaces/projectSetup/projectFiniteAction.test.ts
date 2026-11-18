@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { mkdtemp, mkdir, rm, writeFile, readFile, access, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,7 +54,7 @@ import * as installationStore from '@/daemon/identity/store';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
-import type { ApiMachineClient } from '@/api/apiMachine';
+import { ApiMachineClient } from '@/api/apiMachine';
 import { ApiClient } from '@/api/api';
 import { reviewProjectSetupEffect } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
@@ -84,6 +85,7 @@ import { ProjectAccountRowListResponseV1Schema, ProjectAccountRowReadResponseV1S
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { inspectProjectSetupFromRuntime } from './projectSetupReadiness';
+import { readPublishedProjectSetup } from './projectAcceptedSetup';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { executeWaitActionV1 } from '../../../../../packages/protocol/src/actions/executor/waitAction';
@@ -1488,6 +1490,53 @@ describe('authenticated finite Project Action owner', () => {
             }
             await admitted.dispose();
         }
+    });
+
+    it('projects pending Source setup through the installed inspection Action on demand', async () => {
+        const h = await harness();
+        h.workspaceRefs[0] = { ...h.workspaceRefs[0]!, source: { sourceId: 'source', revision: 1 } };
+        const manifest = { version: 1 as const, scripts: { shared: { source: { kind: 'command' as const, command: 'echo private-command' } } } };
+        const artifact = { id: 'setup', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+            header: encodePlainArtifactStoredContent({ kind: 'project_setup.v1' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', manifest }) }),
+            publicAudience: 'none', headerVersion: 1, bodyVersion: 2, seq: 1, createdAt: 1, updatedAt: 1,
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
+        const source = { id: 'source', revision: 1, name: 'Shared setup', createdByAccountId: 'owner', audience: [],
+            attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId: 'setup' },
+                contentRevision: { headerVersion: 1, bodyVersion: 2 } }] };
+        // Only Home HTTP is substituted; Source/Artifact opening and definition composition stay real.
+        const sourceHttp = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: true } });
+        const originalGet = h.get.getMockImplementation()!;
+        h.get.mockImplementation(async (url, ...args) => String(url).includes('/v1/artifacts/setup')
+            ? { status: 200, data: artifact } : originalGet(url, ...args));
+        const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
+            machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
+            filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
+            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => h.runtime }],
+        });
+        const action = client.createProjectDefinitionAction('home', h.context);
+        const artifactReads = () => h.get.mock.calls.filter(([url]) => String(url).includes('/v1/artifacts/setup')).length;
+        expect(sourceHttp).not.toHaveBeenCalled();
+        expect(artifactReads()).toBe(0);
+        const control = await readPublishedProjectSetup({ account: { credentials: h.runtime.credentials },
+            serverId: 'home', sourceId: 'source', serverHttpBaseUrl: h.runtime.serverHttpBaseUrl });
+        expect(control.publication.manifest).toEqual(manifest);
+        sourceHttp.mockClear();
+        h.get.mockClear();
+        const inspect = () => action({ actionId: 'projects.inspect', input: { workspace: h.address, read: { kind: 'scripts' } }, context: { serverId: 'home' } });
+        for (let request = 1; request <= 2; request++) {
+            const result = ProjectDefinitionInspectOutputSchema.parse(await inspect());
+            expect(result.effectiveDefinition).toMatchObject({ pendingSharedSetup: {
+                source: { id: 'source', name: 'Shared setup' },
+                setup: { sourceId: 'source', contentRevision: { headerVersion: 1, bodyVersion: 2 } },
+                summary: [{ kind: 'scripts', count: 1 }],
+            } });
+            expect(result.effectiveDefinition?.effectiveManifest?.scripts).toBeUndefined();
+            expect(JSON.stringify(result.effectiveDefinition?.pendingSharedSetup)).not.toContain('private-command');
+            expect(sourceHttp).toHaveBeenCalledTimes(request);
+            expect(artifactReads()).toBe(request);
+        }
+        expect(h.spawned).toEqual([]);
     });
 
     it('uses the installed readiness owner for current bytes and withdraws readiness on requester retirement', async () => {

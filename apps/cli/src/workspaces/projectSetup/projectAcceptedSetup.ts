@@ -6,11 +6,17 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readPublishedProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import type { ProjectAcceptedSharedSetupV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 
-/** Explicit review/import only, through the existing Source transport and Artifact envelope owner. */
+export type PublishedProjectSetupRead = Readonly<{
+    source: Readonly<{ id: string; name: string }>;
+    publication: ProjectAcceptedSharedSetupV1;
+}>;
+
+/** Reads one Source setup publication through the existing Source and Artifact owners. */
 export async function readPublishedProjectSetup(input: Readonly<{
     account: ProjectAccountRowsInput; serverId: string; sourceId: string; serverHttpBaseUrl: string; signal?: AbortSignal;
-}>) {
+}>): Promise<PublishedProjectSetupRead> {
     const authorization = input.account.authorization;
     const requester = readRequesterAccountActionContext(authorization);
     const credentials = authorization ? requester?.credentials : input.account.credentials;
@@ -32,10 +38,11 @@ export async function readPublishedProjectSetup(input: Readonly<{
         throw Object.assign(new Error(code), result, { code });
     }
     const artifacts = createCredentialedAccountArtifactStore(credentials);
-    return runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => readPublishedProjectSetupV1({ source: result.source,
+    const publication = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => readPublishedProjectSetupV1({ source: result.source,
         readArtifact: (artifactId, projectSourceId) => artifacts.read(artifactId, { signal: input.signal, projectSourceId,
             includeSharedAudience: false, prepareRecipients: false, authorizationHeaders: headers }),
     }));
+    return { source: { id: result.source.id, name: result.source.name }, publication };
 }
 
 export type AcceptedProjectSetupResult = ProjectSetupReadV1;

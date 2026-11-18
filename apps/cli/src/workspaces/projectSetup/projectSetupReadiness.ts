@@ -7,8 +7,8 @@ import { readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } f
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetupPreparation';
 import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
-import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
-import { readPublishedProjectSetup } from './projectAcceptedSetup';
+import { readProjectEffectiveDefinition, type PendingProjectSharedSetupInput } from './projectEffectiveDefinition';
+import { readAcceptedProjectSetupForProject, readPublishedProjectSetup, type PublishedProjectSetupRead } from './projectAcceptedSetup';
 import { reviewProjectSharedSetupChangeV1, type ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -30,15 +30,42 @@ export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<
     const association = await resolveProjectSetupAcceptedWorkspace({ address: workspace,
         ...projectRuntimeAccountRowsInput(runtime), serverId: workspace.serverId,
         serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+    const account = projectRuntimeAccountRowsInput(runtime);
+    const acceptedSetup = await readAcceptedProjectSetupForProject({ account, project: association.project,
+        serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+    if (acceptedSetup.kind === 'unavailable') throw Object.assign(new Error(acceptedSetup.code), { code: acceptedSetup.code });
+    const sourceId = input.reviewSharedSetup?.sourceId ?? association.workspace.source?.sourceId;
+    let publishedSetup: PublishedProjectSetupRead | undefined;
+    let publishedSetupError: unknown;
+    if (sourceId) {
+        try {
+            publishedSetup = await readPublishedProjectSetup({ account, serverId: workspace.serverId, sourceId,
+                serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+        } catch (error) {
+            signal.throwIfAborted();
+            publishedSetupError = error;
+        }
+    }
+    let pendingSharedSetup: PendingProjectSharedSetupInput | undefined;
+    if (publishedSetup && association.workspace.source?.sourceId === sourceId) {
+        const accepted = acceptedSetup.acceptedSharedSetup;
+        const publication = publishedSetup.publication;
+        const acceptedCurrent = accepted && accepted.sourceId === publication.sourceId
+            && accepted.digest === publication.digest
+            && accepted.contentRevision.headerVersion === publication.contentRevision.headerVersion
+            && accepted.contentRevision.bodyVersion === publication.contentRevision.bodyVersion;
+        if (!acceptedCurrent) pendingSharedSetup = { source: publishedSetup.source,
+            setup: publication, manifest: publication.manifest };
+    }
     const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
-        account: projectRuntimeAccountRowsInput(runtime), project: association.project,
-        serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal, repositorySnapshot: input.repositorySnapshot });
+        account, project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal,
+        repositorySnapshot: input.repositorySnapshot, acceptedSetup, ...(pendingSharedSetup ? { pendingSharedSetup } : {}) });
     let sharedSetupChange: ProjectSharedSetupChangeV1 | undefined;
     if (input.reviewSharedSetup) {
         try {
-            const publication = await readPublishedProjectSetup({ account: projectRuntimeAccountRowsInput(runtime),
-                serverId: workspace.serverId, sourceId: input.reviewSharedSetup.sourceId,
-                serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+            if (publishedSetupError || !publishedSetup) throw publishedSetupError
+                ?? Object.assign(new Error('project_setup_review_unavailable'), { code: 'project_setup_review_unavailable' });
+            const publication = publishedSetup.publication;
             const change = reviewProjectSharedSetupChangeV1({ repositoryManifest: definition.snapshot.document?.status === 'valid'
                 ? definition.snapshot.document.manifest : null,
                 acceptedSetup: definition.acceptedSetup, publication });
