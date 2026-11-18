@@ -8,7 +8,7 @@ import {
   useOrderedBotNames,
   useOrderedBots,
 } from '@/components/sessions/bots/botsSummary';
-import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
 import { Text } from '@/components/ui/text/Text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -66,12 +66,14 @@ function HomeBotFacesRow(
               }}
               style={styles.face}
             >
-              <SessionBotFace
+              {/* The face says working with its mouth; needs-you adds the attention dot, as every row of faces does. */}
+              <BotFaceMarker
                 facts={bot.face}
                 size={FACE_SIZE_PX}
-                mood={bot.activity}
+                activity={bot.activity}
                 motion
                 visible={visible}
+                testID={`home-bot-faces.${bot.key}.face`}
               />
               <Text variant="micro" numberOfLines={1} style={styles.name}>
                 {name}

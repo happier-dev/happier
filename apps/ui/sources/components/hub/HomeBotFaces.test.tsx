@@ -11,6 +11,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
 import { HomeBotFaces } from './HomeBotFaces';
 
 // Where the router was sent (navigate or push): the route boundary of a face's tap.
@@ -108,6 +109,30 @@ it('shows every Bot as a face in one sideways row, and a face opens its Bot', as
     expect(
       pushed.some((route) => bots.some((bot) => route.includes(bot.id))),
     ).toBe(true);
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('marks a Bot that needs you with the attention dot on its face, as every row of Bot faces does (lab mnBots B)', async () => {
+  const { serverId, bots } = await seedBots(2);
+  const waiting = createSessionListRenderableSessionFixture({
+    id: 'face-bot-waiting',
+    serverId,
+    metadataLayoutVersion: 1,
+    metadata: { path: '', bot: { kind: 'bot' }, name: 'Gardener' },
+    active: true,
+    activeAt: Date.now(),
+    hasPendingPermissionRequests: true,
+    pendingRequestObservedAt: Date.now(),
+    updatedAt: 2000,
+  });
+  storage.getState().applyServerScopedSessionListRows(serverId, [...bots, waiting], { source: 'ordinary', mode: 'replace' });
+  const screen = await renderScreen(row());
+  try {
+    const markers = screen.findAllByType(BotFaceMarker);
+    expect(markers.map((marker) => marker.props.activity).filter((activity) => activity === 'needsYou')).toHaveLength(1);
+    expect(markers.filter((marker) => marker.props.activity !== 'needsYou')).toHaveLength(2);
   } finally {
     await screen.unmount();
   }
