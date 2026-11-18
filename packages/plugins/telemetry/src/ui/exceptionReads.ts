@@ -86,7 +86,12 @@ export type ExceptionOccurrencesStateV1 =
 
 export type ExceptionStackStateV1 =
   | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'ready'; stacktrace: string | null }>
+  | Readonly<{
+      kind: 'ready';
+      stacktrace: string | null;
+      /** The exporter's redacted source excerpt for the throwing frame; null when it sent none or it expired. */
+      sourceContext: string | null;
+    }>
   | Readonly<{ kind: 'unavailable'; failure: ExceptionReadFailureV1 }>;
 
 export type ExceptionOccurrencesControllerV1 = Readonly<{
@@ -118,6 +123,7 @@ type Read =
       items: readonly ExceptionOccurrenceV1[];
       nextCursor?: Cursor;
       stacktrace?: string | null;
+      sourceContext?: string | null;
       trend?: readonly ExceptionTrendBucketV1[];
       requestsAffected?: number;
     }>
@@ -141,6 +147,9 @@ function readOf(execution: PluginActionExecution<unknown>): Read | null {
     ...(parsed.data.stacktrace === undefined
       ? {}
       : { stacktrace: parsed.data.stacktrace }),
+    ...(parsed.data.sourceContext === undefined
+      ? {}
+      : { sourceContext: parsed.data.sourceContext }),
     ...(parsed.data.trend === undefined ? {} : { trend: parsed.data.trend }),
     ...(parsed.data.requestsAffected === undefined
       ? {}
@@ -258,7 +267,7 @@ export function useExceptionOccurrences(
       if (read === null) return;
       const next: ExceptionStackStateV1 =
         read.kind === 'ok'
-          ? { kind: 'ready', stacktrace: read.stacktrace ?? null }
+          ? { kind: 'ready', stacktrace: read.stacktrace ?? null, sourceContext: read.sourceContext ?? null }
           : {
               kind: 'unavailable',
               failure:

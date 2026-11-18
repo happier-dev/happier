@@ -61,7 +61,8 @@ import {
   exceptionIssueTransitionResultSchema,
   type ExceptionDetailDataV1,
 } from '../exceptions/contracts.js';
-import { OccurrenceRequest } from './occurrenceRequest.js';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/components';
+import { OccurrenceRequest, formatMilliseconds } from './occurrenceRequest.js';
 import {
   EXCEPTION_TREND_BUCKET_MS,
   TELEMETRY_PLUGIN_ID,
@@ -89,6 +90,15 @@ type Translate = ReturnType<typeof usePluginTranslation>;
 
 /* ------------------------------------------------------------------ facts */
 
+/** The request the occurrence happened in, as the lab's rail reads it: "500 · 412 ms". */
+function occurrenceRequestFacts(occurrence: ExceptionOccurrenceV1, locale: string): string | null {
+  const facts = [
+    typeof occurrence.httpStatusCode === 'number' ? String(occurrence.httpStatusCode) : null,
+    typeof occurrence.durationMs === 'number' ? formatMilliseconds(locale, occurrence.durationMs) : null,
+  ].filter((part): part is string => part !== null);
+  return facts.length === 0 ? null : facts.join(' · ');
+}
+
 function occurrenceLine(occurrence: ExceptionOccurrenceV1): string {
   return [occurrence.serviceVersion, occurrence.serviceName]
     .filter(
@@ -97,9 +107,12 @@ function occurrenceLine(occurrence: ExceptionOccurrenceV1): string {
     .join(' · ');
 }
 
-/** An occurrence's time: the clock alone today, with its day otherwise. */
-function occurrenceWhen(locale: string, atMs: number, nowMs: number): string {
-  const sameDay = new Date(atMs).toDateString() === new Date(nowMs).toDateString();
+/**
+ * An occurrence's time: the clock alone, with its day only where the day changes (the first row when it is not
+ * today, then the first row of each earlier day), so a column of one day never repeats its date.
+ */
+function occurrenceWhen(locale: string, atMs: number, previousMs: number): string {
+  const sameDay = new Date(atMs).toDateString() === new Date(previousMs).toDateString();
   return new Intl.DateTimeFormat(locale, {
     ...(sameDay ? {} : { month: 'short', day: 'numeric' }),
     hour: 'numeric',
@@ -370,6 +383,15 @@ function OccurrencesPanel({
   React.useEffect(() => {
     if (active) demand();
   }, [active, demand]);
+  // Each row's predecessor in the newest-first list, so a row names its day only where the day changes.
+  const items = 'items' in state ? state.items : null;
+  const previousAt = React.useMemo(() => {
+    const previous = new Map<string, number>();
+    items?.forEach((occurrence, index) => {
+      if (index > 0) previous.set(occurrence.id, items[index - 1]!.at);
+    });
+    return previous;
+  }, [items]);
 
   if (state.kind === 'idle' || state.kind === 'loading')
     return (
@@ -442,10 +464,12 @@ function OccurrencesPanel({
       }
       renderItem={(occurrence) => {
         const line = occurrenceLine(occurrence);
+        const request = occurrenceRequestFacts(occurrence, locale);
         return (
           <Item
-            title={occurrenceWhen(locale, occurrence.at, nowMs)}
+            title={occurrenceWhen(locale, occurrence.at, previousAt.get(occurrence.id) ?? nowMs)}
             {...(line.length === 0 ? {} : { subtitle: line })}
+            {...(request === null ? {} : { detail: request })}
             accessibilityRole="option"
           />
         );
@@ -455,6 +479,12 @@ function OccurrencesPanel({
 }
 
 type StackFrameV1 = Readonly<{ name: string; location: string | null; library: boolean }>;
+
+/** The excerpt keeps the sheet's row insets, so its lines start on the frames' text edge. */
+const SOURCE_CONTEXT_INSET = Object.freeze({
+  paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+  paddingBottom: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
+});
 
 /** `at name (file:line:col)` / `at file:line:col` lines of a redacted JS stack; anything else stays text. */
 function parseStackFrames(stacktrace: string): readonly StackFrameV1[] | null {
@@ -476,7 +506,33 @@ function parseStackFrames(stacktrace: string): readonly StackFrameV1[] | null {
   return frames.length === 0 ? null : frames;
 }
 
-function StackFrames({ stacktrace }: Readonly<{ stacktrace: string }>): React.ReactElement {
+/** The line a `file:line:col` location points at, when it names one. */
+function locationLine(location: string | null): number | null {
+  const match = location === null ? null : /:(\d+)(?::\d+)?$/u.exec(location);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The exporter's source excerpt under the frame that threw (lab p7Issues occurrence): mono lines on the sheet's row
+ * insets, the throwing line in the failure ink when the excerpt numbers its lines. Shown exactly as supplied.
+ */
+function SourceContext({ excerpt, line }: Readonly<{ excerpt: string; line: number | null }>): React.ReactElement {
+  const lines = excerpt.split('\n');
+  return (
+    <Stack gap="none" testID="telemetry.exception.source-context" style={SOURCE_CONTEXT_INSET}>
+      {lines.map((sourceLine, index) => {
+        const numbered = /^\s*(\d+)\b/u.exec(sourceLine);
+        const failing = line !== null && numbered !== null && Number(numbered[1]) === line;
+        return (
+          <Text key={index} variant="code" selectable numberOfLines={1} tone={failing ? 'danger' : 'secondary'}
+            value={sourceLine.length === 0 ? ' ' : sourceLine} />
+        );
+      })}
+    </Stack>
+  );
+}
+
+function StackFrames({ stacktrace, sourceContext }: Readonly<{ stacktrace: string; sourceContext: string | null }>): React.ReactElement {
   const text = usePluginTranslation();
   const frames = React.useMemo(() => parseStackFrames(stacktrace), [stacktrace]);
   if (frames === null) return <CodeBlock code={stacktrace} selectable />;
@@ -490,9 +546,15 @@ function StackFrames({ stacktrace }: Readonly<{ stacktrace: string }>): React.Re
       {...(frame.location === null ? {} : { detail: frame.location })}
     />
   );
+  const shown = own.length > 0 ? own : library;
   return (
     <>
-      {(own.length > 0 ? own : library).map(row)}
+      {shown.slice(0, 1).map(row)}
+      {/* The source sits under the top in-app frame only; without an excerpt the frame stands alone. */}
+      {sourceContext !== null && own.length > 0 ? (
+        <SourceContext key="source-context" excerpt={sourceContext} line={locationLine(own[0]!.location)} />
+      ) : null}
+      {shown.slice(1).map((frame, index) => row(frame, index + 1))}
       {own.length > 0 && library.length > 0 ? (
         <CountedDisclosureItem
           title={text(
@@ -597,7 +659,7 @@ function StackTracePanel({
             descriptionKey="plugins.telemetry.exceptions.noStackRecorded.description"
           />
         ) : (
-          <StackFrames stacktrace={stack.stacktrace} />
+          <StackFrames stacktrace={stack.stacktrace} sourceContext={stack.sourceContext} />
         )}
       </ItemGroup>
       <OccurrenceRequest

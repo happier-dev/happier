@@ -113,6 +113,8 @@ const OCCURRENCES = [
     topFrame: record.topFrame,
     traceId: 'trace-7f2c',
     spanId: 'span-receipt',
+    httpStatusCode: 500,
+    durationMs: 412,
   },
   {
     id: 'occ-2',
@@ -120,8 +122,11 @@ const OCCURRENCES = [
     origin: 'span',
     serviceName: 'api-1',
     serviceVersion: 'v1.43',
+    httpStatusCode: null,
+    durationMs: null,
   },
 ];
+const SOURCE_CONTEXT = ['41 const currency = order.customer?.billing', '42   .currency.toUpperCase()', '43 return format(total, currency)'].join('\n');
 const STACK = [
   'TypeError: Cannot read properties of undefined',
   '    at formatTotal (lib/billing/totals.ts:42:18)',
@@ -183,7 +188,7 @@ const okRead = async (input: Record<string, unknown>): Promise<JsonValue> => {
   return {
     status: 'ok',
     items: OCCURRENCES,
-    ...(input.occurrenceId === undefined ? {} : { stacktrace: STACK }),
+    ...(input.occurrenceId === undefined ? {} : { stacktrace: STACK, sourceContext: SOURCE_CONTEXT }),
     ...(window === undefined ? {} : { trend: trendFor(window), requestsAffected: 287 }),
   };
 };
@@ -264,6 +269,9 @@ describe('the Happier exception detail', () => {
     await vi.waitFor(async () => {
       await expect(page.getByText('v1.43 · api-2')).resolves.toBeDefined();
     });
+    // The row says the request it happened in; a row without one says nothing in its place.
+    await expect(page.getByText('500 · 412 ms')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('null');
     expect(calls).toEqual([
       {
         localId: 'capture/exceptions/occurrences/read',
@@ -294,6 +302,8 @@ describe('the Happier exception detail', () => {
     expect(document.body.textContent).toContain(
       `Grouped by type, message and top frame ${record.topFrame}`,
     );
+    // The exporter's excerpt stands under the frame that threw, as supplied.
+    expect(document.body.textContent).toContain('.currency.toUpperCase()');
     // Library frames fold under one counted row.
     await expect(page.getByText('Frames from libraries and Node')).resolves.toBeDefined();
     await expect(page.queryByText('Layer.handle')).resolves.toBeUndefined();
