@@ -67,3 +67,26 @@ it.each([4, 40])('a Workflow name arriving for one latest deploy redraws that ro
   expect(screen.getTextContent()).toContain('Renamed deploy');
   expect(marks.renders).toBe(1);
 });
+
+it.each([4, 40])('one Environment health arrival redraws that row only (%i rows)', async (count) => {
+  const items: EnvironmentItem[] = Array.from({ length: count }, (_, index) => ({
+    environment: createDeploymentEnvironmentHeaderV1({ id: `environment-${index}`, serverId: 'services', projectSourceId: 'storefront' }),
+    title: `Environment ${index}`,
+    projectSourceName: 'Storefront',
+  }));
+  const tree = (rows: readonly EnvironmentItem[]) => <AllDeploymentsGroups items={rows} serverId="services" lifetime={null} />;
+  const screen = await renderScreen(tree(items));
+  const first = items[0]!;
+  const changed: EnvironmentItem = { ...first, healthAggregate: {
+    v: 1, environmentId: first.environment.id, targetLinkId: 'runtime-link', protection: first.environment.protection,
+    status: 'down', n: 1, down: 1, degraded: 0, unknown: 0, members: [], affectedMachineIds: ['machine-0'],
+    edgeUnreachable: false, authoritativeRecovery: false,
+  } };
+  expect(marks.renders).toBeGreaterThan(1);
+  marks.renders = 0;
+
+  await screen.update(tree([changed, ...items.slice(1)]));
+
+  expect(screen.findByTestId('all-deployments.row.environment-0')?.props.accessibilityLabel).toContain('Down');
+  expect(marks.renders).toBe(1);
+});
