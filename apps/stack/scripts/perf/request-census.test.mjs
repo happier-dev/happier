@@ -81,6 +81,8 @@ test('a flow sums bytes up and down per route, preflights, cached assets, socket
   assert.equal(flow.bytes.wsDown, frame('new-message').payload.length);
   assert.equal(flow.bytes.wsUp, 1);
   assert.equal(flow.bytes.wsFramesDown, 1);
+  assert.equal(flow.bytes.wsDownMaxFrame, frame('new-message').payload.length);
+  assert.equal(flow.bytes.wsDownFramesOver1KiB, frame('new-message').payload.length >= 1024 ? 1 : 0);
   assert.equal(flow.bytes.repeatedResponses, 1);
   assert.equal(flow.bytes.repeatedEncoded, 900);
   assert.deepEqual(flow.routeBytes['GET /v2/changes'], { count: 2, up: 0, encoded: 1800, decoded: 8000 });

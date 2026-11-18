@@ -41,7 +41,7 @@ function summarizeProbe(probe) {
 export function summarizeCensusFlow({ requests = [], frames = [], probe = null, preflights = [], assets = [] }) {
   const routes = {}, routeClasses = {}, socket = {}, wakeKinds = {}, routeBytes = {}, socketBytes = {}, routeFields = {}, socketFields = {};
   const bytes = { up: 0, httpEncoded: 0, httpDecoded: 0, preflights: preflights.length, preflightEncoded: 0,
-    assets: assets.length, assetsCached: 0, assetEncoded: 0, assetDecoded: 0, wsUp: 0, wsDown: 0, wsFramesUp: 0, wsFramesDown: 0,
+    assets: assets.length, assetsCached: 0, assetEncoded: 0, assetDecoded: 0, wsUp: 0, wsDown: 0, wsFramesUp: 0, wsFramesDown: 0, wsDownMaxFrame: 0, wsDownFramesOver1KiB: 0,
     repeatedResponses: 0, repeatedEncoded: 0 };
   const seenBodies = new Set();
   let snapshotReads = 0, socketEvents = 0;
@@ -74,7 +74,11 @@ export function summarizeCensusFlow({ requests = [], frames = [], probe = null, 
   for (const frame of frames) {
     // Socket.IO frames are uncompressed text unless permessage-deflate is negotiated, so payload length ≈ wire bytes.
     const size = (frame.payload ?? '').length;
-    if (frame.direction === 'sent') { bytes.wsUp += size; bytes.wsFramesUp++; bytes.up += size; } else { bytes.wsDown += size; bytes.wsFramesDown++; }
+    if (frame.direction === 'sent') { bytes.wsUp += size; bytes.wsFramesUp++; bytes.up += size; } else {
+      bytes.wsDown += size; bytes.wsFramesDown++;
+      // Frame sizes: the largest and how many reach the 1 KiB compression threshold.
+      bytes.wsDownMaxFrame = Math.max(bytes.wsDownMaxFrame, size); if (size >= 1024) bytes.wsDownFramesOver1KiB++;
+    }
     const row = socketFrameClassification(frame.payload ?? '', frame.opcode ?? 1);
     if (row.kind !== 'event') continue;
     socketEvents++;
@@ -157,10 +161,13 @@ export function budgetsFromRuns(runs, bed) {
 
 // ---- live driver -----------------------------------------------------------
 
-const FLOW_ORDER = ['cold', 'revisit', 'idle60', 'settings', 'notifications', 'store', 'projects', 'inbox', 'search', 'newSession', 'session', 'scrollBack', 'switch', 'home', 'turn', 'stop', 'sendAfterStop', 'idleVisible', 'idleHidden'];
-const SCREENS = { settings: '/settings', notifications: '/settings/notifications', store: '/plugins', projects: '/projects', inbox: '/inbox', search: '/search?q=message', newSession: '/new', home: '/' };
+const FLOW_ORDER = ['cold', 'revisit', 'idle60', 'settings', 'notifications', 'store', 'projects', 'inbox', 'search', 'newSession', 'workflows', 'workflow', 'workflowRun', 'sessionShort', 'session', 'scrollBack', 'switch', 'home', 'turn', 'stream', 'stop', 'sendAfterStop', 'idleVisible', 'idleHidden', 'resume'];
+const SCREENS = { settings: '/settings', notifications: '/settings/notifications', store: '/plugins', projects: '/projects', inbox: '/inbox', search: '/search?q=message', newSession: '/new', workflows: '/workflows', home: '/' };
 const SHORT_PROMPT = 'Reply with the single word: ok';
 const LONG_PROMPT = 'Write the integers from 1 to 400 separated by single spaces, nothing else.';
+// The fake Claude's long-stream prompt: `lsl <rounds> <deltas> <deltaMs>` streams that many text deltas, so bytes per delta are known.
+const STREAM_PROMPT = 'lsl 1 200 30';
+const FIRST_ROW = `[...document.querySelectorAll('[data-testid^="transcript-item-"]')].some(e => e.getClientRects().length > 0)`;
 
 async function attach(cdpEndpoint, pageId, { attribution = false } = {}) {
   const { connectPage } = await import('./cdp.mjs');
@@ -185,6 +192,8 @@ export const THROTTLE_PROFILES = Object.freeze({
   '3gslow': { latency: 400, downloadThroughput: 400_000 / 8, uploadThroughput: 400_000 / 8 },
   '3g': { latency: 300, downloadThroughput: 1_600_000 / 8, uploadThroughput: 768_000 / 8 },
   '4g': { latency: 170, downloadThroughput: 9_000_000 / 8, uploadThroughput: 9_000_000 / 8 },
+  // Chrome DevTools "Slow 4G" preset (its former "Fast 3G"): 1.44 Mbit/s down, 675 kbit/s up, 562.5 ms.
+  slow4g: { latency: 562.5, downloadThroughput: 1_600_000 / 8 * 0.9, uploadThroughput: 750_000 / 8 * 0.9 },
 });
 
 // Byte weight of each field path in a JSON body (array items merged as `[]`),
@@ -300,6 +309,11 @@ async function send(cdp, text) {
   for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}) });
 }
 
+// Headless Chromium keeps a background tab `visible`, so hiding is the page's own visibility
+// override plus a visibilitychange event (the method P03-FOREGROUND/REOPEN used).
+const setHidden = (cdp, hidden) => evaluate(cdp, `(() => { const h = ${hidden}; Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => h ? 'hidden' : 'visible' });
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => h }); document.dispatchEvent(new Event('visibilitychange')); return document.visibilityState; })()`);
+
 const push = (cdp, path) => evaluate(cdp, `(() => { history.pushState({}, '', ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent('popstate', { state: {} })); return true; })()`);
 
 async function runLive(options) {
@@ -352,17 +366,24 @@ async function runLive(options) {
   });
   await measure('revisit', load);
   await measure('idle60', async () => { await push(cdp, '/'); await delay(60000); return {}; });
-  for (const flow of ['settings', 'notifications', 'store', 'projects', 'inbox', 'search', 'newSession']) {
+  for (const flow of ['settings', 'notifications', 'store', 'projects', 'inbox', 'search', 'newSession', 'workflows']) {
     await measure(flow, async () => { await push(cdp, SCREENS[flow]); return settle(); });
   }
-  if (options.session) {
-    await measure('session', async () => {
-      await push(cdp, `/session/${options.session}`);
-      const readyMs = await waitFor(cdp, visible('session-composer-input'), 180000);
-      if (readyMs === null) throw new Error('composer did not render');
-      return { readyMs, ...(await settle()) };
-    });
+  // A saved Workflow and a Workflow run, opened by id.
+  for (const [flow, option, path] of [['workflow', 'workflow', '/workflows/'], ['workflowRun', 'workflow-run', '/workflows/runs/']]) {
+    if (options[option]) await measure(flow, async () => { await push(cdp, path + options[option]); return settle(); });
   }
+  // Open a Session: time to the composer and to the first visible transcript row.
+  const openSession = async id => {
+    const t0 = Date.now();
+    await push(cdp, `/session/${id}`);
+    const readyMs = await waitFor(cdp, visible('session-composer-input'), 180000);
+    if (readyMs === null) throw new Error('composer did not render');
+    const rowMs = await waitFor(cdp, FIRST_ROW, 180000);
+    return { readyMs, firstRowMs: rowMs === null ? null : Date.now() - t0, ...(await settle()) };
+  };
+  if (options['session-short']) await measure('sessionShort', () => openSession(options['session-short']));
+  if (options.session) await measure('session', () => openSession(options.session));
   if (options.session) {
     // Scroll back through the open transcript: 20 wheel steps up at the transcript's centre.
     await measure('scrollBack', async () => {
@@ -395,6 +416,15 @@ async function runLive(options) {
     };
     if (['turn', 'stop', 'sendAfterStop'].some(flow => selected.includes(flow))) await onSession().catch(() => {});
     await measure('turn', async () => { await send(cdp, SHORT_PROMPT); return turnEnd(180000); });
+    // Streaming: a known number of text deltas, the time to the first streamed text and the bytes per delta.
+    await measure('stream', async () => {
+      const prompt = String(options['stream-prompt'] ?? STREAM_PROMPT);
+      const deltas = Number(/lsl\s+(\d+)\s+(\d+)/.exec(prompt)?.slice(1).reduce((a, b) => a * b, 1) ?? 0);
+      const t0 = Date.now();
+      await send(cdp, prompt);
+      const firstTextMs = await waitFor(cdp, `document.body.innerText.includes('item 0.0')`, 120000);
+      return { deltas, firstTextMs: firstTextMs === null ? null : Date.now() - t0, ...(await turnEnd(300000)) };
+    });
     await measure('stop', async () => {
       await send(cdp, LONG_PROMPT);
       if (await waitFor(cdp, visible('agent-input-abort'), 30000) === null) throw new Error('turn did not start');
@@ -410,14 +440,25 @@ async function runLive(options) {
   }
   const idleMs = Number(options['idle-ms'] ?? 300000);
   await measure('idleVisible', async () => { await push(cdp, '/'); await rec.quiet(quietMs, maxMs); await rec.start(); await delay(idleMs); return { idleMs }; });
-  // Hidden: another tab in front, as when the user switches away from the app.
+  // Hidden, as when the user switches away from the app.
   await measure('idleHidden', async () => {
     await push(cdp, '/');
     await rec.quiet(quietMs, maxMs);
-    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    if (await setHidden(cdp, true) !== 'hidden') throw new Error('page did not hide');
     await rec.start();
-    try { await delay(idleMs); } finally { await cdp.send('Target.closeTarget', { targetId }).catch(() => {}); await cdp.send('Page.bringToFront'); }
+    try { await delay(idleMs); } finally { await setHidden(cdp, false); }
     return { idleMs, hidden: true };
+  });
+  // Foreground after being away: hidden for --away-ms (not counted), then the return is counted.
+  await measure('resume', async () => {
+    await push(cdp, '/');
+    await rec.quiet(quietMs, maxMs);
+    const awayMs = Number(options['away-ms'] ?? idleMs);
+    if (await setHidden(cdp, true) !== 'hidden') throw new Error('page did not hide');
+    await delay(awayMs);
+    await rec.start();
+    await setHidden(cdp, false);
+    return { awayMs, ...(await settle()) };
   });
   cdp.close();
   return { at: new Date().toISOString(), ui: new URL(options.ui).origin, flows };
@@ -435,7 +476,7 @@ export function formatCensusTable(run) {
 
 const kib = value => (value / 1024).toFixed(1);
 export function formatBytesTable(run) {
-  const lines = ['| flow | ready ms | requests | preflights | up KiB | HTTP down wire KiB | HTTP down decoded KiB | repeated responses (KiB) | assets (cached) | asset wire KiB | WS frames down/up | WS down KiB | WS down if deflated KiB (per msg / shared ctx) | WS up KiB | top routes by wire KiB | top socket types by KiB |',
+  const lines = ['| flow | ready ms (composer / first row / first streamed text) | requests | preflights | up KiB | HTTP down wire KiB | HTTP down decoded KiB | repeated responses (KiB) | assets (cached) | asset wire KiB | WS frames down/up (≥1 KiB, max B) | WS down KiB | WS down if deflated KiB (per msg / shared ctx) | WS up KiB | top routes by wire KiB | top socket types by KiB |',
     '|---|---:|---:|---:|---:|---:|---:|---|---|---:|---|---:|---|---:|---|---|'];
   for (const [flow, row] of Object.entries(run.flows)) {
     if (row.status !== 'ok' || !row.bytes) { lines.push(`| ${flow} | ${row.status} |`); continue; }
@@ -443,7 +484,8 @@ export function formatBytesTable(run) {
     const topRoutes = Object.entries(row.routeBytes ?? {}).sort((x, y) => y[1].encoded - x[1].encoded).slice(0, 4)
       .map(([key, value]) => `${key} ×${value.count} ${kib(value.encoded)}/${kib(value.decoded)}`).join('; ');
     const topSocket = Object.entries(row.socketBytes ?? {}).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([key, value]) => `${key} ${kib(value)}`).join('; ');
-    lines.push(`| ${flow} | ${row.readyMs ?? ''} | ${row.requests} | ${b.preflights} | ${kib(b.up)} | ${kib(b.httpEncoded)} | ${kib(b.httpDecoded)} | ${b.repeatedResponses} (${kib(b.repeatedEncoded)}) | ${b.assets} (${b.assetsCached}) | ${kib(b.assetEncoded)} | ${b.wsFramesDown}/${b.wsFramesUp} | ${kib(b.wsDown)} | ${kib(b.wsDownDeflatedAlone)} / ${kib(b.wsDownDeflatedShared)} | ${kib(b.wsUp)} | ${topRoutes} | ${topSocket} |`);
+    const ready = [row.readyMs, row.firstRowMs && `row ${row.firstRowMs}`, row.firstTextMs && `text ${row.firstTextMs}`].filter(v => v != null && v !== '').join(' / ');
+    lines.push(`| ${flow} | ${ready} | ${row.requests} | ${b.preflights} | ${kib(b.up)} | ${kib(b.httpEncoded)} | ${kib(b.httpDecoded)} | ${b.repeatedResponses} (${kib(b.repeatedEncoded)}) | ${b.assets} (${b.assetsCached}) | ${kib(b.assetEncoded)} | ${b.wsFramesDown}/${b.wsFramesUp} (${b.wsDownFramesOver1KiB}, ${b.wsDownMaxFrame}) | ${kib(b.wsDown)} | ${kib(b.wsDownDeflatedAlone)} / ${kib(b.wsDownDeflatedShared)} | ${kib(b.wsUp)} | ${topRoutes} | ${topSocket} |`);
   }
   return lines.join('\n');
 }

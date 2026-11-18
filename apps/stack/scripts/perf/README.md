@@ -531,10 +531,19 @@ today, so frame length is the wire size). A second table prints these.
 
 Further flows: `search` (`/search?q=message`), `scrollBack` (20 wheel steps up
 in the open transcript), `switch` (to `--session-2` and back), `idleVisible`
-and `idleHidden` (Home for `--idle-ms`, default 5 min; hidden = another tab in
-front). `--throttle=3gslow|3g|4g` applies WebPageTest connectivity profiles
-through Chrome network emulation (HTTP and WebSocket); `readyMs` is the time to
-the flow's readiness element (app shell, or the Session composer).
+and `idleHidden` (Home for `--idle-ms`, default 5 min; hidden = the page's own
+visibility override plus `visibilitychange`, because headless Chromium keeps a
+background tab visible), `resume` (hidden for `--away-ms`, then only the return
+is counted), `workflows`, `workflow` (`--workflow=<id>`), `workflowRun`
+(`--workflow-run=<runId>`), `sessionShort` (`--session-short=<id>`) and `stream`
+(sends the fake Claude's `lsl 1 200 30` long-stream prompt, or `--stream-prompt`,
+so bytes per streamed delta are known; `firstTextMs` is send → first streamed
+text). `--throttle=3gslow|3g|4g|slow4g` applies WebPageTest connectivity
+profiles, or Chrome DevTools' "Slow 4G", through Chrome network emulation (HTTP
+and WebSocket); `readyMs` is the time to the flow's readiness element (app
+shell, or the Session composer) and `firstRowMs` the time to the first visible
+transcript row. The bytes table also gives the largest received frame and how
+many reach 1 KiB.
 `--shapes` adds per-route and per-socket-type byte weights of each JSON field
 path (names and sizes only, id-like map keys folded to `:id`) to find fields
 that are sent but never read.
