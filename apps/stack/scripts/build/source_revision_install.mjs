@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { cp, link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { inspectDependencyRefresh, resolveDependencyInstallRoot } from '../utils/proc/dependency_refresh.mjs';
 import { CURRENT_GENERATION_LINK, createDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
+import { resolveServerGeneratedClients } from './server_generated_clients.mjs';
 
 /**
  * The one owner of a source revision's dependency installation, for revision
@@ -329,4 +331,73 @@ export async function requestRevisionInstallArchive({ repoDir, descriptor, trees
   const path = join(resolve(treesRoot), INSTALLS, `.tmp-archive-${randomUUID()}.tar.gz`);
   await requestBaseArchive({ revision: descriptor.revision, path, signal });
   return path;
+}
+
+/** The server's own Prisma layout owner. A revision that has it places its default
+ * client itself, also for a borrowed installation (612af8e5162 and later). */
+const SERVER_PRISMA_LAYOUT_OWNER = 'apps/server/scripts/prismaInstallLayout.mjs';
+const PRISMA_CLIENT_PACKAGE = '@prisma/client';
+
+function isInsideDir(root, path) {
+  const rel = relative(root, path);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * A revision without its own layout owner generates its default client where Prisma
+ * puts one for a schema without `output`: beside the `@prisma/client` its server
+ * resolves. In a capture that package is a link into the (shared) installation, so
+ * generation would write into the installation. The capture takes a private copy of
+ * the package at the server's resolution point first: the client is then generated,
+ * stamped and carried inside the capture. Revisions with the owner are unchanged.
+ * Call with the installation mounted.
+ * @returns {Promise<string | null>} the capture-relative package directory it made physical
+ */
+export async function prepareRevisionServerClientLayout({ captureDir }) {
+  if (existsSync(join(captureDir, SERVER_PRISMA_LAYOUT_OWNER))) return null;
+  // Node's lookup from the server package: the first node_modules that has the package.
+  let modulesDir = null;
+  for (let dir = 'apps/server'; ; dir = dirname(dir)) {
+    const candidate = join(dir === '.' ? '' : dir, 'node_modules');
+    if (existsSync(join(captureDir, candidate, PRISMA_CLIENT_PACKAGE, 'package.json'))) { modulesDir = candidate; break; }
+    if (dir === '.' || dir === '') break;
+  }
+  if (modulesDir === null) return null;
+  const scope = join(captureDir, modulesDir, dirname(PRISMA_CLIENT_PACKAGE));
+  if ((await lstat(scope)).isSymbolicLink()) {
+    // A mounted scope is one link; keep its other packages linked, own only the client.
+    const target = await realpath(scope);
+    await rm(scope, { force: true });
+    await mkdir(scope);
+    for (const name of await readdir(target)) {
+      await symlink(join(target, name), join(scope, name), process.platform === 'win32' ? 'junction' : 'dir');
+    }
+  }
+  const client = join(captureDir, modulesDir, PRISMA_CLIENT_PACKAGE);
+  if ((await lstat(client)).isSymbolicLink()) {
+    const target = await realpath(client);
+    await rm(client, { force: true });
+    await cp(target, client, { recursive: true, verbatimSymlinks: true });
+  }
+  return join(modulesDir, PRISMA_CLIENT_PACKAGE).split(sep).join('/');
+}
+
+/**
+ * The capture-relative directories a capture-owned Prisma layout adds to the server's
+ * generated inputs: the private `@prisma/client` copy and every client the layout
+ * places inside the capture (from each schema's generator output, or beside that
+ * package). Empty when the installation owns the package: the standard generated
+ * roots then hold every client.
+ * @returns {string[]}
+ */
+export function readRevisionServerClientRoots(captureDir) {
+  const root = realpathSync(captureDir);
+  let packageDir;
+  try { packageDir = dirname(createRequire(join(root, 'apps/server/package.json')).resolve(`${PRISMA_CLIENT_PACKAGE}/package.json`)); }
+  catch (error) { if (error.code === 'MODULE_NOT_FOUND' || error.code === 'ENOENT') return []; throw error; }
+  if (!isInsideDir(root, packageDir)) return [];
+  const clients = resolveServerGeneratedClients({ repoDir: root })
+    .filter(({ schema }) => existsSync(join(root, schema))).map(({ client }) => join(root, client))
+    .filter(path => isInsideDir(root, path));
+  return [...new Set([packageDir, ...clients].map(path => relative(root, path).split(sep).join('/')))];
 }

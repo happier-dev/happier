@@ -39,7 +39,8 @@ async function createPnpmRevisionFixture(t, { prisma = false } = {}) {
   await gitIn('config', 'user.email', 'test@example.invalid');
   await gitIn('config', 'user.name', 'test');
   await write('package.json', JSON.stringify({ name: 'fixture-root', private: true, packageManager: rootPackage.packageManager }));
-  await write('pnpm-workspace.yaml', 'packages:\n  - apps/*\n  - packages/*\n');
+  // A pre-612af8e5162 revision installs hoisted, with Prisma's client at the root.
+  await write('pnpm-workspace.yaml', `packages:\n  - apps/*\n  - packages/*\n${prisma === 'legacy' ? 'nodeLinker: hoisted\n' : ''}`);
   await write('.gitignore', 'node_modules\ngenerated\n');
   for (const [dir, version, value] of [['vendor/dep-one', '1.0.0', 'committed'], ['vendor/dep-two', '2.0.0', 'uncommitted']]) {
     await write(`${dir}/package.json`, JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
@@ -57,14 +58,25 @@ async function createPnpmRevisionFixture(t, { prisma = false } = {}) {
       await write(`vendor/prisma-${version}/index.js`, 'module.exports = {};');
     }
     await write('apps/server/prisma/schema.prisma', 'datasource db { provider = "postgresql" }\n');
-    await write('apps/server/scripts/generateClients.ts', [
-      "import { createHash } from 'node:crypto'; import fs from 'node:fs'; import { createRequire } from 'node:module';",
-      "const { version } = createRequire(`${process.cwd()}/package.json`)('@prisma/client/package.json');",
+    const preamble = [
+      "import { createHash } from 'node:crypto'; import fs from 'node:fs'; import path from 'node:path'; import { createRequire } from 'node:module';",
+      "const packageJson = createRequire(`${process.cwd()}/package.json`).resolve('@prisma/client/package.json');",
+      "const { version } = JSON.parse(fs.readFileSync(packageJson, 'utf8'));",
       "const stamp = createHash('sha256').update(fs.readFileSync('prisma/schema.prisma')).digest('hex');",
+    ];
+    await write('apps/server/scripts/generateClients.ts', [...preamble, ...(prisma === 'legacy' ? [
+      // Before the layout owner: Prisma writes beside the real @prisma/client, and the
+      // script stamps the root client it assumes (2c8b5a872a's generateClients.ts).
+      "const client = path.join(path.dirname(fs.realpathSync(packageJson)), '..', '..', '.prisma', 'client');",
+      "fs.mkdirSync(client, { recursive: true }); fs.writeFileSync(path.join(client, 'prisma-version'), version);",
+      "fs.writeFileSync('../../node_modules/.prisma/client/.happier-source-schema.sha256', stamp);",
+    ] : [
       "fs.mkdirSync('generated/default-client', { recursive: true });",
       "fs.writeFileSync('generated/default-client/.happier-source-schema.sha256', stamp);",
       "fs.writeFileSync('generated/default-client/prisma-version', version);",
-    ].join('\n'));
+    ])].join('\n'));
+    // The current layout owner places the default client itself (612af8e5162 and later).
+    if (prisma !== 'legacy') await write('apps/server/scripts/prismaInstallLayout.mjs', 'export {};');
   }
   await write('apps/server/package.json', serverManifest('dep-one'));
   await write('apps/server/sources/main.light.ts', 'export { marker } from "@happier-dev/shared";');
@@ -189,4 +201,28 @@ test('a revision bundle capture generates with its revision\'s own installation 
   const head = await capture('HEAD', 'head');
   assert.equal(await readFile(join(head.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '7.0.0');
   assert.equal(head.manifest.dependencyRootDir, undefined, 'the checkout\'s installation serves a revision with its identity');
+});
+
+test('an older revision bundle generates its root-layout Prisma client inside the capture, never in its installation', async t => {
+  // Before 612af8e5162 the server had no layout owner: Prisma placed the default client
+  // beside the hoisted @prisma/client, and the generator stamped that root client.
+  const context = await createPnpmRevisionFixture(t, { prisma: 'legacy' });
+  const { fixture, repoDir, env, pnpm, write, serverManifest } = context;
+  const older = (await promisify(execFile)('git', ['-C', repoDir, 'rev-parse', 'HEAD'])).stdout.trim();
+  await write('apps/server/package.json', serverManifest('dep-one', '7.0.0'));
+  pnpm(['install', '--offline', '--ignore-scripts']);
+  await promisify(execFile)('git', ['-C', repoDir, 'commit', '--quiet', '-am', 'prisma 7']);
+  await publishCheckoutInstall({ repoDir, env });
+  const treesRoot = fixture.path('trees');
+  const { descriptorPath } = await resolveSourceRevision({ repoDir, rev: older, outputDir: fixture.path('descriptors') });
+  const outputDir = fixture.path('capture');
+  await mkdir(outputDir);
+  await captureSourceRuntimeSharedInputs({ repoDir, outputDir, env, treesRoot, revision: { descriptorPath } });
+  const manifest = JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8'));
+  assert.equal(await readFile(join(outputDir, 'node_modules/.prisma/client/prisma-version'), 'utf8'), '6.0.0');
+  assert.equal(existsSync(join(manifest.dependencyRootDir, 'node_modules/.prisma')), false, 'generation never writes the shared installation');
+  for (const path of ['node_modules/.prisma/client/prisma-version', 'node_modules/.prisma/client/.happier-source-schema.sha256',
+    'node_modules/@prisma/client/package.json']) {
+    assert.ok(manifest.filesByComponent.server.includes(path), `the server capture carries ${path}`);
+  }
 });

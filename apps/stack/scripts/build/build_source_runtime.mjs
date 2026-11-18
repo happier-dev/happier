@@ -38,7 +38,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
-import { requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -84,9 +84,12 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
         archivePath: revisionArchivePath, env, signal }) : repoDir;
       const files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir, files: capture.files,
         ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor, env, signal });
+      // A capture-owned Prisma layout's client package and clients belong to the server.
+      const serverClientRoots = readRevisionServerClientRoots(outputDir);
       filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => [component,
         files.filter(path => componentFiles.includes(path) || (!captured.has(path)
-          && ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))))]));
+          && (ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))
+            || (component === 'server' && serverClientRoots.some(root => path.startsWith(`${root}/`))))))]));
       revisionIdentity = sourceRevisionIdentity(descriptor);
     }
     const ownDependencies = dependencyRootDir && dependencyRootDir !== repoDir ? { dependencyRootDir } : {};
@@ -1698,8 +1701,12 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
     // Keep the generated clients and the @prisma/client wrapper that loads the
     // default one with this graph after the temporary input capture is retired.
     // They sit where the server's install layout has them (apps/server).
-    for (const path of capturedFiles.filter(isSourceServerGeneratedInput)) {
-      const target = join(runtimeDir, path.slice('apps/server/'.length));
+    // A capture-owned Prisma layout (older revisions) adds its client package and
+    // clients, which sit where that layout put them (the root node_modules).
+    const clientRoots = readRevisionServerClientRoots(repoDir);
+    for (const path of capturedFiles.filter(path => isSourceServerGeneratedInput(path)
+      || clientRoots.some(root => path.startsWith(`${root}/`)))) {
+      const target = join(outputDir, path);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, await readSourceInput(join(repoDir, path)));
       await chmod(target, (await lstat(join(repoDir, path))).mode & 0o777);

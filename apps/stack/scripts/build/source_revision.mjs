@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createWriteStream, existsSync, readFileSync } from 'node:fs';
-import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Readable } from 'node:stream';
@@ -13,7 +13,7 @@ import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBu
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
-import { isRevisionDependencyInput } from './source_revision_install.mjs';
+import { isRevisionDependencyInput, prepareRevisionServerClientLayout, readRevisionServerClientRoots } from './source_revision_install.mjs';
 
 /**
  * QA source captures run one committed revision plus the paths a Stack
@@ -336,7 +336,22 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     throw new BuildInputDriftError(`[source-revision] capture differs from ${descriptor.key} at ${drift.length} path(s) (first: ${drift[0]}); the checkout or its mirror moved after the revision was described`);
   }
   await deriveRevisionGeneratedInputs({ captureDir, sourceDir, env, signal });
+  // A capture-owned Prisma layout (revisions before the server's layout owner) adds
+  // its client package and clients to the capture's inputs.
+  for (const root of readRevisionServerClientRoots(captureDir)) {
+    for (const path of await listCapturedFiles(captureDir, root)) result.add(path);
+  }
   return [...result].sort();
+}
+
+async function listCapturedFiles(captureDir, dir) {
+  const files = [];
+  for (const entry of await readdir(join(captureDir, dir), { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...await listCapturedFiles(captureDir, path));
+    else files.push(path);
+  }
+  return files;
 }
 
 /** Explicit `files` entries of each owner package (from the capture's manifests):
@@ -428,6 +443,9 @@ async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal
     await mountInstalledNodeModules({ ...modules, excludedNames: ['@happier-dev', '.prisma'] });
   }
   try {
+    // A revision without its own layout owner generates beside its @prisma/client:
+    // own that package inside the capture so generation never writes the installation.
+    await prepareRevisionServerClientLayout({ captureDir });
     // Physical captured packages and borrowed tools can select different output
     // layouts. Ask the server owner after the actual tool mount, once.
     const clients = resolveServerGeneratedClients({ repoDir: captureDir });
