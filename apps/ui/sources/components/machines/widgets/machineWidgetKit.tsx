@@ -132,9 +132,12 @@ export function useMachineWidgetMachine(
     };
   }, [language, inventory, machine, presence.reachability, presence.lastSeenAt]);
   // A group header that names this machine says its offline state once for all its widgets (O2).
-  useWidgetFrameBodySubjectState(facts.online !== false ? null : facts.lastSeenAt
+  const offlineText = facts.online !== false ? null : facts.lastSeenAt
     ? t('machines.widgets.body.common.presenceOffline', { time: formatLastSeen(facts.lastSeenAt) })
-    : t('machines.widgets.body.common.offline'));
+    : t('machines.widgets.body.common.offline');
+  const subjectState = React.useMemo(() => offlineText === null ? null
+    : { text: offlineText, compactText: t('machines.widgets.body.common.offline') }, [offlineText]);
+  useWidgetFrameBodySubjectState(subjectState);
   return facts;
 }
 

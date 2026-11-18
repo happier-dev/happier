@@ -19,7 +19,9 @@ vi.mock('react-native', async () =>
 
 /** A widget body that lends the state of what it follows and says its own copy only when nothing above says it. */
 function Body(props: Readonly<{ id: string; state: string | null }>) {
-  useWidgetFrameBodySubjectState(props.state);
+  // Each body lends its own object for the same words, as each widget does.
+  const lent = React.useMemo(() => (props.state === null ? null : { text: props.state, compactText: 'Offline' }), [props.state]);
+  useWidgetFrameBodySubjectState(lent);
   const saidAbove = useWidgetFrameSubjectStateSaidAbove();
   return (
     <Text testID={`${props.id}.own`}>
@@ -32,7 +34,7 @@ function Group(props: Readonly<{ children: React.ReactNode }>) {
   const { state, lend } = useWidgetGroupSubjectState();
   return (
     <WidgetGroupSubjectStateContext.Provider value={lend}>
-      <Text testID="header.meta">{state ?? ''}</Text>
+      <Text testID="header.meta">{state?.text ?? ''}</Text>
       {props.children}
     </WidgetGroupSubjectStateContext.Provider>
   );

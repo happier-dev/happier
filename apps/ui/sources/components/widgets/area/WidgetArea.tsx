@@ -694,7 +694,8 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 {...(props.canEdit ? { onAddToGroup: () => setSlotAddOpen(true), addAnchorRef: slotAnchorRef } : {})}
                 title={props.organizing && props.canEdit ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
                 source={source ? widgetGroupPinnedSource(source) : undefined}
-                meta={subject.state}
+                // A phone header keeps the short form beside the title; the full words would truncate the title.
+                meta={subject.state === null ? null : phone ? subject.state.compactText ?? subject.state.text : subject.state.text}
                 menu={props.canEdit && !props.organizing ? <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} /> : null}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
                 renderChild={(instanceId, placement) => props.renderChild(instanceId, placement, labels)}

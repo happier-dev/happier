@@ -422,8 +422,8 @@ describe('Vitals widget (lab rw V, VS)', () => {
 
   it('lends its offline state to a group header that says it once, and then leaves its own Offline and last seen out (O2)', async () => {
     seed(createMachineFixture({ id: 'm1', active: false, activeAt: Date.now() - 86_400_000, daemonState: { resources } }));
-    const lent: (string | null)[] = [];
-    const lend = (state: string | null) => { lent.push(state); };
+    const lent: ({ text: string; compactText?: string } | null)[] = [];
+    const lend = (state: { text: string; compactText?: string } | null) => { lent.push(state); };
     const settle = async () => { await act(async () => { for (let turn = 0; turn < 4; turn++) await Promise.resolve(); }); };
     // In a group whose header names this machine, the header says "Offline · Last seen …" for every widget in it.
     const grouped = await renderScreen(
@@ -434,7 +434,8 @@ describe('Vitals widget (lab rw V, VS)', () => {
       </WidgetFrameBodySubjectStateContext.Provider>,
     );
     await settle();
-    expect(lent.at(-1)).toContain('machines.widgets.body.common.presenceOffline');
+    expect(lent.at(-1)?.text).toContain('machines.widgets.body.common.presenceOffline');
+    expect(lent.at(-1)?.compactText).toBe('machines.widgets.body.common.offline');
     const groupedText = grouped.getTextContent();
     // No Offline badge in its own frame and no second last-seen sentence in its body.
     expect(groupedText.split(/\s+/)).not.toContain('machines.widgets.body.common.offline');

@@ -41,11 +41,17 @@ export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
  * those bodies read `true` from `useWidgetFrameSubjectStateSaidAbove` and leave their own copy of that state out
  * (O2, WAVE-ACCEPT-1118D). Anywhere else nothing takes it and a body says its state itself.
  */
+export type WidgetFrameSubjectState = Readonly<{
+  text: string;
+  /** The short form a phone header keeps beside the title ("Offline"); wider words would crowd the title out. */
+  compactText?: string;
+}>;
 export const WidgetFrameBodySubjectStateContext = React.createContext<
-  Readonly<{ lend: (state: string | null) => void; saidAbove: boolean }> | null
+  Readonly<{ lend: (state: WidgetFrameSubjectState | null) => void; saidAbove: boolean }> | null
 >(null);
 
-export function useWidgetFrameBodySubjectState(state: string | null): void {
+/** Pass an identity-stable value: a new one re-lends it. */
+export function useWidgetFrameBodySubjectState(state: WidgetFrameSubjectState | null): void {
   const lend = React.useContext(WidgetFrameBodySubjectStateContext)?.lend;
   React.useEffect(() => {
     lend?.(state);
