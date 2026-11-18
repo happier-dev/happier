@@ -58,7 +58,7 @@ import { useMachineAttention } from '@/sync/domains/machines/resources/useMachin
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, describeMachineReasonDetail, readMachinePublishedResources, selectAttentionSubjects, selectFleetLookSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
-import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
+import { MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { useMachineIndexCardAttention } from './machineIndexCardAttention';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
@@ -157,9 +157,6 @@ function AllMachinesIndexBody() {
     const lookSubjects = React.useMemo(() => selectFleetLookSubjects(attention.entries), [attention.entries]);
     const needsYouSubjectKeys = useReconciledStableRows(lookSubjects.map(entry => entry.key), String);
     const needsYouKeys = React.useMemo(() => new Set(needsYouSubjectKeys), [needsYouSubjectKeys]);
-    // The machines whose resources need attention: a phone list row says why on its second line, in place of its work.
-    const rowAttentionKeys = React.useMemo(() => new Set(attention.entries
-        .filter(entry => selectHeadlineReason(entry.attention) !== null).map(entry => entry.key)), [attention.entries]);
     const fleetTitle = describeFleetTitle({ subjects: attention.entries, reportingCount: attention.reportingCount });
     // With Needs you shown the title gives way, so the sentence carries its own lead (TH MB-2).
     const fleetDescription = describeFleetDescription({ subjects: attention.entries, reportingCount: attention.reportingCount,
@@ -265,7 +262,7 @@ function AllMachinesIndexBody() {
     // "—", so the table says each machine's presence instead (the no-metrics layout).
     const anyOnline = items.some(item => item.kind === 'machine' && item.online);
     const shownMetrics = anyOnline ? summarySetting.metrics : NO_METRICS;
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, cardAttention, anyOnline, rowAttentionKeys);
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, cardAttention, anyOnline);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -483,9 +480,7 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
  */
 function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
     /** No listed machine is online: no one has work to show, so the table has no Work column of blanks. */
-    anyOnline: boolean,
-    /** Machines whose resources need attention (attention entry keys). */
-    rowAttentionKeys: ReadonlySet<string>): CollectionAnatomy<MachineIndexItem> {
+    anyOnline: boolean): CollectionAnatomy<MachineIndexItem> {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
     return React.useMemo((): CollectionAnatomy<MachineIndexItem> => {
@@ -505,8 +500,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // row (DESIGN "Phones recompose": a sentence never sits right of a label). That line is why the machine is
         // quiet (offline, unreadable), else what needs attention with its one value, else its work, as the table's
         // Work column says it. The grid's cards carry their own lines.
-        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => <MachineIndexListLine item={item}
-            attention={rowAttentionKeys.has(JSON.stringify([item.serverId, machineKeyOf(item).machineId]))} /> }),
+        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => <MachineIndexListLine item={item} /> }),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
             ...(anyOnline ? [
@@ -551,7 +545,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
         };
-    }, [anyOnline, cardAttention, language, metrics, rowAttentionKeys, style, theme.colors.text.secondary, view]);
+    }, [anyOnline, cardAttention, language, metrics, style, theme.colors.text.secondary, view]);
 }
 
 /**
@@ -559,11 +553,14 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
  * attention with the one value behind it ("Short on memory · 82%"), never unlabelled instruments (owner bar 11-16),
  * else its work ("No work", "2 working").
  */
-const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{ item: MachineIndexItem; attention: boolean }>) {
+const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{ item: MachineIndexItem }>) {
     const { item } = props;
+    // The same per-machine owner as the list column's row, from the daemon's published facts: the page's fleet
+    // attention arrives seconds later, so reading it here said "No work" first (WAVE-ACCEPT-1118D d1).
+    const attention = useMachineRowNeedsAttention(item.serverId, machineKeyOf(item).machineId);
     const quiet = item.reason ?? (item.online ? null : item.presence);
     if (quiet !== null) return <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>;
-    if (!props.attention) return <MachineWorkCell item={item} />;
+    if (!attention) return <MachineWorkCell item={item} />;
     return <MachineIndexMeter item={item} enabled>
         <MachineListRowSummary testID={`machines.index.strip.${item.key}`} serverId={item.serverId}
             machineId={machineKeyOf(item).machineId} online={item.online} quietWord={null} />

@@ -347,13 +347,21 @@ it('gives every phone index row one anatomy: the name alone on line 1, its one s
   // The window is the boundary that makes this a phone.
   const dimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
   try {
+    // WAVE-ACCEPT-1118D d1: a machine whose daemon publishes attention says it on line 2 from its first paint.
+    const attention = MachinePublishedResourceSummaryV1Schema.parse({ v: 1, vitals: { state: 'reporting' },
+      host: { logicalCores: 8, memoryTotalBytes: 2 ** 34, bootedAt: 1 },
+      attention: { level: 'needs_you', reasons: [{ key: 'disk', level: 'needs_you', since: 1, metric: 'disk',
+        nextStep: 'free_up_space', kind: 'disk_full', volumeId: 'data', volumeLabel: '/data' }] } });
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
       machine('live', 'Live', 'live.local'),
+      { ...machine('hot', 'Hot', 'hot.local'), daemonState: { resources: attention } },
       { ...machine('idle', 'Idle', 'idle.local'), active: false },
     ] }]);
     const tree = await renderPage();
     const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
     await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
+    // The row reads its attention from the same per-machine owner as the list column, never "No work" first.
+    expect(tree.findAll(node => node.props.testID === 'machines.index.strip.machine:srv_a:hot').length).toBeGreaterThan(0);
     // The bundler may suffix a function's name.
     const named = (name: string, id: string) => tree.findAll(node => typeof node.type === 'function'
       && new RegExp(`^${name}\\d*$`, 'u').test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
@@ -369,6 +377,7 @@ it('gives every phone index row one anatomy: the name alone on line 1, its one s
       while (ancestor && !(typeof ancestor.type === 'function' && /^MachineIndexListLine\d*$/u.test(ancestor.type.name))) ancestor = ancestor.parent;
       expect(ancestor).toBeTruthy();
     }
+    expect(named('MachineWorkCell', 'hot')).toHaveLength(0);
     // The offline machine's line is its presence, with no work cell.
     expect(named('MachineWorkCell', 'idle')).toHaveLength(0);
     expect(textOf(named('MachineIndexListLine', 'idle')[0]!)).not.toBe('');
