@@ -81,5 +81,9 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         return { machineId: machine.machineId, ...(machine.named === false ? {} : { label: machine.label }), online, readiness,
             ...(machine.homeDir ? { homeDir: machine.homeDir } : {}) };
     }));
+    // Starters are package content an online Machine reads: with none online an empty list has that cause, the same
+    // `needs_machine` a source reports when it cannot be read (AUTO-LIVE F2).
+    if (machines !== null && catalog.starters.length === 0 && !catalog.machines.some(machine => machine.online)
+        && !issues.some(issue => issue.section === 'starters')) issues.push({ section: 'starters', code: 'needs_machine' });
     return catalog;
 }

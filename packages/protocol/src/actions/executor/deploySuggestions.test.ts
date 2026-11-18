@@ -80,6 +80,19 @@ describe('deploy suggestion read Actions', () => {
     ]);
   });
 
+  it('says why there are no starters when no Machine is online to read them (AUTO-LIVE F2)', async () => {
+    const executor = createActionExecutor({
+      // A fresh Account: no Machine supplies the starters package, so the starter list is empty with no failing source.
+      registryActionExecute: async () => ({ pages: [] }),
+      machinesList: async () => ({ items: [{ machineId: 'away', label: 'Dev box', named: true, presence: 'offline' }] }),
+    });
+    const result = await executor.execute('deployments.suggestions.catalog', {}, context);
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const catalog = DeploySuggestionCatalogV1Schema.parse(result.result);
+    expect(catalog.starters).toEqual([]);
+    expect(catalog.issues).toContainEqual({ section: 'starters', code: 'needs_machine' });
+  });
+
   it('checks the held snapshot without rereading owners and is available only with deployments', async () => {
     const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [{ id: 'website', title: 'Website', deploy }],
       apps: [], targets, machines: [], stores: [], forges });
@@ -105,7 +118,9 @@ describe('deploy suggestion read Actions', () => {
       deploymentSuggestionForges: async () => { throw Object.assign(new Error('Forge owner unavailable'), { code: 'hosting_unavailable' }); },
     });
     expect(await executor.execute('deployments.suggestions.catalog', {}, context)).toMatchObject({
-      ok: true, result: { targets, forges: [], issues: [{ section: 'forges', code: 'hosting_unavailable' }] },
+      // No Machine at all, so the empty starter list also says why (AUTO-LIVE F2).
+      ok: true, result: { targets, forges: [], issues: [{ section: 'forges', code: 'hosting_unavailable' },
+        { section: 'starters', code: 'needs_machine' }] },
     });
   });
 
