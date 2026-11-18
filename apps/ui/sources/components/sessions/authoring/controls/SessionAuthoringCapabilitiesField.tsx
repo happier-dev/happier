@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type { ExistingSessionCapabilityDelta } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
+import { SessionCapabilitySelectionV1Schema, setSessionCapabilitySelectionItemV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -30,16 +31,35 @@ const AUTOMATIC_SELECTION: SessionCapabilitySelectionV1 = SessionCapabilitySelec
 export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
     agentId: string;
     context: SessionAuthoringMcpContext;
-    value: SessionCapabilitySelectionV1 | null | undefined;
-    onChange: (value: SessionCapabilitySelectionV1) => void;
-}>) {
-    const { onChange } = props;
-    const selection = props.value ?? AUTOMATIC_SELECTION;
+}> & (
+    | Readonly<{ value: SessionCapabilitySelectionV1 | null | undefined; onChange: (value: SessionCapabilitySelectionV1) => void; itemEditing?: never }>
+    | Readonly<{ value?: never; onChange?: never; itemEditing: Readonly<{
+        selections: readonly (SessionCapabilitySelectionV1 | null | undefined)[];
+        deltas?: readonly ExistingSessionCapabilityDelta[];
+        mixedLabel: string;
+        onChange: (delta: ExistingSessionCapabilityDelta) => void;
+    }> }>
+)) {
+    const { onChange, itemEditing } = props;
+    const currentSelections = itemEditing?.selections;
+    const deltas = itemEditing?.deltas;
+    const selections = React.useMemo(() => currentSelections?.map(value => {
+        const initial = value ?? AUTOMATIC_SELECTION;
+        return deltas?.reduce((selection, delta) =>
+            setSessionCapabilitySelectionItemV1(selection, delta.kind, delta.id, delta.state), initial) ?? initial;
+    }), [currentSelections, deltas]);
+    const selection = selections?.[0] ?? props.value ?? AUTOMATIC_SELECTION;
+    const onItemChange = itemEditing?.onChange;
+    const setItem = React.useCallback((kind: ExistingSessionCapabilityDelta['kind'], id: string, state: ExistingSessionCapabilityDelta['state']) =>
+        onItemChange?.({ kind, id, state }), [onItemChange]);
+    const mixedLabel = itemEditing?.mixedLabel;
+    const items = React.useMemo(() => selections && mixedLabel !== undefined
+        ? { bulk: { selections, mixedLabel }, setItem } : undefined, [selections, mixedLabel, setItem]);
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     // The draft owner's contract is a state setter; a functional update reads the controlled value.
     const setSelection = React.useCallback<React.Dispatch<React.SetStateAction<SessionCapabilitySelectionV1>>>((next) => {
-        onChange(typeof next === 'function' ? next(selectionRef.current) : next);
+        onChange?.(typeof next === 'function' ? next(selectionRef.current) : next);
     }, [onChange]);
 
     const { chip } = useNewSessionCapabilitiesChip({
@@ -51,6 +71,7 @@ export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
             targetServerId: props.context.serverId,
             selection,
             setSelection,
+            itemEditing: items,
         },
         machineName: props.context.machineName ?? '',
     });

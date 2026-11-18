@@ -20,6 +20,8 @@ export type SessionCapabilityRowModel = Readonly<{
     scope: string;
     action: Readonly<{ kind: 'fix'; status: CapabilityStatus }> | Readonly<{ kind: 'turn_on'; state: 'inherit' | 'on' }>
         | Readonly<{ kind: 'remove' | 'none' }>;
+    mixedLabel?: string;
+    removalState?: 'off';
     dimmed: boolean; readOnlyReason: 'viewer' | 'new_sessions_only' | 'masked' | 'native_disable_unsupported' | null;
 }>;
 /**
@@ -45,6 +47,7 @@ export type SessionCapabilitiesModel = Readonly<{
 export type SessionCapabilitiesModelInput = Readonly<{
     view: SessionCapabilitiesViewInput | null; state: SessionCapabilitiesModel['state'];
     selection?: SessionCapabilitySelectionV1; context?: ReachContextV1;
+    bulk?: Readonly<{ selections: readonly SessionCapabilitySelectionV1[]; mixedLabel: string }>;
     skillPlan?: SessionSkillPlanV1 | null;
     mcpStatus(serverId: string): readonly CapabilityStatus[];
     skillStatus(skillId: string): readonly CapabilityStatus[];
@@ -78,10 +81,13 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
         // chip and sheet overlay the same optimistic Session selection on that fact.
         const selected = input.selection ? resolveSessionCapabilityItemSelected(item, override,
             item.kind !== 'mcp_server' || input.selection.mcp?.managedServersEnabled !== false) : item.selected;
+        const mixed = input.bulk?.selections.some(selection => resolveSessionCapabilityItemSelected(item,
+            readSessionCapabilityOverrideV1(selection, item.kind, item.id),
+            item.kind !== 'mcp_server' || selection.mcp?.managedServersEnabled !== false) !== selected) ?? false;
         const timing = input.view?.applyTiming[item.kind === 'mcp_server' ? 'mcp' : 'skills'];
         const masked = item.kind === 'skill' && plan?.items.some(fact => fact.skillId === item.id && fact.state === 'masked_by_native') === true;
         const readOnlyReason = input.readOnly ? 'viewer' : masked ? 'masked' : timing?.t === 'new_sessions_only' ? 'new_sessions_only' : null;
-        if (!selected && override !== 'off') {
+        if (!mixed && !selected && override !== 'off') {
             addItems.push({ kind: item.kind, id: item.id, title: item.title ?? item.name,
                 readOnlyReason: !item.selectable ? 'viewer' : readOnlyReason });
             continue;
@@ -105,11 +111,13 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
                 : shortWhereItsOn(decidingRule ? [decidingRule] : [], input.names),
             // An item's own fix (Sign in, Add key) is an Account action, so a row read-only for this session keeps it.
             action: readOnlyReason !== 'viewer' && status?.fix ? { kind: 'fix', status } : readOnlyReason ? { kind: 'none' }
-                : selected ? { kind: 'remove' } : { kind: 'turn_on',
+                : !mixed && selected ? { kind: 'remove' } : { kind: 'turn_on',
                     // Clear a removal only when the Machine's deciding rule gives ON.
                     // An OFF/no-rule baseline needs a Session include to actually turn on.
-                    state: (decidingRule?.enabled ?? item.reason === 'rule_on') ? 'inherit' : 'on' },
-            dimmed: !selected, readOnlyReason };
+                    state: !input.bulk && (decidingRule?.enabled ?? item.reason === 'rule_on') ? 'inherit' : 'on' },
+            ...(mixed ? { mixedLabel: input.bulk?.mixedLabel } : {}),
+            ...(input.bulk && (mixed || selected) ? { removalState: 'off' as const } : {}),
+            dimmed: !mixed && !selected, readOnlyReason };
         (item.kind === 'skill' ? skills : mcp).push(row);
     }
     const order = (left: SessionCapabilityRowModel, right: SessionCapabilityRowModel) => {
@@ -119,12 +127,15 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
     skills.sort(order); mcp.sort(order); addItems.sort((a, b) => a.title.localeCompare(b.title));
     const nativeRows = input.nativeSkills?.items.map((item): SessionCapabilityRowModel => {
         const off = input.selection?.skills?.excludeNativeSkillNames.includes(item.name) === true;
+        const mixed = input.bulk?.selections.some(selection =>
+            (readSessionCapabilityOverrideV1(selection, 'native_skill', item.name) === 'off') !== off) ?? false;
         const readOnlyReason = input.readOnly ? 'viewer' : input.nativeSkills!.applyTiming.t === 'new_sessions_only' ? 'new_sessions_only'
             : !input.nativeSkills!.canDisable ? 'native_disable_unsupported' : null;
         return { key: `native_skill:${item.name}`, id: item.name, kind: 'native_skill', title: item.name, mark: 'none',
             line2: off ? { kind: 'change', change: 'turned_off' } : null, scope: input.nativeSkills!.machineName,
-            dimmed: off, readOnlyReason,
-            action: readOnlyReason ? { kind: 'none' } : off ? { kind: 'turn_on', state: 'inherit' } : { kind: 'remove' } };
+            ...(mixed ? { mixedLabel: input.bulk?.mixedLabel, removalState: 'off' as const } : {}),
+            dimmed: !mixed && off, readOnlyReason,
+            action: readOnlyReason ? { kind: 'none' } : mixed || off ? { kind: 'turn_on', state: 'inherit' } : { kind: 'remove' } };
     });
     const pendingApply = input.applyState?.pendingApply ?? (input.view && 'pendingApply' in input.view ? input.view.pendingApply : { mcp: false, skills: false });
     const timing = input.applyState?.applyTiming ?? input.view?.applyTiming ?? null;

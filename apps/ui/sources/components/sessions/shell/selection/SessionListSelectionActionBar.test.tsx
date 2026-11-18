@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { renderScreen } from '@/dev/testkit';
+import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { AgentInput } from '@/components/sessions/agentInput';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { SESSION_RECIPIENT_CHIP_KEY } from '@/components/sessions/agentInput/definitions/createRecipientActionChip';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { clearTempData } from '@/utils/sessions/tempDataStore';
 
 import {
     SessionListSelectionProvider,
@@ -123,6 +129,47 @@ describe('SessionListSelectionActionBarHost', () => {
             { serverId: 'server-a', sessionId: 'session-a' },
             { serverId: 'server-a', sessionId: 'session-b' },
         ]);
+    });
+
+    it('opens the new list selection when the same Compose tab body is retained', async () => {
+        const { WorkspaceRouteBody } = await import('@/app/(app)/session/compose');
+        const list = await renderScreen(<ActionBarHarness />);
+        const compose = async (selectionTestId: string) => {
+            await pressByTestId(list, selectionTestId);
+            await pressByTestId(list, 'session-list-selection-action-compose');
+            const href = vi.mocked(routerBoundary.push!).mock.calls.at(-1)?.[0] as
+                { pathname: string; params: { dataId: string } };
+            return href.params.dataId;
+        };
+        const body = (dataId: string) => (
+            <DestinationInstanceContext.Provider value={{
+                tabId: 'compose-tab', pathname: '/session/compose', focused: true, visible: true,
+                isFocused: () => true, ref: { kind: 'sessions.compose', params: { dataId } },
+                navigation: { push: () => {}, replace: () => {}, back: () => {} },
+            }}>
+                <WorkspaceRouteBody />
+            </DestinationInstanceContext.Provider>
+        );
+        const first = await compose('select-all-sessions');
+        const screen = await renderScreen(body(first));
+        try {
+            const selectedIds = () => {
+                const chips: readonly AgentInputExtraActionChip[] = screen.findByType(AgentInput).props.extraActionChips;
+                const selection = chips.find(chip => chip.key === SESSION_RECIPIENT_CHIP_KEY)?.collapsedOptionsPopover?.selection;
+                return selection?.kind === 'multiple' ? [...selection.selectedIds] : [];
+            };
+            const a = sessionAddressKey({ serverId: 'server-a', sessionId: 'session-a' });
+            const b = sessionAddressKey({ serverId: 'server-a', sessionId: 'session-b' });
+            expect(selectedIds()).toEqual([a, b]);
+            const second = await compose('select-session-a');
+            expect(second).not.toBe(first);
+            await screen.update(body(second));
+            expect(selectedIds()).toEqual([a]);
+        } finally {
+            await screen.unmount();
+            await list.unmount();
+            clearTempData();
+        }
     });
 
     afterEach(() => {

@@ -2,13 +2,13 @@ import type { ActionId } from '../../actions/actionIds.js';
 import { SESSION_AGENT_TRANSITION_ACTION_ID_V1 } from '../../actions/sessionAgentTransitionActionIdsV1.js';
 import type { ActionSessionAddressV1 } from '../../actions/sessionAddressV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import type { WorkflowSessionAuthoringSelection, WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/workflowV1.js';
+import type { WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/workflowV1.js';
 import type { AcpConfigOptionOverridesV1 } from '../metadata/metadataOverridesV1.js';
 import { projectSessionModelRefToExecutionModelSelection } from '../../providers/selection/v2.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionKey.js';
 import type { SessionAgentTransitionSelectionV1 } from '../agentTransition.js';
-import { SESSION_CAPABILITY_KINDS_V1, readSessionCapabilityOverrideV1, type SessionCapabilitySelectionV1 } from '../../reach/sessionCapabilitySelectionV1.js';
-import { EXISTING_SESSION_FIELD_APPLICATIONS } from './existingSessionFieldApplication.js';
+import type { SessionCapabilitySelectionV1 } from '../../reach/sessionCapabilitySelectionV1.js';
+import { EXISTING_SESSION_FIELD_APPLICATIONS, type ExistingSessionChangeSet } from './existingSessionFieldApplication.js';
 import {
   buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput,
   buildExistingSessionPermissionModeActionInput, buildExistingSessionModelActionInput,
@@ -56,14 +56,14 @@ export function filterExistingSessionStageTargets(
 
 /** Pure pending-change projection. Action admission and effects remain at the executor. */
 export function planExistingSessionChanges(
-  selection: WorkflowSessionAuthoringSelection,
+  selection: ExistingSessionChangeSet,
   targets: readonly ExistingSessionPlanningTarget[],
   message?: string,
 ): ExistingSessionChangePlan {
   const unsupportedFields: { field: WorkflowSessionAuthoringSelectionFieldId; reason: string }[] = [];
   for (const field of Object.keys(EXISTING_SESSION_FIELD_APPLICATIONS) as WorkflowSessionAuthoringSelectionFieldId[]) {
     const application = EXISTING_SESSION_FIELD_APPLICATIONS[field];
-    if (selection[field] !== undefined && application.via === 'unsupported') unsupportedFields.push({ field, reason: application.reason });
+    if (field !== 'capabilitySelection' && application.via === 'unsupported' && selection[field] !== undefined) unsupportedFields.push({ field, reason: application.reason });
   }
   // The portable transition cannot identify a configured Agent definition.
   if (selection.agentTarget !== undefined && (selection.agentTarget === null || selection.agentTarget.definitionId !== undefined)) return {
@@ -114,21 +114,9 @@ export function planExistingSessionChanges(
     if (selection.connectedServices !== undefined) add(2, EXISTING_SESSION_FIELD_APPLICATIONS.connectedServices.actionId,
       buildExistingSessionConnectedServicesAuthActionInput({ sessionId, serverId: target.address.serverId,
         agentId, machineId: target.machineId, bindings: selection.connectedServices ?? { v: 2, bindingsByServiceId: {} } }), target.address);
-    if (selection.capabilitySelection !== undefined) {
-      const before = target.capabilitySelection ?? {};
-      const after = selection.capabilitySelection ?? {};
-      for (const kind of SESSION_CAPABILITY_KINDS_V1) {
-        const ids = (value: SessionCapabilitySelectionV1) => kind === 'skill'
-          ? [...(value.skills?.forceIncludeSkillIds ?? []), ...(value.skills?.forceExcludeSkillIds ?? [])]
-          : kind === 'mcp_server' ? [...(value.mcp?.forceIncludeServerIds ?? []), ...(value.mcp?.forceExcludeServerIds ?? [])]
-          : value.skills?.excludeNativeSkillNames ?? [];
-        for (const id of new Set([...ids(before), ...ids(after)])) {
-          const state = readSessionCapabilityOverrideV1(after, kind, id);
-          if (state === readSessionCapabilityOverrideV1(before, kind, id)) continue;
-          add(3, EXISTING_SESSION_FIELD_APPLICATIONS.capabilitySelection.actionId,
-            buildExistingSessionCapabilitiesActionInput({ sessionId, kind, id, state }), target.address);
-        }
-      }
+    for (const delta of selection.capabilityDeltas ?? []) {
+      add(3, EXISTING_SESSION_FIELD_APPLICATIONS.capabilitySelection.actionId,
+        buildExistingSessionCapabilitiesActionInput({ sessionId, ...delta }), target.address);
     }
     if (model?.teamCredentialModel) add(4, 'session.model.set', buildExistingSessionModelActionInput({ sessionId, teamCredentialModel: model.teamCredentialModel }), target.address);
     if (hasMessage) {

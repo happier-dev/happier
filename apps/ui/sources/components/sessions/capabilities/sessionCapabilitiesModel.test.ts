@@ -28,6 +28,15 @@ function fixture() {
         cost: (kind: 'skill' | 'mcp_server') => kind === 'skill' ? { tokensWhenUsed: 42 } : { toolCount: 3, tokensPerTurn: 123 } };
 }
 describe('the session capability sheet data owner', () => {
+    it('offers both explicit bulk choices when one target has enabled a capability and another has disabled it', () => {
+        const input = fixture();
+        const off = setSessionCapabilitySelectionItemV1(input.selection, 'skill', 'review', 'off');
+        const model = buildSessionCapabilitiesModel({ ...input,
+            bulk: { selections: [input.selection, off], mixedLabel: 'Mixed' } });
+        expect(model.groups[0]?.rows[0]).toMatchObject({
+            id: 'review', mixedLabel: 'Mixed', action: { kind: 'turn_on', state: 'on' }, removalState: 'off',
+        });
+    });
     it('keeps the chip and open sheet on the same machine-resolved selection while Account rules refresh', () => {
         const input = fixture();
         const selection = setSessionCapabilitySelectionItemV1(input.selection, 'skill', 'review', 'inherit');

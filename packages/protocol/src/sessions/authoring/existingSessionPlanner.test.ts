@@ -20,7 +20,7 @@ describe('existing Session change planner', () => {
   it('orders mode/config before account auth, capabilities and message; groups auth by Agent and Machine', () => {
     const plan = planExistingSessionChanges({ acpSessionModeId: 'plan', sessionConfigOptionOverrides: {
       v: 1, updatedAt: 1, overrides: { effort: { value: 'high', updatedAt: 1 } },
-    }, connectedServices: { v: 2, bindingsByServiceId: {} }, capabilitySelection: { skills: { v: 1, forceIncludeSkillIds: ['skill'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] } } }, targets, 'hello');
+    }, connectedServices: { v: 2, bindingsByServiceId: {} }, capabilityDeltas: [{ kind: 'skill', id: 'skill', state: 'on' }] }, targets, 'hello');
     expect(plan.stages.map(s => s.actionId)).toEqual([
       'session.mode.set', 'session.config_option.set',
       'session.connected_services_auth.set', 'session.connected_services_auth.set', 'session.connected_services_auth.set',
@@ -54,17 +54,24 @@ describe('existing Session change planner', () => {
     ]).targets).toEqual([targets[2].address]);
   });
 
-  it('clears retained capability overrides through item Actions and does not touch inherited targets', () => {
-    const plan = planExistingSessionChanges({ capabilitySelection: null }, [
-      { ...targets[0], capabilitySelection: { skills: { v: 1, forceIncludeSkillIds: ['old'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] } } },
-      targets[1],
+  it('enables a Skill and disables an MCP server on both targets without writing their other overrides', () => {
+    const selected = [
+      { ...targets[0], capabilitySelection: { skills: { v: 1 as const, forceIncludeSkillIds: ['other-skill'], forceExcludeSkillIds: ['review'], excludeNativeSkillNames: [] } } },
+      { ...targets[1], capabilitySelection: { mcp: { v: 1 as const, managedServersEnabled: true, forceIncludeServerIds: ['linear', 'other-server'], forceExcludeServerIds: [] } } },
+    ];
+    const plan = planExistingSessionChanges({ capabilityDeltas: [
+      { kind: 'skill', id: 'review', state: 'on' },
+      { kind: 'mcp_server', id: 'linear', state: 'off' },
+    ] }, selected);
+    expect(plan.stages).toEqual([
+      { actionId: 'session.capabilities.set', input: { kind: 'skill', id: 'review', state: 'on' }, targets: selected.map(target => target.address) },
+      { actionId: 'session.capabilities.set', input: { kind: 'mcp_server', id: 'linear', state: 'off' }, targets: selected.map(target => target.address) },
     ]);
-    expect(plan.stages).toEqual([{ actionId: 'session.capabilities.set', input: { kind: 'skill', id: 'old', state: 'inherit' }, targets: [targets[0].address] }]);
   });
 
   it('switches mixed Agents without delivering until account auth and capabilities have applied', () => {
     const plan = planExistingSessionChanges({ agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-      connectedServices: { v: 2, bindingsByServiceId: {} }, capabilitySelection: { skills: { v: 1, forceIncludeSkillIds: ['skill'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] } },
+      connectedServices: { v: 2, bindingsByServiceId: {} }, capabilityDeltas: [{ kind: 'skill', id: 'skill', state: 'on' }],
       modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'happier.agent.codex/codex', modelId: 'model', providerConnectionId: 'provider' } },
     }, targets, 'hello');
     expect(plan.stages.map(stage => stage.actionId)).toEqual([

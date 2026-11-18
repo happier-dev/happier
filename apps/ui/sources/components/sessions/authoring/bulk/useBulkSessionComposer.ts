@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { ExistingSessionCapabilityDelta, ExistingSessionChangeSet } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
+import { SESSION_CAPABILITY_KINDS_V1, readSessionCapabilityOverrideV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { planExistingSessionChanges, type ExistingSessionChangePlan, type ExistingSessionPlanningTarget } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
@@ -7,7 +8,24 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useComposerTextSelector, useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import { bulkChangeTargetKey, executeBulkSessionChanges, isBulkSessionRetryable, orderBulkSessionChangeRows, summarizeBulkSessionChanges, type BulkSessionChangeRow } from './executeBulkSessionChanges';
 
-type Submission = Readonly<{ selection: WorkflowSessionAuthoringSelection; text: string; targets: readonly ExistingSessionPlanningTarget[];
+// Bridge the current shared-selection chip until the screen wires its item callback.
+type PendingSelection = ExistingSessionChangeSet & Readonly<{ capabilitySelection?: SessionCapabilitySelectionV1 | null }>;
+
+function readCapabilityDelta(before: SessionCapabilitySelectionV1, after: SessionCapabilitySelectionV1): readonly ExistingSessionCapabilityDelta[] {
+    return SESSION_CAPABILITY_KINDS_V1.flatMap(kind => {
+        const ids = (value: SessionCapabilitySelectionV1) => kind === 'skill'
+            ? [...(value.skills?.forceIncludeSkillIds ?? []), ...(value.skills?.forceExcludeSkillIds ?? [])]
+            : kind === 'mcp_server'
+                ? [...(value.mcp?.forceIncludeServerIds ?? []), ...(value.mcp?.forceExcludeServerIds ?? [])]
+                : value.skills?.excludeNativeSkillNames ?? [];
+        return [...new Set([...ids(before), ...ids(after)])].flatMap(id => {
+            const state = readSessionCapabilityOverrideV1(after, kind, id);
+            return state === readSessionCapabilityOverrideV1(before, kind, id) ? [] : [{ kind, id, state }];
+        });
+    });
+}
+
+type Submission = Readonly<{ selection: ExistingSessionChangeSet; text: string; targets: readonly ExistingSessionPlanningTarget[];
     skippedTargets: ExistingSessionChangePlan['skippedTargets'] }>;
 
 function planSubmission(snapshot: Submission): ExistingSessionChangePlan {
@@ -26,7 +44,20 @@ export function useBulkSessionComposer(input: Readonly<{
     const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching');
     const textStore = useComposerTextStore(() => input.initialText ?? '');
     const hasMessage = useComposerTextSelector(textStore, hasMessageText);
-    const [selection, setSelection] = useState<WorkflowSessionAuthoringSelection>({});
+    const [selection, setPendingSelection] = useState<PendingSelection>({});
+    const baselineCapabilitySelection = input.targets[0]?.capabilitySelection;
+    const setSelection = useCallback((next: PendingSelection) => {
+        setPendingSelection(previous => {
+            if (next.capabilitySelection === previous.capabilitySelection) return { ...next, capabilityDeltas: previous.capabilityDeltas };
+            return { ...next, capabilityDeltas: readCapabilityDelta(baselineCapabilitySelection ?? {}, next.capabilitySelection ?? {}) };
+        });
+    }, [baselineCapabilitySelection]);
+    const setCapabilityItem = useCallback((delta: ExistingSessionCapabilityDelta) => {
+        setPendingSelection(previous => ({
+            ...previous,
+            capabilityDeltas: [...(previous.capabilityDeltas ?? []).filter(item => item.kind !== delta.kind || item.id !== delta.id), delta],
+        }));
+    }, []);
     const [rows, setRows] = useState<readonly BulkSessionChangeRow[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const running = useRef(false);
@@ -76,7 +107,7 @@ export function useBulkSessionComposer(input: Readonly<{
             && failed.has(bulkChangeTargetKey(target.address)));
         return targets.length ? run({ ...snapshot, targets }) : Promise.resolve();
     }, [rows, run, input.targets]);
-    return { textStore, setText: textStore.setPrompt, selection, setSelection, rows, submitting, getPlan, consequences, agentSwitchingEnabled,
+    return { textStore, setText: textStore.setPrompt, selection, setSelection, setCapabilityItem, rows, submitting, getPlan, consequences, agentSwitchingEnabled,
         canSend: !submitting && consequencePlan.stages.length > 0 && consequencePlan.unsupportedFields.length === 0,
         failedTargets: rows.filter(isBulkSessionRetryable).map(row => row.target), send, retryFailed };
 }

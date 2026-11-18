@@ -27,6 +27,30 @@ it('keeps the host quiet while nonempty message text changes and sends the lates
     expect(messages).toEqual([expect.objectContaining({ message: 'hello 49' })]);
 });
 
+it('sends the latest per-item intent and leaves other overrides outside the Action payload', async () => {
+    const address = { serverId: 'home', sessionId: 'active' };
+    const targets = [{ address, agentId: 'agent', machineId: 'machine', capabilitySelection: {
+        skills: { v: 1 as const, forceIncludeSkillIds: ['existing'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] },
+    } }];
+    const payloads: unknown[] = [];
+    const hook = await renderHook(() => useBulkSessionComposer({ targets, executeConfirmed: async (id, input) => {
+        payloads.push({ id, input });
+        return { ok: true, result: { kind: 'fanout', results: [
+            { target: address, result: { ok: true, result: { ok: true } } },
+        ] } };
+    } }));
+    await act(async () => {
+        hook.getCurrent().setCapabilityItem({ kind: 'mcp_server', id: 'line', state: 'on' });
+        hook.getCurrent().setCapabilityItem({ kind: 'mcp_server', id: 'line', state: 'off' });
+        hook.getCurrent().setSelection({ permissionMode: 'yolo' });
+    });
+    await act(async () => { await hook.getCurrent().send(); });
+    expect(payloads[0]).toEqual({ id: 'session.capabilities.set', input: {
+        sessionId: { selector: 'sessions', addresses: [address] }, kind: 'mcp_server', id: 'line', state: 'off',
+    } });
+    expect(payloads).toHaveLength(2);
+});
+
 it('includes owner-skipped targets in consequences and the submitted results', async () => {
     const address = { serverId: 'home', sessionId: 'active' };
     const skipped = { serverId: 'home', sessionId: 'archived' };

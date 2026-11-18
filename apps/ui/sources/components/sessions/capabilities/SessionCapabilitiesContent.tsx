@@ -43,7 +43,9 @@ export type SessionCapabilitiesUndo = Readonly<{
 
 /** The row control and mounted commands use the same Session removal intent. */
 export function sessionCapabilityRowRemovalState(row: SessionCapabilityRowModel): 'off' | 'inherit' | null {
-  if (row.action.kind === 'turn_on' || row.readOnlyReason !== null || row.dimmed) return null;
+  if (row.readOnlyReason !== null || row.dimmed) return null;
+  if (row.removalState) return row.removalState;
+  if (row.action.kind === 'turn_on') return null;
   return row.line2?.kind === 'change' && row.line2.change === 'added' ? 'inherit' : 'off';
 }
 
@@ -460,50 +462,50 @@ function SessionCapabilityRow(
     : undefined;
   const removalState = sessionCapabilityRowRemovalState(row);
   const rowAction = row.action;
-  const action =
-    rowAction.kind === 'turn_on' ? (
-      <TextLinkButton
-        tone="strong"
-        label={t('capabilities.status.fix.turnOn')}
-        accessibilityLabel={t('capabilities.session.sheet.turnOnLabel', {
-          item: row.title,
-        })}
-        onPress={() => set(rowAction.state)}
-        testID={`${props.testID}:turn-on`}
-      />
-    ) : (
-      <>
-        {fix?.fix && fixLabel ? (
-          <TextLinkButton
-            tone="strong"
-            label={fixLabel}
-            onPress={fix.fix.onPress}
-            testID={`${props.testID}:fix`}
-          />
-        ) : null}
-        {removalState !== null ? (
-          <IconButton
-            iconName="x"
-            size={24}
-            variant="plain"
-            accessibilityLabel={t('capabilities.session.sheet.removeLabel', {
-              item: row.title,
-            })}
-            tooltip={t('capabilities.session.sheet.removeLabel', {
-              item: row.title,
-            })}
-            onPress={() => set(removalState)}
-            testID={`${props.testID}:remove`}
-          />
-        ) : null}
-      </>
-    );
-  const description =
+  const action = (
+    <>
+      {rowAction.kind === 'turn_on' ? (
+        <TextLinkButton
+          tone="strong"
+          label={t('capabilities.status.fix.turnOn')}
+          accessibilityLabel={t('capabilities.session.sheet.turnOnLabel', {
+            item: row.title,
+          })}
+          onPress={() => set(rowAction.state)}
+          testID={`${props.testID}:turn-on`}
+        />
+      ) : null}
+      {fix?.fix && fixLabel ? (
+        <TextLinkButton
+          tone="strong"
+          label={fixLabel}
+          onPress={fix.fix.onPress}
+          testID={`${props.testID}:fix`}
+        />
+      ) : null}
+      {removalState !== null ? (
+        <IconButton
+          iconName="x"
+          size={24}
+          variant="plain"
+          accessibilityLabel={t('capabilities.session.sheet.removeLabel', {
+            item: row.title,
+          })}
+          tooltip={t('capabilities.session.sheet.removeLabel', {
+            item: row.title,
+          })}
+          onPress={() => set(removalState)}
+          testID={`${props.testID}:remove`}
+        />
+      ) : null}
+    </>
+  );
+  const description = row.mixedLabel ?? (
     row.line2?.kind === 'change'
       ? row.line2.change === 'added'
         ? t('capabilities.session.sheet.added')
         : t('capabilities.session.sheet.turnedOff')
-      : null;
+      : null);
   return (
     <CapabilityRow
       density="menu"

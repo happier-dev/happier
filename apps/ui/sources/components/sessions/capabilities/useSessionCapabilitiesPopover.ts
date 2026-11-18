@@ -7,7 +7,12 @@ import { readSessionCapabilityApplyChange, type SessionCapabilityChange } from '
 import { readCapabilitySelectionApplyV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { readSessionCapabilityOverrideV1, setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 
-export type NewSessionCapabilitiesDraft = Parameters<typeof useNewSessionCapabilities>[0];
+export type NewSessionCapabilitiesDraft = Parameters<typeof useNewSessionCapabilities>[0] & Readonly<{
+    itemEditing?: Readonly<{
+        bulk: NonNullable<SessionCapabilitiesModelInput['bulk']>;
+        setItem: (kind: SessionCapabilityChange['kind'], id: string, state: SessionCapabilityChange['state']) => void;
+    }>;
+}>;
 export type SessionCapabilitiesTarget = Readonly<{ kind: 'draft'; draft: NewSessionCapabilitiesDraft }>
     | Readonly<{ kind: 'session'; sessionId: string; serverId: string | null; readOnly: boolean }>;
 /** The person's last own change, in the words of the sheet's in-place Undo line ("pdf added · Undo"). */
@@ -83,12 +88,15 @@ export function useExistingSessionCapabilitiesPopover(target: Extract<SessionCap
 /** Draft/Workflow/Trigger edits reuse the same P2 draft owner and never write an existing Session. */
 export function useNewSessionCapabilitiesPopover(draft: NewSessionCapabilitiesDraft, presentation: SessionCapabilitiesPresentation) {
     const state = useNewSessionCapabilities(draft);
+    const bulk = draft.itemEditing?.bulk;
     const modelInput = React.useMemo(() => ({ view: state.preview, selection: state.selection,
+        ...(bulk ? { bulk } : {}),
         // REACH's presence decides "offline" too: a failed check against a machine that is away is not a failure.
         state: state.previewStatus === 'ready' ? 'ready' as const
             : state.previewStatus === 'unreachable' || (state.previewStatus === 'error' && presentation.machineOnline === false) ? 'machine_unreachable' as const
             : state.previewStatus === 'error' ? 'error' as const : 'resolving' as const, readOnly: false }),
-        [state.preview, state.selection, state.previewStatus, presentation.machineOnline]);
+        [state.preview, state.selection, state.previewStatus, presentation.machineOnline, bulk]);
     const model = React.useMemo(() => buildSessionCapabilitiesModel({ ...presentation, ...modelInput }), [presentation, modelInput]);
-    return { model, modelInput, setItem: state.setItem, demandPreview: state.demandPreview, refresh: state.refresh, error: state.error };
+    return { model, modelInput, setItem: draft.itemEditing?.setItem ?? state.setItem,
+        demandPreview: state.demandPreview, refresh: state.refresh, error: state.error };
 }

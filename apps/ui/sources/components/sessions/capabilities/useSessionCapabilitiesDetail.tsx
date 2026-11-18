@@ -33,7 +33,7 @@ import type { NewSessionCapabilitiesDraft } from './useSessionCapabilitiesPopove
 
 export type Detail = Pick<SessionCapabilitiesModelInput, 'rules' | 'mcpStatus' | 'skillStatus' | 'names' | 'context' | 'nativeSkills' | 'cost'>;
 export type SheetTarget = Readonly<{ sessionId?: string; metadata?: unknown; draft?: Pick<NewSessionCapabilitiesDraft, 'machineId' | 'directory' | 'agentId' | 'projectKey'> }>;
-export type ModelInput = Pick<SessionCapabilitiesModelInput, 'view' | 'selection' | 'state' | 'readOnly' | 'change' | 'applyState'>;
+export type ModelInput = Pick<SessionCapabilitiesModelInput, 'view' | 'selection' | 'state' | 'readOnly' | 'change' | 'applyState' | 'bulk'>;
 const EMPTY_MESSAGES: Readonly<Record<string, Message>> = Object.freeze({});
 
 const NO_RULES: ReturnType<Detail['rules']> = [];

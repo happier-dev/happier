@@ -113,9 +113,12 @@ describe('Session-specific field intersection', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
             targets: [scoped('m1', '/repo/a'), scoped('m1', '/repo/b')] }))
             .toMatchObject({ kind: 'mcp', agentId: 'claude', context: { machineId: 'm1', directory: '/repo/a', machineName: 'devbox' } });
-        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
-            targets: [scoped('m1', '/repo/a', ['pdf']), scoped('m1', '/repo/b')] }))
+        const differing = [scoped('m1', '/repo/a', ['pdf']), scoped('m1', '/repo/b')];
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection', targets: differing }))
             .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
+            targets: differing, capabilityEditing: 'items' }))
+            .toMatchObject({ kind: 'mcp', context: { machineId: 'm1', serverId: 'home' } });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
             targets: [scoped('m1', '/repo/a'), scoped('m2', '/repo/a')] }))
             .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });

@@ -45,6 +45,7 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
     selection?: WorkflowSessionAuthoringSelection;
     agentSwitchingEnabled: boolean;
     mixedLabel: string;
+    capabilityEditing?: 'items';
 }>): SessionAuthoringFieldControlModel {
     const { field, targets, selection = {}, mixedLabel } = params;
     const unavailable = (reason: Extract<SessionAuthoringFieldControlModel, { kind: 'unavailable' }>['reason']): SessionAuthoringFieldControlModel => ({ field, kind: 'unavailable', reason });
@@ -87,15 +88,15 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         });
         return groups.length ? { ...first, groups } : unavailable('not_supported_on_target');
     }
-    // Skills/MCP: the canonical draft sheet previews one Machine and folder, and Send writes its whole selection
-    // to every target. That is truthful only while every target shares the Agent, the Machine and the current
-    // selection; otherwise a change made here would reset what each Session has on its own.
+    // The sheet previews a single Home, Machine and Agent. Item editors can preserve each target's overrides.
+    // The controlled snapshot editor still requires a common selection while the screen migrates to item edits.
     if (first.kind === 'mcp') {
         const mcpModels = models.filter(model => model.kind === 'mcp');
         const shared = mcpModels.length === models.length
-            && mcpModels.every(model => model.agentId === first.agentId && model.context.machineId === first.context.machineId)
-            && targets.every(target => areSnapshotProjectionsEquivalent(target.values.capabilitySelection ?? null,
-                targets[0]!.values.capabilitySelection ?? null));
+            && mcpModels.every(model => model.agentId === first.agentId && model.context.machineId === first.context.machineId
+                && model.context.serverId === first.context.serverId)
+            && (params.capabilityEditing === 'items' || targets.every(target =>
+                areSnapshotProjectionsEquivalent(target.values.capabilitySelection ?? null, targets[0]!.values.capabilitySelection ?? null)));
         return shared ? first : unavailable('differs_between_targets');
     }
     // Connected Services retain the canonical account picker; the host supplies its exact Home context.
