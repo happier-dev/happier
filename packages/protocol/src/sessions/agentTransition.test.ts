@@ -112,12 +112,12 @@ describe('session agent transition — request', () => {
 
   it('promotes localId from optional to required on the reused message input', () => {
     const parsed = SessionAgentTransitionRequestV1Schema.parse(V.request.valid.minimal);
-    expect(parsed.input.localId).toBe('local_01');
+    expect(parsed.input?.localId).toBe('local_01');
   });
 
   it('closes the nested mutation envelope while preserving opaque metadata', () => {
     const parsed = SessionAgentTransitionRequestV1Schema.parse(V.request.valid.withOpaqueMeta);
-    expect(parsed.input.meta).toEqual({ futureComposerMetadata: { v: 2 } });
+    expect(parsed.input?.meta).toEqual({ futureComposerMetadata: { v: 2 } });
     expect(SessionAgentTransitionRequestV1Schema.safeParse(V.request.invalid.unknownInputKey).success)
       .toBe(false);
   });

@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionTargetV1Schema, withSessionTargetFanoutResultV1 } from '../sessionTargetV1.js';
 import { CapabilityApplyTimingV1Schema } from '../../reach/capabilityApplyTimingV1.js';
-import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
+import { SESSION_CAPABILITY_KINDS_V1, SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { DetectedMcpPreviewEntryV1Schema, ManagedMcpPreviewEntryV1Schema } from '../../mcp/servers/previewV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { SessionSkillPlanV1Schema } from '../../prompts/library/skills/resolveSessionSkillPlanV1.js';
@@ -56,7 +56,7 @@ export const SessionCapabilitiesGetOutputV1Schema = lazyZodSchema(() => z.union(
 ]));
 export type SessionCapabilitiesGetOutputV1 = z.infer<typeof SessionCapabilitiesGetOutputV1Schema>;
 export const SessionCapabilitiesSetInputV1Schema = lazyZodSchema(() => z.strictObject({
-  sessionId: identity, kind: z.enum(['skill', 'mcp_server', 'native_skill']), id: identity,
+  sessionId: identity, kind: z.enum(SESSION_CAPABILITY_KINDS_V1), id: identity,
   state: z.enum(['on', 'off', 'inherit']), reason: z.optional(z.string()),
 }));
 export type SessionCapabilitiesSetInputV1 = z.infer<typeof SessionCapabilitiesSetInputV1Schema>;

@@ -1,3 +1,4 @@
+import { buildExistingSessionPermissionModeActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { requireActionSuccess, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -21,11 +22,11 @@ export async function applyPermissionModeSelection(params: Readonly<{
     }
     const address = { kind: 'session' as const, sessionId: params.sessionId };
     const currentness = params.draftScope ? captureSessionDraftCurrentness({ scope: params.draftScope, address }) : null;
-    const result = await params.executeAction('session.permission_mode.set', {
+    const result = await params.executeAction('session.permission_mode.set', buildExistingSessionPermissionModeActionInput({
         sessionId: params.sessionId,
         permissionMode: params.mode,
         applyTiming: params.applyTiming,
-    }, { surface: 'ui', defaultSessionId: params.sessionId, ...(params.serverId ? { serverId: params.serverId } : {}) });
+    }), { surface: 'ui', defaultSessionId: params.sessionId, ...(params.serverId ? { serverId: params.serverId } : {}) });
     requireActionSuccess(result);
     if (params.draftScope && currentness) clearSessionDraftCurrentnessLocal({ scope: params.draftScope, address, currentness,
         fieldIds: ['extensions.happier.nextPromptPermissionModeV1'] });

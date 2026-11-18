@@ -67,6 +67,47 @@ describe('runSessionAgentTransition — canonical Team model', () => {
 
 });
 
+describe('runSessionAgentTransition — settings-only cutover', () => {
+  it('commits the target selection without admitting a message or starting an empty runtime', async () => {
+    const harness = createTransitionDepsHarness();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest({ input: undefined, selection: {
+        v: 1, agentId: 'codex', modelId: 'target-model', acpSessionModeId: 'plan',
+      } }),
+      actionRequestId: 'settings-switch-1',
+      deps: harness.deps,
+    });
+
+    expect(result).toEqual({ type: 'accepted', localId: 'settings-switch-1' });
+    expect(harness.calls).toContain('stop');
+    const cutover = vi.mocked(harness.deps.applySessionAgentTransitionCutover).mock.calls[0]?.[0];
+    expect(cutover).toBeDefined();
+    const view = cutover?.currentView;
+    if (view?.kind !== 'legacy_v0') throw new Error('Expected the fixture legacy current view');
+    expect(JSON.parse(view.metadataCiphertext)).toMatchObject({
+      flavor: 'codex', modelSelectionIntentV1: { selection: { modelId: 'target-model' } },
+      sessionModeOverrideV1: { modeId: 'plan' },
+    });
+    expect(cutover!.divider.localId).toBe('agent-transition:settings-switch-1');
+    expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
+    expect(harness.deps.requestInactiveSessionResume).not.toHaveBeenCalled();
+  });
+
+  it('retains the submitted input identity and delivers the exact input when present', async () => {
+    const harness = createTransitionDepsHarness();
+    const request = buildTransitionRequest();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS, request, actionRequestId: 'settings-switch-1', deps: harness.deps,
+    });
+    expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+    expect(harness.deps.sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      localId: TEST_LOCAL_ID, message: 'continue please',
+    }));
+    expect(harness.calls.indexOf('send')).toBeLessThan(harness.calls.indexOf('resume'));
+  });
+});
+
 /**
  * The recorded machine is NOT a gate on the transition.
  *

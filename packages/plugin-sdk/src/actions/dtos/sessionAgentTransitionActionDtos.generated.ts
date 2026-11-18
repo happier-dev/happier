@@ -10,6 +10,41 @@ export type SessionAgentTransitionActionInputById = {
         selection: {
             v: 1;
             agentId: string;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
             modelId?: string | undefined;
             providerConnectionId?: null | string | undefined;
             acpSessionModeId?: null | string | undefined;
@@ -29,6 +64,41 @@ export type SessionAgentTransitionActionInputById = {
         selections: {
             v: 1;
             agentId: string;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
             modelId?: string | undefined;
             providerConnectionId?: null | string | undefined;
             acpSessionModeId?: null | string | undefined;
@@ -45,14 +115,44 @@ export type SessionAgentTransitionActionInputById = {
         }[];
     };
     readonly "session.agent.transition": {
-        input: {
-            text: string;
-            localId: string;
-            meta?: Record<string, unknown> | undefined;
-        };
         selection: {
             v: 1;
             agentId: string;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
             modelId?: string | undefined;
             providerConnectionId?: null | string | undefined;
             acpSessionModeId?: null | string | undefined;
@@ -69,6 +169,11 @@ export type SessionAgentTransitionActionInputById = {
         };
         expectedCurrentAgentId: string;
         sessionId: SessionTargetV1<true>;
+        input?: undefined | {
+            text: string;
+            localId: string;
+            meta?: Record<string, unknown> | undefined;
+        };
     };
 };
 export type SessionAgentTransitionActionResultById = {

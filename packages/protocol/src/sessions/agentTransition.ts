@@ -10,11 +10,11 @@ import { SessionSpawnLaunchErrorV1Schema } from './creation/sessionSpawnLaunchEr
 import { SessionModelRefSchema } from '../providers/selection/v2.js';
 
 /**
- * Same-Session cross-Agent continuation — the frozen shared contract.
+ * Same-Session cross-Agent continuation — the current shared contract.
  *
- * Both trees implement THIS shape. The outer request/result is closed and
- * versioned; the nested user input reuses the already-canonical user-message
- * schema so no second message vocabulary exists.
+ * The with-input request retains the predecessor shape; the 0.3 Account Action
+ * also admits settings-only cutover. The outer request/result is closed and
+ * versioned; any nested user input reuses the canonical user-message schema.
  *
  * Machine RPC:      session.agentTransition
  * Inspection RPC:   session.continuation.inspect
@@ -90,10 +90,10 @@ export type SessionAgentTransitionSelectionV1 = z.infer<typeof SessionAgentTrans
  * ------------------------------------------------------------------------- */
 
 /**
- * The exact user input carried by the transition. It is the canonical
- * user-message request with `localId` promoted from optional to REQUIRED: that
- * localId is the transition's dedupe identity, divider correlation key, and
- * draft compare-clear key, so it can never be absent.
+ * The exact user input, when the transition carries a message. Its `localId`
+ * remains required for dedupe, divider correlation and draft compare-clear.
+ * Settings-only transitions omit the whole input and use the admitted Action
+ * request identity for correlation instead.
  *
  * `safeExtend` (not `extend`) retains the canonical sanitizer and refinement.
  * The transition then closes its own mutation boundary; forward-compatible
@@ -122,7 +122,7 @@ export const SessionAgentTransitionRequestV1Schema = lazyZodSchema(() => z.stric
      */
     expectedCurrentAgentId: AgentIdV1Schema,
     selection: SessionAgentTransitionSelectionV1Schema,
-    input: SessionAgentTransitionInputV1Schema,
+    input: z.optional(SessionAgentTransitionInputV1Schema),
   }));
 export type SessionAgentTransitionRequestV1 = z.infer<typeof SessionAgentTransitionRequestV1Schema>;
 
@@ -237,6 +237,7 @@ export type SessionAgentTransitionErrorCodeV1 =
 
 const SessionAgentTransitionAcceptedResultV1Schema = lazyZodSchema(() => z.strictObject({
     type: z.literal('accepted'),
+    /** Input localId when present; admitted Action request id for settings-only cutover. */
     localId: PendingLocalIdSchema,
   }));
 
@@ -294,9 +295,9 @@ const SessionAgentTransitionOutcomeUnknownResultV1Schema = lazyZodSchema(() => z
   }));
 
 /**
- * `accepted` means the target current view and divider committed AND the exact
- * localId received canonical message admission. It does not claim provider
- * acceptance.
+ * `accepted` means the target current view and divider committed. When input
+ * is supplied, its exact localId also received canonical message admission;
+ * settings-only cutover admits no message. It does not claim provider acceptance.
  */
 export const SessionAgentTransitionResultV1Schema = lazyZodSchema(() => z.union([
   SessionAgentTransitionAcceptedResultV1Schema,

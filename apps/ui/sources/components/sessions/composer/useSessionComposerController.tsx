@@ -1,3 +1,4 @@
+import { buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput, buildExistingSessionModelActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { SessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
@@ -3790,15 +3791,11 @@ export function useSessionComposerController({
     }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionRouteServerId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
-        const normalized = typeof modeId === 'string' ? modeId.trim() : '';
-        const publishModeId =
-            normalized === 'default' && !sessionModeOptionIds.includes('default')
-                ? ''
-                : normalized;
-        fireAndForget(actionExecutor.execute('session.mode.set', {
+        fireAndForget(actionExecutor.execute('session.mode.set', buildExistingSessionModeActionInput({
             sessionId,
-            modeId: publishModeId,
-        }, {
+            modeId,
+            availableModeIds: sessionModeOptionIds,
+        }), {
             surface: 'ui',
             defaultSessionId: sessionId,
             serverId: sessionRouteServerId,
@@ -3806,11 +3803,11 @@ export function useSessionComposerController({
     }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionModeOptionIds, sessionRouteServerId]);
 
     const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
-        fireAndForget(actionExecutor.execute('session.config_option.set', {
+        fireAndForget(actionExecutor.execute('session.config_option.set', buildExistingSessionConfigOptionActionInput({
             sessionId,
             configId,
             valueId,
-        }, {
+        }), {
             surface: 'ui',
             defaultSessionId: sessionId,
             serverId: sessionRouteServerId,
@@ -3830,12 +3827,12 @@ export function useSessionComposerController({
         if (ref?.providerConnectionId === null
             && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return false;
         try {
-            const result = await actionExecutor.execute('session.model.set', {
+            const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
                 sessionId,
                 modelId: mode,
                 providerConnectionId: ref?.providerConnectionId ?? null,
                 applyTiming: session.active === true ? 'next_prompt' : 'immediate',
-            }, {
+            }), {
                 surface: 'ui',
                 defaultSessionId: sessionId,
                 serverId: sessionRouteServerId,
@@ -3943,13 +3940,13 @@ export function useSessionComposerController({
             )));
         if (!stillCurrent) return false;
         try {
-            const result = await actionExecutor.execute('session.model.set', {
+            const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
                 sessionId,
                 teamCredentialModel: selectionOutcome.selection,
                 ...(selectedResource?.sessionUsePolicy === 'team_visibility_required'
                     ? { teamVisibilityGrantConsent: { teamId: teamCredentialModel.teamId } }
                     : {}),
-            }, {
+            }), {
                 surface: 'ui',
                 defaultSessionId: sessionId,
                 serverId: sessionRouteServerId,
@@ -5431,10 +5428,10 @@ export function useSessionComposerController({
                 // settle here; a restart refusal or a still-armed result needs runner restart.
                 const requested = effectiveModelTransitionActionRequired?.requestedSelection;
                 if (requested && !isTeamCredentialProviderModelPickerValue(requested)) {
-                    const result = await actionExecutor.execute('session.model.set', {
+                    const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
                         sessionId, modelId: requested.modelId, providerConnectionId: requested.providerConnectionId,
                         applyTiming: 'immediate',
-                    }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: callerSignal });
+                    }), { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: callerSignal });
                     if (callerSignal.aborted) return false;
                     if (result.ok) {
                         // An arm is pending application, so empty Continue still needs the restart.

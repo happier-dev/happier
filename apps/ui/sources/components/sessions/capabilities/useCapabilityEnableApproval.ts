@@ -1,3 +1,4 @@
+import { buildExistingSessionCapabilitiesActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import * as React from 'react';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionCapabilitiesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
@@ -104,7 +105,7 @@ export function useCapabilityEnableApproval(input: Readonly<{
         const current = input.approval.execution;
         const parsed = current?.ok ? SessionCapabilitiesSetOutputV1Schema.safeParse(current.result) : null;
         if (!request || !parsed?.success || !parsed.data.ok) return { ok: false as const, error: 'nothing_to_undo' };
-        return execution.execute('session.capabilities.set', { sessionId: request.sessionId, kind: request.kind, id: request.id, state: parsed.data.previous });
+        return execution.execute('session.capabilities.set', buildExistingSessionCapabilitiesActionInput({ sessionId: request.sessionId, kind: request.kind, id: request.id, state: parsed.data.previous }));
     }, [input.approval.execution, request, execution.execute]);
     const choose = React.useCallback((choice: 'session' | 'always' | 'reject') =>
         sharedControllers.run(key, shared => shared.controller.choose(choice)) ?? Promise.resolve(), [key]);

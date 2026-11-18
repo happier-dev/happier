@@ -7,6 +7,7 @@ import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actio
 import { ReviewModelOutputV1Schema } from '@happier-dev/protocol/reviews/reviewModelOutputV1';
 import { ReviewSessionInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
+import { EXISTING_SESSION_FIELD_APPLICATIONS } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { areSessionCapabilitySelectionsEquivalentV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -1118,9 +1119,9 @@ function assertWorkflowSessionReuseCompatible(
   // decides which authored launch controls can apply when the runner is offline.
   for (const field of WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS) {
     if (keepSessionAgent && field !== 'allowedTools' && field !== 'unlistedTools' && field !== 'approvalProfileId') continue;
-    // These two supported next-input choices are applied by Session Pending.
-    if (field === 'modelSelection' || field === 'permissionMode'
-      || requested[field] === undefined) continue;
+    // Session Pending applies message fields. Other application capabilities do not
+    // change Workflow reuse policy: no settings Actions run on retained Sessions.
+    if (EXISTING_SESSION_FIELD_APPLICATIONS[field].via === 'message' || requested[field] === undefined) continue;
     const retained = field === 'agentTarget' ? actual.agentTarget : actual.runtimeSelection?.[field];
     const retainedSelection = field === 'agentTarget' ? { agentTarget: actual.agentTarget } : actual.runtimeSelection ?? {};
     if (field === 'capabilitySelection' && requested.capabilitySelection && actual.runtimeSelection?.capabilitySelection

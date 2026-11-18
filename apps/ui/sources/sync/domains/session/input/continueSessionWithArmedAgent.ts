@@ -1,3 +1,4 @@
+import { buildExistingSessionAgentTransitionActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
@@ -560,10 +561,12 @@ export async function continueSessionWithArmedAgent(
         ...(options?.signal ? { signal: options.signal } : {}),
         request: {
             v: 1,
-            sessionId: submission.sessionId,
-            expectedCurrentAgentId: submission.intent.sourceAgentId,
-            selection: submission.intent.selection,
-            input: buildArmedAgentContinuationTransitionInput(submission),
+            ...buildExistingSessionAgentTransitionActionInput({
+                sessionId: submission.sessionId,
+                expectedCurrentAgentId: submission.intent.sourceAgentId,
+                selection: submission.intent.selection,
+                input: buildArmedAgentContinuationTransitionInput(submission),
+            }),
         },
     });
     if ('ok' in outcome) {

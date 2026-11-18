@@ -2,7 +2,7 @@ import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/s
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { isPermissionModeGrantedV1, isModelRefGrantedV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
-import { beginSessionAgentTransitionEffects } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
+import { beginSessionAgentTransitionEffects, rejectUndispatchedSessionAgentTransition } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
 import { buildSessionAgentTransitionDividerLocalId, matchesSessionAgentTransitionDividerAgentsV1, readSessionAgentTransitionDividerFromStoredRecordV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -92,8 +92,8 @@ import { resolveCurrentProviderSpawnDefinitiveRejection } from '@/providers/spaw
  *
  * This is a composition, not a persisted state machine. It owns no slot, held
  * carrier, transition row, cursor, lease, timer, or phase enum: the submitted
- * `localId` is the whole correlation identity, and the daemon holds the input
- * snapshot only for this invocation.
+ * input `localId` (or the admitted Action request id without input) is the whole
+ * correlation identity, and the daemon holds any input snapshot only for this invocation.
  *
  * Every existing owner keeps its authority — transport/encryption resolution,
  * the Agent catalog, strict idle, the local provider-input admission seam,
@@ -172,6 +172,8 @@ export type SessionAgentTransitionParams = Readonly<{
   /** Retain the admitted requester's Account custody through target defaulting. */
   operationContext?: SavedSecretOperationContextV1;
   request: SessionAgentTransitionRequestV1;
+  /** Existing Action invocation identity, used for settings-only cutover. */
+  actionRequestId?: string;
   signal?: AbortSignal;
   /** Host-private authenticated input provenance and permission ceiling. */
   inputAdmission?: Parameters<typeof sendSessionMessage>[0]['inputAdmission'];
@@ -496,7 +498,7 @@ async function admitExactInput(params: Readonly<{
   deps: SessionAgentTransitionDeps;
   credentials: StoredCredentials;
   sessionId: string;
-  request: SessionAgentTransitionRequestV1;
+  input: NonNullable<SessionAgentTransitionRequestV1['input']>;
   machineAdmissionTransport: SessionAgentTransitionParams['machineAdmissionTransport'];
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
@@ -506,12 +508,12 @@ async function admitExactInput(params: Readonly<{
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<ExactInputAdmission> {
-  const localId = params.request.input.localId;
+  const localId = params.input.localId;
   const send = await params.deps.sendSessionMessage({
     credentials: params.credentials,
     serverIdentityId: params.serverIdentityId,
     idOrPrefix: params.sessionId,
-    message: params.request.input.text,
+    message: params.input.text,
     localId,
     wait: false,
     // Custody only. The message owner activates an inactive Session itself
@@ -528,7 +530,7 @@ async function admitExactInput(params: Readonly<{
     resumeInactiveSession: false,
     requestedAction: resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap' }),
     timeoutMs: params.timeoutMs,
-    ...(params.request.input.meta ? { messageMeta: params.request.input.meta } : {}),
+    ...(params.input.meta ? { messageMeta: params.input.meta } : {}),
     inputAdmission: params.inputAdmission ?? buildTrustedHostSessionInputAdmissionV1('ui'),
     ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -575,7 +577,7 @@ async function admitExactInput(params: Readonly<{
  * daemon therefore holds the invocation-local snapshot only from RPC receipt to
  * this enqueue, a strictly shorter window than the plan's order implies.
  */
-async function activateTargetAndAdmitInput(params: Readonly<{
+async function completeCommittedTransition(params: Readonly<{
   deps: SessionAgentTransitionDeps;
   credentials: StoredCredentials;
   request: SessionAgentTransitionRequestV1;
@@ -592,7 +594,6 @@ async function activateTargetAndAdmitInput(params: Readonly<{
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
   const { committed, deps, credentials, request } = params;
-  const localId = request.input.localId;
   const sessionId = request.sessionId;
 
   // Reopening is scoped to the transition's exact epoch. The fence lived in the
@@ -611,11 +612,16 @@ async function activateTargetAndAdmitInput(params: Readonly<{
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
   }).catch(() => undefined);
 
+  // Settings-only cutover has no input custody to acquire and no work to wake.
+  // The committed selection and divider are the complete admitted effect.
+  if (!request.input) return committed.accepted();
+  const localId = request.input.localId;
+
   const admitted = await admitExactInput({
     deps,
     credentials,
     sessionId,
-    request,
+    input: request.input,
     machineAdmissionTransport: params.machineAdmissionTransport,
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
@@ -662,8 +668,8 @@ async function activateTargetAndAdmitInput(params: Readonly<{
     }
   }
 
-  // `accepted` still means exactly what section 6.1 says: the current view and
-  // divider committed and this localId received canonical admission. It does NOT
+  // With input, `accepted` means the current view and divider committed and
+  // this localId received canonical admission. It does NOT
   // say the target came up. Activation here is an acknowledged spawn — no
   // readiness wait — so a target that dies seconds later still produced this
   // arm, and the client reads the runtime's absence from canonical Session state
@@ -681,6 +687,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
   deps: SessionAgentTransitionDeps;
   credentials: StoredCredentials;
   request: SessionAgentTransitionRequestV1;
+  localId: string;
   transport: TransportContext;
   machineAdmissionTransport: SessionAgentTransitionParams['machineAdmissionTransport'];
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
@@ -702,7 +709,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
     deps: params.deps,
     token: params.credentials.token,
     sessionId: params.request.sessionId,
-    dividerLocalId: buildSessionAgentTransitionDividerLocalId(params.request.input.localId),
+    dividerLocalId: buildSessionAgentTransitionDividerLocalId(params.localId),
     crypto: readCryptoContext(params.transport),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     expected: {
@@ -714,7 +721,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
   const arm = projectDividerEvidenceArm(divider, committed);
   if (arm) return arm;
 
-  return await activateTargetAndAdmitInput({
+  return await completeCommittedTransition({
     deps: params.deps,
     credentials: params.credentials,
     request: params.request,
@@ -746,7 +753,10 @@ export async function runSessionAgentTransition(
     : undefined;
   const resolveTransport = () => deps.resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: request.sessionId,
     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}) });
-  const localId = request.input.localId;
+  const localId = request.input?.localId ?? params.actionRequestId;
+  // The Action executor owns request identity. A raw invocation without input
+  // or that admitted identity cannot correlate a cutover and must stay effect-free.
+  if (!localId) return rejectUndispatchedSessionAgentTransition('unsupported_operation');
   const sessionId = request.sessionId;
   // Both windows are operator-tunable through the canonical session-timeout
   // owner. The idle wait is part of the stop sequence — it exists only to make
@@ -766,7 +776,7 @@ export async function runSessionAgentTransition(
   // Trusted input preserves the authored metadata at admission. Validate an
   // explicit permission through the canonical intent owner before stopping
   // the source; absent permission keeps the existing trusted-input semantics.
-  if (Object.prototype.hasOwnProperty.call(request.input.meta, 'permissionMode')) {
+  if (request.input && Object.prototype.hasOwnProperty.call(request.input.meta, 'permissionMode')) {
     const permissionMode = request.input.meta.permissionMode;
     if (typeof permissionMode !== 'string' || !parsePermissionIntentAlias(permissionMode)) {
       return effects.rejected('unsupported_operation');
@@ -896,6 +906,7 @@ export async function runSessionAgentTransition(
       deps,
       credentials,
       request,
+      localId,
       transport,
       machineAdmissionTransport: params.machineAdmissionTransport,
       inputAdmission: params.inputAdmission,
@@ -1263,7 +1274,7 @@ export async function runSessionAgentTransition(
    * 7.4 Target activation and exact input admission.
    * --------------------------------------------------------------------- */
 
-  return await activateTargetAndAdmitInput({
+  return await completeCommittedTransition({
     deps,
     credentials,
     request,

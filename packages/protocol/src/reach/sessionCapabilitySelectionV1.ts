@@ -16,7 +16,8 @@ export const SessionCapabilitySelectionAuthoringV1Schema = lazyZodSchema(() => z
 }));
 export const SessionCapabilitySelectionV1Schema = createStoredReadSchema(SessionCapabilitySelectionAuthoringV1Schema);
 export type SessionCapabilitySelectionV1 = z.infer<typeof SessionCapabilitySelectionV1Schema>;
-export type SessionCapabilityKindV1 = 'skill' | 'mcp_server' | 'native_skill';
+export const SESSION_CAPABILITY_KINDS_V1 = ['skill', 'mcp_server', 'native_skill'] as const;
+export type SessionCapabilityKindV1 = typeof SESSION_CAPABILITY_KINDS_V1[number];
 export type SessionCapabilityOverrideV1 = 'on' | 'off' | 'inherit';
 
 export function readSessionCapabilityOverrideV1(selection: SessionCapabilitySelectionV1,

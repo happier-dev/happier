@@ -38,6 +38,8 @@ describe('same-Session Agent continuation Actions', () => {
     };
     expect(SessionAgentTransitionRequestV1Schema.safeParse({ v: 1, ...input }).success).toBe(true);
     expect(transition?.inputSchema.safeParse(input).success).toBe(true);
+    const { input: _firstInput, ...settingsOnly } = input;
+    expect(transition?.inputSchema.safeParse(settingsOnly).success).toBe(true);
     for (const authority of [
       { callerPermissionMode: 'yolo' }, { inputAdmission: { producer: 'ui' } },
       { machineId: 'unrelated-machine' }, { causalPermissionAuthority: { admittedPermissionCeiling: 'yolo' } },

@@ -64,7 +64,7 @@ const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch
 const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
 const target = { kind: 'machine' as const, machineId };
 
-type Variant = 'present-user' | 'inherited-plugin' | 'constraint-only-plugin' | 'escalating-plugin' | 'missing' | 'forged'
+type Variant = 'present-user' | 'settings-only' | 'inherited-plugin' | 'constraint-only-plugin' | 'escalating-plugin' | 'missing' | 'forged'
   | 'pat-default' | 'pat-read-only' | 'pat-ordered-read-only' | 'pat-yolo' | 'pat-fork-inaccessible';
 
 async function runAdmittedSwitch(variant: Variant) {
@@ -88,7 +88,8 @@ async function runAdmittedSwitch(variant: Variant) {
       : { trace: 'authored-meta', permissionMode: variant === 'pat-default' || variant === 'pat-fork-inaccessible' ? 'default' : 'yolo' };
     const requestInput = { localId: `switch-${variant}`, text: 'Continue with this exact input', meta: inputMeta };
     const envelope = { v: 1 as const, requestId: `request-${variant}`, target,
-      input: { sessionId, expectedCurrentAgentId: 'claude', selection: { v: 1, agentId: 'codex' }, input: requestInput } };
+      input: { sessionId, expectedCurrentAgentId: 'claude', selection: { v: 1, agentId: 'codex' },
+        ...(variant === 'settings-only' ? {} : { input: requestInput }) } };
     const invocation: ExternalActionRequesterInvocationV1 | undefined = variant === 'missing' ? undefined
       : variant.includes('plugin') ? { caller: { kind: 'plugin', pluginId: 'acme.switch', contributionLocalId: 'switch' },
         surface: 'plugin', authority: 'account_automation',
@@ -142,7 +143,8 @@ async function runAdmittedSwitch(variant: Variant) {
         expect(signed.authorization.binding).toEqual(authorization.binding);
         expect(signed.target).toEqual({ kind: 'session', sessionId });
         expect(signed.installationId).toBe(installationId);
-        expect(signed.effectActionId).toBe(event === SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 ? 'session.message.send' : actionId);
+        expect(signed.effectActionId).toBe(event === SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 ? 'session.message.send'
+          : method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) ? 'session.stop' : actionId);
       } catch (error) { rejectProof(error instanceof Error ? error.message : 'wrong signed root binding'); }
       if (!verifyExternalActionMachineRpcRequestV1({ authorizationToken: signed.authorization.token,
         ...(signed.authorization.requesterAccountContext ? { requesterAccountContext: signed.authorization.requesterAccountContext } : {}),
@@ -241,7 +243,10 @@ async function runAdmittedSwitch(variant: Variant) {
         id: machineId, installationId, installationPublicKey: Buffer.from(installation.publicKey).toString('base64'),
         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storageMode: 'plain' } } };
       if (path === `/v2/sessions/${sessionId}/messages` || path === `/v1/sessions/${sessionId}/messages`) {
-        return { status: 200, data: { messages: [], hasMore: false } };
+        return { status: 200, data: { messages: [], hasMore: false, activity: {
+          pendingCount: 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+          pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, latestTurnStatus: 'completed',
+        } } };
       }
       return rejectProof(`Unexpected requester GET ${path}`);
     });
@@ -299,6 +304,17 @@ async function runAdmittedSwitch(variant: Variant) {
 }
 
 describe('admitted Account-machine Agent transition composition', () => {
+  it('commits a settings-only transition using the admitted Action identity without input custody', async () => {
+    const observed = await runAdmittedSwitch('settings-only');
+    expect(observed.violations).toEqual([]);
+    expect(observed.result).toMatchObject({ kind: 'response', response: { execution: {
+      ok: true, result: { type: 'accepted', localId: 'request-settings-only' },
+    } } });
+    expect(observed.metadata.flavor).toBe('codex');
+    expect(observed.effects).toEqual(['fence:enforce', 'stop', 'cutover', 'fence:clear']);
+    expect(observed.admitted.content).toBeUndefined();
+  });
+
   it.each(['present-user', 'inherited-plugin', 'constraint-only-plugin', 'pat-default', 'pat-read-only', 'pat-ordered-read-only'] as const)(
     'completes %s through real owners and signed source effects', async variant => {
     const observed = await runAdmittedSwitch(variant);

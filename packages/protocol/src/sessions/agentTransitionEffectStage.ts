@@ -143,7 +143,8 @@ export type SessionAgentTransitionSourceStopped = Readonly<{
  */
 export type SessionAgentTransitionCurrentViewCommitted = Readonly<{
   /**
-   * The exact `localId` received canonical message admission. This does not
+   * Cutover and divider committed; any supplied input received canonical
+   * message admission. Settings-only cutover admits no message. This does not
    * claim provider acceptance.
    */
   accepted: () => SessionAgentTransitionResultV1;

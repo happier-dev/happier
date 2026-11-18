@@ -140,6 +140,7 @@ import {
   createProductionWorkflowSessionStepExecutor,
   createWorkflowSessionStepExecutor,
   renderWorkflowSessionStepInput,
+  type WorkflowSessionConversation,
   type WorkflowSessionStartup,
 } from './sessionStepExecutor';
 import { createAdmittedFreshWorkflowSessionConversation as createProductionFreshWorkflowSessionConversation } from './workflowSessionStartup.testkit';
@@ -592,6 +593,22 @@ describe('workflow Session step executor', () => {
     terminal: { mode: 'tmux', tmux: { sessionName: 'PRIVATE_TITLE', isolated: true } },
     windowsRemoteSessionLaunchMode: 'windows_terminal', windowsRemoteSessionConsole: 'hidden',
     windowsTerminalWindowName: 'PRIVATE_TITLE', runtimeDescriptorV1: null,
+  });
+  it('preserves an explicit Session recipe when authored action and transition fields differ', async () => {
+    const retained: WorkflowSessionConversation = {
+      sessionId: 'retained', machineId: 'machine-1', directory: '/repo', runtimeSelection: {},
+    };
+    const conversations = createProductionWorkflowConversationOwner({ machineId: 'machine-1',
+      createFreshConversation: async () => { throw new Error('must not create'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => retained,
+    });
+    const prepared = await conversations.prepare({ runId: 'run-1',
+      invocation: { logicalInvocationRecordId: 'inv-1' }, execution: { ...reuseSelection,
+        conversation: { kind: 'existing_session', sessionId: 'retained', machineId: 'machine-1' },
+      } } as never);
+    expect(prepared.existing).toBe(retained);
+    expect(retained.runtimeSelection).toEqual({});
   });
   it.each(Object.keys(reuseSelection))('identifies the rejected reuse field %s without disclosing configuration', async (field) => {
     // File logging is an OS boundary; keep the refusal and serialization real.

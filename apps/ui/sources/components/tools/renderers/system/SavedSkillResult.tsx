@@ -1,3 +1,4 @@
+import { buildExistingSessionCapabilitiesActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -61,9 +62,9 @@ export function SavedSkillResult(props: Readonly<{ fact: SavedSkill; sessionId?:
         setBusy(true); setError(null);
         try {
             if (!props.sessionId) return;
-            const result = await execution.execute('session.capabilities.set', {
+            const result = await execution.execute('session.capabilities.set', buildExistingSessionCapabilitiesActionInput({
                 sessionId: props.sessionId, kind: 'skill', id: props.fact.skillId, state: 'on',
-            }, { defaultSessionId: props.sessionId });
+            }), { defaultSessionId: props.sessionId });
             setError(readSavedSkillAttachFailure(result));
         } catch (failure) { setError(resolveActionExecutionErrorMessage(failure, t('capabilities.skills.saved.attachFailed'))); }
         finally { setBusy(false); }

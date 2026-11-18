@@ -1,3 +1,4 @@
+import { buildExistingSessionConnectedServicesAuthActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
@@ -732,7 +733,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     translate: t,
                 }));
         };
-        void params.applyBinding({
+        void params.applyBinding(buildExistingSessionConnectedServicesAuthActionInput({
             sessionId: params.sessionId,
             agentId,
             machineId,
@@ -743,7 +744,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             ...(teamCredentialBindings ? { teamCredentialBindings } : {}),
             ...(previousTeamCredentialBindings ? { previousTeamCredentialBindings } : {}),
             ...(teamVisibilityGrantConsent ? { teamVisibilityGrantConsent } : {}),
-        }).then((result) => {
+        })).then((result) => {
             if (result.ok) {
                 if (switchAttemptIdRef.current === attemptId) {
                     setManualRestartSignal(result.action === 'restart_requested'

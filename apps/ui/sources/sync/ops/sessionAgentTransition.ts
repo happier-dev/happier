@@ -1,11 +1,11 @@
-import { SessionAgentTransitionRequestV1Schema, SessionAgentTransitionResultV1Schema, type SessionAgentTransitionRequestV1, type SessionAgentTransitionResultV1 } from '@happier-dev/protocol/sessions/agentTransition';
+import { SessionAgentTransitionRequestV1Schema, SessionAgentTransitionResultV1Schema, type SessionAgentTransitionInputV1, type SessionAgentTransitionRequestV1, type SessionAgentTransitionResultV1 } from '@happier-dev/protocol/sessions/agentTransition';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import { beginSessionAgentTransitionEffects } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
 
 export type RunSessionAgentTransitionInput = Readonly<{
     machineId: string;
     serverId: string | null;
-    request: SessionAgentTransitionRequestV1;
+    request: SessionAgentTransitionRequestV1 & { input: SessionAgentTransitionInputV1 };
     signal?: AbortSignal;
 }>;
 
@@ -14,7 +14,8 @@ export async function runSessionAgentTransitionOnMachine(
     input: RunSessionAgentTransitionInput,
 ): Promise<SessionAgentTransitionResultV1 | ActionExecuteFailure> {
     const { v: _version, ...payload } = SessionAgentTransitionRequestV1Schema.parse(input.request);
-    const effects = beginSessionAgentTransitionEffects({ localId: payload.input.localId });
+    // This composer-only wrapper requires input even when the general Action does not.
+    const effects = beginSessionAgentTransitionEffects({ localId: payload.input!.localId });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const outcome = await createDefaultActionExecutor().executeConfirmed('session.agent.transition', payload, {
         surface: 'ui',

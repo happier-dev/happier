@@ -79,7 +79,7 @@ An admitted requester therefore reaches the same native Stop owner as standalone
 another raw Stop RPC to its own Machine or another Action admission. The Stop owner's existing
 confirmation predicate still decides when cutover may proceed; transition does not author an explicit-Stop hold.
 
-The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input }`. `selection`
+The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input? }`. `selection`
 carries `agentId` plus optional canonical `modelSelection`, `acpSessionModeId` and
 `sessionConfigOptionOverrides`. Current 0.3 development retains the exact V1/V2 model ref through
 armed draft persistence, inspection and cutover. Team refs keep their resource revision and delivery
@@ -87,13 +87,22 @@ choice; cutover uses the existing V2 intent writer and Team slot-binding owner. 
 `modelId`/`providerConnectionId` inputs remain readable, requiring a model whenever a connection is
 set. Older strict readers reject the canonical field rather than silently dropping its source.
 `input` extends the ordinary user-message send request with a
-**required** `localId` — the caller's message is part of the operation, not a follow-up.
+**required** `localId` when present. Ordinary composer continuations retain that exact first input.
+In current 0.3 development, settings-only bulk compose omits `input`: the coordinator stops the
+source and commits the target selection and divider without admitting a message or starting an
+empty runtime. Its correlation identity comes from the existing admitted Action request id;
+with-input transitions retain the submitted message's `localId` instead. Retrying settings-only
+cutover under that same Action request id reconciles its existing divider.
+
+This settings-only form requires matching 0.3 Protocol and daemon readers. The prospective 0.2
+frontier still requires input on its raw transition RPC and does not expose the admitted
+`session.agent.transition` Account Action; the new flow does not add a raw-RPC fallback.
 
 The result union discriminates on `type` and has four arms:
 
 | Arm | Shape | Meaning |
 |---|---|---|
-| `accepted` | `{ localId }` | Cutover committed, divider appended, input admitted. |
+| `accepted` | `{ localId }` | Cutover committed and divider appended; input admitted when supplied. Without input, `localId` is the admitted Action request id. |
 | `rejected` | `{ code, sourceEffect: 'none' }` | Nothing happened. Codes: `unsupported_operation`, `forbidden`, `same_target`, `stale_selection`, `target_unavailable`, `source_not_idle`, `source_stop_failed`. |
 | `partially_applied` | `{ localId, applied, code }` | A definite partial effect. `applied: 'source_stopped'` (source confirmed stopped, nothing committed; codes `context_unavailable`, `cutover_conflict`) or `applied: 'current_view_committed'` (the Session **is** the target; codes `divider_unavailable`, `target_start_failed`, `input_admission_failed`, `input_rejected`). |
 | `outcome_unknown` | `{ localId }` | Genuinely indeterminate. Deliberately carries **no code**. |
@@ -153,7 +162,8 @@ requested ID and preserves the ordinary current-view-committed recovery result.
 `packages/protocol/src/sessions/agentTransitionDivider.ts` owns the whole shape.
 
 - Reserved localId prefix `agent-transition:`; the divider's id is
-  `agent-transition:<submittedLocalId>`, which makes the operation idempotent by construction.
+  `agent-transition:<correlationId>`, using the input's `localId` when present or the admitted
+  Action request id for settings-only cutover, which makes the operation idempotent by construction.
 - Sidecar key `sessionAgentTransitionV1`, strict
   `{ v: 1, fromAgentId, toAgentId, sourceCutoffSeqInclusive }`.
 - `sourceCutoffSeqInclusive` is **required**. It is the transcript-visible input to the bounded
@@ -334,7 +344,8 @@ fix is at the stop owner, not a machine guess in the coordinator.
 4. **Cutover.** Seal the target current view, call the server owner with the target's Team slot
    bindings the defaults owner resolved in preflight, retry a `version-mismatch` exactly once by
    refetch-and-rebuild; a second loss is `cutover_conflict`.
-5. **Custody, then activation.**
+5. **Custody, then activation when input is present.** Settings-only cutover finishes after
+   clearing its admission fence and does not enqueue input or activate a runtime.
 
 ### "Confirmed stop" has an exact meaning
 

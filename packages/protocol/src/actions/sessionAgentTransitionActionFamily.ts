@@ -39,14 +39,14 @@ function createSessionAgentTransitionActionSpecs() {
   },
   { ...common, id: 'session.agent.transition', title: 'Switch Session Agent',
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
-    description: 'Continue the same Session with the exact target Agent and first input. Retain localId and the entire input on retry. Rejected, partial and indeterminate outcomes retain their canonical effect facts.',
+    description: 'Switch the same Session to the exact target Agent, optionally delivering a first input. With input, retain localId and the entire input on retry. Without input, commit the selection without sending a message. Rejected, partial and indeterminate outcomes retain their canonical effect facts.',
     safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'session_agent_transition' },
     inputSchema: SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS['session.agent.transition'],
     outputSchema: SESSION_AGENT_TRANSITION_ACTION_OUTPUT_SCHEMAS['session.agent.transition'],
     inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'expectedCurrentAgentId', title: 'Expected current Agent', widget: 'text', required: true },
       { path: 'selection', title: 'Exact target Agent selection', widget: 'json', required: true },
-      { path: 'input', title: 'Exact first input and retained localId', widget: 'json', required: true }] },
+      { path: 'input', title: 'Exact first input and retained localId', widget: 'json' }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
 }

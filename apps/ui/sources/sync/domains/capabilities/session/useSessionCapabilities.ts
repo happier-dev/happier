@@ -1,3 +1,4 @@
+import { buildExistingSessionCapabilitiesActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { readPendingCapabilityApplyV1, readCapabilitySelectionApplyV1, readSessionCapabilitySelectionFromMetadataV1, readAppliedSessionCapabilitySelectionFromMetadataV1, readPendingCapabilityRuleApplyV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
@@ -148,8 +149,8 @@ export function useSessionCapabilities(sessionId: string, suppliedMetadata?: unk
             try {
                 if (owner.current !== current || !current.mounted) outcome = { ok: false, message: 'scope-retired' };
                 else {
-                    const input = { sessionId, kind: op.kind, id: op.id, state: op.state,
-                        ...(op.reason !== undefined ? { reason: op.reason } : {}) };
+                    const input = buildExistingSessionCapabilitiesActionInput({ sessionId, kind: op.kind, id: op.id, state: op.state,
+                        ...(op.reason !== undefined ? { reason: op.reason } : {}) });
                     const result = await (op.invocation
                         ? op.invocation.execute(execution, 'session.capabilities.set', input)
                         : execution.execute('session.capabilities.set', input, { defaultSessionId: sessionId }));

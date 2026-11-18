@@ -75,6 +75,27 @@ async function runTransition(harness: TransitionDepsHarness): Promise<SessionAge
 }
 
 describe('section 7.5 recovery projection', () => {
+  it('reconciles an inputless cutover by its admitted Action identity without another switch or delivery', async () => {
+    const harness = createTransitionDepsHarness({
+      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
+        fromAgentId: 'claude', toAgentId: 'codex',
+      })) as never,
+    });
+    harness.setMetadata({ ...TARGET_CURRENT_METADATA });
+
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest({ input: undefined }),
+      actionRequestId: TEST_LOCAL_ID,
+      deps: harness.deps,
+    });
+    expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+    expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+    expect(harness.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
+    expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
+    expect(harness.deps.requestInactiveSessionResume).not.toHaveBeenCalled();
+  });
+
   it('row 1 — source still current and still running, no divider: rejected with sourceEffect none', async () => {
     const harness = createTransitionDepsHarness({
       requestSessionStop: vi.fn(async () => ({
