@@ -26,6 +26,14 @@ function shape(items: SessionListIndexItem[]) {
 }
 
 describe('nestSessionListReports', () => {
+    // LABPARITY-ACCEPT-F-1118 fix 5: some loads handed the same report twice (as its own Needs-you row and again
+    // in the list); it was listed alone AND nested under its lead. One Session is placed once, under its lead.
+    it('places a report delivered twice once, under its lead', () => {
+        const nested = nestSessionListReports([header('needs-you'), session('child', 'needs-you'), session('lead', 'needs-you'),
+            session('child', 'needs-you')], rows({ lead: null, child: 'lead' }));
+        expect(shape(nested)).toEqual(['# needs-you', 'lead:0', 'child:1']);
+    });
+
     it('preserves a filed child membership and execution workspace when its lead owns display placement', () => {
         const lead = { ...session('lead', 'lead-project'), type: 'session' as const, sessionId: 'lead',
             folderId: null, workspace: { t: 'workspaceScope' as const, serverId: 'home', machineId: 'lead-machine', rootPath: '/lead' } };
