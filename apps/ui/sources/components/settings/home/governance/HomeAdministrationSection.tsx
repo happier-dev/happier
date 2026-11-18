@@ -238,6 +238,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
 
     const context: HomeAdministrationContext = {
         scope: state.scope,
+        credentialLifetime: binding.lifetime,
         homeName,
         projection: state.projection,
         mutationsAvailable: state.mutationsAvailable && !approvalPending,

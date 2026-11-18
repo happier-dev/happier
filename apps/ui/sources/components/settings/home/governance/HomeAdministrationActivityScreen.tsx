@@ -14,19 +14,12 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
-import { useHomePagedList, type HomePageReader } from '@/hooks/home/useHomePagedList';
-import { listHomeAudit } from '@/sync/ops/home/homeGovernanceOperations';
+import { useHomePagedList } from '@/hooks/home/useHomePagedList';
 import { t } from '@/text';
 
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { presentHomeAuditEvent, type HomeAuditNames } from './homeAuditPresentation';
-
-
-const readAuditPage: HomePageReader<HomeAdministrationEventV1> = (scope, cursor) => listHomeAudit({
-    scope,
-    ...(cursor ? { cursor } : {}),
-});
 
 /** One administration event: who, what, the changed values, and when. Shared with the person page. */
 export const HomeActivityRow = React.memo(function HomeActivityRow(props: Readonly<{
@@ -67,10 +60,9 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
     const { context, targetId } = props;
     const canView = context.projection.capabilities.viewAdministration;
     // Opened from a person's page, the list is about that person only (`home.audit.list{targetId}`).
-    const readPage = React.useMemo<HomePageReader<HomeAdministrationEventV1>>(() => (targetId
-        ? (scope, cursor) => listHomeAudit({ scope, targetId, ...(cursor ? { cursor } : {}) })
-        : readAuditPage), [targetId]);
-    const audit = useHomePagedList(context.scope, canView, readPage);
+    const audit = useHomePagedList({
+        scope: context.scope, enabled: canView, lifetime: context.credentialLifetime, ...(targetId ? { targetId } : {}),
+    });
     const now = Date.now();
     const methods = context.projection.authenticationOptions.methods;
     const names = React.useMemo<HomeAuditNames>(() => {

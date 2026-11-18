@@ -240,6 +240,56 @@ describe('HomeAdministrationActivityScreen', () => {
         expect(harness.requestsFor(AUDIT_PATH).map((request) => request.input)).toEqual([{}, { cursor: 'cur-2' }]);
     });
 
+    it('keeps loaded events visible while reopening Activity rereads the Home', async () => {
+        const home = await addHome();
+        const event = homeAdministrationEventFixture({ id: 'evt-retained', action: 'home.owner.claim', summary: {} });
+        harness.answer(home, AUDIT_PATH, { body: { items: [event], nextCursor: null } });
+        const screen = await renderActivity(home);
+        await waitForHomeGovernance(() => {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-activity-row:evt-retained');
+        });
+        await act(async () => screen.tree.unmount());
+
+        let releaseRefusal!: () => void;
+        const respondAfter = new Promise<void>(resolve => { releaseRefusal = resolve; });
+        harness.answer(home, AUDIT_PATH, { status: 403, respondAfter });
+        const reopened = await renderScreen(<HomeAdministrationActivityScreen serverId={home} />);
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(AUDIT_PATH)).toHaveLength(2);
+        });
+        const ids = collectRenderedTestIds(reopened.tree.toJSON());
+        expect(ids).toContain('home-activity-row:evt-retained');
+        expect(ids).not.toContain('home-activity-loading');
+        await act(async () => { releaseRefusal(); });
+        await waitForHomeGovernance(() => {
+            const afterRefusal = collectRenderedTestIds(reopened.tree.toJSON());
+            expect(afterRefusal).not.toContain('home-activity-row:evt-retained');
+            expect(afterRefusal).toContain('home-activity');
+        });
+    });
+
+    it('opens a person Activity without borrowing the Home-wide observation', async () => {
+        const home = await addHome();
+        const event = homeAdministrationEventFixture({ id: 'evt-all', action: 'home.owner.claim', summary: {} });
+        harness.answer(home, AUDIT_PATH, { body: { items: [event], nextCursor: null } });
+        const allActivity = await renderActivity(home);
+        await waitForHomeGovernance(() => {
+            expect(collectRenderedTestIds(allActivity.tree.toJSON())).toContain('home-activity-row:evt-all');
+        });
+        await act(async () => allActivity.tree.unmount());
+
+        harness.answer(home, AUDIT_PATH, {
+            body: { items: [], nextCursor: null }, respondAfter: new Promise<void>(() => {}),
+        });
+        const personActivity = await renderScreen(<HomeAdministrationActivityScreen serverId={home} targetId="account-other" />);
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(AUDIT_PATH).at(-1)?.input).toEqual({ targetId: 'account-other' });
+        });
+        const ids = collectRenderedTestIds(personActivity.tree.toJSON());
+        expect(ids).toContain('home-activity-loading');
+        expect(ids).not.toContain('home-activity-row:evt-all');
+    });
+
     it('shows the empty state when the Home has recorded nothing yet', async () => {
         const home = await addHome();
         harness.answer(home, AUDIT_PATH, { body: { items: [], nextCursor: null } });

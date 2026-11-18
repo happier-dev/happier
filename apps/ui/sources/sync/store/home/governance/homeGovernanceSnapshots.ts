@@ -1,10 +1,12 @@
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import type { HomeAdministrationEventV1, HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import {
+    readServerAccountScopeOwnerLifetime,
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
+    type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 
 import {
@@ -51,6 +53,28 @@ export type HomeGovernanceSnapshot = Readonly<{
 
 const snapshots = new Map<string, HomeGovernanceSnapshot>();
 const listeners = new Set<() => void>();
+
+const activityObservations = new Map<string, Readonly<{
+    lifetime: ServerAccountScopeLifetime;
+    rows: readonly HomeAdministrationEventV1[];
+}>>();
+
+export function homeActivityQueryKey(scope: ServerAccountScope, targetId?: string): string {
+    return JSON.stringify([scope.serverId, scope.accountId, targetId ?? null]);
+}
+
+export function getHomeActivityObservation(key: string): readonly HomeAdministrationEventV1[] | undefined {
+    const observation = activityObservations.get(key);
+    return observation?.lifetime.isCurrent() ? observation.rows : undefined;
+}
+
+export function applyHomeActivityObservation(
+    key: string, lifetime: ServerAccountScopeLifetime, rows: readonly HomeAdministrationEventV1[] | null,
+): void {
+    if (!lifetime.isCurrent()) return;
+    if (rows === null) activityObservations.delete(key);
+    else activityObservations.set(key, { lifetime: readServerAccountScopeOwnerLifetime(lifetime), rows });
+}
 
 function notify(): void {
     for (const listener of [...listeners]) {
@@ -199,11 +223,15 @@ export function clearHomeGovernanceSnapshotsForServer(serverIdRaw: string): void
         snapshots.delete(key);
         changed = true;
     }
+    for (const [key, observation] of activityObservations) {
+        if (observation.lifetime.scope.serverId === serverId) activityObservations.delete(key);
+    }
     if (changed) notify();
 }
 
 /** Test-only reset of the module-owned projection cache. */
 export function resetHomeGovernanceSnapshotsForTests(): void {
     snapshots.clear();
+    activityObservations.clear();
     listeners.clear();
 }

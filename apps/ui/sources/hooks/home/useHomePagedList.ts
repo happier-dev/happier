@@ -1,13 +1,16 @@
 import * as React from 'react';
+import type { HomeAdministrationEventV1 } from '@happier-dev/protocol/home/governance';
 
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { HomeGovernanceQueryOutcome } from '@/sync/ops/home/homeGovernanceOperations';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { listHomeAudit } from '@/sync/ops/home/homeGovernanceOperations';
+import { applyHomeActivityObservation, getHomeActivityObservation, homeActivityQueryKey } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
-export type HomePagedListStatus = 'loading' | 'loading_more' | 'ready' | 'error';
+type HomePagedListStatus = 'loading' | 'refreshing' | 'loading_more' | 'ready' | 'error';
 
-export type HomePagedList<TRow> = Readonly<{
-    rows: readonly TRow[];
+type HomePagedList = Readonly<{
+    rows: readonly HomeAdministrationEventV1[];
     status: HomePagedListStatus;
     /** Retained across a failed page load so the list never blanks. */
     error: HomeDomainFailure | null;
@@ -16,17 +19,8 @@ export type HomePagedList<TRow> = Readonly<{
     reload: () => void;
 }>;
 
-/** One page as a Home answers it: rows in order and the position to continue from. */
-export type HomePage<TRow> = Readonly<{ items: readonly TRow[]; nextCursor: string | null }>;
-
-/** Reads one page of an exact Home's list. It must be identity-stable at the caller. */
-export type HomePageReader<TRow> = (
-    scope: ServerAccountScope,
-    cursor: string | null,
-) => Promise<HomeGovernanceQueryOutcome<HomePage<TRow>>>;
-
-type PagedState<TRow> = Readonly<{
-    rows: readonly TRow[];
+type PagedState = Readonly<{
+    rows: readonly HomeAdministrationEventV1[];
     status: HomePagedListStatus;
     error: HomeDomainFailure | null;
     cursor: string | null;
@@ -34,34 +28,32 @@ type PagedState<TRow> = Readonly<{
     hasMore: boolean;
 }>;
 
-const INITIAL: PagedState<never> = Object.freeze({
-    rows: Object.freeze([]) as readonly never[],
+const INITIAL: PagedState = Object.freeze({
+    rows: Object.freeze([]),
     status: 'loading' as const,
     error: null,
     cursor: null,
-    hasMore: true,
+    hasMore: false,
 });
 
 /**
- * A keyset-paged list of one exact Home and Account (People, Activity).
+ * A keyset-paged audit list for one exact Home, Account and optional person.
  *
- * Pages accumulate in order and are never dropped by a later failure: a Home
- * that stops answering midway leaves the pages already read on screen with a
- * retry, which is far more useful to an administrator than an empty list.
- *
- * This is a paged read, not a cache with its own invalidation policy. It reloads
- * when the caller asks and when the Home it is bound to changes, and it makes no
- * claim about rows the Home has not yet returned.
+ * The governance snapshot supplies the last answer while a new read starts.
+ * Its rows are withdrawn on authoritative refusal.
  */
-export function useHomePagedList<TRow>(
-    scope: ServerAccountScope | null,
-    enabled: boolean,
-    readPage: HomePageReader<TRow>,
-): HomePagedList<TRow> {
-    const serverId = scope?.serverId ?? '';
-    const accountId = scope?.accountId ?? '';
-
-    const [state, setState] = React.useState<PagedState<TRow>>(INITIAL);
+export function useHomePagedList(input: Readonly<{
+    scope: ServerAccountScope; targetId?: string; enabled: boolean; lifetime: ServerAccountScopeLifetime | null | undefined;
+}>): HomePagedList {
+    const { scope, targetId, enabled, lifetime } = input;
+    const { serverId, accountId } = scope;
+    const key = homeActivityQueryKey(scope, targetId);
+    const current = enabled && (lifetime === undefined || lifetime?.isCurrent() === true);
+    const retained = current ? getHomeActivityObservation(key) : undefined;
+    const seed = React.useMemo<PagedState>(() => retained === undefined ? INITIAL
+        : { ...INITIAL, rows: retained, status: 'refreshing' }, [retained]);
+    const [sequence, setSequence] = React.useState(() => ({ key, lifetime, state: seed }));
+    const state = !current ? INITIAL : sequence.key === key && sequence.lifetime === lifetime ? sequence.state : seed;
     // Answers for a superseded Home or a superseded reload must not be applied.
     const generation = React.useRef(0);
     // The position the Home last handed back. A continuation has to read it
@@ -69,56 +61,52 @@ export function useHomePagedList<TRow>(
     // updater: React runs those during the next render, by which time the
     // request would already have been sent without a cursor and would have
     // re-read the first page forever.
-    const latest = React.useRef<PagedState<TRow>>(INITIAL);
-    React.useEffect(() => {
-        latest.current = state;
-    }, [state]);
+    const latest = React.useRef(state);
+    const seedRef = React.useRef(seed);
+    seedRef.current = seed;
+    const publish = React.useCallback((next: PagedState) => {
+        latest.current = next;
+        setSequence({ key, lifetime, state: next });
+    }, [key, lifetime]);
 
     const load = React.useCallback((mode: 'reset' | 'refresh' | 'more') => {
-        if (!enabled || !serverId || !accountId) return;
-        const current = latest.current;
+        if (!current) return;
+        const previous = latest.current;
         if (mode === 'more'
-            && (!current.hasMore || current.status === 'loading' || current.status === 'loading_more')) {
+            && (!previous.hasMore || previous.status === 'loading_more')) {
             return;
         }
-        const cursor = mode === 'more' ? current.cursor : null;
+        const cursor = mode === 'more' ? previous.cursor : null;
         const currentGeneration = mode === 'more' ? generation.current : (generation.current += 1);
-        setState((previous) => {
-            if (mode === 'reset') return { ...INITIAL, status: 'loading' };
-            if (mode === 'refresh') {
-                return { ...previous, status: 'loading', error: null, cursor: null, hasMore: true };
+        publish(mode === 'reset' ? seedRef.current
+            : mode === 'refresh' ? {
+                ...INITIAL, rows: previous.rows, status: previous.status === 'loading' ? 'loading' : 'refreshing',
             }
-            return { ...previous, status: 'loading_more', error: null };
-        });
+                : { ...previous, status: 'loading_more', error: null });
 
         void (async () => {
-            const outcome = await readPage({ serverId, accountId }, cursor);
-            if (currentGeneration !== generation.current) return;
-            setState((previous) => {
-                if (outcome.kind === 'failed') {
-                    return { ...previous, status: 'error', error: outcome.failure };
-                }
-                const incoming = outcome.value.items;
-                return {
-                    rows: mode === 'more' ? [...previous.rows, ...incoming] : incoming,
-                    status: 'ready',
-                    error: null,
-                    cursor: outcome.value.nextCursor,
-                    hasMore: outcome.value.nextCursor !== null,
-                };
+            const outcome = await listHomeAudit({ scope: { serverId, accountId }, cursor, ...(targetId ? { targetId } : {}) });
+            if (currentGeneration !== generation.current || (lifetime && !lifetime.isCurrent())) return;
+            if (outcome.kind === 'failed') {
+                const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind);
+                if (withdrawn && lifetime) applyHomeActivityObservation(key, lifetime, null);
+                publish({ ...(withdrawn ? INITIAL : latest.current), status: 'error', error: outcome.failure });
+                return;
+            }
+            const rows = mode === 'more' ? [...previous.rows, ...outcome.value.items] : outcome.value.items;
+            if (lifetime) applyHomeActivityObservation(key, lifetime, rows);
+            publish({
+                rows, status: 'ready', error: null,
+                cursor: outcome.value.nextCursor,
+                hasMore: outcome.value.nextCursor !== null,
             });
         })();
-    }, [enabled, serverId, accountId, readPage]);
+    }, [current, serverId, accountId, key, targetId, lifetime, publish]);
 
     React.useEffect(() => {
-        if (!enabled || !serverId || !accountId) {
-            generation.current += 1;
-            latest.current = INITIAL;
-            setState(INITIAL);
-            return;
-        }
         load('reset');
-    }, [enabled, serverId, accountId, load]);
+        return () => { generation.current += 1; };
+    }, [load]);
 
     const loadMore = React.useCallback(() => { load('more'); }, [load]);
     const reload = React.useCallback(() => { load('refresh'); }, [load]);

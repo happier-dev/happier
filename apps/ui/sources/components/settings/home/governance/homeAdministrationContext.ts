@@ -13,6 +13,8 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
  */
 export type HomeAdministrationContext = Readonly<{
     scope: ServerAccountScope;
+    /** Current credential ownership for retained Home projections. */
+    credentialLifetime?: ServerAccountScopeLifetime | null;
     homeName: string;
     projection: HomeGovernanceProjectionV1;
     /** False while the shown projection is stale or the Home is unreachable. */
