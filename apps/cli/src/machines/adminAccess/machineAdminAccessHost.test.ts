@@ -46,7 +46,7 @@ async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdmi
     const nativeFailures: unknown[] = [], records: unknown[] = [];
     let rootAllowed = previousPolicy.mode === 'preauthorized', current = true;
     let beforeApply: () => Promise<void> = async () => {};
-    let loseResult = false;
+    let loseResult = false, loseVerification = false;
     const spawn: MachineElevationSpawn = invocation => {
         launches.push(invocation);
         const stdin = new PassThrough(), rootInput = new PassThrough(), rootOutput = new PassThrough(), stderr = new PassThrough();
@@ -58,6 +58,8 @@ async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdmi
                 const record: unknown = JSON.parse(chunk.toString('utf8'));
                 records.push(record);
                 if (record && typeof record === 'object' && 'type' in record && record.type === 'ready') await beforeApply();
+                if (loseVerification && record && typeof record === 'object' && 'type' in record && record.type === 'progress'
+                    && 'phase' in record && record.phase === 'verify') { callback(); return; }
                 if (record && typeof record === 'object' && 'type' in record && record.type === 'result' && 'result' in record
                     && record.result && typeof record.result === 'object' && 'status' in record.result) {
                     if (loseResult) { callback(); return; }
@@ -119,7 +121,8 @@ async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdmi
         observe: async () => ({ ...observation, daemonUsername, passwordlessSudoToRoot: rootAllowed ? 'allowed' : 'denied' }), spawn };
     const input = { machineId: 'machine-a', operationId: 'admin-operation', previousPolicy, policy, verifyCurrent: async () => current };
     return { input, dependencies, requests, launches, passwords, nativeFailures, records,
-        allowRoot: () => { rootAllowed = true; }, denyRoot: () => { rootAllowed = false; }, loseResult: () => { loseResult = true; },
+        allowRoot: () => { rootAllowed = true; }, denyRoot: () => { rootAllowed = false; },
+        loseResult: (loseVerificationToo = false) => { loseResult = true; loseVerification = loseVerificationToo; },
         onReady: (callback: () => Promise<void>) => { beforeApply = callback; }, retire: () => { current = false; } };
 }
 
@@ -265,12 +268,23 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(changed === 'facts' ? 'foreign changed policy\n' : 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n');
     });
 
+    it('settles a verified administrator change when its final native receipt is lost', async () => {
+        const f = await fixture(preauthorized, none);
+        f.loseResult();
+        const result = await createMachineAdminAccessHost({ ...f.dependencies, observe: async () => ({
+            ...await observeOwnedGrant(), passwordlessSudoToRoot: 'allowed',
+        }) }).reconcile(f.input);
+        expect(f.records).toContainEqual(expect.objectContaining({ type: 'progress', phase: 'verify', status: 'satisfied' }));
+        expect(result).toMatchObject({ outcome: 'applied', observation: { managedDropIn: 'absent' } });
+        await expect(readFile(MANAGED_SUDOERS_PATH, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
     it('rejects changed desired policy before authentication and retains a lost terminal as unknown', async () => {
         const stale = await fixture(preauthorized, ask);
         expect(await createMachineAdminAccessHost({ ...stale.dependencies, readPolicy: async () => none }).reconcile(stale.input))
             .toMatchObject({ outcome: 'not_applied', reasonCode: 'plan_stale' });
         expect(stale.launches).toEqual([]);
-        const lost = await fixture(preauthorized, ask); lost.loseResult();
+        const lost = await fixture(preauthorized, ask); lost.loseResult(true);
         expect(await createMachineAdminAccessHost(lost.dependencies).reconcile(lost.input)).toMatchObject({ outcome: 'outcome_unknown' });
         expect(lost.launches).toHaveLength(1);
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toContain('happier ALL=(ops.admin) PASSWD: ALL');

@@ -203,10 +203,12 @@ disconnects. A lost acknowledgement is observed without blindly replaying the wr
 The result reports desired policy and metadata version, not administrator power.
 A normal correlated Action invokes the canonical Machine administrator host
 adapter after successful desired settlement; its separate `effect` reports the
-host result without rolling back acknowledged desired intent. An unknown host
-outcome triggers one observation refresh, never effect replay. If reconciliation
-was not attempted, the optional effect is absent. Desired success alone must not
-be presented as a successful host grant or revocation.
+host result without rolling back acknowledged desired intent. The host settles
+an administrator change from exact native verification and a clean interpreter
+exit when the final native result record is lost. Activity displays that settled
+result. An unknown host outcome triggers one observation refresh, never effect
+replay. If reconciliation was not attempted, the optional effect is absent.
+Desired success alone must not be presented as a successful host grant or revocation.
 
 A correlated administrator change uses the existing Action operation and admitted
 system-task owners. Ask publishes a nonsecret `sudo.password` descriptor on that

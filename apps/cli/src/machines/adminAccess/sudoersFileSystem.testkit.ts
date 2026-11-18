@@ -16,7 +16,8 @@ export function redirectSudoersFileSystem(
     return (directory + suffix) as T;
   };
   return { ...actual,
-    lstat: (...args: Parameters<typeof actual.lstat>) => actual.lstat(path(args[0]), args[1]),
+    // The fixture stands in for a Linux host, where /etc is a real directory.
+    lstat: (...args: Parameters<typeof actual.lstat>) => actual.lstat(path(args[0] === '/etc' ? '/etc/sudoers.d' : args[0]), args[1]),
     readFile: (...args: Parameters<typeof actual.readFile>) => actual.readFile(path(args[0]), args[1]),
     writeFile: (...args: Parameters<typeof actual.writeFile>) => actual.writeFile(path(args[0]), args[1], args[2]),
     chmod: (...args: Parameters<typeof actual.chmod>) => actual.chmod(path(args[0]), args[1]),

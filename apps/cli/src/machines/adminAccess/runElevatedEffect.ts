@@ -293,6 +293,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         : request.basis.kind === 'reboot';
     const steps = request.kind === 'apply' ? request.effect.plans.flatMap(entry => entry.plan.steps)
         : 'steps' in request ? request.steps : [];
+    const adminTransitionStepId = request.kind === 'nativeApply' && request.basis.kind === 'adminAccess' && request.steps.length === 1
+        ? request.steps[0]?.id : undefined;
     const checks = request.kind === 'apply' ? request.effect.plans.flatMap(entry => entry.plan.checks ?? [])
         : 'checks' in request ? request.checks ?? [] : [];
     const needsDaemonContext = [...steps, ...checks].some(step => readMachineSetupStepExecutionUserV1(step) === 'daemon');
@@ -389,6 +391,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     let requestSent = false;
     let planSent = false;
     let effectStarted = false;
+    let adminTransitionVerified = false;
     let protocolFailed = false;
     let stopReason: Refusal['reasonCode'] | undefined;
     let termination: Promise<void> | undefined;
@@ -490,8 +493,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                     }
                     catch {
                         // Child exit can close stdin after accepting the full
-                        // request. Keep draining its authoritative result; a
-                        // missing terminal record still settles as unknown.
+                        // request. Keep draining its authoritative records.
                     }
                 } else if (!requestSent || stopReason && !(firewall && stopReason === 'cancelled')) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); }
                 else if (record.type === 'firewall.verified') {
@@ -604,6 +606,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                 else if (record.type === 'progress') {
                     if (stopReason) continue;
                     if (record.phase === 'apply' && record.status === 'started') effectStarted = true;
+                    if (record.planIndex === 0 && record.stepId === adminTransitionStepId
+                        && record.phase === 'verify' && record.status === 'satisfied') adminTransitionVerified = true;
                     dependencies.emit?.({ type: 'machine.setup.progress', stepId: record.stepId,
                         data: { phase: record.phase, status: record.status,
                             ...(record.planIndex !== undefined ? { planIndex: record.planIndex } : {}),
@@ -620,6 +624,16 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         await termination;
         if (terminal?.result.status === 'outcome_unknown' && terminal.result.reason === 'plugin_exec_termination_incomplete') {
             throw Object.assign(new Error('Native process termination could not be verified'), { code: terminal.result.reason });
+        }
+        const exitedCleanly = settled.code === 0 && settled.signal === null;
+        const observeApplied = async (): Promise<MachineElevatedResultV1> => {
+            try { return { outcome: 'applied', observation: await dependencies.observe() }; }
+            catch { return { outcome: 'outcome_unknown' }; }
+        };
+        // The interpreter verifies the exact administrator effect before it
+        // emits success. A clean exit completes this single-step native plan.
+        if (!terminal && !protocolFailed && !stopReason && adminTransitionVerified && exitedCleanly) {
+            return await observeApplied();
         }
         if (protocolFailed || !terminal) {
             if (!stopReason && ask && !requestSent && !protocolFailed) return passwordResponder?.submitted
@@ -644,11 +658,10 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             nativeFailure = { ...(nativeFailure ?? {}), ...failure };
         }
         if (result.status === 'applied') {
-            if (settled.code !== 0 || settled.signal !== null) return { outcome: 'outcome_unknown' };
+            if (!exitedCleanly) return { outcome: 'outcome_unknown' };
             input.onSetupApplied?.(result);
             if (reboot) return { outcome: 'applied', observation };
-            try { return { outcome: 'applied', observation: await dependencies.observe() }; }
-            catch { return { outcome: 'outcome_unknown' }; }
+            return await observeApplied();
         }
         const requiredFact = result.requiredFact ?? (result.reason === 'required_fact_unavailable' || result.reason === 'needs_admin_to_check'
             ? result.stepId : undefined);
