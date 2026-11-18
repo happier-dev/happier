@@ -175,8 +175,8 @@ it('waits for the selected event read despite a connected socket, then distingui
     expect(state.props.kind).toBe('error');
     failed = false;
     await act(async () => { await state.props.action.onPress(); });
-    await expect.poll(() => feed.getCurrent().status).toBe('live');
-    expect(feed.getCurrent().historyError).toBeNull();
+    await expect.poll(() => feed.getCurrent().historyError).toBeNull();
+    expect(feed.getCurrent().status).toBe('live');
     expect(screen.findByType(EmptyState).props.title).toBe(t('workflows.events.gone'));
   } finally {
     page.resolve();
