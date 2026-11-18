@@ -39,11 +39,14 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
     })) }], [props.column.key, props.column.title, theme.colors.text.secondary, value?.trend]);
   const line = series[0]!.points.filter(point => point.y !== null).length >= 2;
   return <Tooltip label={label} accessibilityLabel={label}>
+    {/* One line, as the column reads down (lab p8Columns selected, LAB-P7 Services 1A): the trend, then its figure. */}
     <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-      style={{ alignItems: props.column.align === 'end' ? 'flex-end' : 'flex-start' }}>
-      <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary }} numberOfLines={1}>{text}</Text>
+      style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8,
+        justifyContent: props.column.align === 'end' ? 'flex-end' : 'flex-start' }}>
       {line ? <StackedSeriesChart theme={pluginTheme} label={props.column.title} series={series} variant="line" size="inline"
         decorative showAxis={false} showGrid={false} showScaleValues={false} fitLine width={84} /> : null}
+      <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, ...Typography.tabular() }}
+        numberOfLines={1}>{text}</Text>
     </View>
   </Tooltip>;
 }

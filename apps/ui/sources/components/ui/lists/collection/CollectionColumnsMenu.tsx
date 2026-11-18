@@ -68,7 +68,8 @@ export function collectionColumnsMenuColumns(
       id: field.key,
       title: field.title,
       ...(field.defaultHidden === true ? { defaultHidden: true } : {}),
-      ...(field.description === undefined
+      // A description that only repeats the name says nothing more: the row keeps one line.
+      ...(field.description === undefined || field.description === field.title
         ? {}
         : { description: field.description }),
       ...(field.source === undefined ? {} : { source: field.source }),
