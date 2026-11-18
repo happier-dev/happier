@@ -86,6 +86,8 @@ export function describeBulkRowState(
 /** The reason line under a row: the owner's own sentence when it gave one, else what the state means for the person. */
 export function describeBulkRowReason(
   row: BulkSessionChangeRow,
+  /** The Machine-scoped catalog's Agent titles (`useBulkSessionAgentTitles`), keyed by `bulkSwitchCatalogAgentId`. */
+  agentTitles?: ReadonlyMap<string, string>,
 ): string | null {
   if (row.state === 'skipped') return describeBulkSkipReason(row.code);
   if (row.state === 'waking')
@@ -101,19 +103,27 @@ export function describeBulkRowReason(
   // A message that followed an agent switch keeps the switch in its reason line (lab: "Sent · Switched from …").
   if (row.switchedFrom && row.switchedTo) {
     return t('session.participants.bulk.reasonSwitched', {
-      from: describeAgentId(row.switchedFrom),
-      to: describeAgentId(row.switchedTo),
+      from: describeAgentId(row.switchedFrom, agentTitles),
+      to: describeAgentId(row.switchedTo, agentTitles),
     });
   }
   return null;
 }
 
-/** A qualified Agent id ("happier.agent.claude/claude") in the words the engine chip uses. */
-function describeAgentId(agentId: string): string {
+/** The id the Machine-scoped Agent catalog knows a switch's qualified Agent id ("happier.agent.claude/claude") by. */
+export function bulkSwitchCatalogAgentId(agentId: string): string {
   const localId = agentId.slice(agentId.lastIndexOf('/') + 1);
-  return isBundledAgentId(localId)
-    ? resolveAgentCatalogTitle(localId)
-    : formatAgentLikeIdForDisplay(localId);
+  return isBundledAgentId(localId) ? localId : agentId;
+}
+
+/** A switch's Agent in the catalog's own words (installed and contributed Agents keep their names), as the To rows. */
+function describeAgentId(agentId: string, agentTitles: ReadonlyMap<string, string> | undefined): string {
+  const catalogId = bulkSwitchCatalogAgentId(agentId);
+  const title = agentTitles?.get(catalogId);
+  if (title) return title;
+  return isBundledAgentId(catalogId)
+    ? resolveAgentCatalogTitle(catalogId)
+    : formatAgentLikeIdForDisplay(agentId.slice(agentId.lastIndexOf('/') + 1));
 }
 
 export type BulkSessionResultSummary = Readonly<{

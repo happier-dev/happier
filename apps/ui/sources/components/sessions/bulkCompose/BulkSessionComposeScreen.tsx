@@ -16,6 +16,8 @@ import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { createRecipientMultiSelectActionChip } from '@/components/sessions/agentInput/definitions/createRecipientActionChip';
+import { resolveComposerCardContentInsetX } from '@/components/sessions/agentInput/composerContentInset';
+import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 import type { RecipientMultiSelectModel } from '@/components/sessions/agentInput/routing/recipientMultiSelectModel';
 import {
   readBulkSessionComposerSeed,
@@ -62,7 +64,7 @@ import {
 } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 
 import { BulkSessionResults } from './BulkSessionResults';
-import { describeBulkSkipReason } from './bulkSessionComposePresentation';
+import { bulkSwitchCatalogAgentId, describeBulkSkipReason } from './bulkSessionComposePresentation';
 import {
   resolveBulkTargetCatalogAgentId,
   useBulkSessionAgentTitles,
@@ -157,10 +159,16 @@ function BulkSessionComposer(
     [facts],
   );
   const machineLabels = useBulkSessionMachineLabels(targetMachines);
-  const targetAgents = React.useMemo(
-    () => facts.map((fact) => ({ agentId: resolveBulkTargetCatalogAgentId(fact.agentTarget), machineId: fact.machineId })),
-    [facts],
-  );
+  // The targets' Agents, plus each sent switch's from/to Agent on that target's Machine (the results' reason line).
+  const targetAgents = React.useMemo(() => {
+    const current = facts.map((fact) => ({ agentId: resolveBulkTargetCatalogAgentId(fact.agentTarget), machineId: fact.machineId }));
+    const switched = composer.rows.flatMap((row) => {
+      const machineId = facts.find((fact) => fact.address.sessionId === row.target.sessionId)?.machineId ?? null;
+      return [row.switchedFrom, row.switchedTo].flatMap((agentId) =>
+        agentId ? [{ agentId: bulkSwitchCatalogAgentId(agentId), machineId }] : []);
+    });
+    return switched.length > 0 ? [...current, ...switched] : current;
+  }, [facts, composer.rows]);
   const agentTitles = useBulkSessionAgentTitles(targetAgents, facts[0]?.address.serverId ?? null);
   const toModel = useBulkSessionToModel({
     seedTargets: props.seed.targets,
@@ -221,13 +229,6 @@ function BulkSessionComposer(
       composer.setSelection({ ...composer.selection, ...fields });
     },
   );
-  const enginePicker = useSessionAuthoringEnginePicker({
-    values: composer.selection,
-    facts: engineControl.kind === 'options' ? leadFacts : undefined,
-    engineOptions: engineControl.kind === 'options' ? engineControl.options : undefined,
-    disabled: engineControl.kind !== 'options',
-    onChangeFields: changeEngineFields,
-  });
   const sharedAgentTarget = React.useMemo(() => {
     const first = facts.find(fact => fact.status === 'ready')?.agentTarget;
     if (!first) return null;
@@ -235,6 +236,19 @@ function BulkSessionComposer(
     return facts.every(fact => fact.status !== 'ready'
       || (fact.agentTarget && buildBackendTargetKeyV2(fact.agentTarget) === key)) ? first : null;
   }, [facts]);
+  // While the targets run different Agents nothing is chosen in the model pane (lab §3b): "Running: Mixed".
+  const engineMixedSelection = React.useMemo(
+    () => (sharedAgentTarget ? undefined : { label: mixedLabel, applyTiming: t('agentInput.model.applyTimingNextMessage') }),
+    [mixedLabel, sharedAgentTarget],
+  );
+  const enginePicker = useSessionAuthoringEnginePicker({
+    values: composer.selection,
+    facts: engineControl.kind === 'options' ? leadFacts : undefined,
+    engineOptions: engineControl.kind === 'options' ? engineControl.options : undefined,
+    disabled: engineControl.kind !== 'options',
+    onChangeFields: changeEngineFields,
+    mixedSelection: engineMixedSelection,
+  });
   const sharedAgentOption = React.useMemo(
     () => findSessionAuthoringAgentTargetOption(leadFacts?.agentTargets, sharedAgentTarget),
     [leadFacts, sharedAgentTarget],
@@ -347,6 +361,7 @@ function BulkSessionComposer(
         }}
         onDone={done}
         onOpenSession={(href) => router.push(href as never)}
+        agentTitles={agentTitles}
       />
       </View>
     );
@@ -398,9 +413,9 @@ function BulkSessionComposer(
           autocompleteKinds={NO_AUTOCOMPLETE_KINDS}
           autocompleteSuggestions={NO_AUTOCOMPLETE_SUGGESTIONS}
         />
-        {/* On the card's edge, not the column's: the sentence reads as the composer's own footnote. */}
+        {/* On the card's content edge, not the column's: the sentence reads as the composer's own footnote. */}
         <View style={styles.consequence}>
-          <BulkConsequenceLine consequences={composer.consequences} />
+          <BulkConsequenceLine consequences={composer.consequences} targetCount={readyCount} />
         </View>
       </View>
       <View style={phone ? styles.spacerBottomPhone : styles.spacerBottom} />
@@ -429,6 +444,7 @@ function Hero(props: Readonly<{ phone: boolean }>) {
 function BulkConsequenceLine(
   props: Readonly<{
     consequences: ReturnType<typeof useBulkSessionComposer>['consequences'];
+    targetCount: number;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -463,6 +479,8 @@ function BulkConsequenceLine(
             count: countSettingsTargets(consequences),
           })}
     </Text>
+  ) : props.targetCount === 1 ? (
+    t('session.participants.bulk.keepsOwnOne')
   ) : (
     t('session.participants.bulk.keepsOwn')
   );
@@ -547,7 +565,7 @@ function useBulkAccountChip(
     value: pending !== undefined ? pending : current.value,
     pending: pending !== undefined,
     onChange,
-    ...(pending === undefined && current.mixed ? { labelOverride: mixedLabel } : {}),
+    ...(pending === undefined && current.mixed ? { mixedLabel } : {}),
   });
   const reason = targets ? describeBulkControlUnavailable(model) : null;
   return React.useMemo(() => {
@@ -590,7 +608,6 @@ function useBulkCapabilitiesChip(
     itemEditing: {
       selections,
       deltas: selection.capabilityDeltas,
-      mixedLabel,
       onChange: setCapabilityItem,
     },
   });
@@ -708,7 +725,7 @@ function useBulkSessionToModel(
   }, [agentTitles, facts, machineLabels, names, onChange, seedTargets, targets]);
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create((theme, rt) => ({
   screen: {
     flex: 1,
   },
@@ -740,8 +757,11 @@ const styles = StyleSheet.create((theme) => ({
   hero: {
     textAlign: 'center',
   },
+  // The composer's own column, then the card's content inset (where its chrome-free notices stand): a chip popover
+  // hangs on that edge, so the line's glyph never peeks out beside one (BC-D5 N5).
   consequence: {
-    paddingHorizontal: theme.space.s16,
+    paddingHorizontal: resolveAgentInputColumn({ screenWidth: rt.screen.width }).paddingHorizontal
+      + resolveComposerCardContentInsetX(theme, rt.screen.width),
   },
   column: {
     width: '100%',

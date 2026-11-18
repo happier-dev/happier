@@ -30,6 +30,11 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
     disabled?: boolean;
     onChangeFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
     roleSelection?: RolesRailPickerOptionParams;
+    /**
+     * The host writes to several Sessions that run different models (bulk Compose): until an Agent is staged, no
+     * model reads as chosen and the running line names the mix. A staged Agent shows its own choice as usual.
+     */
+    mixedSelection?: Readonly<{ label: string; applyTiming?: string }>;
 }>) {
     const latest = React.useRef(params);
     latest.current = params;
@@ -98,6 +103,8 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                 },
                 renderDetailContent: () => <SessionAuthoringEngineDetail values={latest.current.values}
                     onSelectionChange={apply} detail={{
+                    ...(latest.current.mixedSelection && !latest.current.values.agentTarget
+                        ? { mixedSelection: latest.current.mixedSelection } : {}),
                     agentCatalogEntry: entry.agentCatalogEntry,
                     backendTarget, runtimeCarrierAgentId: option.agentId,
                     selectedMachineId: context?.machineId ?? null,

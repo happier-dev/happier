@@ -85,3 +85,32 @@ it('offers models probed with the authored service, profile and runtime instead 
     });
     await vi.waitFor(() => expect(screen.findByTestId('model-picker-overlay-option:["agent:happier.agent.codex/codex",null,"terra"]')).not.toBeNull());
 });
+
+it('chooses no model while the Sessions it writes to differ, and says so on the running line (Mixed)', async () => {
+    const { serverId } = await account.restore();
+    resetDynamicModelProbeCacheForTests();
+    const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] })[0]!;
+    const codex = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+    const facts = { agentPickerContext: { machineId: 'm1', serverId, directory: '/repo' },
+        agentTargets: [{ id: entry.backendTargetKey, label: 'Codex', target: codex, agentId: 'codex', pickerEntry: entry }] };
+    const mixed = { label: 'Mixed', applyTiming: t('agentInput.model.applyTimingNextMessage') };
+    const renderDetail = async (values: { agentTarget?: typeof codex }) => {
+        const hook = await renderHook(() => useSessionAuthoringEnginePicker({ values, facts, onChangeFields: () => {}, mixedSelection: mixed }));
+        const detail = hook.getCurrent().options[0]?.renderDetailContent?.({ onRequestClose: () => {} });
+        if (!React.isValidElement(detail)) throw new Error('missing_picker_detail');
+        const screen = await renderScreen(detail);
+        const options = () => screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('model-picker-overlay-option:'));
+        await vi.waitFor(() => expect(options().length).toBeGreaterThan(0));
+        // A chosen card says so to assistive tech (web aria-selected, native accessibilityState).
+        const chosen = () => new Set(screen.findAll(node => node.props['aria-selected'] === true
+            || node.props.accessibilityState?.selected === true).map(node => String(node.props.id ?? node.props.testID ?? node.props.accessibilityLabel)));
+        return { screen, chosen };
+    };
+    const unstaged = await renderDetail({});
+    expect(unstaged.chosen().size).toBe(0);
+    expect(unstaged.screen.getTextContent()).toContain(`${t('agentInput.model.running', { model: 'Mixed' })} · ${mixed.applyTiming}`);
+    // Once an Agent is staged the pane shows that choice, as every other host does.
+    const staged = await renderDetail({ agentTarget: codex });
+    expect(staged.chosen().size).toBeGreaterThan(0);
+});

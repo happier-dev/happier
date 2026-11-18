@@ -1136,6 +1136,15 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         return Math.max(0, Math.min(edgeInsets.horizontal, carried.left, carried.right));
     }, [computed.placement, containerStyle, edgeInsets.horizontal, spansPhone]);
     const contentMaxWidth = Math.max(0, computed.maxWidth - horizontalGutter * 2);
+    // A side popover's box carries the vertical edge padding as a transparent gutter (`paddingStyle`): a submenu
+    // (start-aligned) puts its surface, not that gutter, on its row's top edge.
+    const sideVerticalGutter = React.useMemo(() => {
+        if (computed.placement !== 'left' && computed.placement !== 'right') return 0;
+        const vertical = typeof edgePadding === 'number' ? edgePadding : (edgePadding.vertical ?? 0);
+        const carried = resolvePaddingEdges([{ paddingVertical: vertical }, containerStyle]);
+        return Math.max(0, Math.min(vertical, carried.top));
+    }, [computed.placement, containerStyle, edgePadding]);
+
 
     const keyboardHeightRef = React.useRef(0);
     // The shell's floating bottom chrome (tab bar, docked band) covers the page and reserves nothing, so the popover
@@ -1868,7 +1877,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                             case 'end':
                                 return anchorRectState.y + anchorRectState.height - contentHeight;
                             case 'start':
-                                return anchorRectState.y;
+                                return anchorRectState.y - sideVerticalGutter;
                             case 'center':
                             default:
                                 return anchorRectState.y + (anchorRectState.height - contentHeight) / 2;
@@ -1876,15 +1885,20 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                     })();
 
                     const settled = settledSideTopRef.current;
-                    const heldTopRaw = settled !== null && settled.placement === computed.placement
+                    // A submenu (start-aligned) stands at its row whenever its measured content fits below it: a tall
+                    // placeholder that lifted it never keeps it over the page above once the content is short (BC-D5 N2).
+                    // Its transparent bottom gutter may overhang the boundary, as the horizontal clamp lets a side gutter.
+                    const startFitsBelow = anchorAlignVerticalOnPortal === 'start' && measuredSurfaceHeight !== null
+                        && desiredTopRaw + contentHeight - sideVerticalGutter <= boundaryRect.y + boundaryRect.height;
+                    const heldTopRaw = !startFitsBelow && settled !== null && settled.placement === computed.placement
                         ? anchorRectState.y + settled.offset
                         : desiredTopRaw;
-                    const fittedTop = Math.min(
+                    const fittedTop = startFitsBelow ? desiredTopRaw : Math.min(
                         boundaryRect.y + boundaryRect.height - contentHeight,
                         Math.max(boundaryRect.y, heldTopRaw),
                     );
                     // Settle once the content has a measured height (until then the box is hidden).
-                    if ((settled === null || settled.placement !== computed.placement) && contentRectState !== null && contentRectState.height > 0) {
+                    if ((startFitsBelow || settled === null || settled.placement !== computed.placement) && contentRectState !== null && contentRectState.height > 0) {
                         settledSideTopRef.current = { placement: computed.placement, offset: fittedTop - anchorRectState.y };
                     }
                     return fittedTop;

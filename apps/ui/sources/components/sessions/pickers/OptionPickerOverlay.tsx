@@ -200,6 +200,8 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     options: ReadonlyArray<OptionPickerOption<TValue>>;
     sections?: ReadonlyArray<OptionPickerSection<TValue>>;
     selectedValue: TValue;
+    /** No row reads as chosen: the picker writes to several targets whose values differ (Mixed). */
+    nothingSelected?: boolean;
     /**
      * Controlled multi-selection for policy/catalog surfaces. The incumbent
      * `selectedValue` remains the single-selection/custom-value owner; callers
@@ -750,7 +752,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     inputTestID="model-picker-overlay-search"
                     rootStep={selectionRootStep}
                     listAccessibilityLabel={props.title}
-                    selectedOptionId={customEditorVisible ? null : selectedValueKey}
+                    selectedOptionId={customEditorVisible || props.nothingSelected === true ? null : selectedValueKey}
                     selection={selectedValueKeys === null
                         ? undefined
                         : { kind: 'multiple', selectedIds: selectedValueKeys }}

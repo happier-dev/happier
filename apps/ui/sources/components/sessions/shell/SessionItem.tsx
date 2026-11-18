@@ -872,10 +872,11 @@ const SessionItemContent = React.memo(
         const touchCompactRow = useTouchCompactRow(isMinimal);
         // A carried row is a quiet ghost of its place (lab E1 `.dd-src`): its actions can't be used mid-carry.
         // A touch screen has no hover to reveal a Bot roster row's Talk and More, so they stay beside it (lab b-rail Ap).
-        const touchRosterActions = showTalkAction && touchPrimaryPointer;
+        // While choosing sessions a row is a choice: no actions over its title (lab list-sel).
+        const touchRosterActions = showTalkAction && touchPrimaryPointer && !rowSelection.isSelectionMode;
         // Engaged: the pointer on the row or its actions, keyboard focus inside it, or one of its menus open. The
         // actions then take the row's end and its status hides (owner 2026-11-11); a touch roster keeps them beside it.
-        const hoverEngaged = isWeb && isBeingDragged !== true && !touchRosterActions
+        const hoverEngaged = isWeb && isBeingDragged !== true && !touchRosterActions && !rowSelection.isSelectionMode
             && (isRowHovered || isActionsHovered || keyboardFocusWithin || tagMenuOpen || moreMenuOpen);
         const showRowActions = isBeingDragged !== true && (touchRosterActions || hoverEngaged);
         const rowActionIconColor = theme.colors.text.secondary;

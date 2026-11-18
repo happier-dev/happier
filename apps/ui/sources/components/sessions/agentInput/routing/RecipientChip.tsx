@@ -62,12 +62,12 @@ export function RecipientChip(props: RecipientChipProps) {
     return 'multi' in props ? <MultiRecipientChip {...props} /> : <SingleRecipientChip {...props} />;
 }
 
-/** The chip text for several recipients: none is plain "To"; two read whole; more read "Ana +2". */
+/** The chip text for several recipients: none is everyone ("To: Everyone"); two read whole; more read "Ana +2". */
 export function resolveRecipientMultiSelectLabel(model: Pick<RecipientMultiSelectModel<unknown>, 'targets' | 'selectedIds' | 'summaryLabel'>): string {
     if (model.summaryLabel) return model.summaryLabel;
     const selected = new Set(model.selectedIds);
     const labels = model.targets.filter((target) => selected.has(target.id)).map((target) => target.label);
-    if (labels.length === 0) return t('session.participants.to');
+    if (labels.length === 0) return t('session.participants.cardTo', { label: t('session.participants.everyone') });
     const label = labels.length <= 2 ? labels.join(', ')
         : t('session.collaboration.discussion.controls.recipientsMore', { first: labels[0]!, count: labels.length - 1 });
     return t('session.participants.cardTo', { label });

@@ -20,6 +20,8 @@ export function useDiscussionRecipientSelection(input: Readonly<{
     draft: Pick<DiscussionDraft, 'recipients' | 'setRecipients' | 'replyTarget' | 'prepareContent'>;
     roster: DiscussionParticipantRoster | null;
     label(participant: DiscussionParticipantRefV1): string;
+    /** The participant's mark in the To list's leading slot: an Agent's own mark or a person's face (lab §3b). */
+    icon?(participant: DiscussionParticipantRefV1): React.ReactNode;
 }>): DiscussionRecipientSelection {
     return React.useMemo<DiscussionRecipientSelection>(() => {
         const participants = new Map<string, DiscussionParticipantRefV1>();
@@ -33,7 +35,8 @@ export function useDiscussionRecipientSelection(input: Readonly<{
             }
         }
         const selection = buildRecipientMultiSelectModel({
-            targets: [...participants].map(([id, recipient]) => ({ id, recipient, label: input.label(recipient) })),
+            targets: [...participants].map(([id, recipient]) => ({ id, recipient, label: input.label(recipient),
+                ...(input.icon ? { icon: input.icon(recipient) } : {}) })),
             recipients: input.draft.recipients, key: discussionRecipientKey, onChange: input.draft.setRecipients,
         });
         return {
@@ -46,5 +49,5 @@ export function useDiscussionRecipientSelection(input: Readonly<{
                 return input.draft.prepareContent(content, { ...options, recipients: selection.selectedRecipients });
             },
         };
-    }, [input.roster, input.label, input.draft.recipients, input.draft.setRecipients, input.draft.replyTarget, input.draft.prepareContent]);
+    }, [input.roster, input.label, input.icon, input.draft.recipients, input.draft.setRecipients, input.draft.replyTarget, input.draft.prepareContent]);
 }

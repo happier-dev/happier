@@ -8492,6 +8492,7 @@ export const zhHans: TranslationStructure = {
         skippedGroupTitle: "已跳过",
         bulk: {
             pageTitle: "撰写",
+        everyone: '所有人',
             hero: "接下来让它们做什么？",
             placeholder: "写一条消息，或只修改设置",
             expiredTitle: "没有可撰写的内容",
@@ -8503,6 +8504,8 @@ export const zhHans: TranslationStructure = {
             onSend: "发送时：",
             willSwitch: ({ count }: { count: number }) => `${count} 个切换智能体`,
             willRestart: ({ count }: { count: number }) => `${count} 个重启以切换账号`,
+            keepsOwnOne: "此会话保留自己的智能体和设置。",
+            onInSessions: ({ count, total }: { count: number; total: number }) => `已在 ${total} 个会话中的 ${count} 个开启`,
             willApply: ({ count }: { count: number }) => `${count} 个获得新设置`,
             willMessage: ({ count }: { count: number }) => `${count} 个收到你的消息`,
             sendTo: ({ count }: { count: number }) => count === 1 ? "发送到 1 个会话" : `发送到 ${count} 个会话`,

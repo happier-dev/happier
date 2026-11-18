@@ -36,7 +36,6 @@ export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
     | Readonly<{ value?: never; onChange?: never; itemEditing: Readonly<{
         selections: readonly (SessionCapabilitySelectionV1 | null | undefined)[];
         deltas?: readonly ExistingSessionCapabilityDelta[];
-        mixedLabel: string;
         onChange: (delta: ExistingSessionCapabilityDelta) => void;
     }> }>
 )) {
@@ -52,9 +51,8 @@ export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
     const onItemChange = itemEditing?.onChange;
     const setItem = React.useCallback((kind: ExistingSessionCapabilityDelta['kind'], id: string, state: ExistingSessionCapabilityDelta['state']) =>
         onItemChange?.({ kind, id, state }), [onItemChange]);
-    const mixedLabel = itemEditing?.mixedLabel;
-    const items = React.useMemo(() => selections && mixedLabel !== undefined
-        ? { bulk: { selections, mixedLabel }, setItem } : undefined, [selections, mixedLabel, setItem]);
+    const items = React.useMemo(() => selections
+        ? { bulk: { selections }, setItem } : undefined, [selections, setItem]);
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     // The draft owner's contract is a state setter; a functional update reads the controlled value.

@@ -63,8 +63,8 @@ it('authors a connected pick during unread inheritance and preserves controlled 
     }], conflicts: [], errorReason: null } satisfies ConnectedAccountDescriptorProjectionState);
     applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 5, record: { key: 'purposes', value } }, true);
     const onChange = vi.fn<(value: ConnectedServiceBindingsV2 | null) => void>();
-    const renderField = (authored: ConnectedServiceBindingsV2 | null | undefined) => <SessionAuthoringConnectedServicesField
-        agentId="codex" agentIdentity={consumer} connectedAccounts={declarations} context={{ serverId: connection.home.id }}
+    const renderField = (authored: ConnectedServiceBindingsV2 | null | undefined, mixedLabel?: string) => <SessionAuthoringConnectedServicesField
+        mixedLabel={mixedLabel} agentId="codex" agentIdentity={consumer} connectedAccounts={declarations} context={{ serverId: connection.home.id }}
         value={authored} onChange={onChange} testID="authoring-auth" chipRenderContext={{ chipStyle: () => null, iconColor: '#000',
             showLabel: true, textStyle: null, countTextStyle: null, chipAnchorRef: { current: null }, popoverAnchorRef: { current: null } }} />;
     const wrapper = ({ children }: React.PropsWithChildren) => <AuthProvider initialCredentials={connection.credentials}>{children}</AuthProvider>;
@@ -99,5 +99,23 @@ it('authors a connected pick during unread inheritance and preserves controlled 
         await screen.update(renderField(null));
         expect(screen.findHostByTestId('new-session-connected-services-auth-chip')?.props.dataSet?.authSource).toBe('native');
         expect(onChange).not.toHaveBeenCalled();
+
+        // Several Sessions whose routes differ: the chip says Mixed and its popover chooses no row, whatever the lead's route.
+        denied = false;
+        await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 6, record: { key: 'purposes', value } }, true); });
+        const chosenRows = async (mixedLabel?: string) => {
+            await picker?.unmount();
+            await screen.update(renderField(authored, mixedLabel));
+            const content = screen.findByType(AgentInputContentPopover).props.content;
+            if (typeof content !== 'function') throw new Error('Expected the shared Connected Services picker');
+            picker = await renderScreen(content({ maxHeight: 420, requestClose() {} }), { wrapper });
+            const options = picker.findByType(SelectionList).props.rootStep.sections
+                .flatMap((section: { options: readonly { id: string; selected?: boolean }[] }) => section.options);
+            expect(options.length).toBeGreaterThan(0);
+            return options.filter((option: { selected?: boolean }) => option.selected === true).map((option: { id: string }) => option.id);
+        };
+        expect(await chosenRows()).not.toEqual([]);
+        expect(await chosenRows('Mixed')).toEqual([]);
+        expect(screen.getTextContent()).toContain('Mixed');
     } finally { await picker?.unmount(); await screen.unmount(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });

@@ -141,6 +141,27 @@ describe('SessionItem pin hover affordance (web)', () => {
         await screen.unmount();
     });
 
+    it('keeps a row a plain choice while choosing sessions: no hover actions over its title (lab list-sel)', async () => {
+        const { SessionListSelectionProvider, createSessionListSelectionStore } = await import('./selection/SessionListSelectionContext');
+        const selectionKey = 'server_a:sess_1';
+        const store = createSessionListSelectionStore({ scopeKey: 'scope-a', visibleOrderedKeys: [selectionKey] });
+        store.toggle(selectionKey);
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={[selectionKey]} store={store}>
+                <ModelBackedSessionItem session={createSession('sess_1')} serverId="server_a" selectionKey={selectionKey}
+                    pinned={false} onTogglePinned={vi.fn()} selected={false} variant="default" compact={false} />
+            </SessionListSelectionProvider>,
+        );
+        const row = findSessionRow(screen, 'sess_1');
+        await act(async () => {
+            triggerHoverEnter(findSessionRowContainer(screen, 'sess_1'));
+        });
+        expect(screen.findByProps({ testID: 'session-list-selection-checkbox-sess_1' })).toBeTruthy();
+        expect(findPinActions(row)).toHaveLength(0);
+
+        await screen.unmount();
+    });
+
     it('shows a carried row as a quiet ghost: no hover actions while it is being dragged (lab E1)', async () => {
         const screen = await renderSessionItem({
             session: createSession('sess_1'),

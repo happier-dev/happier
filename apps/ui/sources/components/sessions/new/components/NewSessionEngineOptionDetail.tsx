@@ -64,6 +64,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      * running on the New Session screen, and something is in a live Session.
      */
     modelSummary?: string;
+    /** Several Sessions that run different models: no card is chosen and the running line says so. */
+    mixedSelection?: SessionModelPickerProps['mixedSelection'];
     selectedModelId?: string | null;
     selectedModelSelection?: SessionModelSelection | null;
     selectedSessionModeId?: string | null;
@@ -488,6 +490,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             hiddenSources={providersFeatureEnabled ? providerProjection.data?.hiddenSources : undefined}
             sourceBrowse={providersFeatureEnabled ? providerSourceBrowse : undefined}
             selected={canonicalSelectedRef}
+            mixedSelection={props.mixedSelection}
             canEnterCustomNativeValue={canEnterCustomModel}
             notes={modelNotes}
             probe={unifiedProbe}

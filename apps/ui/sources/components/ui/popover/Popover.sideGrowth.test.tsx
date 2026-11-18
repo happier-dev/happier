@@ -168,3 +168,69 @@ describe('Popover: a designed panel above its trigger stays where it opened whil
         expect(await layout(400)).toBe(400);
     });
 });
+
+/**
+ * A submenu beside its row (start-aligned): it opens on a tall placeholder (a sheet reserving rows while it
+ * loads) and then settles on short content (a "Couldn't check" line).
+ */
+async function renderSubmenuBesideRow(edgePadding: number | Readonly<{ horizontal: number; vertical: number }> = 0) {
+    const { Popover } = await import('./Popover');
+    const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+    const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+    const portalRootNode = {
+        measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
+        measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
+    } as any;
+    const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } } as const;
+    const screen = await renderScreen(
+        <PopoverPortalTargetContextProvider value={portalTarget}>
+            <OverlayPortalProvider>
+                <Popover
+                    open
+                    backdrop={false}
+                    anchor={{ kind: 'rect', rect: { left: 300, top: 500, width: 300, height: 48 } }}
+                    portal={{ native: true, matchAnchorWidth: false, anchorAlignVertical: 'start' }}
+                    placement="right"
+                    gap={4}
+                    maxWidthCap={360}
+                    maxHeightCap={640}
+                    placementMinSpace={320}
+                    edgePadding={edgePadding}
+                >
+                    {() => React.createElement('SubmenuSheet')}
+                </Popover>
+                <OverlayPortalHost />
+            </OverlayPortalProvider>
+        </PopoverPortalTargetContextProvider>,
+    );
+    await act(async () => {
+        await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+    });
+    const layout = async (height: number) => {
+        const view = findPopoverContentView(screen, 'SubmenuSheet');
+        await act(async () => {
+            view?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: height + NATIVE_SHADOW_OUTSET_PX * 2 } } });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        const style = flattenStyle(findPopoverContentView(screen, 'SubmenuSheet')?.props?.style);
+        if (typeof style.top !== 'number') throw new Error(`Expected numeric top, got ${JSON.stringify(style.top)}`);
+        return style.top + NATIVE_SHADOW_OUTSET_PX;
+    };
+    return { layout };
+}
+
+describe('Popover: a submenu stands beside its row whenever its content fits below it', { timeout: 180_000 }, () => {
+    it('rises for a tall placeholder, then returns to its row once the content fits below', async () => {
+        const { layout } = await renderSubmenuBesideRow();
+        // 600 tall from the row (500) would cross the 800 bottom: it rises only that far.
+        expect(await layout(600)).toBeLessThan(500);
+        // The content settles at 160: it fits below the row, so the submenu stands at its row, not over the page above.
+        expect(await layout(160)).toBe(500);
+    });
+
+    it('puts its surface, not its transparent edge gutter, on the row\'s top edge', async () => {
+        const { layout } = await renderSubmenuBesideRow({ horizontal: 16, vertical: 16 });
+        // The box carries a 16 px gutter above its surface: the box starts 16 above the row so the surface meets it.
+        expect(await layout(160 + 32)).toBe(500 - 16);
+    });
+});

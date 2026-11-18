@@ -9114,6 +9114,7 @@ localTailscale: {
           skippedGroupTitle: "スキップ",
           bulk: {
               pageTitle: "作成",
+          everyone: '全員',
               hero: "次に何をさせますか？",
               placeholder: "メッセージを書くか、設定だけを変更",
               expiredTitle: "作成するものがありません",
@@ -9125,6 +9126,8 @@ localTailscale: {
               onSend: "送信時:",
               willSwitch: ({ count }: { count: number }) => `${count} 件がエージェントを切り替え`,
               willRestart: ({ count }: { count: number }) => `${count} 件がアカウント変更のため再起動`,
+              keepsOwnOne: "このセッションは自分のエージェントと設定を保ちます。",
+              onInSessions: ({ count, total }: { count: number; total: number }) => `${total} 件中 ${count} 件のセッションでオン`,
               willApply: ({ count }: { count: number }) => `${count} 件に新しい設定`,
               willMessage: ({ count }: { count: number }) => `${count} 件にメッセージ`,
               sendTo: ({ count }: { count: number }) => count === 1 ? "1 セッションに送信" : `${count} セッションに送信`,

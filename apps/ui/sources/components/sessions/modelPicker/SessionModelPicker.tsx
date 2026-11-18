@@ -207,6 +207,11 @@ export type SessionModelPickerProps = Readonly<{
         label?: string;
         status: ReportedModelStatus;
     }> | null;
+    /**
+     * The pane writes to several Sessions that run different models: no card reads as chosen (Mixed means nothing
+     * is chosen) and the running line names the mix ("Running: Mixed · Applies from your next message").
+     */
+    mixedSelection?: Readonly<{ label: string; applyTiming?: string }>;
     canEnterCustomNativeValue?: boolean;
     /** `false` removes custom entry for both native and Provider models in a restricted presentation. */
     canEnterCustomValue?: boolean;
@@ -811,6 +816,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             options={[]}
             sections={presentedSections}
             selectedValue={props.selectedTeamCredentialModel ?? props.selected}
+            nothingSelected={props.mixedSelection !== undefined}
             getValueKey={sessionModelSelectionKey}
             emptyText={t('settingsProviders.models.empty')}
             emptyContent={emptyFailureContent}
@@ -834,13 +840,20 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             selectedOptionControls={selectedOptionControls}
             onSelectOptionControlValue={props.onSelectOptionControlValue}
             summary={reportedModelPresentation.label
+                || props.mixedSelection
                 || currentSelectionRecovery
                 || (props.scope && props.sourceUsage)
                 || projectionApprovalOpen
                 || experimentalApproval
                 || props.experimentalConfirmation?.error ? (
                 <>
-                    {props.reportedModel && reportedModelPresentation.label ? (
+                    {props.mixedSelection ? (
+                        <ReportedModelSummary
+                            status="running"
+                            modelLabel={props.mixedSelection.label}
+                            applyTiming={props.mixedSelection.applyTiming ?? hostApplyTiming?.timing}
+                        />
+                    ) : props.reportedModel && reportedModelPresentation.label ? (
                         <ReportedModelSummary
                             status={props.reportedModel.status}
                             modelLabel={reportedModelPresentation.label}

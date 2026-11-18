@@ -51,6 +51,8 @@ type SessionAgentPickerDetailContentParams = Readonly<{
      * that the conversation carries over and nothing is sent yet.
      */
     modelSummary?: string;
+    /** Several Sessions that run different models: no model reads as chosen, and the running line says Mixed. */
+    mixedSelection?: NewSessionEngineOptionDetailProps['mixedSelection'];
     selection: SessionAgentPickerSelection;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
@@ -111,6 +113,7 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
             capabilityProbeContext={capabilityProbeContext}
             refreshProbe={params.refreshProbe}
             modelSummary={params.modelSummary}
+            mixedSelection={params.mixedSelection}
             selectedModelId={params.selection.modelId}
             selectedModelSelection={params.selection.modelSelection ?? null}
             selectedSessionModeId={params.selection.sessionModeId}

@@ -78,6 +78,8 @@ import { buildDiscussionCheckInMenuAction } from './discussionCheckInMenu';
 import { useDiscussionRecipientSelection } from './useDiscussionRecipientSelection';
 import { DiscussionPatternCapturePanel, type DiscussionPatternCaptureMessage } from './DiscussionPatternCapturePanel';
 import type { DiscussionParticipantRefV1 } from '@happier-dev/protocol/discussions/references';
+import { resolveAccountActorAvatar } from '@/sync/domains/account/accountActorPresentation';
+import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/suggestionSession';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SaveMemoryDecisionSheet } from '@/components/memory/SaveMemoryDecisionSheet';
@@ -161,7 +163,7 @@ import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './disc
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionRepository as useRepository, useNewDiscussionCreate } from './useNewDiscussionCreate';
 import { formatDiscussionPresenceLine } from '@/components/discussions/discussionPresenceLine';
-import { DiscussionAgentsPanel, DiscussionParticipantsPanel, DiscussionParticipantsPopover, DiscussionRosterFaces, formatDiscussionRosterLine, summarizeDiscussionRoster } from '@/components/discussions/DiscussionParticipantsPopover';
+import { DiscussionAgentsPanel, DiscussionParticipantsPanel, DiscussionParticipantsPopover, DiscussionRosterFaces, formatDiscussionRosterLine, ParticipantAgentMark, summarizeDiscussionRoster } from '@/components/discussions/DiscussionParticipantsPopover';
 import { DiscussionInviteButton } from '@/components/discussions/DiscussionInviteSheet';
 import { useDiscussionListRows } from '@/sync/ops/discussions/useDiscussionListRows';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -907,7 +909,18 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         const grant = roster?.grants.find((entry) => entry.principal.kind === 'account' && entry.principal.accountId === participant.accountId);
         return resolveAccountLabel(participant.accountId) ?? grant?.display.name ?? grant?.display.username ?? t('session.collaboration.unnamed');
     }, [resolveAccountLabel, resolveSessionLabel, roster?.grants, rosterSessionAddresses, rosterSessionTitles]);
-    const recipientSelection = useDiscussionRecipientSelection({ draft, roster, label: recipientLabel });
+    const participantAccounts = participantProfiles.accounts;
+    const recipientIcon = React.useCallback((participant: DiscussionParticipantRefV1): React.ReactNode => {
+        if (participant.kind === 'session') {
+            const display = readComposerSessionSuggestionDisplay({ serverId: props.scope.serverId, sessionId: participant.sessionId });
+            return <ParticipantAgentMark agentId={display?.agentId} machineId={display?.machineId ?? null}
+                serverId={display?.serverId ?? null} size={ICON_SIZE.md} />;
+        }
+        const avatar = resolveAccountActorAvatar({ serverId: props.scope.serverId, accountId: participant.accountId },
+            participantAccounts.get(participant.accountId), props.scope);
+        return <Avatar id={avatar.id} imageUrl={avatar.imageUrl ?? null} size={ICON_SIZE.md} />;
+    }, [participantAccounts, props.scope]);
+    const recipientSelection = useDiscussionRecipientSelection({ draft, roster, label: recipientLabel, icon: recipientIcon });
     React.useEffect(() => {
         if (!props.active || discussionId === null) return;
         if (messageId) void repository.openMessage({ kind: 'discussion', discussion: {

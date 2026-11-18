@@ -85,6 +85,18 @@ describe('BulkSessionResults', () => {
     expect(screen.getTextContent()).toMatch(/Gemini.*Claude/);
   });
 
+  it('names a contributed Agent in a switch reason by the catalog title the To rows use', async () => {
+    const screen = await renderScreen(
+      <BulkSessionResults
+        rows={[{ ...row('a', 'sent'), switchedFrom: 'happier.agent.claude/claude', switchedTo: 'acme.coder/coder' }]}
+        text="Rebase." submitting={false} compact={false} onRetry={() => {}} onRetryFailed={() => {}}
+        onDone={() => {}} onOpenSession={() => {}}
+        agentTitles={new Map([['acme.coder/coder', 'Acme Coder']])}
+      />,
+    );
+    expect(screen.getTextContent()).toMatch(/Claude.*Acme Coder/);
+  });
+
   it('says why a send was refused when the target gave only a typed code', async () => {
     const { screen } = await render([{ ...row('a', 'failed'), code: 'session_input_target_update_required' }]);
     expect(screen.getTextContent()).toContain(t('session.pendingMessages.admissionRejected.targetUpdateRequired'));

@@ -10301,6 +10301,7 @@ const enSession = {
     skippedGroupTitle: 'Skipped',
     bulk: {
         pageTitle: 'Compose',
+    everyone: 'Everyone',
         hero: 'What should they do next?',
         placeholder: 'Write a message, or change settings only',
         expiredTitle: 'Nothing to compose',
@@ -10312,6 +10313,8 @@ const enSession = {
         onSend: 'On send:',
         willSwitch: ({ count }: { count: number }) => `${count} switch agent`,
         willRestart: ({ count }: { count: number }) => `${count} restart to change account`,
+        keepsOwnOne: 'The session keeps its agent and settings.',
+        onInSessions: ({ count, total }: { count: number; total: number }) => `On in ${count} of ${total} sessions`,
         willApply: ({ count }: { count: number }) => `${count} get the new settings`,
         willMessage: ({ count }: { count: number }) => `${count} get your message`,
         sendTo: ({ count }: { count: number }) => count === 1 ? 'Send to 1 session' : `Send to ${count} sessions`,

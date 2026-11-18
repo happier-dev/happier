@@ -173,7 +173,7 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
  * A participant's Agent mark (lab T2-S): its Session's Agent, or the Agent a model slot's launch names, through
  * the catalog owner; a participant whose Agent this device cannot see keeps the catalog's neutral mark.
  */
-function ParticipantAgentMark(props: Readonly<{ agentId: string | null | undefined; machineId: string | null; serverId: string | null; size: number }>) {
+export function ParticipantAgentMark(props: Readonly<{ agentId: string | null | undefined; machineId: string | null; serverId: string | null; size: number }>) {
   return props.agentId
     ? <SessionAgentCatalogIdentityIcon agentId={props.agentId} machineId={props.machineId} serverId={props.serverId} size={props.size} />
     : <AgentIcon agentId={null} size={props.size} />;

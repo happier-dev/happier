@@ -47,6 +47,8 @@ export function BulkSessionResults(
     onRetryFailed: () => void;
     onDone: () => void;
     onOpenSession: (href: string) => void;
+    /** The catalog's Agent titles for a switch's reason line. */
+    agentTitles?: ReadonlyMap<string, string>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -149,6 +151,7 @@ export function BulkSessionResults(
                 onRetry={props.onRetry}
                 onOpenSession={props.onOpenSession}
                 busy={props.submitting}
+                agentTitles={props.agentTitles}
               />
             ))}
           </ItemGroup>
@@ -166,6 +169,7 @@ export function BulkSessionResults(
                 onRetry={props.onRetry}
                 onOpenSession={props.onOpenSession}
                 busy={props.submitting}
+                agentTitles={props.agentTitles}
               />
             ))}
           </ItemGroup>
@@ -187,6 +191,7 @@ const ResultRow = React.memo(function ResultRow(
     busy: boolean;
     onRetry: (target: ActionSessionAddressV1) => void;
     onOpenSession: (href: string) => void;
+    agentTitles?: ReadonlyMap<string, string>;
     /** Injected by the group: another row follows this one. */
     showDivider?: boolean;
   }>,
@@ -227,7 +232,7 @@ const ResultRow = React.memo(function ResultRow(
         serverId={row.target.serverId}
         reply="none"
         state={describeBulkRowState(row)}
-        reason={describeBulkRowReason(row)}
+        reason={describeBulkRowReason(row, props.agentTitles)}
         action={action}
         reserveActionColumn
         compact={props.compact}

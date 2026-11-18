@@ -9263,6 +9263,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
           skippedGroupTitle: "Пропущены",
           bulk: {
               pageTitle: "Написать",
+          everyone: 'Всем',
               hero: "Что им делать дальше?",
               placeholder: "Напишите сообщение или измените только настройки",
               expiredTitle: "Нечего писать",
@@ -9274,6 +9275,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
               onSend: "При отправке:",
               willSwitch: ({ count }: { count: number }) => `смена агента: ${count}`,
               willRestart: ({ count }: { count: number }) => `перезапуск для смены аккаунта: ${count}`,
+              keepsOwnOne: "Сессия сохраняет своего агента и настройки.",
+              onInSessions: ({ count, total }: { count: number; total: number }) => `Включено в ${count} из ${total} сессий`,
               willApply: ({ count }: { count: number }) => `новые настройки: ${count}`,
               willMessage: ({ count }: { count: number }) => `ваше сообщение: ${count}`,
               sendTo: ({ count }: { count: number }) => count === 1 ? "Отправить в 1 сессию" : `Отправить в сессии (${count})`,

@@ -5,6 +5,7 @@ import { setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach
 import { SessionCapabilitiesGetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { buildSessionCapabilitiesModel } from './sessionCapabilitiesModel';
+import { t } from '@/text';
 import { sessionCapabilityApplyNotice } from './sessionCapabilityApplyNotice';
 import { resolveCapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
 
@@ -32,9 +33,10 @@ describe('the session capability sheet data owner', () => {
         const input = fixture();
         const off = setSessionCapabilitySelectionItemV1(input.selection, 'skill', 'review', 'off');
         const model = buildSessionCapabilitiesModel({ ...input,
-            bulk: { selections: [input.selection, off], mixedLabel: 'Mixed' } });
+            bulk: { selections: [input.selection, off] } });
+        // The count is what the person needs to decide "Turn on" (lab copy "On in 2 of 6 sessions").
         expect(model.groups[0]?.rows[0]).toMatchObject({
-            id: 'review', mixedLabel: 'Mixed', action: { kind: 'turn_on', state: 'on' }, removalState: 'off',
+            id: 'review', mixedLabel: t('session.participants.bulk.onInSessions', { count: 1, total: 2 }), action: { kind: 'turn_on', state: 'on' }, removalState: 'off',
         });
     });
     it('keeps the chip and open sheet on the same machine-resolved selection while Account rules refresh', () => {

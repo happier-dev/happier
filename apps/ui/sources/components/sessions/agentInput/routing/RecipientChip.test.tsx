@@ -326,4 +326,9 @@ describe('RecipientChip', () => {
         act(() => capturedSelectionListPopoverProps.onSelect('session:ui'));
         expect(capturedSelectionListPopoverProps?.open).toBe(true);
     });
+    it('names nobody chosen as everyone, as the message reaches everyone here (lab compose-disc)', async () => {
+        const { resolveRecipientMultiSelectLabel } = await import('./RecipientChip');
+        expect(resolveRecipientMultiSelectLabel({ targets: [{ id: 'account:ana', label: 'Ana', recipient: {} }], selectedIds: [] }))
+            .toBe('session.participants.cardTo:session.participants.everyone');
+    });
 });

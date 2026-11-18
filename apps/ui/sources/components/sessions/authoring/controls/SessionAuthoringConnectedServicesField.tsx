@@ -42,8 +42,11 @@ export type SessionAuthoringConnectedServicesChipParams = Readonly<{
     context: SessionAuthoringConnectedServicesContext;
     value: ConnectedServiceBindingsV2 | null | undefined;
     onChange: (value: ConnectedServiceBindingsV2 | null) => void;
-    /** The chip's label instead of the route's: a Composer aimed at several Sessions whose routes differ says Mixed. */
-    labelOverride?: string;
+    /**
+     * A Composer aimed at several Sessions whose routes differ: the chip says this instead of the route, and its
+     * popover chooses no row (Mixed means nothing is chosen) until the person picks one.
+     */
+    mixedLabel?: string;
     /**
      * Whether the value is an edit the person made here (the chip then rides the row). Defaults to any authored
      * value; a Composer that shows its targets' current value passes only its own pending edit.
@@ -119,7 +122,7 @@ export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoring
     const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
         placementId: getConnectedServicesAuthActionChipPlacement({ scoped: true }).id,
         placementPending: props.pending ?? props.value !== undefined,
-        ...(props.labelOverride === undefined ? {} : { labelOverride: props.labelOverride }),
+        ...(props.mixedLabel === undefined ? {} : { mixedLabel: props.mixedLabel }),
         agentCore,
         defaultAuthAgentId: props.agentId,
         defaultAuthConsumer: props.agentIdentity,
@@ -167,6 +170,7 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     context: SessionAuthoringConnectedServicesContext;
     value: ConnectedServiceBindingsV2 | null | undefined;
     onChange: (value: ConnectedServiceBindingsV2 | null) => void;
+    mixedLabel?: string;
     chipRenderContext: AgentInputExtraActionChipRenderContext;
     /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
     trigger?: 'chip' | 'select';

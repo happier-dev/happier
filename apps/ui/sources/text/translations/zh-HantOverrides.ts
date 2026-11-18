@@ -7337,6 +7337,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 skippedGroupTitle: "已略過",
                 bulk: {
                     pageTitle: "撰寫",
+                everyone: '所有人',
                     hero: "接下來要它們做什麼？",
                     placeholder: "寫一則訊息，或只修改設定",
                     expiredTitle: "沒有可撰寫的內容",
@@ -7348,6 +7349,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     onSend: "傳送時：",
                     willSwitch: ({ count }: { count: number }) => `${count} 個切換代理程式`,
                     willRestart: ({ count }: { count: number }) => `${count} 個重新啟動以切換帳號`,
+                    keepsOwnOne: "此工作階段保留自己的代理程式與設定。",
+                    onInSessions: ({ count, total }: { count: number; total: number }) => `已在 ${total} 個工作階段中的 ${count} 個開啟`,
                     willApply: ({ count }: { count: number }) => `${count} 個取得新設定`,
                     willMessage: ({ count }: { count: number }) => `${count} 個收到你的訊息`,
                     sendTo: ({ count }: { count: number }) => count === 1 ? "傳送到 1 個工作階段" : `傳送到 ${count} 個工作階段`,

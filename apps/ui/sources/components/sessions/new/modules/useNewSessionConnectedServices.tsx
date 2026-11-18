@@ -87,6 +87,8 @@ export type NewSessionConnectedServicesResult = Readonly<{
   connectedServicesRecoveryAction: SessionInstrumentStripLineAction | null;
 }>;
 
+const NO_BINDINGS_BY_SERVICE_ID: Readonly<Record<string, never>> = {};
+
 function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarningCode | undefined): string | undefined {
   const key = resolveConnectedServicesAuthWarningTranslationKey(warningCode);
   return key ? t(key) : undefined;
@@ -96,8 +98,11 @@ function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarnin
 export function useNewSessionConnectedServices(params: Readonly<{
   placementId?: string;
   placementPending?: boolean;
-  /** What the chip says instead of the route label: a Composer aimed at several Sessions whose routes differ says Mixed. */
-  labelOverride?: string;
+  /**
+   * A Composer aimed at several Sessions whose routes differ: the chip says this instead of the route label, and the
+   * popover chooses no row (Mixed means nothing is chosen). A pick still authors through the same writer.
+   */
+  mixedLabel?: string;
   modelSelection?: RouteSelection;
   providerSources?: readonly ProviderRouteSource[];
   /** The selected Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
@@ -546,8 +551,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
       supportedServiceIds={supportedConnectedServiceIds}
       profileOptionsByServiceId={connectedServiceProfileOptionsByServiceId}
       groupOptionsByServiceId={connectedServiceAccountGroupOptionsByServiceId}
-      bindingsByServiceId={connectedServicesBindingsByServiceId}
-      bindingsKnown={connectedAccountDefaultsStatus === 'ready'}
+      bindingsByServiceId={params.mixedLabel === undefined ? connectedServicesBindingsByServiceId : NO_BINDINGS_BY_SERVICE_ID}
+      bindingsKnown={connectedAccountDefaultsStatus === 'ready' && params.mixedLabel === undefined}
       declarationContext={providerDeclarationContext(params.sourceMachineId, params.providerProjection)}
       teamCredentialResources={params.teamCredentialResources}
       teamCredentialDisplayNames={params.teamCredentialDisplayNames}
@@ -585,6 +590,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedServiceAccountGroupOptionsByServiceId,
     connectedAccountDefaultsStatus,
     connectedServicesBindingsByServiceId,
+    params.mixedLabel,
     resolveOptionAvailability,
     router,
     setBindingForService,
@@ -641,7 +647,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
             placementId: params.placementId,
             ...(routeSource?.kind === 'source' ? { fieldValue: routeSource.source } : {}),
             pending: params.placementPending === true || authLabel.warningCodes.length > 0 || connectedAccountDefaultsStatus === 'unavailable',
-            label: params.labelOverride ?? routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
+            label: params.mixedLabel ?? routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
                 ? t(connectedAccountDefaultsStatus === 'loading' ? 'common.loading' : 'common.unavailable')
                 : authLabel.label),
             connectedCount: authLabel.connectedCount,
@@ -649,7 +655,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
             popoverContent: connectedServicesAuthPopoverContent,
             agentId: defaultAuthAgentId,
         });
-    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending, params.labelOverride]);
+    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending, params.mixedLabel]);
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,
