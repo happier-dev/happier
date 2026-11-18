@@ -268,6 +268,28 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     expect(draft?.adds).toEqual([{ clientId: 'session-pr', trigger: { kind, pullRequest, enabled: true } }]);
   });
 
+  it('keeps a deliberate provider CI rule separate from the selected Session CI continuation', async () => {
+    const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+    const session = commitWorkflowTriggerWhen({ draft: EMPTY_WORKFLOW_TRIGGER_DRAFT,
+      row: { kind: 'new', clientId: 'continue-session' },
+      when: { kind: 'ciFailed', pullRequest: { repository: 'acme/widgets', number: 7 } },
+      enabled: true, sessionId: 'lifetime-session' });
+    expect(session?.adds).toHaveLength(1);
+    if (!session) throw new Error('Expected configured Session CI continuation');
+    const provider = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+      eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-checks-failed-v1' },
+      sourceInstanceId: `github:repository:42:pull-request:7:head:${'a'.repeat(40)}:checks:all`, sourceContractVersion: 1,
+      sourceConfig: { pullRequestNumber: 7, headSha: 'a'.repeat(40), selection: 'all' }, displayLabel: 'acme/widgets #7',
+      observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+        machineId: 'machine-1', pluginId: 'happier.scm.forge.github', materializationId: 'github-1',
+      } }, filter: null, maximumObservationAgeMs: null });
+    if (provider.kind !== 'pluginEvent' || !('sourceInstanceId' in provider)) throw new Error('Expected configured provider Event');
+    const both = commitWorkflowTriggerWhen({ draft: session, row: { kind: 'new', clientId: 'provider-workflow' },
+      when: { kind: 'pluginEvent', value: provider }, enabled: true, sessionId: 'lifetime-session' });
+    expect(both?.adds).toEqual([...session.adds, { clientId: 'provider-workflow', trigger: provider }]);
+    expect(session.adds).toHaveLength(1);
+  });
+
   it('an incomplete When leaves the draft untouched (a PR without Session context, an unset Event)', () => {
     for (const when of [
       { kind: 'ciFailed' as const, pullRequest: { repository: 'acme/widgets', number: 7 } },

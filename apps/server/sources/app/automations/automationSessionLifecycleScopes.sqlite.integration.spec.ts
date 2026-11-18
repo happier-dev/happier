@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { serializeAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { db } from '@/storage/db';
@@ -135,6 +136,48 @@ describe('Session lifecycle scoped admission', () => {
         expect(await db.automationRun.findMany({ where: { accountId: current.accountId }, select: { triggerId: true } }))
             .toEqual([{ triggerId: selected.trigger.id }]);
         expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: other.trigger.id } })).remainingOccurrences).toBe(1);
+    });
+
+    it('applies one Account habit once to each matching changed Session and never to clean or other-profile turns', async () => {
+        const current = await owner();
+        const selected = await habit(current, {
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+            filter: { v: 1, all: [
+                { field: '/launchProfileId', op: 'eq', value: 'selected-profile' },
+                { field: '/changedFiles', op: 'eq', value: true },
+            ] },
+        });
+        const first = await db.session.create({ data: { accountId: current.accountId,
+            tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const second = await db.session.create({ data: { accountId: current.accountId,
+            tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const turns = [
+            { session: first, profile: 'selected-profile', changedFiles: false, runs: 0 },
+            { session: first, profile: 'selected-profile', changedFiles: true, runs: 1 },
+            { session: second, profile: 'other-profile', changedFiles: true, runs: 1 },
+            { session: second, profile: 'selected-profile', changedFiles: null, runs: 1 },
+            { session: second, profile: 'selected-profile', changedFiles: false, runs: 1 },
+            { session: second, profile: 'selected-profile', changedFiles: true, runs: 2 },
+        ];
+        for (const turn of turns) {
+            const turnId = randomUUID();
+            await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: {
+                v: 1, action: 'begin', sessionId: turn.session.id, turnId, mutationId: randomUUID(),
+                observedAt: Date.now(), initiator: 'user',
+            } });
+            const mutation = { v: 1 as const, action: 'complete' as const, sessionId: turn.session.id, turnId,
+                mutationId: randomUUID(), observedAt: Date.now(), automationLifecycleFacts: {
+                    launchProfileId: projectAutomationSessionLifecycleLaunchProfileId(turn.profile), changedFiles: turn.changedFiles,
+                } };
+            await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation });
+            await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation });
+            expect(await db.automationRun.count({ where: { automationId: selected.automation.id } })).toBe(turn.runs);
+        }
+        const runs = await db.automationRun.findMany({ where: { automationId: selected.automation.id },
+            select: { triggerId: true, causeSourceSessionId: true } });
+        expect(runs).toHaveLength(2);
+        expect(runs.map(run => run.triggerId)).toEqual([selected.trigger.id, selected.trigger.id]);
+        expect(runs.map(run => run.causeSourceSessionId).sort()).toEqual([first.id, second.id].sort());
     });
 
     it.each([undefined, null, false])('retires a currentTurn habit when its terminal changed-files fact is %s', async (changedFiles) => {
