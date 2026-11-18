@@ -103,4 +103,19 @@ describe('WelcomeActionCard', () => {
         expect(screen.findByTestId('malformed-accent')).toBeFalsy();
         expect(screen.findByTestId('malformed-icon')).toBeTruthy();
     });
+    it('draws a quiet way with the plain glyph every quiet way uses, even when its provider projects a colour', async () => {
+        // LABPARITY-ACCEPT-B-1118 (10): the colour is a door's; a filled tile among the outline rows reads as noise.
+        const { WelcomeActionCard } = await import('./WelcomeActionCard');
+        const screen = await renderScreen(
+            <>
+                <WelcomeActionCard testID="quiet-provider" presentation="row" title="Continue with GitHub" iconName="sign-in"
+                    accentColor="#24292F" onPress={() => {}} />
+                <WelcomeActionCard testID="quiet-email" presentation="row" title="Email and password" iconName="mail"
+                    onPress={() => {}} />
+            </>,
+        );
+
+        expect(screen.findByTestId('quiet-provider-accent')).toBeFalsy();
+        expect(screen.findByTestId('quiet-provider-icon')?.props.color).toBe(screen.findByTestId('quiet-email-icon')?.props.color);
+    });
 });

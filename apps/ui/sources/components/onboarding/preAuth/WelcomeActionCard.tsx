@@ -79,7 +79,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();
     const accentColor = props.accentColor?.trim();
-    const accent = accentColor && accentColor !== 'transparent' && isValidThemeProfileColorValue(accentColor)
+    // A projected connect colour belongs to a door; a quiet way keeps the plain glyph every quiet way uses.
+    const accent = !row && accentColor && accentColor !== 'transparent' && isValidThemeProfileColorValue(accentColor)
         ? accentColor
         : null;
     const button = props.presentation === 'button';
