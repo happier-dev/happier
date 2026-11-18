@@ -70,7 +70,7 @@ function resolveOutgoingModelContext(sessionValue: unknown, fallbackAgentId: str
     const agentTargetKey = defaultTarget ? resolveBackendTargetKeyV2(defaultTarget)
         : agentId ? buildAgentUniverseBackendTargetKey(agentId) : null;
     const modelOverride = session && agentTargetKey ? getModelOverrideForSpawn(session, agentTargetKey) : null;
-    return { agentTargetKey, selection: modelOverride?.modelSelection ?? null };
+    return { agentId, agentTargetKey, selection: modelOverride?.modelSelection ?? null };
 }
 
 /**
@@ -141,12 +141,12 @@ export function buildOutgoingUserTextRecord(params: Readonly<{
         sentFrom: params.sentFrom ?? resolveSentFrom(),
         permissionMode: params.permissionMode || 'default',
         model: resolveOutgoingUserMessageModel({
-            agentId: params.agentId,
+            agentId: modelContext.agentId,
             modelMode: params.modelMode,
             structuredModelSelection,
         }),
         displayText: params.displayText,
-        agentId: params.agentId,
+        agentId: modelContext.agentId,
         settings: params.settings,
         session: params.session,
         metaOverrides: callerMeta as Partial<MessageMeta>,

@@ -34,6 +34,28 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 afterEach(async () => { await connection?.dispose(); });
 
 describe('presentCreatedNewSession currentness', () => {
+    it('does not project a bundled model for an Agent whose retained flavor names Codex', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { projectLaunchingNewSessionFirstTurn } = await import('./presentCreatedNewSession');
+        const initialState = storage.getState();
+        const session = createSessionFixture({ id: 'contributed-agent-first-turn', metadata: {
+            ...createSessionFixture().metadata!,
+            flavor: 'codex',
+            runtimeDescriptorV1: { v: 1, agentId: 'acme.agent/codex', agent: {} },
+        } });
+        try {
+            storage.setState({ sessions: { ...initialState.sessions, [session.id]: session } });
+            projectLaunchingNewSessionFirstTurn({
+                sessionId: session.id, localId: 'first-turn', text: 'Hello', fallbackModelMode: 'gpt-5.2',
+            });
+            const row = storage.getState().sessionPending[session.id]?.messages[0];
+            expect(row).toMatchObject({ localId: 'first-turn', pendingLaunch: { state: 'starting' } });
+            expect(row?.rawRecord?.meta?.model).toBeUndefined();
+        } finally {
+            storage.setState(initialState, true);
+        }
+    });
+
     it.each(['published', 'forbidden'] as const)('presents fresh publication or preserves its typed refusal: %s', async mode => {
         const { storage } = await import('@/sync/domains/state/storage');
         const initialState = storage.getState();
