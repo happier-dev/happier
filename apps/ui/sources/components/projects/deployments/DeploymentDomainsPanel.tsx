@@ -436,17 +436,24 @@ function DomainAddForm(
   }>,
 ) {
   const [hostname, setHostname] = React.useState('');
-  const [selectedService, setSelectedService] = React.useState<string | null>(null);
   const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
     ? props.initialService ?? '' : '';
-  const service = selectedService ?? initialService;
-  const [enteredPort, setEnteredPort] = React.useState<Readonly<{ service: string; value: string }> | null>(null);
+  const [target, setTarget] = React.useState<Readonly<{
+    selectedService: string | null;
+    enteredPort: Readonly<{ service: string; value: string }> | null;
+  }>>({ selectedService: null, enteredPort: null });
+  const service = target.selectedService ?? initialService;
   const changeService = (next: string) => {
-    if (next === service) return;
-    setSelectedService(next);
-    setEnteredPort(null);
+    setTarget(current => next === (current.selectedService ?? initialService)
+      ? current
+      : { selectedService: next, enteredPort: null });
   };
-  const setPort = (value: string) => setEnteredPort({ service, value });
+  const setPort = (value: string) => {
+    setTarget(current => ({
+      ...current,
+      enteredPort: { service: current.selectedService ?? initialService, value },
+    }));
+  };
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('');
   const [checkStatus, setCheckStatus] = React.useState('');
@@ -457,7 +464,7 @@ function DomainAddForm(
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
   // Port is either an entry for this Service or its one declared container port.
-  const port = enteredPort?.service === service ? enteredPort.value
+  const port = target.enteredPort?.service === service ? target.enteredPort.value
     : servicePorts.length === 1 ? String(servicePorts[0]) : '';
   const [ingressMode, setIngressMode] = React.useState<IngressMode>(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
