@@ -670,6 +670,8 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             expect(await person.execute('session.message.send', { sessionId, message: sourceText }, context))
                 .toMatchObject({ ok: true });
             await waitForFakeClaudeUserText(claudeLog, text => text.includes(sourceText), { timeoutMs: 120_000 });
+            await waitFor(async () => (await fetchSessionV2(fixture!.server.baseUrl, account.auth.token, sessionId)).latestTurnStatus === 'completed',
+                { timeoutMs: 120_000, context: 'source Claude turn settles before Agent transition' });
             const targetText = `ALTERNATE_AGENT_${randomUUID()}`;
             const transitioned = await person.executeConfirmed('session.agent.transition', {
                 sessionId, expectedCurrentAgentId: 'claude',
@@ -685,7 +687,8 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             await waitFor(async () => !(await fetchSessionV2(fixture!.server.baseUrl, account.auth.token, sessionId)).active,
                 { timeoutMs: 60_000 });
             const recoveryText = `CURRENT_AGENT_RECOVERY_${randomUUID()}`;
-            const sent = await person.execute('session.message.send', { sessionId, message: recoveryText }, context);
+            const sent = await person.execute('session.message.send', { sessionId, message: recoveryText,
+                requestedAction: { v: 1, kind: 'send_now' } }, context);
             expect(sent, JSON.stringify(sent)).toMatchObject({ ok: true });
             await waitFor(async () => (await readJsonlEvents(piLog)).some(row => typeof row.text === 'string'
                 && row.text.includes(recoveryText)), { timeoutMs: 120_000 });
@@ -693,6 +696,26 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             expect(after).toMatchObject({ id: sessionId, createdAt: before.createdAt, active: true });
             expect(await account.readSessionMetadata(sessionId)).toMatchObject({ flavor: 'pi',
                 mcpSelectionV1: { v: 1, ...capabilitySelection.mcp } });
+
+            // Explicit Resume followed by ordinary Composer input is a distinct
+            // lifecycle path from sending directly to the stopped Session above.
+            expect(await person.executeConfirmed('session.stop', { sessionId }, context)).toMatchObject({ ok: true });
+            await waitFor(async () => !(await fetchSessionV2(fixture!.server.baseUrl, account.auth.token, sessionId)).active,
+                { timeoutMs: 60_000 });
+            const resumed = await person.execute('session.open', { sessionId, intent: 'resume' }, context);
+            expect(resumed, JSON.stringify(resumed)).toMatchObject({ ok: true });
+            await waitFor(async () => (await fetchSessionV2(fixture!.server.baseUrl, account.auth.token, sessionId)).active,
+                { timeoutMs: 60_000 });
+            const composerText = `POST_RESUME_COMPOSER_${randomUUID()}`;
+            const composerSend = await person.execute('session.message.send', {
+                sessionId, message: composerText, messageMeta: { permissionMode: 'read-only' },
+            }, context);
+            expect(composerSend, JSON.stringify(composerSend)).toMatchObject({ ok: true });
+            await waitFor(async () => (await readJsonlEvents(piLog)).some(row => typeof row.text === 'string'
+                && row.text.includes(composerText)), { timeoutMs: 120_000 });
+            expect(await fetchSessionV2(fixture.server.baseUrl, account.auth.token, sessionId))
+                .toMatchObject({ id: sessionId, createdAt: before.createdAt, active: true });
+            expect(await account.readSessionMetadata(sessionId)).toMatchObject({ flavor: 'pi' });
         } catch (error) {
             journeyFailure = error;
             throw error;
