@@ -7,6 +7,7 @@ import {
     type ReviewRequestedReviewerV1,
     type ReviewVerdictV1,
 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { PrincipalRefV1Schema } from '@happier-dev/protocol/teams/principal';
 import type { ReviewAccessCapability } from './reviewAccess';
 import { readAdmittedReviewCountsInTx } from './reviewListService';
@@ -61,7 +62,7 @@ async function readHumanRowsInTx(tx: Tx, input: Readonly<{
             .map(row => ({ ...row, roundOrdinal: metadata.currentRoundOrdinal }));
     const requests = currentRequests.map(projectRequest);
     const verdicts = verdictRows.map(row => ({ accountId: row.accountId, roundOrdinal: row.roundOrdinal,
-        verdict: row.verdict as ReviewVerdictV1['verdict'], content: row.content === null ? undefined : row.content,
+        verdict: row.verdict as ReviewVerdictV1['verdict'], content: row.content === null ? undefined : StoredJsonContentEnvelopeSchema.parse(row.content),
         submittedAt: row.submittedAt.getTime(), revision: row.revision }));
     const canRead = true;
     const canDecide = input.access.level !== 'view';
