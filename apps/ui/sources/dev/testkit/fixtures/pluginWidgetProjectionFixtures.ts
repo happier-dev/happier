@@ -24,6 +24,8 @@ export type WidgetFixtureEntry = Readonly<{
     pluginId: string;
     localId: string;
     title?: string;
+    /** The widget's purpose line, as a manifest declares it (a literal or a localized key). */
+    description?: string | Readonly<{ key: string; fallback: string }>;
     target?: WidgetTargetKind;
     homeDefault?: WidgetHomeDefault;
     inputs?: InputHints;
@@ -73,7 +75,7 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry): Extract<Plugin
         binding: { ...binding, rendererChain: [...binding.rendererChain], platforms: [...binding.platforms] },
         target: binding.target,
         renderer: { kind: 'declarative', contributionId: 'widget-native' },
-        display: { title: input.title ?? input.localId },
+        display: { title: input.title ?? input.localId, ...(input.description === undefined ? {} : { description: input.description }) },
         ...((input.role ?? WIDGET_ROLE) === WIDGET_ROLE ? { sizeDeclaration: input.sizeDeclaration ?? { sizes: [...WIDGET_SIZE_ORDER_V1], defaultSize: 'medium' } } : {}),
         ...(input.homeDefault ? { home: { default: input.homeDefault } } : {}),
         ...(inputs ? { inputs } : {}),

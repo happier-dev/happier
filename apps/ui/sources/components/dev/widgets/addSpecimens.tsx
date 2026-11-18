@@ -8,7 +8,9 @@ import { SessionBoardDeclarativeContent } from '@/components/sessions/board/Sess
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { WIDGET_ADD_SURFACE_PX, WidgetAddPanel } from '@/components/widgets/add/WidgetAddSurface';
 import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from '@/components/widgets/add/widgetAddSections';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { buildHomeWidgetAddSections } from '@/components/widgets/add/HomeWidgetAddPopover';
+import { selectBuiltinWidgetCandidates, selectWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
 import { projectSessionBoard } from '@/sync/domains/session/board';
 import { t } from '@/text';
@@ -136,7 +138,52 @@ function CompanionAdd(props: Readonly<{ phone: boolean }>) {
     );
 }
 
+/**
+ * Home's Add widget with the Telemetry section (lab `p7Surfaces-add`): the real Home gallery over Happier's own
+ * widgets and the Telemetry widgets as their manifest declares them, each row with its purpose line.
+ */
+const TELEMETRY_WIDGETS = [
+    { localId: 'app-vitals', title: 'App vitals', description: 'Requests, p95 and errors, each with its line' },
+    { localId: 'metric', title: 'Metric', description: 'Latency, errors, requests or heap over time' },
+    { localId: 'slowest-routes', title: 'Slowest routes', description: 'The slowest routes and their error rates' },
+] as const;
+
+function HomeTelemetryAdd(props: Readonly<{ phone: boolean }>) {
+    const sections = React.useMemo(() => {
+        // The Telemetry widgets' declarations (packages/plugins/telemetry/src/widgets.ts), as the daemon projects them.
+        const telemetry = selectWidgetCandidates(widgetProjectionOf(
+            TELEMETRY_WIDGETS.map(widget => ({
+                pluginId: 'happier.telemetry', target: 'app' as const, homeDefault: 'available' as const,
+                sizeDeclaration: { sizes: ['medium', 'wide'], defaultSize: 'medium' as const }, ...widget,
+            })),
+            { 'happier.telemetry': widgetInstalledPackage('happier.telemetry', 'Telemetry') },
+        )).filter(candidate => candidate.surface !== undefined);
+        return buildHomeWidgetAddSections({
+            candidates: [...selectBuiltinWidgetCandidates(), ...telemetry],
+            instances: [],
+            addInstance: async () => ({ ok: true }),
+            scope: null,
+        });
+    }, []);
+    return (
+        <Surface phone={props.phone}>
+            <WidgetAddPanel
+                testID="specimen-add-home-telemetry"
+                title={t('widgetAdd.homeTitle')}
+                hint={t('widgetAdd.homeHint')}
+                searchPlaceholder={t('widgetAdd.searchWidgets')}
+                addLabel={t('widgetAdd.addToHome')}
+                composition={props.phone ? 'push' : 'split'}
+                sections={sections}
+                phone={props.phone}
+                onRequestClose={NOOP}
+            />
+        </Surface>
+    );
+}
+
 export const ADD_SPECIMEN_FRAMES: WidgetSpecimenFrames = {
     WB: ({ phone }) => <BoardAdd phone={phone} />,
     WC3add: ({ phone }) => <CompanionAdd phone={phone} />,
+    WHtelemetry: ({ phone }) => <HomeTelemetryAdd phone={phone} />,
 };

@@ -116,6 +116,19 @@ describe('Widget Add candidates', () => {
         });
     });
 
+    it('describes a plugin widget by its declared purpose line, which Add widget shows under its title', () => {
+        const candidates = selectSessionWidgetCandidates(projectionOf(
+            [inlineEntry({ pluginId: 'acme.telemetry', localId: 'vitals', title: 'App vitals',
+                description: { key: 'acme.vitals.description', fallback: 'Requests, p95 and errors' } }),
+            inlineEntry({ pluginId: 'acme.telemetry', localId: 'routes', title: 'Slowest routes' })],
+            { 'acme.telemetry': installedPackage('acme.telemetry', 'Telemetry') },
+        ));
+        expect(Object.fromEntries(candidates.map(candidate => [candidate.title, candidate.description]))).toEqual({
+            'App vitals': 'Requests, p95 and errors',
+            'Slowest routes': undefined,
+        });
+    });
+
     it('names a saved copy of an installed widget by that widget\u2019s plugin, not by its own name (already its title)', () => {
         const projection = projectionOf(
             [inlineEntry({ pluginId: 'acme.review', localId: 'review-status-widget', title: 'Review status' })],

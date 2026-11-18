@@ -7,6 +7,7 @@ import { readWidgetInputTargetV1, WidgetConnectedAccountPurposeBindingV1Schema, 
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev/protocol/inputs';
+import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, type BuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetDefinitionRefV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { t } from '@/text';
 import { readUsageBreakdownsInstanceTitle } from '@/components/settings/usage/usageBreakdownTitle';
@@ -294,6 +295,9 @@ function describeWidgetPlacements(
         const sizeDeclaration = WidgetSizeDeclarationV1Schema.safeParse(placement.sizeDeclaration);
         const publicPresentation = WidgetPublicSnapshotPresentationV1Schema.safeParse(placement.publicPresentation);
         if (!sizeDeclaration.success) continue;
+        // The widget's own purpose line ("Requests, p95 and errors"), as its manifest declares it.
+        const declaredDescription = PluginLocalizedStringV2Schema.safeParse(placement.display.description);
+        const description = declaredDescription.success ? localize(surface.pluginId, declaredDescription.data).trim() : '';
         const purposeBindings = Array.isArray(placement.connectedAccountPurposeBindings)
             ? placement.connectedAccountPurposeBindings.map((binding) => WidgetConnectedAccountPurposeBindingV1Schema.safeParse(binding)) : [];
         const resources = Array.isArray(placement.resources)
@@ -304,6 +308,7 @@ function describeWidgetPlacements(
             surface,
             key,
             title: resolvePluginSurfaceDestinationLabel(placement, localize),
+            ...(description ? { description } : {}),
             pluginName,
             sharedPluginName: (displayNameCounts.get(pluginName) ?? 0) > 1,
             icon: resolvePluginSurfaceDestinationIcon(placement),
