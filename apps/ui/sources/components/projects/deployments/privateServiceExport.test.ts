@@ -112,4 +112,18 @@ describe('private service export authoring', () => {
       scheme: 'redis', hostPort: 16379, reach: { kind: 'happierNetwork' } });
     expect(next.ownServer.serviceExports.map(entry => [entry.key, entry.exposure])).toEqual([['database', 'loopback'], ['cache', 'loopback']]);
   });
+
+  it('keeps normalized Compose output readable when the stored source is JSON', () => {
+    const base = createDeploymentEnvironmentDetailV1().content;
+    const content = { ...base, definition: { kind: 'stored' as const, contentRevision: 1,
+      composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: '{"services":{"db":{"image":"postgres:17","ports":["5432:5432"]}}}',
+      profiles: [], services: ['db'] } };
+    const patch = buildPrivateServiceExportPatch(content, { key: 'database', service: 'db', containerPort: 5432,
+      scheme: 'postgres', hostPort: 15432, reach: { kind: 'happierNetwork' } });
+    expect(patch.definition.document).toContain('services:');
+    expect(patch.definition.document).not.toMatch(/^"services":/m);
+    expect(patch.definition.document).not.toMatch(/^    "image":/m);
+    expect(parse(patch.definition.document).services.db.image).toBe('postgres:17');
+  });
 });
