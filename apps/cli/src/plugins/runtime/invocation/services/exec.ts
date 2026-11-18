@@ -987,6 +987,8 @@ async function resolveExecRequesterIdentity(input: Readonly<{
 /** The one final tuple producer, after the caller's executable/effect admission. */
 async function finalizeHostExecLaunch(input: Readonly<{
     launch: ResolvedHostExecLaunch;
+    /** Explicit invocation values, excluding the ambient host environment. */
+    launchEnvironmentKeys?: readonly string[];
     requestedCwd?: string;
     projectLaunch?: HostProjectNativeLaunchAdmission;
     agentIsolation?: HostAgentIsolationLaunchContext;
@@ -1079,6 +1081,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             }) : { args, environment: { ...environment, ...material.environment }, selectedMaterials: material.selectedMaterials };
             assertCurrent();
             const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
+                selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(input.launchEnvironmentKeys ?? [])],
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 sessionMcpContext: material.sessionMcpContext });
@@ -1783,6 +1786,7 @@ export function createStablePluginExecService(params: Readonly<{
             const authorizedLaunch = { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) };
             return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({
                 launch: authorizedLaunch,
+                launchEnvironmentKeys: Object.keys(request.env ?? {}),
                 ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
                 agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
                 ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1883,6 +1887,7 @@ export function createStablePluginExecService(params: Readonly<{
             signal,
             assertCurrent,
             projectLaunch,
+            launchEnvironmentKeys: Object.keys(request.env ?? {}),
             ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
             agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             agentNativeLaunch,

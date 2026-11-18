@@ -40,6 +40,31 @@ function nativeContext(root: string): HostAgentIsolationLaunchContext {
 const requesterIdentity = { kind: 'isolated', separationRequired: false, requester: {
   serverId: 'home', accountId: 'owner', machineId: 'team-machine', installationId: 'installation' } } as const;
 
+it.skipIf(process.platform !== 'linux')('keeps explicit OpenCode server authentication in the native frame without ambient daemon credentials', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-native-server-auth-'));
+  const controller = new AbortController();
+  try {
+    const spec = buildOpenCodeManagedServerSpawnSpec({ id: 'member-server', dialect: 'v2', systemToolId: 'opencode-cli' });
+    if (spec.mode.kind !== 'spawn' || spec.clientAccess?.kind !== 'hostBasic') throw new Error('Expected host-authenticated server');
+    // The managed-service owner injects this after native material preparation.
+    const passwordKey = spec.clientAccess.injectPasswordEnvironmentKey;
+    const exec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+      resolveExecutable: async () => ({ command: '/fixture/opencode' }), resolvePath: async () => root,
+      environment: { UNSELECTED_DAEMON_CREDENTIAL: 'ambient-private-value' },
+      agentIsolation: nativeContext(root), requesterIdentity });
+    const launch = await authorizePluginExecLaunchForHost(exec, {
+      ...spec.mode.launch, env: { ...spec.mode.launch.env, [passwordKey]: 'synthetic-host-password',
+        HAPPIER_DAEMON_TOKEN: 'synthetic-control-value' },
+    });
+    try {
+      const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
+      expect(frame.environment[passwordKey]).toBe('synthetic-host-password');
+      expect(frame.environment).not.toHaveProperty('UNSELECTED_DAEMON_CREDENTIAL');
+      expect(frame.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
+    } finally { await launch.release(); }
+  } finally { controller.abort(); await rm(root, { recursive: true, force: true }); }
+});
+
 it.skipIf(process.platform !== 'linux').each(['probeModelsRaw', 'probeCatalogsRaw'] as const)(
   'selects generated Pi preflight files before native launch through %s', async method => {
     const root = await mkdtemp(join(tmpdir(), 'pi-preflight-member-'));
