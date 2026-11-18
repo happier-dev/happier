@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -26,6 +27,7 @@ import {
   type SessionProjectFilesReturnReviewState,
 } from '@/sync/ops/sessionProjectFilesReturn';
 import { t } from '@/text';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -80,6 +82,12 @@ type Phase =
   | Readonly<{ kind: 'review'; state: SessionProjectFilesReturnReviewState }>
   | Readonly<{ kind: 'applied'; count: number }>;
 
+function readFailureAppliedPaths(failure: ActionExecuteFailure): readonly string[] {
+  return Array.isArray(failure.details?.appliedPaths)
+    ? failure.details.appliedPaths.filter((path): path is string => typeof path === 'string')
+    : [];
+}
+
 function ProjectFilesReturnModal(
   props: CustomModalInjectedProps & ReturnInput,
 ) {
@@ -94,9 +102,9 @@ function ProjectFilesReturnModal(
   );
   const [phase, setPhase] = React.useState<Phase>({ kind: 'loading' });
   const [busy, setBusy] = React.useState<'apply' | string | null>(null);
-  const [applyFailure, setApplyFailure] = React.useState<string | null>(null);
-  // Conflicted files the person brought in with "Use the sandbox's": already applied, so out of Apply.
-  const [swapped, setSwapped] = React.useState<ReadonlySet<string>>(
+  const [applyFailure, setApplyFailure] = React.useState<ActionExecuteFailure | null>(null);
+  // Files already brought back, including successful files from a return with remaining conflicts.
+  const [appliedFiles, setAppliedFiles] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(
@@ -138,8 +146,8 @@ function ProjectFilesReturnModal(
     () =>
       review?.paths
         .map((path) => path.path)
-        .filter((path) => !conflicts.has(path) && !swapped.has(path)) ?? [],
-    [conflicts, review, swapped],
+        .filter((path) => !conflicts.has(path) && !appliedFiles.has(path)) ?? [],
+    [appliedFiles, conflicts, review],
   );
   const files = React.useMemo(
     () =>
@@ -158,6 +166,14 @@ function ProjectFilesReturnModal(
   const applyUnavailable =
     review?.applyUnavailableReason === 'baseline_unavailable';
 
+  const retainApplyFailure = React.useCallback((failure: ActionExecuteFailure) => {
+    setApplyFailure(failure);
+    const paths = readFailureAppliedPaths(failure);
+    if (paths.length > 0) {
+      setAppliedFiles((current) => new Set([...current, ...paths]));
+    }
+  }, []);
+
   const apply = React.useCallback(() => {
     if (!review || applyPaths.length === 0 || busy) return;
     setBusy('apply');
@@ -172,17 +188,21 @@ function ProjectFilesReturnModal(
         );
         setBusy(null);
         if (outcome.kind === 'failed') {
-          setApplyFailure(outcome.failure.errorCode);
+          retainApplyFailure(outcome.failure);
+          return;
+        }
+        if (outcome.kind === 'conflicts') {
+          setAppliedFiles((current) => new Set([...current, ...outcome.result.appliedPaths]));
           return;
         }
         setPhase({
           kind: 'applied',
-          count: outcome.result.appliedPaths.length + swapped.size,
+          count: outcome.result.appliedPaths.length + appliedFiles.size,
         });
       })(),
       { tag: 'ProjectFilesReturn.apply' },
     );
-  }, [applyPaths, busy, context, review, swapped.size, target]);
+  }, [appliedFiles.size, applyPaths, busy, context, retainApplyFailure, review, target]);
 
   const takeSandboxVersion = React.useCallback(
     (path: string) => {
@@ -199,15 +219,15 @@ function ProjectFilesReturnModal(
           );
           setBusy(null);
           if (outcome.kind === 'failed') {
-            setApplyFailure(outcome.failure.errorCode);
+            retainApplyFailure(outcome.failure);
             return;
           }
-          setSwapped((current) => new Set([...current, path]));
+          setAppliedFiles((current) => new Set([...current, path]));
         })(),
         { tag: 'ProjectFilesReturn.useSandbox' },
       );
     },
-    [busy, context, review, target],
+    [busy, context, retainApplyFailure, review, target],
   );
 
   const footer = React.useMemo(
@@ -314,6 +334,7 @@ function ProjectFilesReturnModal(
       />
     );
   }
+  const partiallyAppliedPaths = applyFailure ? readFailureAppliedPaths(applyFailure) : [];
   return (
     <View testID="project-files-return.review" style={styles.body}>
       <Text style={styles.summary}>
@@ -326,13 +347,22 @@ function ProjectFilesReturnModal(
         {t('machineDetailPage.projectFiles.returnNote')}
       </Text>
       {applyFailure ? (
-        <SurfaceStateCard
-          testID="project-files-return.apply-failed"
-          kind="error"
-          size="line"
-          title={t('machineDetailPage.projectFiles.applyFailed')}
-          diagnosticCode={applyFailure}
-        />
+        <>
+          <SurfaceStateCard
+            testID="project-files-return.apply-failed"
+            kind="error"
+            size="line"
+            title={presentActionExecutionFailure(applyFailure).reason}
+            diagnosticCode={applyFailure.errorCode}
+          />
+          {partiallyAppliedPaths.length > 0 ? (
+            <Text style={styles.summary}>
+              {t('machineDetailPage.projectFiles.changedCount', { count: partiallyAppliedPaths.length })}
+              {'\n'}
+              {partiallyAppliedPaths.join('\n')}
+            </Text>
+          ) : null}
+        </>
       ) : null}
       {conflicts.size > 0 ? (
         <Text style={styles.conflictHelp}>
@@ -359,7 +389,7 @@ function ProjectFilesReturnModal(
         renderBeforeFileRow={({ file }) =>
           file.filePath &&
           conflicts.has(file.filePath) &&
-          !swapped.has(file.filePath) ? (
+          !appliedFiles.has(file.filePath) ? (
             <View style={styles.conflict}>
               <Text style={styles.conflictText}>
                 {t('machineDetailPage.projectFiles.conflictsTitle')}

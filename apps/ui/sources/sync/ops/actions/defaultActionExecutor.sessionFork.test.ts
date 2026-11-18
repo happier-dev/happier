@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { AgentNativeResumeIdentityV1Schema} from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
@@ -44,6 +46,12 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION } from '@/utils/system/versionUtils';
 import { readMachineDaemonCliVersionForServerScope } from '@/sync/domains/machines/readMachineDaemonCliVersionForServerScope';
+
+// Only native modal presentation is replaced; custom content and Action admission stay real.
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock({ renderCustomModals: true, confirmResult: true }).module;
+});
 
 let daemonAnswer: (request: SocketRpcRequestPayload) => unknown = () => { throw new Error('Unexpected daemon request'); };
 const outgoing = installSessionActionRpcBoundary(request => daemonAnswer(request));
@@ -618,6 +626,62 @@ describe('default Action executor Session lifecycle contracts', () => {
       .toMatchObject({ ok: true, result: { appliedPaths: ['src/file.ts'], conflicts: [] } });
     expect(appliedInput)
       .toMatchObject({ paths: ['src/file.ts'], replaceConflictPaths: ['src/file.ts'] });
+  });
+
+  it.each([
+    { outcome: 'failed', appliedPaths: ['tree/first.txt', 'tree/nested/also.txt'] },
+    { outcome: 'failed', appliedPaths: [] },
+    { outcome: 'conflicts', appliedPaths: ['tree/first.txt', 'tree/nested/also.txt'] },
+  ])('shows honest copied-file $outcome effects for $appliedPaths', async ({ outcome, appliedPaths }) => {
+    installSession();
+    const conflicts = [{ path: 'tree/both.txt', code: 'both_changed' as const }];
+    const review = { returnId: 'b'.repeat(64), sessionId: 'sess_parent', repositoryRootPath: '/repo',
+      paths: [{ path: 'tree', conflicts, files: ['tree/first.txt', 'tree/nested/also.txt', 'tree/both.txt'].map(path => ({
+        path, changeKind: 'modified', binary: false, generated: false, lockfile: false,
+        evidence: { state: 'available' as const, unifiedDiff: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n` }, occurrences: [],
+      })) }] };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine_1', installationId: 'return-installation',
+      tokenEpoch: 0, actionId: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], requesterInvocation: 'credentials', execute: () => review });
+    let answer: unknown = outcome === 'failed'
+      ? { ok: false as const, errorCode: 'conflict_changed', error: 'conflict_changed', details: { appliedPaths, path: 'tree/both.txt' } }
+      : { appliedPaths, conflicts };
+    let applyReached = false;
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine_1', installationId: 'return-installation',
+      tokenEpoch: 0, actionId: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], requesterInvocation: 'optional',
+      execute: () => { applyReached = true; return answer; },
+      failure: value => { const parsed = ActionExecuteFailureSchema.safeParse(value); return parsed.success ? parsed.data : null; } });
+    daemonAnswer = request => request.method.endsWith(`:${SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0]}`) ? review : answer;
+    const { Modal, ModalProvider } = await import('@/modal');
+    const { openProjectFilesReturn } = await import('@/components/sessions/files/turnChanges/projectFilesReturn/ProjectFilesReturnModal');
+    const { t } = await import('@/text');
+    Modal.hideAll();
+    const screen = await renderScreen(React.createElement(ModalProvider));
+    await act(async () => { openProjectFilesReturn({ sessionId: 'sess_parent', machineName: 'Original machine',
+      source: { serverId, machineId: 'machine_1', rootPath: '/repo' } }); });
+    await vi.waitFor(() => expect(screen.findByTestId('project-files-return.apply')).not.toBeNull());
+    await act(async () => { await screen.pressByTestIdAsync('project-files-return.apply'); });
+    await vi.waitFor(() => expect(applyReached, screen.getTextContent()).toBe(true));
+    await vi.waitFor(() => expect(screen.findByTestId('project-files-return.applied')
+      ?? screen.findAll(node => node.props.testID === 'project-files-return.apply' && node.props.loading === false)[0]).toBeDefined());
+    if (outcome === 'failed') {
+      await vi.waitFor(() => expect(screen.findByTestId('project-files-return.apply-failed')).not.toBeNull());
+      expect(screen.getTextContent()).toContain(t('common.requestFailed'));
+      expect(screen.getTextContent()).not.toContain(t('machineDetailPage.projectFiles.applyFailed'));
+      for (const path of appliedPaths) expect(screen.getTextContent()).toContain(path);
+      if (appliedPaths.length > 0) expect(screen.getTextContent()).toContain(t('machineDetailPage.projectFiles.changedCount', { count: appliedPaths.length }));
+    } else {
+      await vi.waitFor(() => expect(screen.findByTestId('project-files-return.use-sandbox.tree/both.txt')).not.toBeNull());
+    }
+    expect(screen.findByTestId('project-files-return.applied')).toBeNull();
+    // The person explicitly replaces the remaining conflict, then finishes the same captured return.
+    answer = { appliedPaths: ['tree/both.txt'], conflicts: [] };
+    await act(async () => { await screen.pressByTestIdAsync('project-files-return.use-sandbox.tree/both.txt'); });
+    await vi.waitFor(() => expect(screen.findByTestId('project-files-return.use-sandbox.tree/both.txt')).toBeNull());
+    answer = { appliedPaths: appliedPaths.length === 0 ? ['tree/first.txt', 'tree/nested/also.txt'] : [], conflicts: [] };
+    await act(async () => { await screen.pressByTestIdAsync('project-files-return.apply'); });
+    await vi.waitFor(() => expect(screen.findByTestId('project-files-return.applied')).not.toBeNull());
+    expect(screen.getTextContent()).toContain(t('machineDetailPage.projectFiles.changedCount', { count: 3 }));
+    await act(async () => { Modal.hideAll(); });
   });
 
   it('preserves source authority and direct-to-persisted workspace options on handoff', async () => {
