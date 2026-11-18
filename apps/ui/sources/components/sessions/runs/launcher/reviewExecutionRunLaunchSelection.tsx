@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { View } from 'react-native';
 
 import { Modal } from '@/modal';
@@ -19,7 +20,7 @@ export type ReviewExecutionRunLaunchSelectionRequest = Readonly<{
     anchor?: PopoverAnchor;
     sessionId: string;
     serverId: string;
-    draft: Readonly<{ engineIds: readonly string[]; instructions: string }>;
+    draft: Readonly<{ reviewers: readonly ReviewReviewerSelectionV1[]; instructions: string }>;
     isCurrent: () => boolean;
 }>;
 

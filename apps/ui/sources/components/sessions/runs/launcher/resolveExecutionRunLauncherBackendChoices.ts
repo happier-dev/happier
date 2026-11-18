@@ -1,4 +1,6 @@
-import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, readBackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agents';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
@@ -23,6 +25,8 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     targetKey: string;
     backendId: string;
+    /** Exact id admitted by the review inventory; configured engines retain their Agent target. */
+    reviewEngineId?: string;
     /** Operational Agent identity that owns this selected backend. */
     agentId: string;
     title: string;
@@ -176,16 +180,17 @@ function resolveCatalogBackendChoices(params: ResolveBackendChoicesParams): read
             const isConfigured = target.kind === 'agent'
                 ? Boolean(target.definitionId && readBackendTargetRefV2(target).configuredBackendId)
                 : Boolean(target.configuredBackendId);
-            if (isConfigured && catalogEntry?.kind !== 'configuredBackend') {
-                return [];
-            }
-            const backendId = catalogEntry?.backendId ?? (target.kind === 'backend' ? target.backendId : option.id);
+            const backendId = catalogEntry?.backendId ?? (target.kind === 'backend' ? target.backendId : target.definitionId ?? option.id);
+            const canonicalTarget = parseBackendTargetKeyV2(resolveBackendTargetKeyV2(target));
             const projectedAgentId = catalogEntry?.agentId ?? (isConfigured
-                ? LEGACY_COMPAT_PRIMARY_AGENT_ID
+                ? canonicalTarget.kind === 'agent'
+                    ? resolveBundledAgentIdFromContributionIdentity(canonicalTarget.identity) ?? buildQualifiedPluginContributionKey(canonicalTarget.identity)
+                    : LEGACY_COMPAT_PRIMARY_AGENT_ID
                 : params.mergedBackendProjectionById?.[backendId]?.agentId?.trim()
                     || params.mergedProviderProjectionById?.[backendId]?.agentId?.trim()
                     || backendId);
             return [{
+                reviewEngineId: option.id,
                 backendTarget: target,
                 targetKey: resolveBackendTargetKeyV2(target),
                 backendId,

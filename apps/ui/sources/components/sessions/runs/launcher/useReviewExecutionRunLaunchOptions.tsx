@@ -14,6 +14,7 @@ import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLau
 import type { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 import { useExecutionRunTeamCredentialModel } from './useExecutionRunTeamCredentialModel';
 import { applyExecutionRunChildSelection, clearExecutionRunChildSelection } from './executionRunChildChoice';
+import { useReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { t } from '@/text';
 
 export type ReviewExecutionRunLaunchSelection = Extract<PluginUiSelectActionInputResultV1, { kind: 'executionRunLaunch' }>;
@@ -27,15 +28,17 @@ export async function admitReviewExecutionRunLaunchSelection(params: Readonly<{
 }>): Promise<ReviewExecutionRunLaunchSelection | null> {
     if (!params.isCurrent()) return null;
     const admitted = ReviewStartInputSchema.parse(params.draft);
+    const engines = admitted.reviewers.filter(reviewer => reviewer.kind === 'engine');
+    const selected = engines.length === 1 ? { ...admitted, ...engines[0] } : admitted;
     await params.launcher.admitExactTarget({
-        secretReferenceOverlay: admitted.secretReferenceOverlay !== undefined,
-        teamCredentialModel: admitted.teamCredentialModel !== undefined,
+        secretReferenceOverlay: selected.secretReferenceOverlay !== undefined,
+        teamCredentialModel: selected.teamCredentialModel !== undefined,
     }, params.operationId);
     if (!params.isCurrent() || !params.launcher.accountLifetime?.isCurrent()) return null;
     return { kind: 'executionRunLaunch', input: {
-        ...(admitted.secretReferenceOverlay ? { secretReferenceOverlay: admitted.secretReferenceOverlay } : {}),
-        ...(admitted.teamCredentialModel ? { teamCredentialModel: admitted.teamCredentialModel } : {}),
-        ...(admitted.teamCredentialSessionBindingConsent ? { teamCredentialSessionBindingConsent: admitted.teamCredentialSessionBindingConsent } : {}),
+        ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}),
+        ...(selected.teamCredentialModel ? { teamCredentialModel: selected.teamCredentialModel } : {}),
+        ...(selected.teamCredentialSessionBindingConsent ? { teamCredentialSessionBindingConsent: selected.teamCredentialSessionBindingConsent } : {}),
     } };
 }
 
@@ -56,7 +59,8 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
     /** The plugin host's credential-only settlement cannot carry a personal model choice. */
     credentialSelectionOnly?: boolean;
 }>) {
-    const { launcher, actionInput: launchInput, setActionInput: setLaunchInput } = params;
+    const { launcher } = params;
+    const { actionInput: launchInput, setActionInput: setLaunchInput } = useReviewLauncherEngineConfiguration(params.actionInput, params.setActionInput, Array.isArray(params.actionInput.reviewers));
     const { settings, session, accountBinding, machineId } = launcher;
     const [secretState, setSecretState] = React.useState<ExecutionRunSecretReferenceOverlayState>({ readiness: { ok: true } });
     const sharedSecrets = useFeatureEnabled('teams', { scopeKind: 'spawn', serverId: params.serverId });
@@ -85,9 +89,9 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
     });
     const onSelectModel = React.useCallback((selection: ProviderBoundModelRef | null) => {
         params.onSelectionChange?.();
-        setLaunchInput(previous => selection
+        params.setActionInput(previous => selection
             ? applyExecutionRunChildSelection(previous, selection) : clearExecutionRunChildSelection(previous));
-    }, [params.onSelectionChange, setLaunchInput]);
+    }, [params.onSelectionChange, params.setActionInput]);
     // Native, Provider and Team offers share the exact Agent's existing catalog owner.
     const modelChoice = params.credentialSelectionOnly ? teamCredential.picker
         : model.pickerProps ? <SessionModelPicker {...model.pickerProps} showTitle={false} onSelect={onSelectModel} /> : null;

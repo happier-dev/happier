@@ -28,9 +28,10 @@ import { resolveExecutionRunLauncherActionId, resolveExecutionRunTargetFieldPath
 import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
 import { doesExecutionRunProfileMatchSelectedBackends, resolveExecutionRunLauncherProfileChoices } from './resolveExecutionRunLauncherProfileChoices';
 import { resolveExecutionRunPermissionAgentId } from './resolveExecutionRunPermissionAgentId';
+import { readReviewLauncherReviewers, readReviewLauncherEngineIds, selectReviewLauncherEngines, useReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { clearExecutionRunChildSelection } from './executionRunChildChoice';
 
-export function useExecutionRunLauncherOptionsModel(params: Readonly<{
+export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     sessionId: string | null;
     intent: ExecutionRunIntent;
     actionInput: Record<string, unknown>;
@@ -54,6 +55,9 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     inheritedRoutePresentation?: ReturnType<typeof resolveSessionRoutePresentation>;
     inheritedConnectedServicesSelection?: ConnectedServiceBindingsV2 | null;
 }>) {
+    const configuration = useReviewLauncherEngineConfiguration(rawParams.actionInput, rawParams.setActionInput, rawParams.intent === 'review');
+    const userConfiguration = useReviewLauncherEngineConfiguration(rawParams.actionInput, rawParams.setUserActionInput ?? rawParams.setActionInput, rawParams.intent === 'review');
+    const params = { ...rawParams, ...configuration, setUserActionInput: userConfiguration.setActionInput };
     const actionId = resolveExecutionRunLauncherActionId(params.intent);
     const catalogReady = params.acpCatalogSnapshot?.status === 'ready';
     // Only configured Agents depend on this catalog. Built-in and installed
@@ -90,7 +94,7 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
         [actionSpec, params.actionInput, params.sessionId],
     );
     const backendOptions = React.useMemo<readonly ActionFieldOption[]>(() => backendChoices.map((choice) => ({
-        value: params.intent === 'review' ? choice.backendId : choice.targetKey,
+        value: params.intent === 'review' ? choice.reviewEngineId ?? choice.backendId : choice.targetKey,
         label: choice.title,
         ...(choice.disabled ? { disabled: true as const } : {}),
     })), [backendChoices, params.intent]);
@@ -102,11 +106,13 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     const targetFieldPath = resolveExecutionRunTargetFieldPath(params.intent);
     const targetField = fields.find((field) => field.path === targetFieldPath) ?? null;
     const selectedValues = React.useMemo(() => {
+        if (params.intent === 'review') return readReviewLauncherEngineIds(params.actionInput);
         const raw = getValueAtPath(params.actionInput, targetFieldPath);
         return Array.isArray(raw) ? raw.map(String) : [];
     }, [params.actionInput, targetFieldPath]);
     const selectedBackendChoices = React.useMemo(() => backendChoices.filter((choice) => (
         selectedValues.includes(choice.targetKey) || selectedValues.includes(choice.backendId)
+        || (choice.reviewEngineId !== undefined && selectedValues.includes(choice.reviewEngineId))
     )), [backendChoices, selectedValues]);
     const selectedBackendChoice = selectedBackendChoices.length === 1 && selectedBackendChoices[0]?.disabled !== true
         ? selectedBackendChoices[0]!
@@ -138,8 +144,10 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
 
     React.useEffect(() => {
         if (!catalogReady || !machineAnswered) return;
-        const selectable = backendChoices.filter((choice) => !choice.disabled);
-        const selectableValues = selectable.map((choice) => params.intent === 'review' ? choice.backendId : choice.targetKey);
+        if (params.intent === 'review' && readReviewLauncherReviewers(params.actionInput).length > 0) return;
+        const valueOf = (choice: typeof backendChoices[number]) => params.intent === 'review' ? choice.reviewEngineId ?? choice.backendId : choice.targetKey;
+        const selectable = backendChoices.filter(choice => !choice.disabled);
+        const selectableValues = selectable.map(valueOf);
         const preserved = selectedValues
             .filter((value) => selectableValues.includes(value))
             .slice(0, params.singleTarget ? 1 : undefined);
@@ -155,10 +163,9 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
                 ? []
                 : preferred ? [preferred] : [];
         if (selectedValues.length === next.length && selectedValues.every((value, index) => value === next[index])) return;
-        params.setActionInput((previous) => ({
-            ...previous,
-            ...setValueAtTopLevelPatch(previous, targetFieldPath, next),
-        }));
+        params.setActionInput(previous => params.intent === 'review' ? selectReviewLauncherEngines(previous, next) : {
+            ...previous, ...setValueAtTopLevelPatch(previous, targetFieldPath, next),
+        });
     }, [catalogReady, machineAnswered, backendChoices, initialBackendTargetKey, params.intent, params.setActionInput, params.singleTarget, selectedValues, targetField?.requireExplicitSelection, targetFieldPath]);
 
     React.useEffect(() => {
@@ -183,7 +190,7 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
         }
         if (!selectedBackendChoice || backendTargetKeysMatch(draftModelAgentTargetKey, selectedBackendChoice.backendTarget)) return;
         if (params.intent === 'review') {
-            params.setActionInput(clearExecutionRunChildSelection);
+            rawParams.setActionInput(clearExecutionRunChildSelection);
             return;
         }
         params.setActionInput(({ modelSelection: _modelSelection, ...rest }) => rest);
@@ -218,10 +225,10 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     const onSelectBackend = React.useCallback((targetKey: string) => {
         const choice = backendChoices.find((candidate) => candidate.targetKey === targetKey);
         if (!choice || choice.disabled) return;
-        const value = params.intent === 'review' ? choice.backendId : choice.targetKey;
+        const value = params.intent === 'review' ? choice.reviewEngineId ?? choice.backendId : choice.targetKey;
         (params.setUserActionInput ?? params.setActionInput)((previous) => {
             const currentRaw = getValueAtPath(previous, targetFieldPath);
-            const current = Array.isArray(currentRaw) ? currentRaw.map(String) : [];
+            const current = params.intent === 'review' ? readReviewLauncherEngineIds(previous) : Array.isArray(currentRaw) ? currentRaw.map(String) : [];
             const next = params.singleTarget
                 ? [value]
                 : current.includes(value)
@@ -229,19 +236,20 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
                     : typeof targetField?.maxSelections === 'number' && current.length >= targetField.maxSelections
                         ? current
                         : [...current, value];
-            return { ...previous, ...setValueAtTopLevelPatch(previous, targetFieldPath, next) };
+            return params.intent === 'review' ? selectReviewLauncherEngines(previous, next)
+                : { ...previous, ...setValueAtTopLevelPatch(previous, targetFieldPath, next) };
         });
     }, [backendChoices, params.intent, params.setActionInput, params.setUserActionInput, params.singleTarget, targetField?.maxSelections, targetFieldPath]);
     const onSelectProfile = React.useCallback((choice: (typeof profileChoices)[number]) => {
         if (!choice.compatibleAgentId) return;
         const backend = backendChoices.find((candidate) => candidate.backendId === choice.compatibleAgentId);
         if (!backend || backend.disabled) return;
-        const value = params.intent === 'review' ? backend.backendId : backend.targetKey;
+        const value = params.intent === 'review' ? backend.reviewEngineId ?? backend.backendId : backend.targetKey;
         (params.setUserActionInput ?? params.setActionInput)((previous) => ({
             ...previous,
+            ...(params.intent === 'review' ? selectReviewLauncherEngines(previous, [value]) : setValueAtTopLevelPatch(previous, targetFieldPath, [value])),
             profileId: choice.id,
             profileSourceCustody: choice.sourceCustody,
-            ...setValueAtTopLevelPatch(previous, targetFieldPath, [value]),
         }));
     }, [backendChoices, params.intent, params.setActionInput, params.setUserActionInput, profileChoices, targetFieldPath]);
     const onPatch = React.useCallback((patch: Record<string, unknown>) => {
@@ -259,9 +267,9 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     // Review targets are explicitly chosen; an empty default is a missing reviewer, not a
     // permission/scope failure. Send and the control that repairs it consume this one answer.
     const targetRequirement = React.useMemo(() => (params.intent === 'review'
-        ? selectedBackendChoices.length > 0 : selectedBackendChoice !== null)
+        ? readReviewLauncherReviewers(params.actionInput).length > 0 : selectedBackendChoice !== null)
         ? null : { code: params.intent === 'review' ? 'reviewer_required' : 'agent_required', fieldPath: targetFieldPath },
-    [params.intent, selectedBackendChoices.length, selectedBackendChoice, targetFieldPath]);
+    [params.intent, params.actionInput, selectedBackendChoice, targetFieldPath]);
     return {
         catalogReady,
         actionId,

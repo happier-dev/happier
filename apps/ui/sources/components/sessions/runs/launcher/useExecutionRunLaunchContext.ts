@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readReviewLauncherReviewers, readReviewLauncherEngineIds } from './reviewLauncherSelection';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, PersistedBackendTargetRefV2Schema, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -150,7 +151,7 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
     const startAction = React.useCallback(async (actionId: ActionId, input: Record<string, unknown>, readinessOperationId: string,
         launchOrigin?: ExecutionRunLaunchOrigin) => {
         const rawTargets = actionId === 'execution.run.start' ? [input.backendTarget]
-            : actionId === 'review.start' ? input.engineIds : input.backendTargetKeys;
+            : actionId === 'review.start' ? readReviewLauncherEngineIds(input) : input.backendTargetKeys;
         const runBackendTargets = Array.isArray(rawTargets) ? rawTargets.flatMap((value) => {
             if (actionId === 'execution.run.start') {
                 const target = PersistedBackendTargetRefV2Schema.safeParse(value);
@@ -164,8 +165,10 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
                 return [];
             }
         }) : [];
-        await admitExactTarget({ secretReferenceOverlay: input.secretReferenceOverlay !== undefined,
-            teamCredentialModel: input.teamCredentialModel !== undefined, roleBinding: input.roleId !== undefined }, readinessOperationId, runBackendTargets);
+        const reviewers = actionId === 'review.start' ? readReviewLauncherReviewers(input) : [];
+        await admitExactTarget({ secretReferenceOverlay: input.secretReferenceOverlay !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.secretReferenceOverlay !== undefined),
+            teamCredentialModel: input.teamCredentialModel !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.teamCredentialModel !== undefined),
+            roleBinding: input.roleId !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.roleId !== undefined) }, readinessOperationId, runBackendTargets);
         // `execution.run.start` names a rowless Run with an explicit null Session; the fan-out Actions (a detached
         // review carries `target: { kind: 'detached' }`) take no Session key at all.
         return executor.execute(actionId, { ...input, ...(sessionId !== null || actionId === 'execution.run.start' ? { sessionId } : {}),

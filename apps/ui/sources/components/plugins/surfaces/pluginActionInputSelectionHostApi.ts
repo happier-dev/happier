@@ -263,7 +263,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                     }
                     const machineId = typeof input.host.machineId === 'string' ? input.host.machineId.trim() : '';
                     const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
-                    const draft = 'draft' in parsed.data ? parsed.data.draft : undefined;
+                    const draft = 'draft' in parsed.data && !('sessionId' in parsed.data) ? parsed.data.draft : undefined;
                     const outcome = await composer({
                         serverId,
                         ...(draft === undefined ? {} : { draft }),

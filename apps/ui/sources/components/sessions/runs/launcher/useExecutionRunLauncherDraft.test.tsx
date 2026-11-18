@@ -38,13 +38,13 @@ it('ignores malformed comparison context when reopening a retained draft', async
     const hook = await renderHook(() => useExecutionRunLauncherDraft({ lifetime, sessionId, draftKey: 'review',
         createDefaultInput: () => ({}),
     }));
-    await act(async () => hook.getCurrent().setUserActionInput({ engineIds: ['claude'] }));
+    await act(async () => hook.getCurrent().setUserActionInput({ reviewers: [{ kind: 'engine', engineId: 'claude' }] }));
     const document = getSessionDraftSnapshot(scope, address)?.document;
     const malformed = { cwd: '/repo', comparison: { kind: 'branch', base: 42, head: 'HEAD' },
         scopeLabel: 'Changes', defaultWalkthrough: true };
     await act(async () => writeExistingSessionDraft({ scope, sessionId,
         patch: { executionRunLauncher: { key: 'review', patch: { selection: {
-            identity: hook.getCurrent().identity, actionInput: { engineIds: ['claude'] }, comparisonReview: malformed,
+            identity: hook.getCurrent().identity, actionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] }, comparisonReview: malformed,
         } } } } }));
     expect(document).not.toBeNull();
     expect(readExecutionRunLauncherComparisonReview(getSessionDraftSnapshot(scope, address)?.document ?? null, 'review')).toBeNull();
@@ -56,6 +56,23 @@ it('keeps detached launcher selections editable without Session draft currentnes
     await act(async () => hook.getCurrent().setUserActionInput({ modelId: 'chosen' }));
     expect(hook.getCurrent().actionInput).toEqual({ modelId: 'chosen' });
     expect(hook.getCurrent().captureSelection()).toBeNull();
+});
+
+it('restores historical review selections through the canonical roster decoder without writing during hydration', async () => {
+    writeExistingSessionDraft({ scope, sessionId, patch: { executionRunLauncher: { key: 'review', patch: { selection: {
+        identity: { correlationId: 'historical-review', inputLocalId: 'historical-input' },
+        actionInput: { engineIds: ['claude'], instructions: '', modelId: 'selected-model',
+            includeSessionTranscript: true, sourceSession: { sessionId, serverId: scope.serverId } },
+    } } } } });
+    const saved = getSessionDraftSnapshot(scope, address);
+    const hook = await renderHook(() => useExecutionRunLauncherDraft({ lifetime, sessionId, draftKey: 'review',
+        actionId: 'review.start', createDefaultInput: () => ({}) }));
+    expect(hook.getCurrent().actionInput).toMatchObject({
+        instructions: '', reviewers: [{ kind: 'engine', engineId: 'claude', modelId: 'selected-model' }],
+        includeSessionTranscript: true, sourceSession: { sessionId, serverId: scope.serverId },
+    });
+    expect(hook.getCurrent().actionInput).not.toHaveProperty('engineIds');
+    expect(getSessionDraftSnapshot(scope, address)).toBe(saved);
 });
 
 it('checkpoints the first document edit without committing an unchanged launcher selection', async () => {

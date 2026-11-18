@@ -37,9 +37,9 @@ export function resolveExecutionRunLauncherActionId(intent: ExecutionRunIntent):
     }
 }
 
-/** The Action input field that lists who runs the launch: reviewers are engines, everything else Agent targets. */
-export function resolveExecutionRunTargetFieldPath(intent: ExecutionRunIntent): 'engineIds' | 'backendTargetKeys' {
-    return intent === 'review' ? 'engineIds' : 'backendTargetKeys';
+/** The Action input field that lists who runs the launch: reviews use their roster, everything else Agent targets. */
+export function resolveExecutionRunTargetFieldPath(intent: ExecutionRunIntent): 'reviewers' | 'backendTargetKeys' {
+    return intent === 'review' ? 'reviewers' : 'backendTargetKeys';
 }
 
 export function defaultPermissionModeForExecutionRunIntent(intent: ExecutionRunIntent): PermissionMode {

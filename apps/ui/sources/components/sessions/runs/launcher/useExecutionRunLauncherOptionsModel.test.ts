@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it } from 'vitest';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { useExecutionRunLauncherOptionsModel } from './useExecutionRunLauncherOptionsModel';
@@ -37,13 +38,13 @@ it('exposes the applied inherited draft tuple without stamping it into child lau
 
 afterEach(standardCleanup);
 
-it('keeps a chosen reviewer model, then drops it when another reviewer is added', async () => {
+it('keeps each reviewer model when another reviewer is added', async () => {
     const selected = ProviderBoundModelRefSchema.parse({
         agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'review-source', modelId: 'review-model',
     });
     const hook = await renderHook(() => {
         const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => applyExecutionRunChildSelection({
-            engineIds: ['claude'], permissionMode: 'read_only', instructions: 'Review the captured changes',
+            reviewers: [{ kind: 'engine', engineId: 'claude' }], permissionMode: 'read_only', instructions: 'Review the captured changes',
         }, selected));
         const model = useExecutionRunLauncherOptionsModel({
             sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
@@ -54,11 +55,12 @@ it('keeps a chosen reviewer model, then drops it when another reviewer is added'
         });
         return { actionInput, model };
     });
-    expect(hook.getCurrent().actionInput.modelSelection).toEqual(selected);
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude', modelSelection: selected }]);
+    await act(async () => hook.getCurrent().model.onPatch({ roleId: 'second_opinion' }));
     const nextReviewer = hook.getCurrent().model.backendChoices.find(choice => choice.backendId === 'codex');
     expect(nextReviewer).toBeDefined();
     await act(async () => hook.getCurrent().model.onSelectBackend(nextReviewer!.targetKey));
-    expect(hook.getCurrent().actionInput.engineIds).toEqual(['claude', 'codex']);
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude', modelSelection: selected, roleId: 'second_opinion' }, { kind: 'engine', engineId: 'codex' }]);
     expect(hook.getCurrent().actionInput.instructions).toBe('Review the captured changes');
     expect(hook.getCurrent().actionInput).not.toHaveProperty('modelSelection');
 });
@@ -79,6 +81,42 @@ it('preserves the authored run selection when its required Account catalog is lo
     });
     expect(hook.getCurrent().actionInput.backendTargetKeys).toEqual(['acpBackend:review-bot']);
     expect(hook.getCurrent().model.backendChoices).toEqual([]);
+});
+
+it('retains repeated engine models, Session reviewers and requested people when adding an engine', async () => {
+    const original = ReviewStartInputSchema.parse({ instructions: 'Review this change', reviewers: [
+        { kind: 'engine', engineId: 'claude', modelId: 'first-model' },
+        { kind: 'engine', engineId: 'claude', modelId: 'second-model' },
+        { kind: 'session', session: { sessionId: 'reviewer-session', serverId: 'review-home' } },
+        { kind: 'person', principal: { kind: 'account', accountId: 'reviewer-account' }, required: true },
+    ] });
+    const hook = await renderHook(() => {
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(original);
+        const model = useExecutionRunLauncherOptionsModel({ sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
+            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: {
+                claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] },
+            }, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' } });
+        return { actionInput, model };
+    });
+    const next = hook.getCurrent().model.backendChoices.find(choice => choice.backendId === 'codex')!;
+    await act(async () => hook.getCurrent().model.onSelectBackend(next.targetKey));
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([...original.reviewers, { kind: 'engine', engineId: 'codex' }]);
+    expect(hook.getCurrent().model.targetRequirement).toBeNull();
+});
+
+it('authors the exact configured review engine target from the Machine inventory', async () => {
+    const engineId = 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot';
+    const hook = await renderHook(() => {
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [] });
+        const model = useExecutionRunLauncherOptionsModel({ sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
+            enabledAgentIds: [], executionRunsBackends: { [engineId]: { available: true, intents: ['review'] } },
+            acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' } });
+        return { actionInput, model };
+    });
+    await act(async () => hook.getCurrent().model.onSelectBackend(engineId));
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId }]);
 });
 
 it.each([true, false])('keeps report selection %s explicit through the options owner', async (initial) => {
@@ -102,7 +140,7 @@ it.each([true, false])('keeps report selection %s explicit through the options o
 it('keeps the authored reviewers while the Machine has not answered, then settles them against its answer', async () => {
     let machineBackends: Record<string, { available: boolean; intents: string[] }> | null = null;
     const hook = await renderHook(() => {
-        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ engineIds: ['claude', 'codex'], permissionMode: 'read_only' });
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }], permissionMode: 'read_only' });
         const model = useExecutionRunLauncherOptionsModel({
             sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
             enabledAgentIds: ['claude', 'codex'], executionRunsBackends: machineBackends,
@@ -112,12 +150,12 @@ it('keeps the authored reviewers while the Machine has not answered, then settle
         });
         return { actionInput, model };
     });
-    expect(hook.getCurrent().actionInput.engineIds).toEqual(['claude', 'codex']);
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }]);
     expect(hook.getCurrent().model.backendChoices.every((choice) => choice.disabled)).toBe(true);
     expect(hook.getCurrent().model.initialBackendChoice?.backendId).toBe('claude');
 
     machineBackends = { claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] } };
     await hook.rerender();
     expect(hook.getCurrent().model.backendChoices.map((choice) => choice.disabled)).toEqual([false, false]);
-    expect(hook.getCurrent().actionInput.engineIds).toEqual(['claude', 'codex']);
+    expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }]);
 });

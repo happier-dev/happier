@@ -625,7 +625,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             [serverId]: [...(state.machineListByServerId[serverId] ?? []), otherMachine] },
             sessions: { ...state.sessions, existing_other: createSessionFixture({ id: 'existing_other', serverId,
                 metadata: { machineId: otherMachine.id, path: '/elsewhere', host: 'other' } }) } }));
-        await mount({ intent: detached ? undefined : 'review', initialActionInput: detached ? undefined : { engineIds: ['claude'] },
+        await mount({ intent: detached ? undefined : 'review', initialActionInput: detached ? undefined : { reviewers: [{ kind: 'engine', engineId: 'claude' }] },
             ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}) });
         await waitFor(() => expect(screen.findByTestId('contextual-start-who')).not.toBeNull());
         await showAgentChoices();
@@ -1822,6 +1822,23 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(text).toContain('Second opinion');
         expect(text).not.toContain('runPage.launcher.titles.review');
         expect(text).toContain('runPage.launcher.descriptions.review');
+    });
+    it('authors independent review steps in the live launcher and retains them when folded', async () => {
+        await mount({ intent: 'review' });
+        await reviewers(['claude']);
+        await screen.pressByTestIdAsync('review-start-add-step');
+        expect(screen.findByTestId('review-start-step:1:header')).not.toBeNull();
+        const lists = screen.findAllByType(SelectionList).filter(node => node.props.testID === 'contextual-start-who');
+        expect(lists).toHaveLength(2);
+        const second = lists[1]!;
+        const rows: SelectionListOption[] = second.props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []);
+        await act(async () => { rows.find(row => canonicalTargetKey(row.id) === canonicalTargetKey('codex'))!.onSelect?.(); });
+        expect(selectedAgentIds()).toHaveLength(1);
+        expect([...screen.findAllByType(SelectionList).filter(node => node.props.testID === 'contextual-start-who')[1]!.props.selection.selectedIds]).toHaveLength(1);
+        await screen.pressByTestIdAsync('review-start-step:1:header');
+        await screen.pressByTestIdAsync('review-start-step:1:header');
+        expect([...screen.findAllByType(SelectionList).filter(node => node.props.testID === 'contextual-start-who')[1]!.props.selection.selectedIds]).toHaveLength(1);
+        expect(emittedStarts).toEqual([]);
     });
     it('starts Second opinion through the real review Action with its explicit role', async () => {
         await mount({ intent: 'review', roleId: 'second_opinion' });

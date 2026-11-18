@@ -3,6 +3,8 @@ import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { decodeLegacyReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import type { ParticipantComposerDocument } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import type { ComparisonReviewDraftInput } from './useComparisonReviewDraft';
@@ -57,6 +59,7 @@ export function useExecutionRunLauncherDraft(input: Readonly<{
     lifetime: ServerAccountScopeLifetime | null;
     sessionId: string | null;
     draftKey: string;
+    actionId?: ActionId;
     correlationId?: string;
     comparisonReview?: ComparisonReviewDraftInput;
     createDefaultInput: () => Record<string, unknown>;
@@ -95,9 +98,11 @@ export function useExecutionRunLauncherDraft(input: Readonly<{
     const createState = (): LauncherSelection => {
         const document = lifetime && address ? getSessionDraftSnapshot(lifetime.scope, address)?.document : null;
         const saved = SelectionSchema.safeParse(getSessionDraftDocumentField(document ?? null, selectionPath)?.value);
+        const actionInput = saved.success ? saved.data.actionInput : input.createDefaultInput();
         return { key, selectionSnapshot, identity: saved.success ? saved.data.identity : {
             correlationId: input.correlationId ?? randomUUID(), inputLocalId: randomUUID(),
-        }, actionInput: saved.success ? saved.data.actionInput : input.createDefaultInput(),
+        }, actionInput: input.actionId === 'review.start'
+            ? decodeLegacyReviewStartInput(actionInput) as Record<string, unknown> : actionInput,
             ...(input.comparisonReview ? { comparisonReview: input.comparisonReview } : {}) };
     };
     const [stored, setStored] = React.useState(createState);

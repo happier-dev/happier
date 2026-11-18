@@ -4,6 +4,8 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams/credentials/providerModelCatalogV1';
 
+import { updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
+
 /** The part of a refused start a chooser reads: an Action result, or one member of a fan-out. */
 export type ExecutionRunStartRefusal = Readonly<{ ok: boolean; error?: string; errorCode?: string; details?: unknown }>;
 
@@ -36,17 +38,24 @@ export type ExecutionRunChildSelection = 'agentDefault' | ProviderBoundModelRef
     | Readonly<{ teamCredentialModel: TeamCredentialProviderModelSelectionV1 }>;
 
 /** A start input with no model or route of its own: the session's (attached omission inherits at admission). */
-export function clearExecutionRunChildSelection<T extends Record<string, unknown>>(input: T): Record<string, unknown> {
+function clearChildConfiguration(input: Record<string, unknown>): Record<string, unknown> {
     const { modelId: _modelId, modelSelection: _modelSelection, teamCredentialModel: _team, teamCredentialSessionBindingConsent: _consent,
         connectedServices: _connected, connectedServicesDefaultServiceIds: _defaults, connectedServicesByBackendTargetKey: _byTarget,
         childSelection: _child, ...rest } = input;
     return rest;
 }
 
+export function clearExecutionRunChildSelection<T extends Record<string, unknown>>(input: T): Record<string, unknown> {
+    return Array.isArray(input.reviewers) ? updateReviewLauncherEngineConfiguration(input, clearChildConfiguration) : clearChildConfiguration(input);
+}
+
 /** A start input carrying exactly one child choice: the Agent's Account default or an exact model. */
 export function applyExecutionRunChildSelection<T extends Record<string, unknown>>(input: T, selection: ExecutionRunChildSelection): Record<string, unknown> {
-    const rest = clearExecutionRunChildSelection(input);
-    return selection === 'agentDefault' ? { ...rest, childSelection: 'agentDefault' }
-        : 'teamCredentialModel' in selection ? { ...rest, teamCredentialModel: selection.teamCredentialModel }
-        : { ...rest, modelSelection: selection };
+    const apply = (configuration: Record<string, unknown>) => {
+        const rest = clearChildConfiguration(configuration);
+        return selection === 'agentDefault' ? { ...rest, childSelection: 'agentDefault' }
+            : 'teamCredentialModel' in selection ? { ...rest, teamCredentialModel: selection.teamCredentialModel }
+            : { ...rest, modelSelection: selection };
+    };
+    return Array.isArray(input.reviewers) ? updateReviewLauncherEngineConfiguration(input, apply) : apply(input);
 }

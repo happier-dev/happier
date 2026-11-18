@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { applyExecutionRunChildSelection, clearExecutionRunChildSelection, readExecutionRunChildChoice, readExecutionRunFanoutMembers } from './executionRunChildChoice';
+import { selectReviewLauncherRetryReviewers } from './reviewLauncherSelection';
 
 describe('child choice permission for a fresh launch', () => {
+    it('retries the original indexed engine selection with its configuration and excludes mixed participants', () => {
+        const first = { kind: 'engine', engineId: 'codex', modelId: 'first-model' };
+        const second = { kind: 'engine', engineId: 'codex', modelId: 'second-model' };
+        const input = { instructions: 'review', reviewers: [first,
+            { kind: 'session', session: { serverId: 'home', sessionId: 'session' } }, second] };
+        expect(selectReviewLauncherRetryReviewers(input, ['step-1-reviewer-3', 'step-1-reviewer-2']))
+            .toEqual({ instructions: 'review', reviewers: [second] });
+    });
     it('revokes the previous no-effect choice after an unknown-effect attempt', () => {
         const refusal = { ok: false as const, error: 'Choose', errorCode: 'execution_run_child_choice_required',
             details: { childChoice: projectExecutionRunChildChoiceV1({ agentTargetKey: 'agent:codex' }),
