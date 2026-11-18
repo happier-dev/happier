@@ -118,16 +118,22 @@ async function current(instance: ManagedServiceNativeInstanceV1, context: Plugin
 async function control(verb: 'start' | 'stop' | 'restart', instance: ManagedServiceNativeInstanceV1,
     options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1> {
     if (!context) return { kind: 'unavailable', code: 'native_adapter_invocation_unavailable' };
+    let issued = false;
     try {
         const rows = await current(instance, context, options);
         if (!rows?.length) return { kind: 'unavailable', code: 'compose_service_unavailable' };
         // Control only existing members. Exec retains the admitted service's
         // cancellation and process settlement; no Compose launcher runs here.
+        issued = true;
         const result = await command([verb, ...rows.map(row => row.id).sort()], context, options);
         if (!result.successful) return { kind: 'failed', code: 'compose_native_unavailable' };
         const observed = await current(instance, context, options);
         return observed ? observation(observed, !selection(instance)?.service) : unknown;
-    } catch (error) { return failure(error, options); }
+    } catch (error) {
+        const cause = failure(error, options);
+        // After dispatch, an unavailable Docker read cannot establish that Stop was refused.
+        return verb === 'stop' && issued && cause.kind !== 'cancelled' ? unknown : cause;
+    }
 }
 
 function logs(instance: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogReadV1,
@@ -228,6 +234,7 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
     restart: (instance, options, context) => control('restart', instance, options, context),
     async stop(instance, options, context) {
         const result = await control('stop', instance, options, context);
+        if ('kind' in result && result.kind !== 'failed') return result;
         return { status: 'phase' in result && result.phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
     },
 };

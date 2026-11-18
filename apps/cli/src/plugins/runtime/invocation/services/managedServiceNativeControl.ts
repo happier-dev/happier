@@ -1,9 +1,14 @@
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError,
     type MachineNativeEffectKey, type MachineNativeEffectOperation, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { ManagedWorkloadControlResultV1 } from '@happier-dev/plugin-sdk/managed-services';
+import { PluginError, type PluginProjectNativeFailureV1 } from '@happier-dev/plugin-sdk';
 
 /** Native settlement is separate from the caller's current snapshot/read authority. */
 export type ManagedServiceNativeControlResult = ManagedWorkloadControlResultV1;
+
+export function throwNativeServiceControlFailure(failure: PluginProjectNativeFailureV1): never {
+    throw new PluginError({ code: failure.code, message: 'Native service control was refused' });
+}
 
 export type ManagedServiceNativeControl = Readonly<{
     operation: MachineNativeEffectOperation;

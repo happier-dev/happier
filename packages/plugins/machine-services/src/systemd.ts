@@ -80,7 +80,7 @@ function controllable(selected: ReturnType<typeof parseInstance>): boolean {
     return process.platform === 'linux' && selected.scope === 'user';
 }
 
-async function control(verb: 'start' | 'restart', instance: ManagedServiceNativeInstanceV1,
+async function control(verb: 'start' | 'stop' | 'restart', instance: ManagedServiceNativeInstanceV1,
     options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1> {
     const selected = parseInstance(instance);
     if (!controllable(selected)) return { kind: 'unsupported', code: 'systemd_control_unsupported' };
@@ -136,12 +136,9 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
     start: (instance, options, context) => control('start', instance, options, context),
     restart: (instance, options, context) => control('restart', instance, options, context),
     async stop(instance, options, context) {
-        const selected = parseInstance(instance);
-        if (!controllable(selected)) return { status: 'unsupported' };
-        const result = await command(selected.scope, ['stop', '--', selected.unit], options, context);
-        if (!result.complete) return { status: 'termination_incomplete' };
-        const current = await inspect(instance, options, context);
-        return { status: current.phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
+        const result = await control('stop', instance, options, context);
+        if ('kind' in result && result.kind !== 'failed') return result;
+        return { status: 'phase' in result && result.phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
     },
 };
 

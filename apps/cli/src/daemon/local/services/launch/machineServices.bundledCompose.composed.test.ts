@@ -97,8 +97,10 @@ else process.exitCode=19;
                 expect(await readFile(callsPath, 'utf8')).toBe(callsBeforeFollow);
                 await writeFile(statePath, JSON.stringify({ ...native, engineId: 'other-engine' }));
                 const callsBeforeForeignEngine = await readFile(callsPath, 'utf8');
-                expect(await handle.controlNative('stop', { operation: { operationId: 'foreign-engine-stop', kind: 'serviceControl' } }))
-                    .toMatchObject({ kind: 'outcome_unknown' });
+                for (const verb of ['start', 'stop'] as const) {
+                    await expect(handle.controlNative(verb, { operation: { operationId: `foreign-engine-${verb}`, kind: 'serviceControl' } }))
+                        .rejects.toMatchObject({ code: 'compose_service_unavailable' });
+                }
                 const foreignEngineCalls = (await readFile(callsPath, 'utf8')).slice(callsBeforeForeignEngine.length)
                     .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]);
                 expect(foreignEngineCalls.some(args => ['start', 'stop', 'restart'].includes(args[0]!))).toBe(false);

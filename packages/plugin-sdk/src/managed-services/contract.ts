@@ -403,9 +403,10 @@ export interface ManagedServiceNativeLifecycleV1 {
         | { kind: 'shell'; service?: string }>,
         options?: PluginCancellationOptions, context?: PluginInvocationContext,
     ): Promise<Readonly<{ kind: 'ready'; launch: ExecSpawnRequest }> | PluginProjectNativeFailureV1>;
+    /** Refusals use the same typed failure as Start and Restart. */
     stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
-        status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
-    }>>;
+        status: 'stopped' | 'accepted' | 'termination_incomplete';
+    }> | PluginProjectNativeFailureV1>;
 }
 
 export type ManagedServiceSnapshot = Readonly<{
@@ -448,7 +449,7 @@ export interface ManagedServiceHandle extends Disposable {
     request(request: ManagedServiceRequest): Promise<ManagedServiceResponse>;
     stop(
         options?: PluginCancellationOptions,
-    ): Promise<Awaited<ReturnType<ManagedServiceNativeLifecycleV1['stop']>> | Readonly<{ status: 'detached' }>>;
+    ): Promise<Readonly<{ status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete' | 'detached' }>>;
     dispose(): Promise<void>;
 }
 

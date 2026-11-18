@@ -184,7 +184,7 @@ describe('managed-services author contract', () => {
                 contributes: { projectNativeAdapters: [{ id: 'service', files: ['service.json'], roles: ['nativeServiceLifecycle'] }] } },
             module: { activate(api) { api.projectNativeAdapters.register('service', { nativeServiceLifecycle: {
                 async inspect() { return { phase: 'unknown', readiness: 'not_reported', endpoint: null }; },
-                async stop() { return { status: 'unsupported' }; },
+                async stop() { return { kind: 'unsupported', code: 'fixture_stop_unsupported' }; },
             } }); } },
         });
         try {

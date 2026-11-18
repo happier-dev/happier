@@ -1188,7 +1188,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                 async stop() {
                     if (allowStop) return { status: 'stopped' };
                     if (refusal === 'throw') throw new Error('Native stop refused');
-                    return { status: 'unsupported' };
+                    return { kind: 'unsupported', code: 'fixture_stop_unsupported' };
                 },
             } },
         }));
@@ -1196,7 +1196,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         const subscription = handle.observeHealth!(value => facts.push(value));
         try {
             if (refusal === 'throw') await expect(handle.controlNative!('stop')).rejects.toThrow('Native stop refused');
-            else expect(await handle.controlNative!('stop')).toEqual({ kind: 'unsupported', reason: 'unsupported' });
+            else await expect(handle.controlNative!('stop')).rejects.toMatchObject({ code: 'fixture_stop_unsupported' });
             expect(facts.at(-1)).not.toHaveProperty('expectedDown');
             await handle.inspectCurrentOccurrence!();
             expect(facts.at(-1)).not.toHaveProperty('expectedDown');
@@ -1206,7 +1206,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             allowStop = false;
             const beforeRefusedStop = facts.length;
             if (refusal === 'throw') await expect(handle.controlNative!('stop')).rejects.toThrow('Native stop refused');
-            else expect(await handle.controlNative!('stop')).toEqual({ kind: 'unsupported', reason: 'unsupported' });
+            else await expect(handle.controlNative!('stop')).rejects.toMatchObject({ code: 'fixture_stop_unsupported' });
             expect(facts.at(-1)).toMatchObject({ expectedDown: 'stop' });
             expect(facts).toHaveLength(beforeRefusedStop);
         } finally { subscription.dispose(); await handle.dispose(); }
@@ -1215,7 +1215,6 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     it.each([
         ['accepted', 'running', 'termination_incomplete'],
         ['accepted', 'stopped', 'stopped'],
-        ['unsupported', 'running', 'unsupported'],
         ['termination_incomplete', 'running', 'termination_incomplete'],
         ['stopped', 'stopped', 'stopped'],
     ] as const)('preserves confirmed Stop semantics for observation-only native %s with %s evidence', async (status, phase, expected) => {
@@ -1243,11 +1242,12 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                     instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' },
                     lifecycle: {
                         inspect: async () => ({ phase: 'unknown' as const, readiness: 'not_reported' as const, endpoint: null }),
-                        stop: async () => ({ status }),
+                        stop: async () => status === 'unsupported' ? { kind: 'unsupported', code: 'fixture_stop_unsupported' } : { status },
                     },
                 },
             }));
-            expect(await handle.stop()).toEqual({ status: status === 'unsupported' ? 'unsupported' : 'termination_incomplete' });
+            if (status === 'unsupported') await expect(handle.stop()).rejects.toMatchObject({ code: 'fixture_stop_unsupported' });
+            else expect(await handle.stop()).toEqual({ status: 'termination_incomplete' });
             expect(handle.snapshot().state).not.toBe('stopped');
         },
     );

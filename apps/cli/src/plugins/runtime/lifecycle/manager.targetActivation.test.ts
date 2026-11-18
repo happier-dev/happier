@@ -1188,8 +1188,8 @@ describe('target activation publication', () => {
             await expect(captured.lifecycle.inspect(instance)).resolves.toMatchObject({ phase: 'running' });
             await registry.dispose();
             await expect(captured.lifecycle.stop(instance)).resolves.toEqual({ status: 'stopped' });
-            await expect(captured.lifecycle.stop({ ...instance, nativeResourceId: 'other-service' })).resolves.toEqual({ status: 'unsupported' });
-            await expect(captured.lifecycle.stop({ ...instance, adapter: { pluginId: 'other.plugin', localId: 'pixi' } })).resolves.toEqual({ status: 'unsupported' });
+            await expect(captured.lifecycle.stop({ ...instance, nativeResourceId: 'other-service' })).rejects.toMatchObject({ code: 'native_adapter_reference_mismatch' });
+            await expect(captured.lifecycle.stop({ ...instance, adapter: { pluginId: 'other.plugin', localId: 'pixi' } })).rejects.toMatchObject({ code: 'native_adapter_reference_mismatch' });
             await expect(captured.lifecycle.inspect(instance)).rejects.toMatchObject({ code: 'native_adapter_retired' });
             await captured.release();
             expect(selected.lease.captureNativeServiceLifecycle(instance, { root })).toEqual({ kind: 'refused', code: 'native_adapter_retired' });

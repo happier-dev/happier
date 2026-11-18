@@ -6,7 +6,7 @@ import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/l
 import type { ManagedServiceHandle, ManagedServiceNativeInstanceV1, ManagedServiceNativeLifecycleV1,
     ManagedServiceSnapshot, ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineNativeEffectKey, MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import { runManagedServiceNativeControl, type ManagedServiceNativeControlResult } from './managedServiceNativeControl';
+import { runManagedServiceNativeControl, throwNativeServiceControlFailure, type ManagedServiceNativeControlResult } from './managedServiceNativeControl';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from './managedServiceSpecNormalization';
 import { createManagedServiceAccountingRead } from './managedServiceAccountingRead';
@@ -191,7 +191,7 @@ export function createMachineManagedServices(input: Readonly<{
                 const method = native[operation];
                 if (!method) unavailable();
                 const result = await method.call(native, instance, options);
-                if ('kind' in result) throw new PluginError({ code: result.code, message: 'Native service control was refused' });
+                if ('kind' in result) throwNativeServiceControlFailure(result);
                 return retainObservation(result);
             };
             const lifecycle: ProjectBuiltinNativeLifecycle = {
@@ -209,7 +209,7 @@ export function createMachineManagedServices(input: Readonly<{
                 async stop(options) {
                     const result = await native.stop(instance, options);
                     // The confirmed stop is the existing witness; no extra native read.
-                    if (result.status === 'stopped') retainObservation({ phase: 'stopped', readiness: 'not_reported', endpoint: null });
+                    if ('status' in result && result.status === 'stopped') retainObservation({ phase: 'stopped', readiness: 'not_reported', endpoint: null });
                     return result;
                 },
                 ...(native.start ? { start: (options?: Readonly<{ signal?: AbortSignal }>) => control('start', options) } : {}),

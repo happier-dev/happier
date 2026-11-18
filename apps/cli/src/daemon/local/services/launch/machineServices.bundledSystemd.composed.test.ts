@@ -170,7 +170,7 @@ describe('bundled systemd Machine services', () => {
             const systemCandidate = discovery.candidates.find(value => value.nativeResourceId === 'system/system-worker.service')!;
             const systemCapture = selected.lease.captureNativeServiceLifecycle(systemCandidate, { machine: target });
             if (systemCapture.kind !== 'ready') throw new Error('System lifecycle did not capture');
-            try { expect(await systemCapture.lifecycle.stop(systemCandidate)).toEqual({ status: 'unsupported' }); }
+            try { expect(await systemCapture.lifecycle.stop(systemCandidate)).toEqual({ kind: 'unsupported', code: 'systemd_control_unsupported' }); }
             finally { await systemCapture.release(); }
             if (listed.kind !== 'snapshot') throw new Error('Expected watched service');
             const row = listed.services[0]!;

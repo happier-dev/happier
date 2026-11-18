@@ -13610,6 +13610,10 @@ detach observation and log following without stopping the serving resource.
 Explicit admitted Stop or deployment teardown remains the effect owner. Existing
 Compose/systemd and plugin native adapters retain their platform contracts;
 unsupported adapters/platforms and absent host admission return typed unavailable.
+Native adapter Stop uses `PluginProjectNativeFailureV1` for refusals, like Start
+and Restart. The host projects the adapter's error code on all three controls.
+An issued Stop with unconfirmed termination still reports outcome uncertainty.
+The SDK and its bundled adapters move together under the unpublished 0.3 direct cut.
 This is an unreleased source contract, with loaded-runtime replay tracked separately.
 
 ## Bot identity and page layout adapters (0.3 development source)

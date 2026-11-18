@@ -407,9 +407,10 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                     return result;
                 },
                 async stop(candidate: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions) {
-                    if (released || !matchesInstance(candidate)) return { status: 'unsupported' as const };
+                    if (released) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
+                    const selected = exactInstance(candidate);
                     // The incumbent service supervisor owns settlement, not adapter currentness.
-                    return await lifecycle.stop(retained!, options, context());
+                    return await lifecycle.stop(selected, options, context());
                 },
             }) };
         },

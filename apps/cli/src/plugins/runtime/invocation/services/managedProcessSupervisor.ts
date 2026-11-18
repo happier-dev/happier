@@ -20,7 +20,7 @@ import type {
     ManagedServiceNativeLogWatchV1,
 } from '@happier-dev/plugin-sdk/managed-services';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type { PluginDiagnosticData, PluginProjectNativeFailureV1 } from '@happier-dev/plugin-sdk';
 import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { type MachineServiceAccountingV1, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
@@ -78,7 +78,7 @@ import { classifySpawnFailure, type SpawnFailureLimitsReader } from '@/processes
 import { logger } from '@/ui/logger';
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import type { LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
-import type { ManagedServiceNativeControlResult } from './managedServiceNativeControl';
+import { throwNativeServiceControlFailure, type ManagedServiceNativeControlResult } from './managedServiceNativeControl';
 import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
 import type { AdmittedServiceExecContextV1, ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
 import type { MachineNativeEffectContext, MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -195,7 +195,8 @@ export type ProjectBuiltinNativeLifecycle = Readonly<{
     restart?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
     stop(options?: Readonly<{ signal?: AbortSignal }>): ReturnType<ManagedServiceNativeLifecycleV1['stop']>;
     /** Host-only exact admitted generation removal; never a public service control. */
-    remove?(options?: Readonly<{ signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>): ReturnType<ManagedServiceNativeLifecycleV1['stop']>;
+    remove?(options?: Readonly<{ signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>): Promise<
+        Exclude<Awaited<ReturnType<ManagedServiceNativeLifecycleV1['stop']>>, PluginProjectNativeFailureV1>>;
     /** Read-only removal witness; an exited retained container is still present. */
     inspectRemoval?(options?: Readonly<{ signal?: AbortSignal }>): Promise<'present' | 'absent' | 'unknown'>;
     logs?(options: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | import('@happier-dev/plugin-sdk').Disposable>;
@@ -2005,8 +2006,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                             const result = spec.mode.builtinLifecycle
                                 ? await spec.mode.builtinLifecycle.stop()
                                 : await spec.mode.lifecycle.stop(spec.mode.instance);
+                            if ('kind' in result) throwNativeServiceControlFailure(result);
                             nativeStopped = result.status === 'stopped';
-                            if (!nativeStopped && result.status !== 'unsupported') {
+                            if (!nativeStopped) {
                                 try {
                                     nativeStopped = (await inspectNative()).phase === 'stopped';
                                 } catch {
@@ -2015,9 +2017,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                             }
                             if (!nativeStopped) {
                                 return fail(
-                                    result.status === 'unsupported'
-                                        ? 'plugin_managed_service_unavailable'
-                                        : 'plugin_managed_server_termination_incomplete',
+                                    'plugin_managed_server_termination_incomplete',
                                     'Native service stop is unconfirmed',
                                 );
                             }
@@ -2811,6 +2811,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 if (spec.mode.kind === 'native' && spec.mode.observationOnly) {
                     assertGenerationUsable();
                     const result = await spec.mode.builtinLifecycle!.stop(options);
+                    if ('kind' in result) throwNativeServiceControlFailure(result);
                     assertNotAborted(options?.signal);
                     const observation = await inspectNative(options?.signal);
                     if (result.status === 'accepted') {
@@ -2823,18 +2824,11 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 } catch (error) {
                     if (
                         isPluginError(error)
-                        && error.code === 'plugin_managed_service_unavailable'
-                        && spec.mode.kind === 'native'
-                    ) {
-                        return Object.freeze({ status: 'unsupported' });
-                    }
-                    if (
-                        isPluginError(error)
                         && error.code === 'plugin_managed_server_termination_incomplete'
                     ) {
                         return Object.freeze({ status: 'termination_incomplete' });
                     }
-                    if (spec.mode.kind === 'native' && !options?.signal?.aborted) {
+                    if (spec.mode.kind === 'native' && !options?.signal?.aborted && !isPluginError(error)) {
                         return Object.freeze({ status: 'termination_incomplete' });
                     }
                     throw error;
@@ -2863,10 +2857,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 try {
                     if (operation === 'stop') {
                         const result = await nativeControl.stop(options);
-                        if (result.status === 'unsupported') {
-                            setExpectedDown(previousExpectedDown);
-                            return { kind: 'unsupported', reason: 'unsupported' };
-                        }
+                        if ('kind' in result) throwNativeServiceControlFailure(result);
                         if (result.status === 'accepted') return { kind: 'accepted' };
                         if (result.status === 'termination_incomplete') return { kind: 'outcome_unknown' };
                         observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null,

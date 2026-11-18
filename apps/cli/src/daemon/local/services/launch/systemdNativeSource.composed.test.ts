@@ -11,7 +11,7 @@ describe('systemd native source with production Exec', () => {
         const lifecycle = systemdRuntime.nativeServiceLifecycle!;
         const instance = { adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'user/worker.service' };
         expect(await lifecycle.discover!({ serverId: 'home', machineId: 'machine' })).toEqual({ kind: 'unsupported', code: 'systemd_platform_unsupported' });
-        expect(await lifecycle.stop(instance)).toEqual({ status: 'unsupported' });
+        expect(await lifecycle.stop(instance)).toEqual({ kind: 'unsupported', code: 'systemd_control_unsupported' });
         expect(await lifecycle.start!(instance)).toEqual({ kind: 'unsupported', code: 'systemd_control_unsupported' });
         expect(await lifecycle.inspect(instance)).toEqual({ phase: 'unknown', readiness: 'not_ready', endpoint: null, displayName: 'worker.service' });
     });
@@ -102,7 +102,8 @@ else if(user&&['start','restart','stop'].some(verb=>args.includes(verb))){if(sta
             expect(await lifecycle.start!(instance, undefined, context)).toMatchObject({ phase: 'running' });
             expect(await lifecycle.restart!(instance, undefined, context)).toMatchObject({ phase: 'running' });
             const callsBeforeRefusal = await readFile(calls, 'utf8');
-            expect(await lifecycle.stop({ ...instance, nativeResourceId: 'system/system-worker.service' }, undefined, context)).toEqual({ status: 'unsupported' });
+            const systemInstance = { ...instance, nativeResourceId: 'system/system-worker.service' };
+            expect(await lifecycle.stop(systemInstance, undefined, context)).toEqual(await lifecycle.start!(systemInstance, undefined, context));
             await expect(lifecycle.stop({ ...instance, nativeResourceId: 'user/*.service' }, undefined, context)).rejects.toMatchObject({ code: 'systemd_invalid_native_resource' });
             expect(await readFile(calls, 'utf8')).toBe(callsBeforeRefusal);
             const effects = callsBeforeRefusal.trim().split('\n').map(line => JSON.parse(line) as { args: string[]; bus: string; runtime: string });
