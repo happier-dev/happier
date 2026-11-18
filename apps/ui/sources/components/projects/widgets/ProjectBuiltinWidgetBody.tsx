@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { BuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
+import type { BuiltinWidgetIdV1, ProjectSurfaceBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { ProjectReadinessWidgetBody } from './ProjectReadinessWidgetBody';
+import { ProjectAutomationsWidgetBody } from './ProjectAutomationsWidgetBody';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -59,11 +60,12 @@ import { ProjectSessionsWidgetBody } from './ProjectSessionsWidgetBody';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 
-type Props = Readonly<{ id: Exclude<BuiltinWidgetIdV1, 'project_readiness'>; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1; testID: string }>;
+type Props = Readonly<{ id: Exclude<BuiltinWidgetIdV1, ProjectSurfaceBuiltinWidgetIdV1>; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1; testID: string }>;
 
-/** Native Project bodies consume only the generic binder's admitted exact checkout. */
-export function ProjectBuiltinWidgetBody(props: Props | Readonly<{ id: 'project_readiness'; target: ProjectSurfaceTargetV1; testID: string }>): React.ReactElement {
+/** Native Project bodies consume only the generic binder's admitted exact checkout, or the Project surface itself. */
+export function ProjectBuiltinWidgetBody(props: Props | Readonly<{ id: ProjectSurfaceBuiltinWidgetIdV1; target: ProjectSurfaceTargetV1; serverId: string; testID: string }>): React.ReactElement {
     if (props.id === 'project_readiness') return <ProjectReadinessWidgetBody target={props.target} testID={props.testID} />;
+    if (props.id === 'project_automations') return <ProjectAutomationsWidgetBody target={props.target} serverId={props.serverId} />;
     if (props.id === 'project_about') return <AboutBody {...props} />;
     if (props.id === 'project_code') return <CodeBody {...props} />;
     if (props.id === 'project_readme') return <ReadmeBody {...props} />;

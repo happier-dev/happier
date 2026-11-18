@@ -18,7 +18,13 @@ export { USAGE_BREAKDOWN_DIMENSION_HEADING, readUsageBreakdownsInstanceTitleV1 }
 
 /** Native Session content identities; presentation references and configured copies share this owner. */
 export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services', 'environment', 'running', 'usage', 'links'] as const;
-export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes', 'project_readiness'] as const;
+export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes', 'project_readiness', 'project_automations'] as const;
+/** Project widgets that read the logical Project itself (its surface target), not one bound checkout. */
+export const PROJECT_SURFACE_BUILTIN_WIDGET_IDS_V1 = ['project_readiness', 'project_automations'] as const;
+export type ProjectSurfaceBuiltinWidgetIdV1 = (typeof PROJECT_SURFACE_BUILTIN_WIDGET_IDS_V1)[number];
+export function isProjectSurfaceBuiltinWidgetIdV1(id: string): id is ProjectSurfaceBuiltinWidgetIdV1 {
+    return (PROJECT_SURFACE_BUILTIN_WIDGET_IDS_V1 as readonly string[]).includes(id);
+}
 export const USAGE_BUILTIN_WIDGET_IDS_V1 = ['usage_daily', 'usage_period_summary', 'usage_cost_facts', 'usage_flow', 'usage_efficiency', 'usage_breakdowns',
     'usage_capacity', 'usage_projections', 'usage_resets', 'usage_plan_fit', 'usage_project_ledger', 'usage_session_value', 'usage_outcomes', 'usage_coach',
     'usage_rhythm', 'usage_parallel', 'usage_human_loop', 'usage_night_shift', 'usage_recap', 'usage_footprint', 'usage_sources', 'usage_source_coverage', 'usage_unpriced',
@@ -86,9 +92,11 @@ export function projectOverviewDefaultPlacementsV1(): WidgetLayoutWidgetV1[] {
             definition: { kind: 'builtin', id: 'project_readiness' }, bindings: {} } },
         ...[
         ...(['code', 'readme'] as const).map(id => ({ id, area: 'main' as const })),
-        ...(['sessions', 'changes', 'scripts', 'checkouts', 'about'] as const).map(id => ({ id, area: 'aside' as const })),
+        ...(['sessions', 'changes', 'scripts', 'automations', 'checkouts', 'about'] as const).map(id => ({ id, area: 'aside' as const })),
     ].map(({ id, area }): WidgetLayoutWidgetV1 => ({ kind: 'widget', area, instance: {
-        v: 1, id, definition: { kind: 'builtin', id: `project_${id}` }, bindings: { checkout: { kind: 'context', slot: 'checkout' } },
+        v: 1, id, definition: { kind: 'builtin', id: `project_${id}` },
+        // A Project-surface widget reads the Project itself; the others read the selected checkout.
+        bindings: isProjectSurfaceBuiltinWidgetIdV1(`project_${id}`) ? {} : { checkout: { kind: 'context', slot: 'checkout' } },
     } })),
     ];
 }
@@ -113,6 +121,7 @@ const nativeMetadata = {
     project_scripts: { title: 'Scripts', titleKey: 'projects.pages.scripts', icon: 'play' },
     project_sessions: { title: 'Sessions', titleKey: 'projects.widgets.sessions', icon: 'chats-circle' },
     project_changes: { title: 'Local changes', titleKey: 'projects.widgets.localChanges', icon: 'git-branch' },
+    project_automations: { title: 'Automations', titleKey: 'workflows.triggers.section.title', icon: 'tree-structure' },
     usage_daily: { title: 'Daily usage', titleKey: 'usage.widgets.usage_daily', descriptionKey: 'usage.board.page.purposeDaily', icon: 'chart-bar' },
     usage_period_summary: { title: 'Period summary', titleKey: 'usage.widgets.usage_period_summary', descriptionKey: 'usage.board.page.purposeSummary', icon: 'squares-four' },
     usage_cost_facts: { title: 'Cost facts', titleKey: 'usage.widgets.usage_cost_facts', descriptionKey: 'usage.board.page.purposeCostFacts', icon: 'currency-dollar' },
@@ -299,8 +308,8 @@ export const BUILTIN_WIDGET_DESCRIPTORS_V1 = lazyDefinition(() => Object.freeze(
     sizeDeclaration: nativeSizeDeclaration,
     key: `builtin:${id}`, target: readWidgetInputTargetV1(sessionInputs).kind === 'session' ? 'session' : 'app', homeDefault: 'available' as const, availability: 'available' as const,
 })), ...PROJECT_BUILTIN_WIDGET_IDS_V1.map((id): NativeDescriptor => Object.freeze({
-    ...(id === 'project_readiness' ? {} : workspaceInputs), ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
-    sizeDeclaration: nativeSizeDeclaration, key: `builtin:${id}`, target: id === 'project_readiness' ? 'project' : 'app',
+    ...(isProjectSurfaceBuiltinWidgetIdV1(id) ? {} : workspaceInputs), ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
+    sizeDeclaration: nativeSizeDeclaration, key: `builtin:${id}`, target: isProjectSurfaceBuiltinWidgetIdV1(id) ? 'project' : 'app',
     homeDefault: 'available' as const, availability: 'available' as const,
 })), ...USAGE_BUILTIN_WIDGET_IDS_V1.map((id): NativeDescriptor => Object.freeze({
     ...(id === 'usage_sources' ? sourceInventoryInputs : usageInputs(id)), ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },

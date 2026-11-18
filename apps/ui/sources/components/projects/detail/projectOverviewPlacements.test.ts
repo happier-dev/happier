@@ -12,10 +12,10 @@ describe('Project Overview responsive projection', () => {
         const areas = projectOverviewWidgetAreas({ main: null, aside: null });
         expect(areas.main.map(row => row.instance.definition)).toEqual([{ kind: 'builtin', id: 'project_code' }, { kind: 'builtin', id: 'project_readme' }]);
         expect(areas.aside.map(row => row.instance.definition)).toEqual(
-            ['sessions', 'changes', 'scripts', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
+            ['readiness', 'sessions', 'changes', 'scripts', 'automations', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
         );
         expect(mergeProjectOverviewWidgetHeads({ main: null, aside: null }).map(row => row.instance.definition)).toEqual(
-            ['sessions', 'changes', 'scripts', 'code', 'readme', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
+            ['readiness', 'sessions', 'changes', 'scripts', 'automations', 'code', 'readme', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
         );
     });
 

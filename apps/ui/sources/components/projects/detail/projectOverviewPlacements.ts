@@ -49,6 +49,7 @@ const PHONE_PRIORITY: Readonly<Record<string, number>> = {
   project_sessions: 0,
   project_changes: 1,
   project_scripts: 2,
+  project_automations: 3,
   project_code: 4,
   project_readme: 5,
   project_checkouts: 6,

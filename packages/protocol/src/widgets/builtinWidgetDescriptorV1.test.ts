@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readBuiltinWidgetDescriptorV1, readUsageBreakdownsInstanceTitleV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, BuiltinUsagePublicPresentationV1Schema } from './builtinWidgetDescriptorV1.js';
+import { projectOverviewDefaultPlacementsV1, readBuiltinWidgetDescriptorV1, readUsageBreakdownsInstanceTitleV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, BuiltinUsagePublicPresentationV1Schema } from './builtinWidgetDescriptorV1.js';
 import { isWidgetTargetHostableV1, readWidgetInputTargetV1, resolveConfiguredWidgetInputs, resolveConfiguredWidgetTargetInputV1, validateWidgetWorkspaceInputV1, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import { composeWidgetGroupContextV1 } from './widgetActionInputResolverV1.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
@@ -18,6 +18,19 @@ describe('native widget target contracts', () => {
         expect(resolveConfiguredWidgetInputs({ descriptor: descriptor!, instance: {
             v: 1, id: 'readiness', definition, bindings: {},
         }, providedContext: {}, viewerValues: {} })).toEqual({ status: 'ready', input: {} });
+    });
+    it('admits Automations on its logical Project without a checkout, and the default Overview places it after Scripts', () => {
+        const definition = { kind: 'builtin', id: 'project_automations' } as const;
+        const descriptor = readBuiltinWidgetDescriptorV1(definition);
+        expect(descriptor).toMatchObject({ target: 'project' });
+        expect(isWidgetTargetHostableV1(descriptor!, 'project')).toBe(true);
+        expect(resolveConfiguredWidgetInputs({ descriptor: descriptor!, instance: {
+            v: 1, id: 'automations', definition, bindings: {},
+        }, providedContext: {}, viewerValues: {} })).toEqual({ status: 'ready', input: {} });
+        const aside = projectOverviewDefaultPlacementsV1().filter(entry => entry.area === 'aside')
+            .map(entry => entry.instance.definition.kind === 'builtin' ? entry.instance.definition.id : null);
+        expect(aside.indexOf('project_automations')).toBe(aside.indexOf('project_scripts') + 1);
+        expect(projectOverviewDefaultPlacementsV1().find(entry => entry.instance.id === 'automations')?.instance.bindings).toEqual({});
     });
     it('admits Home Services without a Session and keeps existing Session copies scoped', () => {
         const definition = { kind: 'builtin', id: 'local_services_app' } as const;

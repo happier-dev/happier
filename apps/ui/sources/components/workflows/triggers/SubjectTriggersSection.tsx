@@ -10,6 +10,9 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -101,6 +104,11 @@ export type SubjectTriggersSectionProps = Readonly<{
       children?: React.ReactNode;
       /** The host's own rows are held, so the section is neither pending nor empty without triggers. */
       hasRetainedContent?: boolean;
+      /**
+       * `widget`: a widget frame heads the section (lab automations-v-project). The frame's title is its title,
+       * Automate… and Link workflow are the frame header's icon actions, and the description leads the body.
+       */
+      presentation?: 'section' | 'widget';
       deploymentEnvironment?: DeploymentEnvironmentRefV1;
       deploymentSourceName?: string;
       sourceAudience?: readonly PrincipalRefV1[];
@@ -190,38 +198,63 @@ export const SubjectTriggersSectionContent = React.memo(
     const unsettled = !held && status !== 'ready';
     // Settled with nothing to show (no rows, no starter, nothing broader): say what belongs here in one line, never a blank sheet.
     const nothingHere = !held && !unsettled && !starters.some(starterAvailable) && also.length === 0 && skippedNotSharedCount === 0;
+    const widget = props.presentation === 'widget';
+    const description = describeAutomationsSection(props.subject.kind, empty && !unsettled);
+    const linkExpanded = opening?.kind === 'link';
+    // In a widget frame the same two actions are its header's icon controls, under the same anchors and rule.
+    const frameActions = React.useMemo(() => !widget ? null : (
+      <View style={styles.actions}>
+        {linkSlot === 'offered' ? (
+          <View ref={linkAnchor} collapsable={false}>
+            <IconButton testID="subject-triggers-link" iconName="link" variant="plain" expanded={linkExpanded}
+              accessibilityLabel={t('workflows.triggers.section.link')} tooltip={t('workflows.triggers.section.link')}
+              onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })} />
+          </View>
+        ) : linkSlot === 'pending' ? (
+          <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
+            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <IconButton iconName="link" variant="plain" accessibilityLabel={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
+          </View>
+        ) : null}
+        <View ref={addAnchor} collapsable={false}>
+          <IconButton testID="subject-triggers-add" iconName="plus" variant="plain"
+            accessibilityLabel={t('workflows.triggers.section.automate')} tooltip={t('workflows.triggers.section.automate')}
+            onPress={() => openSentence(null, addAnchor)} />
+        </View>
+      </View>
+    ), [widget, linkSlot, linkExpanded, openSentence]);
+    const sectionActions = widget ? null : (
+      <View ref={addAnchor} collapsable={false} style={styles.actions}>
+        <SectionActionButton
+          testID="subject-triggers-add"
+          icon="plus"
+          title={t('workflows.triggers.section.automate')}
+          onPress={() => openSentence(null, addAnchor)}
+        />
+        {linkSlot === 'offered' ? (
+          <View ref={linkAnchor} collapsable={false}>
+            <SectionActionButton
+              testID="subject-triggers-link"
+              icon="link"
+              title={t('workflows.triggers.section.link')}
+              expanded={opening?.kind === 'link'}
+              onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
+            />
+          </View>
+        ) : linkSlot === 'pending' ? (
+          <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
+            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
+          </View>
+        ) : null}
+      </View>
+    );
     const section = (
       <ItemGroup
         testID="subject-triggers"
-        title={t('workflows.triggers.section.title')}
-        description={describeAutomationsSection(props.subject.kind, empty && !unsettled)}
-        action={
-          <View ref={addAnchor} collapsable={false} style={styles.actions}>
-            <SectionActionButton
-              testID="subject-triggers-add"
-              icon="plus"
-              title={t('workflows.triggers.section.automate')}
-              onPress={() => openSentence(null, addAnchor)}
-            />
-            {linkSlot === 'offered' ? (
-              <View ref={linkAnchor} collapsable={false}>
-                <SectionActionButton
-                  testID="subject-triggers-link"
-                  icon="link"
-                  title={t('workflows.triggers.section.link')}
-                  expanded={opening?.kind === 'link'}
-                  onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
-                />
-              </View>
-            ) : linkSlot === 'pending' ? (
-              <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
-                aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
-              </View>
-            ) : null}
-          </View>
-        }
+        {...(widget ? { surface: 'none' as const } : { title: t('workflows.triggers.section.title'), description, action: sectionActions })}
       >
+        {widget ? <WidgetGlanceRow variant="fact" title={description} testID="subject-triggers-description" /> : null}
         {unsettled ? (
           <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
             // Nothing held: the whole section failed, said once with its Retry.
@@ -291,6 +324,7 @@ export const SubjectTriggersSectionContent = React.memo(
     // An open editor owns its draft independently of the row read's availability.
     return (
       <>
+        {frameActions ? <WidgetFrameHeaderActions node={frameActions} /> : null}
         {section}
         {alsoSection}
         {editor.popover}
@@ -326,6 +360,12 @@ export const SubjectTriggersSectionContent = React.memo(
     );
   },
 );
+
+/** Lends the section's actions to the widget frame that heads it; mounted only in that presentation. */
+function WidgetFrameHeaderActions(props: Readonly<{ node: React.ReactNode }>) {
+  useWidgetFrameBodyMeta(props.node);
+  return null;
+}
 
 /** A suggested entry opens a sentence draft or the subject's specialized setup. */
 const StarterRow = React.memo(function StarterRow(

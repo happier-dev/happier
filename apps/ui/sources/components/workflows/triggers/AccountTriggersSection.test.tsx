@@ -619,6 +619,34 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
         await screen.unmount();
     });
+    it('lets a widget frame head a Project\'s section: its actions become the frame\'s, its rows stay the section\'s', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { WidgetFrameBodyMetaContext } = await import('@/components/widgets/frame/widgetFrameBodyCaption');
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 }) });
+        const subject = { kind: 'project' as const, serverId, projectKey: 'project-happier' };
+        // The frame (WidgetArea) holds what its body lends and draws it in its header.
+        function Frame() {
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return <>
+                <View testID="frame-header">{meta}</View>
+                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                    <SubjectTriggersSection subject={subject} subjectName="happier" presentation="widget" />
+                </WidgetFrameBodyMetaContext.Provider>
+            </>;
+        }
+        const { View } = await import('react-native');
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><Frame /></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-empty')).not.toBeNull());
+        const header = screen.findByTestId('frame-header')!;
+        expect(header.findAll(node => node.props.testID === 'subject-triggers-add').length).toBeGreaterThan(0);
+        // The frame names it: the section draws no title of its own, and says what belongs here first.
+        expect(screen.getTextContent()).not.toContain('workflows.triggers.section.title');
+        expect(screen.findByTestId('subject-triggers-description')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.projectInfo');
+        await screen.unmount();
+    });
     it('says, in place of Link, that a Machine\'s starts could not be read', async () => {
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
