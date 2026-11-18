@@ -15914,8 +15914,16 @@ export async function startDaemonSessionControlRuntime(
         readStartupFailure: trackedSession => readStartupFailure({ sessionId: input.sessionId, trackedSession }),
       }),
     // Daemon shutdown ends every intent hold, so it never waits on an open New Session.
-    prestartSessionHost: async (signal) => await sessionHostPlacement.prestart(
-      AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal])),
+    prestartSessionHost: async (signal) => {
+      // The first spawn's engine resolution imports this; load it now (it stays loaded either way).
+      void import('@/agent/runtime/registry/engineRegistry/resolution')
+        .then(({ preloadEngineRuntimeCore }) => preloadEngineRuntimeCore())
+        .catch((error: unknown) => {
+          // The spawn imports the same module itself; a failed preload only loses the head start.
+          logger.warn('[DAEMON RUN] Engine runtime core preload failed', { error: error instanceof Error ? error.message : String(error) });
+        });
+      await sessionHostPlacement.prestart(AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]));
+    },
     installExternalSessionHostOperations: (operations) =>
       externalSessionHostOperationOwner.install({
         followOperation: operations.followOperation && {

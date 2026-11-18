@@ -100,6 +100,14 @@ function resolveRegisteredAgentAuxiliarySurfaces(
         : surfaces;
 }
 
+/**
+ * Loads the runtime core the first resolution imports (below), so a New Session intent can pay for it
+ * in the person's think time instead of on the first spawn. Same module instance either way.
+ */
+export async function preloadEngineRuntimeCore(): Promise<void> {
+    await import('./runtimeCore');
+}
+
 export async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
     agentTarget?: ResolveEngineRegistryParams['agentTarget'];
