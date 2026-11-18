@@ -12,6 +12,11 @@ export type ProjectSourceArtifactReadOptionsV1 = Readonly<{
   projectSourcePatch?: ProjectSourcePublicationPatchV1;
 }>;
 
+/** A Source owner or audience edit is what changes who reads the Source's content. */
+export function changesProjectSourceAudienceV1(input: Readonly<{ patch: Readonly<{ owner?: unknown; audience?: unknown }> }>): boolean {
+  return input.patch.owner !== undefined || input.patch.audience !== undefined;
+}
+
 /** Content kind is read from the current Artifact, never from an attachment or Source grant. */
 export function isProjectSourceAttachmentKindV1(
   purpose: SourceAttachmentV1['purpose'], refKind: 'doc' | 'bundle', header: unknown,
@@ -65,10 +70,10 @@ export async function prepareProjectSourceUpdateV1(input: Readonly<{
     ...(patch.audience === undefined ? {} : { audience: patch.audience }),
   };
   const publicationRead: typeof input.readArtifact = (ref, options) => input.readArtifact(ref, { ...options,
-    projectSourceId: sourceId, ...(patch.owner === undefined && patch.audience === undefined ? {} : { projectSourcePatch: publicationPatch }) });
+    projectSourceId: sourceId, ...(changesProjectSourceAudienceV1(input.input) ? { projectSourcePatch: publicationPatch } : {}) });
   let setup: Extract<SourceAttachmentV1, { purpose: 'setup' }> | undefined;
   if (intent?.kind === 'attach' && intent.attachment.purpose === 'setup') setup = intent.attachment;
-  else if (patch.owner !== undefined || patch.audience !== undefined) {
+  else if (changesProjectSourceAudienceV1(input.input)) {
     input.signal?.throwIfAborted();
     const current = await input.readSource();
     input.signal?.throwIfAborted();

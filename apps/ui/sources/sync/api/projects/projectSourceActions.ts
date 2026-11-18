@@ -11,10 +11,9 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
-import { prepareProjectSourceUpdateV1, type ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
+import { changesProjectSourceAudienceV1, prepareProjectSourceUpdateV1, type ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { changesProjectSourceAudienceV1 } from '@happier-dev/deployment-protocol/v1';
 
 type SourceAccountPort = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentialAuthorityKind' | 'request' | 'assertCurrent'> & Readonly<{
     workflowArtifacts: Readonly<{ read(artifactId: string, options?: ProjectSourceArtifactReadOptionsV1): ReturnType<LazyActionAccountContext['workflowArtifacts']['read']> }>;
@@ -100,7 +99,7 @@ export function createProjectSourceActionDeps(account: SourceAccountPort, option
         projectSourcesUpdate: async (raw: Parameters<typeof ProjectSourcesUpdateInputV1Schema.parse>[0], context?: ActionExecutorContext) => {
             const input = ProjectSourcesUpdateInputV1Schema.parse(raw);
             return inSourceHome(input.serverId, async () => {
-                if (input.patch.attachment?.kind === 'attach' || input.patch.owner !== undefined || input.patch.audience !== undefined) {
+                if (input.patch.attachment?.kind === 'attach' || changesProjectSourceAudienceV1(input)) {
                     account.assertCurrent();
                     const admission = await prepareProjectSourceUpdateV1({
                         input, signal: context?.signal,

@@ -121,7 +121,7 @@ describe('deployment content recipient delivery', () => {
         { serverId: 'home', environmentId: 'env-a' },
         context,
       ),
-    ).resolves.toEqual({ status: 'prepared' });
+    ).resolves.toBeUndefined();
     expect(prepared).toEqual([
       [
         'env-a-content',
@@ -140,7 +140,7 @@ describe('deployment content recipient delivery', () => {
         { serverId: 'home', projectSourceId: 'source' },
         context,
       ),
-    ).resolves.toEqual({ status: 'prepared' });
+    ).resolves.toBeUndefined();
     expect(new Set(prepared.flat())).toEqual(
       new Set([
         'env-a-content',
@@ -157,7 +157,7 @@ describe('deployment content recipient delivery', () => {
     expect(calls).not.toContain('deployments.receipts.list');
   });
 
-  it('still delivers readable heads when one read is refused, and reports pending', async () => {
+  it('still delivers readable heads when one read is refused', async () => {
     const { ports, prepared } = home({ domainsFail: true });
     await expect(
       prepareDeploymentEnvironmentRecipientsV1(
@@ -165,13 +165,13 @@ describe('deployment content recipient delivery', () => {
         { serverId: 'home', environmentId: 'env-a' },
         context,
       ),
-    ).resolves.toEqual({ status: 'pending' });
+    ).resolves.toBeUndefined();
     expect(prepared).toEqual([
       ['env-a-content', 'env-a-runtime-content', 'env-a-retained-content'],
     ]);
   });
 
-  it('reports pending when the keyholder preparation is refused', async () => {
+  it('settles without failing when the keyholder preparation is refused', async () => {
     const { ports } = home();
     const refused = {
       ...ports,
@@ -185,7 +185,7 @@ describe('deployment content recipient delivery', () => {
         { serverId: 'home', environmentId: 'env-a' },
         context,
       ),
-    ).resolves.toEqual({ status: 'pending' });
+    ).resolves.toBeUndefined();
   });
 
   it('selects only Permissions edits as Environment access changes', () => {
@@ -228,6 +228,19 @@ describe('deployment content recipient delivery', () => {
       expect((await save({ deployerMode: 'chosen' }, 3)).prepared).toEqual([]);
       expect((await save({ protection: 'production' }, 4)).prepared).toEqual([]);
       expect((await save({ deployerMode: 'chosen' }, 4, 'none')).prepared).toEqual([]);
+    });
+
+    it('settles a committed Save as succeeded when the caller aborts during delivery', async () => {
+      const fixture = home();
+      const controller = new AbortController();
+      const aborting = { ...fixture.ports, async prepareArtifactRecipients() {
+        controller.abort();
+        throw new DOMException('aborted', 'AbortError');
+      } };
+      const route = (async () => ({ ok: true, environmentId: 'env-a', revision: 4 })) as DeploymentContentRecipientPortsV1['deploymentAction'];
+      const wrapped = withDeploymentEnvironmentRecipientDeliveryV1(route, () => aborting);
+      await expect(wrapped('deployments.environments.update', update({ deployerMode: 'chosen' }) as never,
+        { ...context, signal: controller.signal })).resolves.toEqual({ ok: true, environmentId: 'env-a', revision: 4 });
     });
   });
 });
