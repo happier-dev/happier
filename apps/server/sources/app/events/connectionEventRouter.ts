@@ -38,7 +38,7 @@ import { ACCOUNT_SIGN_IN_REVOKED_EVENT, SIGN_IN_POLICY_CHANGED_EVENT } from './s
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { getDbProviderFromEnv } from '@/storage/db';
 import {
-    isAccountChangeRowVisibleToCompatibility, projectAccountChangesPage, readAccountChangeRowsPendingRunIds,
+    cutAccountChangesPage, isAccountChangeRowVisibleToCompatibility, projectAccountChangesPage, readAccountChangeRowsPendingRunIds,
     readAccountChangeRowsSessionAccess, withAccountChangesReads, type AccountChangeRowFacts,
 } from '@/app/changes/readAccountChangesPage';
 import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, type PushedAccountChangesPageV1 } from '@happier-dev/protocol/changes';
@@ -678,12 +678,12 @@ class EventRouter {
         };
         if (!delivery.rows) return sendBare(included);
 
-        // The feed's order and page bound: more rows than a page carries is a full page (read on).
+        // The feed's order and page boundary: a pushed page always carries `full` (its schema is the
+        // current page schema), so it is cut as the feed cuts a V4 read; a full page acknowledges only its last row.
         const sorted = delivery.rows.map(row => ({ ...row, changedAt: new Date(row.changedAt) }))
             .sort((left, right) => left.cursor - right.cursor || (left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0)
                 || (left.entityId < right.entityId ? -1 : left.entityId > right.entityId ? 1 : 0));
-        const full = sorted.length > ACCOUNT_CHANGES_PAGE_LIMIT_V1;
-        const rows = full ? sorted.slice(0, ACCOUNT_CHANGES_PAGE_LIMIT_V1) : sorted;
+        const { rows, full } = cutAccountChangesPage(sorted, ACCOUNT_CHANGES_PAGE_LIMIT_V1, { supportsFull: true });
         const nextCursor = full ? rows[rows.length - 1]!.cursor : delivery.toCursor;
 
         const groups = new Map<string, AccountChangeRowsGroup>();

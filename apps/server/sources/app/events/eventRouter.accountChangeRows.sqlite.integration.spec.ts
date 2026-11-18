@@ -3,14 +3,16 @@ import { Server } from 'socket.io';
 import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
+import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { markAccountChanged, markAccountProjectionChanges } from '@/app/changes/markAccountChanged';
 import { readAccountChangesPage } from '@/app/changes/readAccountChangesPage';
 import { readSessionAccessAuthenticationFromSocket } from '@/app/session/access/sessionAccessAuthentication';
 import { getAccountChangeRowsSocketRoom, getAccountStoredContentV3SocketRoom } from '@/app/api/socketRooms';
@@ -253,6 +255,57 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         }
     });
 
+    it('cuts a pushed wake page where the feed would, never acknowledging only the global half of a quota pair', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `pair-${crypto.randomUUID()}` } });
+        const recordId = buildProviderAccountUsageRecordId({ providerId: 'claude', accountSubjectId: 'account',
+            subjectKind: 'account', quotaScope: 'account' });
+        const [global, exact] = buildProviderAccountUsageMaterialChangesV1(recordId);
+        const http = createServer();
+        const io = new Server(http, { path: '/v1/updates' });
+        io.on('connection', socket => {
+            Object.assign(socket.data, { userId: account.id, clientType: 'user-scoped',
+                authAuthority: 'present_user', authTokenAuthenticationEvidence: [] });
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(socket.handshake.auth));
+            socket.data.accountChangeRows = { kinds: readAccountChangeRowsDemandV1(socket.handshake.auth)!.kinds };
+            void socket.join([getAccountStoredContentV3SocketRoom(account.id), getAccountChangeRowsSocketRoom(account.id), `user-scoped:${account.id}`]);
+            socket.emit('joined');
+        });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test address');
+        eventRouter.setIo(io);
+        const client = connect(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'], reconnection: false,
+            auth: { accountStoredContentCompatibility: { v: 1, protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION },
+                accountChangeRows: { v: 1, kinds: ['account', 'machine'] } } });
+        const wakes: Wake[] = [];
+        client.on('update', (wake: Wake) => { if (wake.body.t === 'account-change') wakes.push(wake); });
+        const limit = ACCOUNT_CHANGES_PAGE_LIMIT_V1;
+        try {
+            await new Promise<void>((resolve, reject) => { client.once('joined', () => resolve()); client.once('connect_error', reject); });
+            // One wake: a page's worth of rows whose last two straddle a quota pair.
+            await inTx(async tx => {
+                await markAccountProjectionChanges(tx, 'machine', new Map(Array.from({ length: limit - 1 },
+                    (_, index) => [`machine-${index}`, [account.id]] as const)));
+                await markAccountChanged(tx, { accountId: account.id, ...global });
+                await markAccountChanged(tx, { accountId: account.id, ...exact });
+            });
+            await vi.waitFor(() => expect(wakes).toHaveLength(1));
+            const pushed = wakes[0]!.body.rows!;
+            expect(pushed.page.changes.map(change => change.entityId)).not.toContain(global.entityId);
+            expect(pushed.page).toEqual(expect.objectContaining({ full: true, nextCursor: pushed.page.changes.at(-1)!.cursor }));
+            // The pushed page is the page the feed owner reads for the same cursor.
+            const serverSocket = (await io.fetchSockets())[0]!;
+            expect(await readAccountChangesPage({ accountId: account.id, after: pushed.after, limit,
+                kinds: ['account', 'machine'], compatibility: { ...serverSocket.data.accountStoredContentCompatibility },
+                readAuthentication: () => readSessionAccessAuthenticationFromSocket(serverSocket) }))
+                .toEqual({ status: 'ok', page: pushed.page });
+        } finally {
+            client.close();
+            eventRouter.clearIo();
+            await io.close();
+        }
+    });
+
     it('judges a filtered feed page full on the stored rows, so its reader reads on', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `full-${crypto.randomUUID()}` } });
         const session = await db.session.create({ data: { accountId: account.id, tag: 'full', encryptionMode: 'plain', metadata: '{}' } });
@@ -264,9 +317,10 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
         const kinds = (await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } })).map(row => row.kind);
         expect(kinds.slice(0, 2)).toEqual(['pluginDomain', 'pluginDomain']);
+        // A V4 reader that cannot consume plugin rows: they are read, then hidden (a released reader is filled in SQL).
         const read = await readAccountChangesPage({ accountId: account.id, after: 0, limit: 2,
             compatibility: { supportsPluginDataProtocol: false, supportsMachinePoolChangeProtocol: true,
-                supportsSavedSecretResourceChangeProtocol: true, supportsSessionAccessWitnessProtocol: false } as never,
+                supportsSavedSecretResourceChangeProtocol: true, supportsSessionAccessWitnessProtocol: true } as never,
             readAuthentication: () => { throw new Error('unused'); } });
         expect(read.status === 'ok' && read.page).toEqual(expect.objectContaining({ changes: [], full: true }));
     });

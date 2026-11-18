@@ -466,6 +466,18 @@ export function canTargetSessionFromSocket(params: Readonly<{
     return scopedSessionIds.every((scopedSessionId) => scopedSessionId === sessionId);
 }
 
+/**
+ * Whether a socket may read a Session's Machine access key (`access-key-get`).
+ *
+ * Unlike RPC admission (`canUseSessionScopedRpcMethodWithMachineAccessKey`), which holds the connect-time
+ * fact and reads no access per call, a Machine-bound Session-scoped socket re-reads its Machine access
+ * here. This is deliberate: the request releases key material, it is one request (not a publisher
+ * event), and its handler opens a read for the key anyway, so the live read costs one row on a path
+ * that already reads. It also closes the one window the held fact leaves open, an access loss whose
+ * cross-node push this node missed (until `reconfirmSessionScopedMachineAccess`), at the point where
+ * a stale admission would hand out a secret. A withdrawal commits before it is pushed, so this read
+ * refuses whenever the held fact would; the two differ only in that this one also sees a missed push.
+ */
 export async function canReadAccessKeyFromSessionScopedSocket(params: Readonly<{
     socket: Socket;
     connection: ClientConnection;

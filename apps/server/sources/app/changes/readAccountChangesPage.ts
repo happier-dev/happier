@@ -158,6 +158,27 @@ export function projectAccountChangesPage(input: Readonly<{
     } };
 }
 
+/**
+ * The one page boundary for Account change rows in feed order (`cursor`, `kind`, `entityId`):
+ * `GET /v2/changes` cuts the rows it read and the wake fan-out cuts the rows the write stored,
+ * so a pushed page ends exactly where the feed read would.
+ *
+ * A V4 reader (`supportsFull`) is handed at least one row past the limit when more exist, so
+ * `full` is exact, and is never acknowledged only the legacy/global half of a verified quota
+ * pair: the pair is deferred together, or carried on a one-row page. A released reader is handed
+ * at most `limit` rows and drains by row count, so it keeps its original row boundary and a page
+ * of `limit` rows is full.
+ */
+export function cutAccountChangesPage<Row extends Readonly<{ kind: string; entityId: string; cursor: number; hint?: unknown }>>(
+    sortedRows: readonly Row[], limit: number, options: Readonly<{ supportsFull: boolean }>,
+): Readonly<{ rows: Row[]; full: boolean }> {
+    if (!options.supportsFull) return { rows: sortedRows.slice(0, limit), full: sortedRows.length >= limit };
+    const last = sortedRows[limit - 1];
+    const next = sortedRows[limit];
+    const splitQuotaPair = last && next && isPairedProviderAccountUsageChangeV1(last, next);
+    return { rows: sortedRows.slice(0, splitQuotaPair ? limit === 1 ? 2 : limit - 1 : limit), full: sortedRows.length > limit };
+}
+
 export type AccountChangesPageRead =
     | Readonly<{ status: 'account-not-found' }>
     | Readonly<{ status: 'cursor-gone'; currentCursor: number; changesFloor: number;
@@ -221,14 +242,7 @@ export async function readAccountChangesPage(input: Readonly<{
             take: supportsFull ? limit + 1 : limit,
             select: { cursor: true, kind: true, entityId: true, changedAt: true, hint: true },
         }), true);
-        const last = readRows[limit - 1];
-        const next = readRows[limit];
-        // Never acknowledge only the legacy/global half of a verified quota
-        // pair to a V4 reader. Defer the pair together, or carry it on a
-        // one-row HTTP page. Released readers keep their original row boundary.
-        const splitQuotaPair = last && next && isPairedProviderAccountUsageChangeV1(last, next);
-        const rows = readRows.slice(0, splitQuotaPair ? limit === 1 ? 2 : limit - 1 : limit);
-        const full = readRows.length >= limit;
+        const { rows, full } = cutAccountChangesPage(readRows, limit, { supportsFull });
         // Retention advances the floor and removes rows atomically. Keep
         // this second, fresh read after rows, even within one transaction.
         const currentAccount = await read(tx => tx.account.findUnique({
