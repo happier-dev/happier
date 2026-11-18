@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from './approvalRequestV1.js';
+import { ApprovalRequestV2Schema, HistoricalPublishApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequestV2 } from './approvalRequestV1.js';
+import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { createApprovalAutomaticChecksV1 } from '../actions/executor/automaticApprovalContinuation.js';
 import { decideApprovalRequestTransition, resolveApprovalRequestExecutionInput, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -123,6 +124,16 @@ describe('open decision readability', () => {
     const settled = ApprovalRequestV2Schema.parse({ ...pastPendingChecks,
       automaticChecks: { ...existing.automaticChecks!, phase: 'passed', humanDecision: decision } });
     expect(decideApprovalRequestTransition(existing, settled)).toEqual({ ok: true, changed: true });
+  });
+
+  it.each(['rejected', 'canceled'] as const)('lets a person settle an open retired Publish Ask as %s', status => {
+    const original = openRequest();
+    const existing = HistoricalPublishApprovalRequestV2Schema.parse({ ...original, actionId: RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1,
+      executionOriginV1: { ...original.executionOriginV1, actionId: RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } });
+    const next = { ...existing, status, updatedAtMs: 2,
+      ...(status === 'rejected' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}) } as const;
+    expect(StoredApprovalRequestSchema.safeParse(next).success).toBe(true);
+    expect(decideApprovalRequestTransition(existing, next)).toEqual({ ok: true, changed: true });
   });
 });
 

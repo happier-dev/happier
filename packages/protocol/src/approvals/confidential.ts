@@ -13,6 +13,8 @@ const ConfidentialApprovalFailureCodeSchema = lazyZodSchema(() => z.union([
     'approval_stale', 'approval_context_unavailable', 'approval_execution_outcome_unknown',
     'confidential_choice_required', 'unsupported_action', 'invalid_parameters', 'present_user_required',
     'approval_not_found', 'approval_invalid', 'approval_not_open', 'action_disabled', 'credential_scope_denied',
+    // An automatic check's refusal, recorded before any private choice is materialized.
+    'action_interception_rejected',
   ]),
 ]));
 
@@ -45,8 +47,10 @@ export function validateConfidentialApprovalRequest(value: Readonly<Record<strin
     const record = execution.data;
     if (record.result !== undefined && !SecretFillSettlementV1Schema.safeParse(record.result).success) issue(['execution', 'result']);
     if (record.ok && record.result === undefined) issue(['execution', 'result']);
-    if (record.details !== undefined && (record.ok || record.errorCode !== 'approval_stale'
-      || !ApprovalStaleFailureDetailsSchema.safeParse(record.details).success)) issue(['execution', 'details']);
+    // Value-free details only: a stale reason, or the check Workflow's refusal message about the value-free request.
+    const detailsSchema = record.ok ? null : record.errorCode === 'approval_stale' ? ApprovalStaleFailureDetailsSchema
+      : record.errorCode === 'action_interception_rejected' ? z.strictObject({ message: z.string() }) : null;
+    if (record.details !== undefined && (!detailsSchema || !detailsSchema.safeParse(record.details).success)) issue(['execution', 'details']);
     if (!record.ok && (!ConfidentialApprovalFailureCodeSchema.safeParse(record.errorCode).success || record.error !== record.errorCode)) issue(['execution', 'error']);
     if (record.ok && (record.error !== undefined || record.errorCode !== undefined)) issue(['execution', 'error']);
   }

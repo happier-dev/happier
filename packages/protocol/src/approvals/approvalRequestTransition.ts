@@ -2,7 +2,7 @@ import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.j
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
+import { ApprovalRequestUpdateSchema, ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
 import { actionAutomationTriggerKeyV1, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
@@ -209,10 +209,10 @@ export function decideApprovalRequestTransition(
   if (durablyEqual(existing, next)) {
     return existing.status === 'executing' ? INVALID_TRANSITION : { ok: true, changed: false };
   }
-  // A decision the stored-request reader would reject is refused here, never committed unreadable.
+  // A decision outside the stored-request reader's update schema is refused here, never committed unreadable.
   const isOpenDecision = existing.status === 'open'
     && (next.status === 'approved' || next.status === 'rejected' || next.status === 'canceled')
-    && (next.v !== 2 || ApprovalRequestV2Schema.safeParse(next).success);
+    && (next.v !== 2 || ApprovalRequestUpdateSchema.safeParse(next).success);
   const isAutomaticPendingDecision = existing.v === 2 && next.v === 2
     && existing.status === 'open' && next.status === 'open'
     && existing.automaticChecks !== undefined && next.automaticChecks !== undefined

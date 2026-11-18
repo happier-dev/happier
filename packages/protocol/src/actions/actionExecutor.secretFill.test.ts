@@ -455,7 +455,8 @@ describe('confidential secret-fill approval continuation', () => {
     expect(delivered).toBe(1);
   });
 
-  it('fills once through an Ask that carries the Account\'s automatic checks, and its Artifact stays readable', async () => {
+  /** Only the Artifact storage port is substituted; it keeps the real body/header reader and CAS transition owner. */
+  async function createArtifactBackedAsk(actionAutomations: NonNullable<ActionExecutorDeps['actionAutomations']>) {
     const rows = new Map<string, { header: Record<string, unknown>; body: string }>();
     const read = (artifactId: string) => {
       const row = rows.get(artifactId);
@@ -463,7 +464,6 @@ describe('confidential secret-fill approval continuation', () => {
       return parsed?.family === 'built_in' ? parsed.request : null;
     };
     let fills = 0;
-    // Only the Artifact storage port is substituted; it keeps the real body/header reader and CAS transition owner.
     const executor = createActionExecutor({
       approvalsCreate: async ({ request: created }) => createApprovalRequestArtifact({ request: created, accountId: 'account',
         newId: () => 'unused', read: async id => rows.get(id) ? { ...rows.get(id)!, access: 'owner' } : null,
@@ -478,22 +478,59 @@ describe('confidential secret-fill approval continuation', () => {
         return { ok: true };
       },
       isApprovalExecutionOriginCurrent: async () => true,
-      // Every daemon-admitted Action carries the Account's (here empty) automation selection.
-      actionAutomations: { select: async () => ({ status: 'ready', subjects: [], before: [], after: [] }) },
+      actionAutomations,
       confidentialSecretFill: async () => { fills += 1; return { status: 'filled', code: 'filled' }; },
     } as ActionExecutorDeps);
     const created = await executor.execute('browser.automation.secret.fill', request, { ...context, runtimeAccountId: 'account' });
     expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     const [artifactId] = [...rows.keys()];
-    expect(read(artifactId!)).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent', humanApprovalRequired: true } });
-
     const human = { authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' } as const;
-    expect(await executor.continueConfidentialApprovalRequest({ ...privateInput, artifactId: artifactId! }, human))
-      .toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
-    expect(fills).toBe(1);
-    expect(read(artifactId!)).toMatchObject({ status: 'executed', execution: { ok: true, result: { status: 'filled' } },
+    return { read: () => read(artifactId!), fills: () => fills, rows,
+      submit: () => executor.continueConfidentialApprovalRequest({ ...privateInput, artifactId: artifactId! }, human) };
+  }
+
+  it('fills once through an Ask that carries the Account\'s automatic checks, and its Artifact stays readable', async () => {
+    // Every daemon-admitted Action carries the Account's (here empty) automation selection.
+    const ask = await createArtifactBackedAsk({ select: async () => ({ status: 'ready', subjects: [], before: [], after: [] }) });
+    expect(ask.read()).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent', humanApprovalRequired: true } });
+    expect(await ask.submit()).toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
+    expect(ask.fills()).toBe(1);
+    expect(ask.read()).toMatchObject({ status: 'executed', execution: { ok: true, result: { status: 'filled' } },
       decision: { kind: 'approve', authority: 'present_user' },
       automaticChecks: { phase: 'passed', humanDecision: { kind: 'approve', authority: 'present_user' } } });
-    expect(JSON.stringify([...rows.values()])).not.toContain(privateInput.choice.value);
+    expect(JSON.stringify([...ask.rows.values()])).not.toContain(privateInput.choice.value);
+  });
+
+  it.each([
+    { name: 'a passing check fills once', onFailure: 'refuse', outcome: 'succeeded', consent: undefined,
+      first: { ok: true }, firstFills: 1, phase: 'passed', status: 'executed' },
+    { name: 'a refusing check fills nothing', onFailure: 'refuse', outcome: 'failed', consent: undefined,
+      first: { ok: false, errorCode: 'action_interception_rejected' }, firstFills: 0, phase: 'refused', status: 'failed' },
+    { name: 'a check awaiting consent fills nothing and stays open', onFailure: 'refuse', outcome: 'succeeded', consent: 'missing',
+      first: { ok: false, errorCode: 'approval_not_open' }, firstFills: 0, phase: 'consent', status: 'open' },
+    { name: 'a failed ask-on-failure check waits for an override before filling', onFailure: 'ask', outcome: 'failed', consent: undefined,
+      first: { ok: false, errorCode: 'approval_not_open' }, firstFills: 0, phase: 'override', status: 'open' },
+  ] as const)('settles a selected check before any fill: $name', async ({ onFailure, outcome, consent, first, firstFills, phase, status }) => {
+    const row = { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+      ownerAccountId: 'account', actionIds: ['browser.automation.secret.fill'], phase: 'before', mode: 'wait', onFailure,
+      ...(consent ? { consent: { status: consent } } : {}) } as const;
+    let starts = 0;
+    // The Workflow runner is the automation boundary; selection, admission and settlement stay real.
+    const ask = await createArtifactBackedAsk({
+      select: async () => ({ status: 'ready', subjects: [], before: [row], after: [] }),
+      start: async ({ selected }) => { starts += 1;
+        return { runs: selected.map(entry => ({ automationId: entry.automationId, triggerId: entry.triggerId, runId: 'run' })), notices: [] }; },
+      wait: async () => ({ state: outcome }),
+    });
+    expect(await ask.submit()).toMatchObject(first);
+    expect(ask.fills()).toBe(firstFills);
+    expect(starts).toBe(consent ? 0 : 1);
+    expect(ask.read()).toMatchObject({ status, automaticChecks: { phase } });
+    if (phase === 'override') {
+      // The person's second private Approve is the ordinary "Approve anyway" over the recorded failure.
+      expect(await ask.submit()).toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
+      expect(ask.fills()).toBe(1);
+      expect(ask.read()).toMatchObject({ status: 'executed', automaticChecks: { phase: 'passed', results: [{ outcome: 'failed' }] } });
+    }
   });
 });
