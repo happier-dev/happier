@@ -16,6 +16,7 @@ import {
     isEffectiveTeamGroupMembership,
 } from '@/app/teams/groups/effectiveGroupMembership';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 export type TeamCredentialUsageLimitRow = Readonly<{
     id: string;
@@ -289,33 +290,41 @@ export async function evaluateResourcesFromDatabaseInTx(
             Math.min(earliest, earliestStartByResourceId.get(request.resourceId) ?? Infinity));
     }
     const earliestStartMs = Math.min(...earliestStartByResourceId.values());
-    const resourceIds = requestsWithLimits.map((request) => request.resourceId);
-    const candidateResourceRows = await tx.usageEvent.findMany({
-        where: {
-            teamCredentialResourceId: { in: resourceIds },
-            observedAt: { gte: new Date(earliestStartMs), lte: input.sourceEndMs === undefined ? input.now : new Date(input.sourceEndMs) },
-        },
-        orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    });
-    const resourceRows = candidateResourceRows.filter((row) => (
-        row.teamCredentialResourceId !== null
-        && row.observedAt.getTime() >= (earliestStartByResourceId.get(row.teamCredentialResourceId) ?? Number.POSITIVE_INFINITY)
-    ));
+    const resourceIds = [...earliestStartByResourceId.keys()];
+    const sourceEnd = input.sourceEndMs === undefined ? input.now : new Date(input.sourceEndMs);
+    // Read each set within its SQL bind budget. Prisma includes LIMIT and OFFSET
+    // in addition to the timestamp predicates.
+    const resourceRowsById = new Map<string, Awaited<ReturnType<typeof tx.usageEvent.findMany>>[number]>();
+    for (const ids of portableQueryChunks({ values: resourceIds, bindingsPerValue: 1, fixedBindings: 4 })) {
+        const candidates = await tx.usageEvent.findMany({
+            where: { teamCredentialResourceId: { in: [...ids] },
+                observedAt: { gte: new Date(earliestStartMs), lte: sourceEnd } },
+        });
+        for (const row of candidates) {
+            if (row.teamCredentialResourceId !== null
+                && row.observedAt.getTime() >= (earliestStartByResourceId.get(row.teamCredentialResourceId) ?? Infinity)) {
+                resourceRowsById.set(row.id, row);
+            }
+        }
+    }
+    const resourceRows = [...resourceRowsById.values()];
     const sessionIds = [...new Set(resourceRows.flatMap((row) => row.sessionId ? [row.sessionId] : []))];
-    const rows = sessionIds.length === 0 ? resourceRows : await tx.usageEvent.findMany({
-        where: {
-            OR: [
-                { id: { in: resourceRows.map((row) => row.id) } },
-                { sessionId: { in: sessionIds }, observedAt: { lte: input.sourceEndMs === undefined ? input.now : new Date(input.sourceEndMs) } },
-            ],
-        },
-        orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    });
-    const groupRows = resourceRows.length === 0 ? [] : await tx.usageEventTeamCredentialGroupAttribution.findMany({
-        where: { usageEventId: { in: resourceRows.map((row) => row.id) } },
-        select: { usageEventId: true, teamGroupId: true },
-    });
-    const resourceRowsById = new Map(resourceRows.map((row) => [row.id, row]));
+    const replayRowsById = new Map(resourceRowsById);
+    for (const ids of portableQueryChunks({ values: sessionIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+        const rows = await tx.usageEvent.findMany({
+            where: { sessionId: { in: [...ids] }, observedAt: { lte: sourceEnd } },
+        });
+        for (const row of rows) replayRowsById.set(row.id, row);
+    }
+    const groupRows = [];
+    for (const ids of portableQueryChunks({
+        values: [...resourceRowsById.keys()], bindingsPerValue: 1, fixedBindings: 2,
+    })) {
+        groupRows.push(...await tx.usageEventTeamCredentialGroupAttribution.findMany({
+            where: { usageEventId: { in: [...ids] } },
+            select: { usageEventId: true, teamGroupId: true },
+        }));
+    }
     const groupAdmissionsByEventId = new Map<string, Map<string, number>>();
     for (const row of groupRows) {
         const usageEvent = resourceRowsById.get(row.usageEventId);
@@ -354,22 +363,22 @@ export async function evaluateResourcesFromDatabaseInTx(
         }
         groupAdmissionsByExternalCorrelation.set(externalCorrelationKey, externalAdmissions);
     }
-    const { bucketAttributions } = resolveScopedUsageContributions(rows.map(toScopedUsageEventRow));
+    const { bucketAttributions } = resolveScopedUsageContributions([...replayRowsById.values()].map(toScopedUsageEventRow));
     const turnReferences = [...new Map(bucketAttributions.flatMap((row) => (
         row.sessionId && row.turnId
             ? [[JSON.stringify([row.sessionId, row.turnId]), { sessionId: row.sessionId, turnId: row.turnId }] as const]
             : []
     ))).values()];
-    const turnRows = turnReferences.length === 0 ? [] : await tx.sessionTurn.findMany({
-        where: {
-            OR: turnReferences.map(({ sessionId, turnId }) => ({ sessionId, turnId })),
-        },
-        select: { sessionId: true, turnId: true, startedAt: true },
-    });
-    const turnStartedAtByKey = new Map(turnRows.map((turn) => [
-        JSON.stringify([turn.sessionId, turn.turnId]),
-        Number(turn.startedAt),
-    ]));
+    const turnStartedAtByKey = new Map<string, number>();
+    for (const references of portableQueryChunks({ values: turnReferences, bindingsPerValue: 2, fixedBindings: 2 })) {
+        const turns = await tx.sessionTurn.findMany({
+            where: { OR: [...references] },
+            select: { sessionId: true, turnId: true, startedAt: true },
+        });
+        for (const turn of turns) {
+            turnStartedAtByKey.set(JSON.stringify([turn.sessionId, turn.turnId]), Number(turn.startedAt));
+        }
+    }
     const events: TeamCredentialUsageLimitEvent[] = bucketAttributions.map((row) => {
         const directlyAttributedAdmissions = row.contributingEventIds.flatMap((id) => (
             [...(groupAdmissionsByEventId.get(id) ?? [])]

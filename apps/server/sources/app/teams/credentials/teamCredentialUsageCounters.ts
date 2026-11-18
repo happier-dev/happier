@@ -3,6 +3,7 @@ import { z } from 'zod/mini';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import {
     evaluateResourcesFromDatabaseInTx, evaluateTeamCredentialUsageLimits, measureTeamCredentialUsageLimit,
@@ -192,24 +193,29 @@ export async function refreshTeamCredentialUsageCountersInTx(tx: Tx, input: Read
     sessionIds?: readonly string[];
     changedObservedAts: readonly Date[];
 }>): Promise<void> {
-    const sessionResources = input.sessionIds?.length ? await tx.usageEvent.groupBy({
-        by: ['teamCredentialResourceId'], _min: { observedAt: true }, _max: { observedAt: true },
-        where: { sessionId: { in: [...input.sessionIds] }, teamCredentialResourceId: { not: null } },
-    }) : [];
-    const resourceIds = [...new Set([...(input.resourceIds ?? []),
-        ...sessionResources.flatMap(row => row.teamCredentialResourceId ? [row.teamCredentialResourceId] : [])])];
-    if (resourceIds.length === 0) return;
-    // A cumulative/native correction can affect other observations in its Session.
-    // Reuse this query's actual extent; unrelated retained periods remain untouched.
-    const affectedDates = [...input.changedObservedAts, ...sessionResources.flatMap(row => [
-        ...(row._min.observedAt ? [row._min.observedAt] : []),
-        ...(row._max.observedAt ? [row._max.observedAt] : []),
-    ])];
+    const affectedResourceIds = new Set(input.resourceIds);
     const observedRange = { startMs: Infinity, endMs: -Infinity };
-    for (const date of affectedDates) {
+    // A cumulative/native correction can affect other observations in its Session.
+    // Fold all chunk extents before choosing which retained periods to reconstruct.
+    const sessionIds = [...new Set(input.sessionIds)];
+    // The null predicate binds no value. Reserve Prisma's LIMIT and OFFSET binds.
+    for (const ids of portableQueryChunks({ values: sessionIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.usageEvent.groupBy({
+            by: ['teamCredentialResourceId'], _min: { observedAt: true }, _max: { observedAt: true },
+            where: { sessionId: { in: [...ids] }, teamCredentialResourceId: { not: null } },
+        });
+        for (const row of rows) {
+            if (row.teamCredentialResourceId) affectedResourceIds.add(row.teamCredentialResourceId);
+            if (row._min.observedAt) observedRange.startMs = Math.min(observedRange.startMs, row._min.observedAt.getTime());
+            if (row._max.observedAt) observedRange.endMs = Math.max(observedRange.endMs, row._max.observedAt.getTime());
+        }
+    }
+    if (affectedResourceIds.size === 0) return;
+    for (const date of input.changedObservedAts) {
         observedRange.startMs = Math.min(observedRange.startMs, date.getTime());
         observedRange.endMs = Math.max(observedRange.endMs, date.getTime());
     }
+    const resourceIds = [...affectedResourceIds];
     await lockResourcesInTx(tx, resourceIds);
     const resources = await tx.teamCredentialResource.findMany({
         where: { id: { in: resourceIds } },
