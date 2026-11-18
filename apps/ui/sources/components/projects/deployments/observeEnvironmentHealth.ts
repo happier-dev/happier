@@ -1,7 +1,7 @@
 import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
     type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -156,6 +156,73 @@ export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime):
         };
         const subscriptions = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
         if (edge) subscriptions.push(edge.selection.subscribe(update, true));
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            options.signal.removeEventListener('abort', close);
+            for (const unsubscribe of subscriptions) unsubscribe();
+        };
+        options.signal.addEventListener('abort', close, { once: true });
+        if (options.signal.aborted) close(); else update();
+        return close;
+    };
+}
+
+/** Observe all native runtime members for a collection page through one shared Machine resource per Machine. */
+export function environmentCollectionHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']> {
+    return (_scope, items, publish, options) => {
+        if (options.signal.aborted) return () => {};
+        const rows = items as readonly DeploymentEnvironmentCollectionV1['items'][number][];
+        const bindings = new Map<string, ReturnType<typeof createMachineServiceResourceBinding>>();
+        for (const item of rows) {
+            const link = item.runtimeTargetLink;
+            if (!link || link.targetKind !== 'ownServer') continue;
+            for (const member of link.members.filter(member => member.state === 'active')) {
+                if (bindings.has(member.machineId)) continue;
+                bindings.set(member.machineId, createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+                    hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId, machineId: member.machineId },
+                }, projection: machineServicesListProjection }));
+            }
+        }
+        const aggregates = new Map<string, ReturnType<typeof projectDeploymentHealthAggregateV1>>();
+        let closed = false;
+        const update = () => {
+            if (closed) return;
+            for (const item of rows) {
+                const link = item.runtimeTargetLink;
+                if (!link || link.targetKind !== 'ownServer') {
+                    publish(item.environment.id, undefined);
+                    continue;
+                }
+                const observations: DeploymentHealthServicesObservationV1[] = [];
+                for (const member of link.members.filter(member => member.state === 'active')) {
+                    const owner = bindings.get(member.machineId);
+                    const snapshot = owner?.selection.getSnapshot();
+                    const value = snapshot?.value;
+                    const services = value?.kind === 'snapshot' ? value.services : [];
+                    const environmentRows = services.filter(row => row.environmentId === item.environment.id);
+                    const memberRows = environmentRows.filter(row => row.deployment?.installationId === member.installationId);
+                    if (snapshot?.freshness !== 'fresh' || snapshot.error || value?.kind !== 'snapshot'
+                        || environmentRows.length !== memberRows.length) continue;
+                    observations.push({ environmentId: item.environment.id, targetLinkId: link.id,
+                        targetLinkRevision: link.revision, machineId: member.machineId, installationId: member.installationId,
+                        role: 'runtime', source: { kind: 'native' },
+                        observedAtMs: memberRows.reduce((latest, service) => Math.max(latest, service.health?.observedAtMs ?? 0), 0),
+                        services: memberRows.map(service => ({ serviceId: service.serviceId,
+                            ...(service.health?.observedAtMs === undefined ? {} : { observation: {
+                                status: service.health.status, observedAtMs: service.health.observedAtMs,
+                                ...(service.health.reason === undefined ? {} : { reason: service.health.reason }),
+                                ...(service.health.expectedDown ? { expectedDown: service.health.expectedDown } : {}),
+                            } }) })),
+                    });
+                }
+                const aggregate = projectDeploymentHealthAggregateV1({ environment: item.environment, targetLink: link,
+                    observations }, aggregates.get(item.environment.id));
+                aggregates.set(item.environment.id, aggregate);
+                publish(item.environment.id, aggregate);
+            }
+        };
+        const subscriptions = [...bindings.values()].map(owner => owner.selection.subscribe(update, true));
         const close = () => {
             if (closed) return;
             closed = true;

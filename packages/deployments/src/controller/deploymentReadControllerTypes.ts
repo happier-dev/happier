@@ -141,6 +141,11 @@ export type DeploymentReadTransportV1 = Readonly<{
     /** One shared, demand-bound subscription to the existing Machine Services Resource. */
     observeEnvironmentHealth?(scope: DeploymentReadScopeV1, detail: DeploymentEnvironmentReadDetailV1,
         publish: (feed: DeploymentEnvironmentHealthFeedV1, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void, options: DeploymentReadOptionsV1): () => void;
+    /** One shared, demand-bound subscription for every Environment currently in a collection page. */
+    observeEnvironmentCollectionHealth?(scope: DeploymentReadScopeV1,
+        items: readonly DeploymentEnvironmentCollectionV1['items'][number][],
+        publish: (environmentId: string, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void,
+        options: DeploymentReadOptionsV1): () => void;
     /** Current saved-check facts for this visible page, independent of its Home metadata read. */
     observeDomainHealth?(scope: DeploymentReadScopeV1, environmentId: string, items: readonly DeploymentDomainReadItemV1[],
         publish: (items: readonly DeploymentDomainReadItemV1[]) => void, options: DeploymentReadOptionsV1): () => void;

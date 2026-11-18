@@ -550,6 +550,37 @@ describe('deployment demand read controller', () => {
             expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toEqual(aggregate);
         } finally { environment.release(); collection.release(); controller.retire(); }
     });
+    it('publishes live health for every collection row without a selected Environment', async () => {
+        const base = networkBoundary();
+        const ids = ['acme-api', 'acme-status', 'billing-db'];
+        const rows = ids.map((id, index) => {
+            const environment = createDeploymentEnvironmentHeaderV1({ id, runtimeTargetLinkId: `target-${id}` });
+            const runtimeTargetLink = { ...base.environmentDetail.targetLinks[0]!.targetLink,
+                id: `target-${id}`, environmentId: id, machines: [`machine-${index}`],
+                members: [{ machineId: `machine-${index}`, installationId: `installation-${index}`, state: 'active' as const }] };
+            return { environment, title: id, runtimeTargetLink };
+        });
+        base.transport.listEnvironments.mockResolvedValue({ ok: true, value: createDeploymentEnvironmentCollectionV1({ items: rows }) });
+        base.transport.observeEnvironmentCollectionHealth = (_scope, items, publish) => {
+            for (const item of items) {
+                const down = item.environment.id !== 'acme-api';
+                publish(item.environment.id, { v: 1, environmentId: item.environment.id,
+                    targetLinkId: item.runtimeTargetLink!.id, protection: item.environment.protection,
+                    status: down ? 'down' : 'up', n: 1, down: down ? 1 : 0, degraded: 0, unknown: 0,
+                    members: [], affectedMachineIds: down ? [`machine-${item.environment.id}`] : [],
+                    edgeUnreachable: false, authoritativeRecovery: !down });
+            }
+            return () => {};
+        };
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const collection = controller.acquireCollection({}, active);
+        try {
+            await collection.refresh();
+            expect(collection.getSnapshot().value?.items.map(item => [item.environment.id, item.healthAggregate?.status])).toEqual([
+                ['acme-api', 'up'], ['acme-status', 'down'], ['billing-db', 'down'],
+            ]);
+        } finally { collection.release(); controller.retire(); }
+    });
     it('withdraws the edge Resource when its controller or admitted link revision changes', async () => {
         const base = networkBoundary();
         let detail = { ...base.environmentDetail, environment: { ...base.environmentDetail.environment,
