@@ -58,8 +58,8 @@ const lightThemeBase = {
             // and the elevated chip fill (#F0F0F0).
             tertiary: '#6C6C70',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.light.link,
-            // Destructive copy is read on the page and its sheets: the system red's hue, deepened to 4.5:1 there.
-            destructive: '#E10C00',
+            // Destructive copy is read on the page, its sheets and control fills: the system red's hue, deepened to 4.5:1 there.
+            destructive: '#DB0C00',
             // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
             placeholder: '#6C6C70',
             disabled: '#C0C0C0',
@@ -74,12 +74,12 @@ const lightThemeBase = {
             purple: Platform.select({ ios: '#AF52DE', default: '#9C27B0' }),
         },
         state: {
-            // Each marker ink (dot, icon, border) holds 3:1 on its own tint over the page and its sheets;
+            // Each marker ink (dot, icon, border) holds 3:1 on its own tint over the page, its sheets and control fills;
             // asserted in `themeContrast.test.ts`.
             success: {
-                foreground: '#289B45',
+                foreground: '#289744',
                 // Lab status hues, deepened for small text on their tints; markers retain their ink.
-                textForeground: '#187633',
+                textForeground: '#187632',
                 background: 'rgba(52, 199, 89, 0.12)',
                 border: '#34C759',
             },
@@ -87,7 +87,7 @@ const lightThemeBase = {
             // lab's #FFF8F0 / #FFF0F0, and a glass plane keeps their hue instead of repainting an opaque
             // fill as its neutral inner coat (a warning badge turned grey on the glass composer).
             warning: {
-                foreground: '#CB7600',
+                foreground: '#C67300',
                 textForeground: '#945700',
                 background: 'rgba(255, 149, 0, 0.06)',
                 border: '#FF9500',
@@ -101,7 +101,7 @@ const lightThemeBase = {
                 background: Color(PLANET_ATTENTION_HEX.light).alpha(0.12).rgb().string(),
             },
             danger: {
-                foreground: '#FF362B',
+                foreground: '#FF291D',
                 textForeground: '#BE2525',
                 background: 'rgba(255, 59, 48, 0.075)',
                 border: '#FF3B30',
@@ -113,7 +113,7 @@ const lightThemeBase = {
                 border: '#007AFF',
             },
             neutral: {
-                foreground: '#8B8B91',
+                foreground: '#8A8A90',
                 textForeground: '#6C6C70',
                 background: '#F2F2F7',
                 border: '#D1D1D6',

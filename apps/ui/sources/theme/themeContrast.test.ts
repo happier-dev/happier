@@ -344,12 +344,13 @@ describe('default tinted status text contrast', () => {
 
 /**
  * The pairings the Themes editor checks for the Default palette (`themeProfileTokens.ts` contrastPairs):
- * link and destructive copy are read on the page and its sheets (4.5:1), and each state marker ink (a
- * dot, icon or border) sits on its own tint (3:1, WCAG 1.4.11). The tint is measured over the page and
- * over a sheet, because status rows and pills stand on both.
+ * link and destructive copy are read on the page, its sheets, cards, popovers and control fills (4.5:1),
+ * and each state marker ink (a dot, icon or border) is a non-text indicator (3:1, WCAG 1.4.11) on its
+ * own tint over the page, a sheet and a control fill, and bare on a control fill (menus, chips).
  */
 const READ_INK_TOKENS = ['text.link', 'text.destructive'] as const;
-const READ_INK_BACKGROUNDS = ['background.canvas', 'surface.base'] as const;
+const READ_INK_BACKGROUNDS = ['background.canvas', 'surface.base', 'surface.elevated', 'edge.cardFill', 'edge.floatingFill'] as const;
+const MARKER_BACKDROPS = ['background.canvas', 'surface.base', 'surface.elevated'] as const;
 const STATE_MARKER_VARIANTS = ['success', 'warning', 'danger', 'info', 'neutral', 'active'] as const;
 
 function defaultPaletteRoleFailures(colors: unknown, label: string): string[] {
@@ -358,14 +359,15 @@ function defaultPaletteRoleFailures(colors: unknown, label: string): string[] {
         const ratio = contrastRatio(readTokenPath(colors, token), readTokenPath(colors, background), canvas);
         return ratio >= 4.5 ? [] : [`${label}: ${token} on ${background} = ${ratio.toFixed(2)}:1 (needs 4.5:1)`];
     }));
-    const markers = STATE_MARKER_VARIANTS.flatMap((variant) => READ_INK_BACKGROUNDS.flatMap((backdrop) => {
-        const ratio = contrastRatio(
-            readTokenPath(colors, `state.${variant}.foreground`),
-            readTokenPath(colors, `state.${variant}.background`),
-            readTokenPath(colors, backdrop),
-        );
-        return ratio >= 3 ? [] : [`${label}: state.${variant}.foreground on its tint over ${backdrop} = ${ratio.toFixed(2)}:1 (needs 3:1)`];
-    }));
+    const markers = STATE_MARKER_VARIANTS.flatMap((variant) => {
+        const ink = readTokenPath(colors, `state.${variant}.foreground`);
+        const onTint = MARKER_BACKDROPS.flatMap((backdrop) => {
+            const ratio = contrastRatio(ink, readTokenPath(colors, `state.${variant}.background`), readTokenPath(colors, backdrop));
+            return ratio >= 3 ? [] : [`${label}: state.${variant}.foreground on its tint over ${backdrop} = ${ratio.toFixed(2)}:1 (needs 3:1)`];
+        });
+        const bare = contrastRatio(ink, readTokenPath(colors, 'surface.elevated'), canvas);
+        return bare >= 3 ? onTint : [...onTint, `${label}: state.${variant}.foreground on surface.elevated = ${bare.toFixed(2)}:1 (needs 3:1)`];
+    });
     return [...read, ...markers];
 }
 
