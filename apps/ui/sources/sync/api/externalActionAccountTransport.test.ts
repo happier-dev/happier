@@ -157,11 +157,11 @@ describe('captured Account Action response decoding', () => {
         expect(result, JSON.stringify(result)).toEqual({ ok: true, result: terminalInput });
     });
     it.each([
-        { creator: true, prepareCodec: true, accountMode: 'plain' }, { creator: true, prepareCodec: true, accountMode: 'e2ee' },
-        { creator: false, prepareCodec: false, accountMode: 'plain' }, { creator: false, prepareCodec: false, accountMode: 'e2ee' },
-        { creator: true, prepareCodec: false, accountMode: 'plain' }, { creator: true, prepareCodec: false, accountMode: 'e2ee' },
-        { creator: false, prepareCodec: true, accountMode: 'plain' }, { creator: false, prepareCodec: true, accountMode: 'e2ee' },
-    ] as const)('uses signed creator Delete custody without borrowing member credentials ($accountMode, creator=$creator, prepared=$prepareCodec)', async ({ creator, prepareCodec, accountMode }) => {
+        { creator: true, intent: 'delete', accountMode: 'plain' },
+        { creator: true, intent: 'delete', accountMode: 'e2ee' },
+        { creator: false, intent: 'delete', accountMode: 'e2ee' },
+        { creator: false, intent: 'stop', accountMode: 'e2ee' },
+    ] as const)('runs admitted $intent without sharing Account material ($accountMode, creator=$creator)', async ({ creator, intent, accountMode }) => {
         if (!account) throw new Error('Expected captured Account');
         if (accountMode === 'e2ee') {
             const credentials = { ...account.credentials, secret: encodeBase64(new Uint8Array(32).fill(29), 'base64url') };
@@ -175,10 +175,10 @@ describe('captured Account Action response decoding', () => {
         const { encryption } = await account.resolveAccountEncryption();
         const material = encryption ? { type: 'dataKey' as const, machineKey: encryption.getContentPrivateKey() } : undefined;
         const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
-        const actionId = 'machines.managed.delete';
-        const requestId = 'creator-delete';
+        const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+        const requestId = 'managed-control';
         const input = { homeId: binding.serverIdentityId, managedId: 'created-guest', when: 'now',
-            expectedRevision: 0, intent: 'delete', reviewedDependencies: true };
+            expectedRevision: 0, intent, ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
         const actionPath = `/v1/actions/${actionId}`;
         homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -195,17 +195,16 @@ describe('captured Account Action response decoding', () => {
             try {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             const authorization = request.executionAuthorization;
-            if (!authorization) throw new Error('Missing admitted Delete');
+            if (!authorization) throw new Error('Missing admitted managed control');
             const recipient = { authorization, serverIdentityId: binding.serverIdentityId, machineId: 'machine-1',
                 installationId: 'installation-1', installationPrivateKey: keys.secretKey };
             const codec = openManagedControllerActionCodecV1(recipient);
-            expect(codec !== null).toBe(creator);
+            expect(codec).not.toBeNull();
             if (codec && material) expect(codec.machineKey).not.toEqual(material.machineKey);
             if (request.envelope.v === 2) expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                 envelope: request.envelope, binding: { ...binding, actionId, requestId }, material: codec ?? material! })).toEqual({ input });
             const requester = openExternalActionRequesterAccountContextV1({ ...recipient, purpose: { kind: 'external_action' } });
-            if (creator) expect(requester).toBeNull();
-            else expect(requester).toMatchObject({ token: account?.credentials.token });
+            expect(requester).toBeNull();
             const execution = { ok: true as const, result: { kind: 'accepted', managedId: input.managedId, intentRevision: 1 } };
             return { body: request.envelope.v === 2 ? prepareExternalActionResponseV2({ binding: { ...binding, actionId, requestId },
                 request: request.envelope, material: codec ?? material!, randomBytes: getRandomBytes, executedMachineId: 'machine-1', execution }).response
@@ -213,15 +212,14 @@ describe('captured Account Action response decoding', () => {
             } catch (error) { boundaryFailure = error; throw error; }
         } });
         const result = await executeOriginalAccountActionTransport({ account, binding: { ...binding, actionId, requestId }, input,
-            ...(material ? { material } : {}), ...(prepareCodec ? { prepareManagedControllerCodec: true } : {}),
+            ...(material ? { material } : {}),
             authority: 'present_user', invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' },
             machineCustody: { accountMode, installationId: 'installation-1', installationPublicKey: keys.publicKey,
                 custodian: { accountId: 'custodian' } },
         });
         expect(boundaryFailure).toBeUndefined();
-        if (creator === prepareCodec) expect(result).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: input.managedId } });
-        else expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
-        expect(homes.requestsFor(actionPath)).toHaveLength(creator === prepareCodec ? 1 : 0);
+        expect(result).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: input.managedId } });
+        expect(homes.requestsFor(actionPath)).toHaveLength(1);
     });
     it('sends unbound host repair Actions through the Home action.invoke owner', async () => {
         const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1' };

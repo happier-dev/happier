@@ -366,7 +366,7 @@ describe('requester bootstrap installation confidentiality', () => {
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes })).toThrow();
   });
   it.each(['plain', 'e2ee'].flatMap(accountEncryptionMode => ['machines.managed.acquire', 'machines.managed.credentials.install',
-    'machines.managed.cancel', 'machines.managed.setup.skip',
+    'machines.managed.cancel', 'machines.managed.setup.skip', 'machines.managed.resize',
     'machines.services.list', 'machines.services.discovery', 'machines.services.detail']
     .map(actionId => ({ accountEncryptionMode, actionId }))))('seals only an invocation codec for $actionId ($accountEncryptionMode)', ({ accountEncryptionMode, actionId }) => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
@@ -380,6 +380,8 @@ describe('requester bootstrap installation confidentiality', () => {
       } } } : {}),
       ...(actionId === 'machines.managed.cancel' || actionId === 'machines.managed.setup.skip'
         ? { managedAdmission: { actionId, input: { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 } } } : {}),
+      ...(actionId === 'machines.managed.resize' ? { managedAdmission: { actionId,
+        input: { homeId: 'home', managedId: 'managed', size: { cpuCores: 4 } } } } : {}),
       target: { kind: 'machine', machineId: 'controller' },
     } });
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
@@ -396,6 +398,13 @@ describe('requester bootstrap installation confidentiality', () => {
     for (const changed of [{ ...input, machineId: 'other' }, { ...input, installationId: 'other' },
       { ...input, serverIdentityId: 'other' }, { ...input, authorization: { ...sealed, token: 'different-root' } }]) {
       expect(bootstrap.openManagedControllerActionCodecV1(changed)).toBeNull();
+    }
+    if (actionId === 'machines.managed.resize') {
+      const { managedAdmission: _admission, ...bindingWithoutAdmission } = authorization.binding;
+      expect(() => bootstrap.sealManagedControllerActionCodecV1({ authorization: { ...authorization, binding: bindingWithoutAdmission },
+        material, installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes })).toThrow();
+      expect(bootstrap.openManagedControllerActionCodecV1({ ...input,
+        authorization: { ...sealed, binding: bindingWithoutAdmission } })).toBeNull();
     }
     for (const actionId of ['notifications.notify_me', 'action.operations.list', 'action.operations.get',
       'machines.services.logs.read', 'machines.services.watch', 'machines.services.unwatch']) {

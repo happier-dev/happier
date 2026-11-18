@@ -6,7 +6,8 @@ import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/ac
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ExternalActionRequesterInvocationV1Schema, isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { ManagedControllerAccessV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionOperationActionInputSchemasV1, ActionOperationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
@@ -326,8 +327,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
                     || (!foreignController && row.access.resourceMode !== accountMode)))) return failure('content_unavailable');
         }
         usesControllerCodec = Boolean(machineCustody && machineCustody.custodian.accountId !== account.accountId
-            && (actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
-                || actionId === 'machines.managed.delete' && scopedControllerAccess !== undefined || operationActionId));
+            && isManagedControllerCodecActionV1({ actionId, managedAdmission: projectExternalActionManagedAdmissionV1(actionId, input) }));
         if (encryption && !usesControllerCodec) material = { type: 'dataKey', machineKey: encryption.getContentPrivateKey() };
     }
     // Narrow the authenticated Account carrier before the installed daemon's
@@ -346,7 +346,6 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         ...(invocation.pluginInvocation ? { pluginInvocation: invocation.pluginInvocation } : {}),
         ...(material ? { material } : {}),
         ...(machineCustody ? { machineCustody } : {}),
-        ...(usesControllerCodec ? { prepareManagedControllerCodec: true } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         invalidResponseCode: 'managed_response_invalid', requestFailureCode: 'managed_request_failed' });
     return validateExecution(execution);

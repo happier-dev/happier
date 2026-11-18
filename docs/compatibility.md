@@ -13521,6 +13521,11 @@ own role at Use for the managed-resource projection. Only controller Manage or
 controller-less custody supplies resource Manage, required for native lifecycle
 control and unredacted custodian credential/bootstrap selectors. Granting admin
 on a guest does not delegate the custodian's billed resource.
+Delegated power, resize and delete use the existing per-invocation controller
+codec. Home still authorizes the exact action, managed resource and receiving
+controller installation. The call uses the managed resource facts and keeps
+the custodian's Account keys and sealed preset content private. This uses the
+existing managed admission binding and requires matching 0.3 clients and daemon.
 Team workload authority uses the Team's grant, independently of any member's
 personal Machine grant. Pools retain their separate ownership and audience
 contract.

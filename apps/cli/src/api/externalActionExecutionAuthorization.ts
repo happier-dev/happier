@@ -1098,8 +1098,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     ? { runId: workflowCaller.runId, requestId: input.requestId,
       ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) }
     : undefined;
-  const controllerCodec = Boolean(foreign && (managedAdmission
-    || isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission }))
+  const controllerCodec = Boolean(foreign && isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })
     || workflowActionOrigin && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin }));
   if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {

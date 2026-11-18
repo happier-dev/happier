@@ -120,8 +120,6 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     requestFailureCode?: string;
     /** Fresh captured-Home identity only; inventory hints never select private custody. */
     machineCustody?: MachineCustody;
-    /** Prepare an independent invocation key from a scoped public carrier; only the minted root authorizes its use. */
-    prepareManagedControllerCodec?: true;
     invocation?: ExternalActionRequesterInvocationV1;
     reviewedChild?: ReviewedActionChildHttpProofV1;
     onTransportIssued?: () => void;
@@ -141,9 +139,8 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     const retainedResource = params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined
         || params.managedContinuation !== undefined;
     const foreignGuest = custody !== undefined && custody.custodian.accountId !== account.accountId;
-    const prepareManagedControllerCodec = foreignGuest && (params.prepareManagedControllerCodec === true
-        || isManagedControllerCodecActionV1({ actionId: binding.actionId,
-            managedAdmission: projectExternalActionManagedAdmissionV1(binding.actionId, params.input) }));
+    const prepareManagedControllerCodec = foreignGuest && isManagedControllerCodecActionV1({ actionId: binding.actionId,
+        managedAdmission: projectExternalActionManagedAdmissionV1(binding.actionId, params.input) });
     // This invocation key is independent of every Account key and credential.
     const codecMaterial = prepareManagedControllerCodec ? { type: 'dataKey' as const, machineKey: getRandomBytes(32) } : undefined;
     const material = codecMaterial ? custody?.accountMode === 'e2ee' ? codecMaterial : undefined : params.material;

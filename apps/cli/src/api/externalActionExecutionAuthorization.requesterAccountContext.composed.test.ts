@@ -663,6 +663,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   malformedUnrelatedMachine?: boolean;
   onInventoryResponse?: (path: string, rowCount: number) => void;
   scopedManagedController?: boolean;
+  managedEnrollmentAccountId?: string;
   scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
   onRequestAuthorization?: (authorization: string | undefined) => void;
   launchProfile?: Readonly<{ service: { pluginId: string; localId: string }; profileId: string;
@@ -777,7 +778,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       if (options.scopedManagedController) events.push('managed-read');
       expect(body).toEqual({ homeId: homeIdentityId, managedId: 'retained-machine' });
       return respond(ManagedMachineV1Schema.parse({ id: 'retained-machine', homeId: homeIdentityId,
-        custodianAccountId: options.custodianAccountId ?? 'alice', enrollmentAccountId: 'bob', controller: options.scopedControllerMismatch === 'account-owned' ? undefined : {
+        custodianAccountId: options.custodianAccountId ?? 'alice', enrollmentAccountId: options.managedEnrollmentAccountId ?? 'bob',
+        controller: options.scopedControllerMismatch === 'account-owned' ? undefined : {
           machineId: options.scopedControllerMismatch === 'parent' ? 'other-parent' : machine.id,
           installationId: options.scopedControllerMismatch === 'installation' ? 'other-installation' : machine.installationId },
         controllerAccess: { custodian: { accountId: 'alice' }, installationPublicKey: encodeBase64(publicKey, 'base64url') },
@@ -1070,6 +1072,25 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         }
       } finally { await requester?.dispose(); await channel.close(); }
     });
+  });
+  it.each(['stop', 'delete'] as const)('sends a foreign Manage %s through the installation codec without sharing Account material', async intent => {
+    const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+    const events: string[] = [];
+    const target = await home('e2ee', events, { machineRole: 'manage', originalOwnAction: actionId,
+      managedEnrollmentAccountId: 'alice' });
+    const input = { homeId: homeIdentityId, managedId: 'retained-machine', intent, when: 'now',
+      expectedRevision: 0, ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
+    const result = await dispatchOriginalAccountAction({ actionId, input, requestId: 'request-1',
+      target: { kind: 'machine', machineId: 'alice-machine' }, credentials: { token: token(), encryption: null },
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId });
+    expect(result).toMatchObject({ ok: false, errorCode: 'fixture_receipt' });
+    expect(events).toContain('dispatch');
+    const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(delivered.envelope).toMatchObject({ v: 2, managedAdmission: { actionId, input } });
+    const receiver = { authorization: delivered.executionAuthorization, machineId: 'alice-machine',
+      installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
+    expect(openManagedControllerActionCodecV1(receiver)).not.toBeNull();
+    expect(openExternalActionRequesterAccountContextV1({ ...receiver, purpose: { kind: 'external_action' } })).toBeNull();
   });
   it.each(['plain', 'e2ee'] as const)('forwards exact Account power admission without selecting a native recovery controller (%s)', async mode => {
     const events: string[] = [];
