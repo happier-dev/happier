@@ -117,7 +117,6 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         subtitleLines={0}
         mode="info"
         showChevron={false}
-        accessoryLayout="adaptive"
         rightElement={
           <SectionActionButton
             testID={`${props.testID}.archive`}
