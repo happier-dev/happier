@@ -3172,10 +3172,13 @@ function PluginSurfaceHostMount(props: Readonly<(
                     openSurface: controllerBindingWithConnectedAccounts.openSurface,
                 },
             } : {}),
-            // A Composer can carry an opener captured above its physical pane.
-            // Resource intents use the matching pane's catalog AND resolver.
-            ...(enclosingDestinationNavigation?.targetKind === surfaceTargetKind ? {
+            // General destinations use the enclosing scope's existing handoff,
+            // including services panels inside a Project or Session.
+            ...(enclosingDestinationNavigation ? {
                 openSurface: controllerBindingWithConnectedAccounts.openSurface ?? enclosingDestinationNavigation.openSurface,
+            } : {}),
+            // Resource intents still need the matching pane's catalog AND resolver.
+            ...(enclosingDestinationNavigation?.targetKind === surfaceTargetKind ? {
                 resourceNavigation: controllerBindingWithConnectedAccounts.resourceNavigation ?? enclosingDestinationNavigation,
             } : {}),
             ...(!controllerBindingWithConnectedAccounts?.executeHostAction && defaultPluginActionExecute ? {

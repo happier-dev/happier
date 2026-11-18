@@ -11079,7 +11079,14 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         try {
             await vi.waitFor(() => expect(reactNativeSurfaceProps.length, surfaceFixtureDiagnostics(screen, 'acme.browser')).toBeGreaterThan(0));
             const context = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
-            if (explicitResolver === 'other-target' || explicitResolver === 'standalone') {
+            if (explicitResolver === 'other-target') {
+                // An inline mount borrows general destination navigation even
+                // when the enclosing scope owns a different target kind.
+                expect(context.hostApi.version().methods).toContain('openSurface');
+                await expect(context.hostApi.openSurface({ pluginId: 'acme.forge', localId: 'details' })).rejects.toMatchObject({ code: 'unavailable' });
+                return;
+            }
+            if (explicitResolver === 'standalone') {
                 expect(context.hostApi.version().methods).not.toContain('openSurface');
                 return;
             }
@@ -19006,6 +19013,45 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             props: { sessionId: 'session-92' },
         },
     ] as const;
+
+    it('opens a Project destination from a services panel requiring openSurface', async () => {
+        reactNativeSurfaceProps.length = 0;
+        await primeCrossPathArtifact();
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { createPluginSurfaceDestinationNavigationBinding, PluginSurfaceDestinationNavigationBindingProvider } = await import('./pluginSurfaceDestinationNavigation');
+        const { placement, model } = await projectPlacementFromBinding(bindingDeclaration({
+            id: 'database-panel', container: 'servicesPanel', target: { kind: 'services' },
+        }), { hostApiMethods: ['context', 'openSurface'] });
+        const projectBinding = destinationBinding(bindingDeclaration({
+            id: 'database-project', container: 'rightSidebarTab', target: { kind: 'project', workspaceRefIdPath: '/workspaceRefId' },
+        }));
+        const destination = { ...placement, id: 'surfacePlacement:acme.browser:database-project',
+            descriptorId: 'database-project', binding: projectBinding, target: projectBinding.target };
+        const navigation = createPluginSurfaceDestinationNavigationBinding({
+            placements: [destination], projection: model, targetKind: 'project',
+            accountLifetime: pluginSurfaceAccountLifetime.value,
+            scopedLaunchFacts: { serverId: 'server-1', machineId: 'machine_1', interactionEnabled: true },
+        });
+        const opened: unknown[] = [];
+        navigation.registerOwner({ container: 'rightSidebarTab', handler: resolution => {
+            opened.push(resolution.request);
+            return { ok: true };
+        } });
+        const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={navigation}>
+            <PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
+                projectId="project-91" projectContext={createPluginProjectContextFixture({ id: 'project-91', serverId: 'server-1' })}
+                machineId="machine_1" serverId="server-1" platform="web"
+                reactNativeLoaderBackend={{ backendId: 'commonJs', available: true,
+                    loadInstalledBundle: async () => () => null }} />
+        </PluginSurfaceDestinationNavigationBindingProvider>);
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps.length, surfaceFixtureDiagnostics(screen, 'acme.browser')).toBeGreaterThan(0));
+            const hostApi = readMountedHostApi();
+            expect(hostApi.version().methods).toContain('openSurface');
+            await hostApi.openSurface(destination.binding.destination, { table: 'customers' });
+            expect(opened).toEqual([{ destination: destination.binding.destination, input: { table: 'customers' } }]);
+        } finally { await screen.unmount(); }
+    });
 
     it.each(placements)(
         'installs the canonical dispatcher at a $name mount that supplies no host API',
