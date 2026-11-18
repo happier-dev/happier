@@ -3,6 +3,7 @@ import {
   normalizeExecutableParticipantSelectionV1,
   type ExecutableParticipantSelectionV1,
 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
@@ -20,7 +21,7 @@ export function resolveExecutableModelParticipantDisplay(
 ) {
   const agentId = resolveBundledAgentIdFromContributionIdentity(launch.agentTarget.identity);
   const agentLabel = resolveAgentCatalogTitle(agentId ?? launch.agentTarget.identity.localId);
-  const modelId = launch.modelSelection?.ref.modelId ?? launch.configuration?.model.value;
+  const modelId = readAuthoredSessionModelSelection(launch)?.ref.modelId ?? launch.configuration?.model.value;
   // Match ordinary Session authoring: a selected freeform id remains its label
   // when the Agent catalog supplies none; it is never reinterpreted as default.
   const modelLabel = resolveSessionModelLabel(agentId ?? launch.agentTarget.identity.localId, null, modelId ?? 'default')
