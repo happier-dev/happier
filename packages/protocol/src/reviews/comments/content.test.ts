@@ -36,6 +36,22 @@ const OTHER_MATERIAL: AccountScopedCryptoMaterial = {
 };
 
 describe('canonical confidential structural indexes', () => {
+  it.each(['plain', 'e2ee'] as const)('retains the complete typed finding in sealed %s content without a recursive comment reference', mode => {
+    const finding = { id: 'finding-1', title: 'Unsafe input', summary: 'Input reaches the query',
+      severity: 'high' as const, category: 'security' as const, filePath: 'src/private.ts', startLine: 3,
+      whyItMatters: 'A caller can change the query', evidence: 'query(input)', suggestion: 'Bind the input',
+      patch: '- query(input)\n+ query({ value: input })', confidence: 0.9,
+      scopeAttribution: 'pre_existing' as const, extensions: { 'acme.reviewer': { evidence: 'Private evidence' } } };
+    const withBackref = { ...finding, comment: { id: 'previous-comment', state: 'open', serverRevision: 1, projectId: 'project-1' } };
+    const split = splitReviewCommentV1({ ...comment(), finding: withBackref });
+    expect(split.structural).not.toHaveProperty('finding');
+    const envelope = sealReviewCommentSensitiveEnvelopeV1({ ...split, mode,
+      ...(mode === 'e2ee' ? { material: MATERIAL, randomBytes: (size: number) => new Uint8Array(size).fill(2) } : {}) });
+    const opened = openReviewCommentSensitiveEnvelopeV1({ structural: split.structural, envelope, mode,
+      ...(mode === 'e2ee' ? { material: MATERIAL } : {}) });
+    expect(opened).toMatchObject({ status: 'available', comment: { finding } });
+    if (opened.status === 'available') expect(opened.comment.finding).not.toHaveProperty('comment');
+  });
   it('retains host finding attribution and plugin evidence only inside sealed content', () => {
     const finding = { ...comment(), scopeAttribution: 'pre_existing' as const,
       extensions: { 'acme.reviewer': { evidence: 'Private plugin evidence' } } };

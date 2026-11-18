@@ -5,6 +5,7 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
 import { ReviewFindingSeveritySchema, ReviewFindingScopeAttributionSchema } from '../reviewFindingClassification.js';
 import { ReviewFindingExtensionsSchema } from '../findingExtensions.js';
+import { ReviewFindingContentSchema } from '../ReviewFinding.js';
 import { ReviewFindingIdentityV1Schema } from './findingIdentity.js';
 import { ReviewTriageStatusSchema } from '../reviewTriageStatus.js';
 
@@ -403,6 +404,7 @@ export const ReviewCommentV1Schema = lazyZodSchema(() => z.strictObject({
   appearances: z.optional(z.array(ReviewCommentAppearanceInputV1Schema)),
   scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
   extensions: z.optional(ReviewFindingExtensionsSchema),
+  finding: z.optional(ReviewFindingContentSchema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),
@@ -448,6 +450,7 @@ export const ReviewCommentCreateRequestV1Schema = lazyZodSchema(() => z.strictOb
   appearance: z.optional(ReviewCommentAppearanceInputV1Schema),
   scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
   extensions: z.optional(ReviewFindingExtensionsSchema),
+  finding: ReviewCommentV1Schema.shape.finding,
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),

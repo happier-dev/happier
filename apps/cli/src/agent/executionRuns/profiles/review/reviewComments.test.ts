@@ -730,7 +730,7 @@ describe('canonical review Run comments', () => {
       : { session: { sessionId: 'session-1', localInputId: 'actual-input', workflowRunId: 'workflow-1',
         stepId: 'review-step', invocationId: 'physical-invocation', agentId: 'claude', reviewerId: 'reviewer-model-selection-2' },
         workflowRunId: 'workflow-1' }), findings: findings.map(finding => ({ ...finding,
-      scopeAttribution: 'pre_existing' as const, extensions })), review: { reviewId: 'review-1', roundOrdinal: 1 }, reviewedFingerprint: 'launch-fingerprint' });
+      scopeAttribution: 'pre_existing' as const, extensions, patch: '- input();\n+ validate(input);' })), review: { reviewId: 'review-1', roundOrdinal: 1 }, reviewedFingerprint: 'launch-fingerprint' });
 
     expect(result.failures).toEqual([]);
     expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding', 'comment-global-finding'], engineId: 'claude' });
@@ -739,6 +739,10 @@ describe('canonical review Run comments', () => {
     if (source === 'session') expect(posted[1]).toMatchObject({ records: [{ sensitiveEnvelope: { t: 'plain', v: { content: { linkedRefs: [{ kind: 'session', id: 'session-1' }] } } } }] });
     expect(posted[0]).not.toHaveProperty('mutation.input.scopeAttribution');
     expect(posted[0]).not.toHaveProperty('mutation.input.extensions');
+    expect(posted[0]).not.toHaveProperty('mutation.input.finding');
+    expect(posted[1]).toMatchObject({ records: [{ sensitiveEnvelope: { t: 'plain', v: { content: { finding: {
+      ...findings[0], scopeAttribution: 'pre_existing', extensions, patch: '- input();\n+ validate(input);',
+    } } } } }] });
     expect(posted[1]).toMatchObject({ records: [{ sensitiveEnvelope: { t: 'plain', v: { content: { snapshot: { kind: 'text', selectedLines: ['input();'] }, scopeAttribution: 'pre_existing', extensions } } } }] });
     expect(posted[2]).toMatchObject({ mutation: { input: { findingIdentity: expect.stringMatching(/^[a-f0-9]{64}$/) } } });
     });

@@ -60,18 +60,30 @@ describe('canonical Review Comment structural mutations', () => {
   });
 
   it('admits no sensitive create fields and reconstructs the server-assigned record for sealing', () => {
-    const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+    const finding = { id: 'f1', title: 'Private title', summary: 'private summary', category: 'security', severity: 'high', patch: 'private patch' };
+    const createInput = { ...input, finding };
+    const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.create', createInput);
     expect(JSON.stringify(mutation)).not.toContain('private');
     expect(ReviewCommentStructuralMutationV1Schema.safeParse({ ...mutation, input: { ...mutation.input, anchorIndex: { kind: 'file', filePath: 'private.ts' } } }).success).toBe(false);
     const { projectId: _project, ...withoutScope } = mutation.input;
     expect(ReviewCommentStructuralMutationV1Schema.safeParse({ ...mutation, input: withoutScope }).success).toBe(false);
     const prepared = deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor, current: [], runtime });
-    const sensitive = applyReviewCommentPreparedSensitiveMutationV1({ mutation, input, prepared: prepared.records[0]!, previous: undefined });
+    const sensitive = applyReviewCommentPreparedSensitiveMutationV1({ mutation, input: createInput, prepared: prepared.records[0]!, previous: undefined });
     const stored = { v: 1 as const, structural: prepared.records[0]!.structural,
       sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural: prepared.records[0]!.structural, sensitive, mode: 'plain' }) };
     const opened = openStoredReviewCommentV1({ stored, mode: 'plain' });
     expect(opened.status).toBe('available');
-    if (opened.status === 'available') expect(opened.comment).toMatchObject({ id: 'review-comment-1', body: 'private body', serverRevision: 1, author: actor });
+    if (opened.status === 'available') {
+      expect(opened.comment).toMatchObject({ id: 'review-comment-1', body: 'private body', finding, serverRevision: 1, author: actor });
+      const redactInput = { projectId: input.projectId, commentId: opened.comment.id, expectedServerRevision: 1, clientMutationId: 'redact' };
+      const redact = projectReviewCommentStructuralMutationV1('reviews.comments.redact', redactInput);
+      const preparedRedact = deriveReviewCommentStructuralMutationV1({ mutation: redact, accountId: 'account-1', actor,
+        current: [prepared.records[0]!.structural], runtime }).records[0]!;
+      const redacted = applyReviewCommentPreparedSensitiveMutationV1({ mutation: redact, input: redactInput,
+        prepared: preparedRedact, previous: opened.comment });
+      expect(redacted.body).toBe('');
+      expect(redacted.finding).toBeUndefined();
+    }
   });
 
   it('requires evidence or reason for delegated and pending-review state changes', () => {

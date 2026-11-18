@@ -31,7 +31,7 @@ const createShape = ReviewCommentCreateRequestV1Schema.shape;
 const { anchor: _anchor, snapshot: _snapshot, body: _body, eventEnvelope: _createEvent,
   fingerprint: _fingerprint, linkedRefs: _linkedRefs, suggestedFix: _fix,
   evidence: _createEvidence, metadata: _metadata, scopeAttribution: _scopeAttribution,
-  extensions: _extensions, ...createStructural } = createShape;
+  extensions: _extensions, finding: _finding, ...createStructural } = createShape;
 const { reason: _transitionReason, evidence: _transitionEvidence, eventEnvelope: _transitionEvent,
   ...transitionStructural } = ReviewCommentTransitionRequestV1Schema.shape;
 const { nextBody: _nextBody, reason: _editReason, eventEnvelope: _editEvent,
@@ -114,6 +114,7 @@ export function projectReviewCommentStructuralMutationV1(actionId: z.input<typeo
   const { anchor, snapshot: _snapshotValue, body: _bodyValue, nextBody: _nextBodyValue,
     reason, evidence, fingerprint, linkedRefs: _refsValue, suggestedFix: _fixValue,
     metadata: _metadataValue, scopeAttribution: _scopeAttributionValue, extensions: _extensionsValue,
+    finding: _findingValue,
     eventEnvelope: _eventValue, ...structural } = input;
   return ReviewCommentStructuralMutationV1Schema.parse({ actionId, input: {
     ...structural,
@@ -300,7 +301,7 @@ export function applyReviewCommentPreparedSensitiveMutationV1(params: Readonly<{
     sensitive = { anchor: parsed.anchor, snapshot: plainMutationContent(parsed.snapshot), body: plainMutationContent(parsed.body), edits: [],
       evidence: parsed.evidence, transitions: prepared.structural.transitionHistory.map((item) => ({ ...item, evidence: parsed.evidence })),
       fingerprint: parsed.fingerprint, linkedRefs: parsed.linkedRefs, suggestedFix: parsed.suggestedFix, metadata: parsed.metadata,
-      scopeAttribution: parsed.scopeAttribution, extensions: parsed.extensions };
+      scopeAttribution: parsed.scopeAttribution, extensions: parsed.extensions, finding: parsed.finding };
   } else {
     if (!prior || !previous) throw new Error('Review Comment mutation requires its opened previous record');
     sensitive = { ...prior };
@@ -315,7 +316,7 @@ export function applyReviewCommentPreparedSensitiveMutationV1(params: Readonly<{
     } else if (mutation.actionId === 'reviews.comments.transition' || mutation.actionId === 'reviews.comments.bulkTransition') {
       sensitive.transitions = [...prior.transitions, { ...prepared.structural.transitionHistory[prepared.structural.transitionHistory.length - 1], reason: input.reason, evidence: input.evidence }];
     } else if (mutation.actionId === 'reviews.comments.redact') {
-      if (mutation.input.redactBody !== false) { sensitive.body = ''; sensitive.edits = []; }
+      if (mutation.input.redactBody !== false) { sensitive.body = ''; sensitive.edits = []; delete sensitive.finding; }
       sensitive.tombstone = { ...prepared.structural.tombstone, reason: input.reason };
     } else if (mutation.actionId === 'reviews.comments.attachEvidence') {
       const parsed = ReviewCommentAttachEvidenceRequestV1Schema.parse(input);

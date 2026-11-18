@@ -9,6 +9,7 @@ import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/revi
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { ReviewFindingContentSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
 
@@ -178,6 +179,7 @@ export function createReviewRunCommentService(deps: Readonly<{
             findingIdentity, findingSeverity: finding.severity, reviewedFingerprint: params.reviewedFingerprint,
             ...(finding.scopeAttribution === undefined ? {} : { scopeAttribution: finding.scopeAttribution }),
             ...(finding.extensions === undefined ? {} : { extensions: finding.extensions }),
+            finding: ReviewFindingContentSchema.parse(finding),
             ...(review ? { reviewId: review.reviewId, appearance: { roundOrdinal: review.roundOrdinal,
               runId: producingRunId, reviewerId,
               ...(scope.workspace ? { machineId: scope.workspace.machineId } : {}),

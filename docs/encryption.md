@@ -2663,7 +2663,10 @@ and migration encoder; preparation creates no reservation row or second store.
 
 Anchors, snapshots, bodies, edit history, evidence, reasons, sensitive finding fingerprints, links,
 fixes and metadata remain inside the sensitive envelope. New structural records
-retain the anchor kind, not raw path or message-hash indexes. Host-signed current
+retain the anchor kind, not raw path or message-hash indexes. Typed finding
+content also retains its category, explanation, evidence and patch
+there; its mutable comment reference is omitted. Body redaction removes that
+finding content together with the body. Host-signed current
 intent for host-authorized creates is checked against the logical effect locally and bound to the keyed
 commitment and actual HTTP bytes on both mutation phases. Existing finding identities
 and reviewed fingerprints remain structural identity/currentness facts. Equivalent-create

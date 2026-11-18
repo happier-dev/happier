@@ -133,6 +133,7 @@ export type ReviewCommentResourceCryptoV1 = Readonly<{
 export const ReviewCommentSensitiveContentV1Schema = lazyZodSchema(() => z.strictObject({
   scopeAttribution: ReviewCommentV1Schema.shape.scopeAttribution,
   extensions: ReviewCommentV1Schema.shape.extensions,
+  finding: ReviewCommentV1Schema.shape.finding,
   anchor: ReviewCommentAnchorV1Schema,
   snapshot: ReviewCommentSnapshotV1Schema,
   body: z.string(),
@@ -350,6 +351,7 @@ export function splitReviewCommentV1(commentInput: ReviewCommentV1): ReviewComme
       metadata: comment.metadata,
       scopeAttribution: comment.scopeAttribution,
       extensions: comment.extensions,
+      finding: comment.finding,
     }),
   };
 }
@@ -399,6 +401,7 @@ function reconstructComment(
     ...(sensitive.metadata === undefined ? {} : { metadata: sensitive.metadata }),
     ...(sensitive.scopeAttribution === undefined ? {} : { scopeAttribution: sensitive.scopeAttribution }),
     ...(sensitive.extensions === undefined ? {} : { extensions: sensitive.extensions }),
+    ...(sensitive.finding === undefined ? {} : { finding: sensitive.finding }),
     createdAt: structural.createdAt,
     updatedAt: structural.updatedAt,
     serverRevision: structural.serverRevision,

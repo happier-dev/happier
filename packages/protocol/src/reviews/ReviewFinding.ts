@@ -38,6 +38,10 @@ export const ReviewFindingSchema = lazyZodSchema(() => z.looseObject({
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export type ReviewFindingId = string;
 
+/** Durable finding content excludes the mutable reference back to its owning comment. */
+export const ReviewFindingContentSchema = lazyZodSchema(() => z.object(z.omit(ReviewFindingSchema, { comment: true }).shape));
+export type ReviewFindingContent = z.infer<typeof ReviewFindingContentSchema>;
+
 /** Model-authored content excludes host references and plugin-owned evidence namespaces. */
 export const ReviewModelFindingSchema = lazyZodSchema(() => z.strictObject(z.omit(ReviewFindingSchema, {
   comment: true, attributionConfidence: true, scopeAttribution: true, extensions: true,
