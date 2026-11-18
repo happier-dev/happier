@@ -12,7 +12,11 @@ installSettingsViewCommonModuleMocks({ storage: 'real', router: async () => {
     return createExpoRouterMock({ params: { tokenId } }).module;
 } });
 installDisconnectedServerSocketBoundary();
-const { createApiTokenSettingsControllerHarness, disposeApiTokenSettingsControllerHarnesses } = await import('./apiTokenSettingsControllerTestHarness');
+const {
+    apiTokenReadWireFixture,
+    createApiTokenSettingsControllerHarness,
+    disposeApiTokenSettingsControllerHarnesses,
+} = await import('./apiTokenSettingsControllerTestHarness');
 
 afterEach(async () => {
     await standardCleanup();
@@ -71,12 +75,12 @@ describe('API token target recording privacy', () => {
     });
 
     it('keeps configured detail targets while hiding their identity and machine context', async () => {
-        const token = AccountApiTokenSummaryV1Schema.parse({ tokenId, label: 'Website integration',
+        const token = AccountApiTokenSummaryV1Schema.parse(apiTokenReadWireFixture({ tokenId, label: 'Website integration',
             displayPrefix: 'hap_v1_11111111', createdAt: '2026-09-06T00:00:00.000Z', lastUsedAt: null,
             expiresAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
             grant: { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: ['private-target'], machines: [] } },
-            parentTokenId: null, activeChildCount: 0, embedConfig: null });
-        const harness = await createApiTokenSettingsControllerHarness({ rows: [token] });
+            parentTokenId: null, activeChildCount: 0, embedConfig: null }));
+        const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain', rows: [token] });
         await seedSessions(harness.scope.serverId);
         const { ApiTokenSettingsScope } = await import('./collection/ApiTokenSettingsScope');
         const { ApiTokenDetailScreen } = await import('./ApiTokenDetailScreen');

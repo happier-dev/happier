@@ -7,18 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
-import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { ApiTokenSettingsController, ApiTokenSettingsState } from './apiTokenSettingsController';
 
 const runtime = vi.hoisted(() => ({
-    logout: vi.fn(),
     announceAccessibilityMessage: vi.fn(),
     shimmerRepeats: vi.fn(),
-    executeApiTokenAction: vi.fn(),
-    activeAccountScopeLifetime: null as ActiveServerAccountScopeLifetime | null,
-    activeServerAccountScope: null as Readonly<{ serverId: string; accountId: string }> | null,
-    activeServerAccountScopeListeners: new Set<() => void>(),
-    activeServerSnapshot: { serverId: 'server-a', serverUrl: 'https://home-a.example.test' },
     hostActivelyViewed: true,
     hostActivelyViewedListeners: new Set<() => void>(),
     routeParams: {} as Record<string, string | undefined>,
@@ -39,21 +33,7 @@ installSettingsViewCommonModuleMocks({
             useGlobalSearchParams: () => runtime.routeParams,
         };
     },
-    storage: async () => {
-        const React = await import('react');
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return {
-            ...createStorageModuleStub({}),
-            useActiveServerAccountScope: () => React.useSyncExternalStore(
-                (listener) => {
-                    runtime.activeServerAccountScopeListeners.add(listener);
-                    return () => runtime.activeServerAccountScopeListeners.delete(listener);
-                },
-                () => runtime.activeServerAccountScope,
-                () => runtime.activeServerAccountScope,
-            ),
-        };
-    },
+    storage: 'real',
 });
 
 vi.mock('./showApiTokenCreateModal', () => ({
@@ -73,21 +53,8 @@ vi.mock('react-native-reanimated', async () => {
     };
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ logout: runtime.logout }),
-}));
-
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
     announceAccessibilityMessage: runtime.announceAccessibilityMessage,
-}));
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => runtime.activeAccountScopeLifetime,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    subscribeActiveServer: () => () => {},
-    getActiveServerSnapshot: () => runtime.activeServerSnapshot,
 }));
 
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
@@ -113,18 +80,6 @@ vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
 function setHostActivelyViewed(next: boolean): void {
     runtime.hostActivelyViewed = next;
     for (const listener of runtime.hostActivelyViewedListeners) listener();
-}
-
-function createActiveAccountScopeLifetime(): ActiveServerAccountScopeLifetime {
-    const retirementCallbacks = new Set<() => void>();
-    return {
-        scope: { serverId: 'server-a', accountId: 'account-a' },
-        isCurrent: () => true,
-        onRetire(callback) {
-            retirementCallbacks.add(callback);
-            return { dispose: () => retirementCallbacks.delete(callback) };
-        },
-    };
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -216,20 +171,23 @@ function createObservableController(initialState: ApiTokenSettingsState) {
     };
 }
 
+installDisconnectedServerSocketBoundary();
+const {
+    apiTokenReadWireFixture,
+    createApiTokenSettingsControllerHarness,
+    disposeApiTokenSettingsControllerHarnesses,
+} = await import('./apiTokenSettingsControllerTestHarness');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+
 // Collect the real screen after installing its boundaries, before individual test deadlines begin.
 await import('./ApiTokensSettingsScreen');
 
-afterEach(() => {
-    standardCleanup();
+afterEach(async () => {
+    await standardCleanup();
+    await disposeApiTokenSettingsControllerHarnesses();
     vi.useRealTimers();
-    runtime.logout.mockClear();
     runtime.announceAccessibilityMessage.mockClear();
     runtime.shimmerRepeats.mockClear();
-    runtime.executeApiTokenAction.mockReset();
-    runtime.activeAccountScopeLifetime = null;
-    runtime.activeServerAccountScope = null;
-    runtime.activeServerSnapshot = { serverId: 'server-a', serverUrl: 'https://home-a.example.test' };
-    runtime.activeServerAccountScopeListeners.clear();
     runtime.hostActivelyViewed = true;
     runtime.hostActivelyViewedListeners.clear();
     runtime.routeParams = {};
@@ -250,17 +208,33 @@ const RESUMED_LIMITED_DRAFT = Object.freeze({
     },
 });
 
+const TOKEN_ID = '11111111-1111-4111-8111-111111111111';
+const tokenListRow = apiTokenReadWireFixture({
+    tokenId: TOKEN_ID,
+    label: 'CI',
+    displayPrefix: 'hap_v1_11111111',
+    createdAt: '2026-08-22T12:00:00.000Z',
+    lastUsedAt: null,
+    expiresAt: null,
+    hasEncryptionAccess: false,
+    hasUnattendedTeamAccess: false,
+    grant: API_TOKEN_FULL_GRANT_V1,
+    parentTokenId: null,
+    activeChildCount: 0,
+    embedConfig: null,
+});
+
 describe('ApiTokensSettingsScreen', () => {
     it('never resumes a limited draft that lost its grant as Full access', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+        const { scope } = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
         const { grant: _lost, ...withoutGrant } = RESUMED_LIMITED_DRAFT;
         runtime.routeParams = {
             resumeCreate: '1',
             draft: JSON.stringify(withoutGrant),
-            targetServerId: 'server-a',
-            targetServerUrl: 'https://home-a.example.test',
-            expectedAccountId: 'account-a',
+            targetServerId: scope.serverId,
+            targetServerUrl: getActiveServerSnapshot().serverUrl,
+            expectedAccountId: scope.accountId,
         };
         const state: ApiTokenSettingsState = {
             phase: 'ready', tokens: [], isRefreshing: false, listError: null,
@@ -279,13 +253,13 @@ describe('ApiTokensSettingsScreen', () => {
 
     it('restores the complete non-secret draft, limited grant included, and reopens the existing create modal', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+        const { scope } = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
         runtime.routeParams = {
             resumeCreate: '1',
             draft: JSON.stringify(RESUMED_LIMITED_DRAFT),
-            targetServerId: 'server-a',
-            targetServerUrl: 'https://home-a.example.test',
-            expectedAccountId: 'account-a',
+            targetServerId: scope.serverId,
+            targetServerUrl: getActiveServerSnapshot().serverUrl,
+            expectedAccountId: scope.accountId,
         };
         const state: ApiTokenSettingsState = {
             phase: 'ready', tokens: [], isRefreshing: false, listError: null,
@@ -313,14 +287,13 @@ describe('ApiTokensSettingsScreen', () => {
 
     it('retires a recovery continuation instead of reopening creation on a different Home Account', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.activeServerAccountScope = { serverId: 'server-b', accountId: 'account-b' };
-        runtime.activeServerSnapshot = { serverId: 'server-b', serverUrl: 'https://home-b.example.test' };
+        await createApiTokenSettingsControllerHarness({ mode: 'plain' });
         runtime.routeParams = {
             resumeCreate: '1',
             draft: JSON.stringify(RESUMED_LIMITED_DRAFT),
             targetServerId: 'server-a',
             targetServerUrl: 'https://home-a.example.test',
-            expectedAccountId: 'account-a',
+            expectedAccountId: 'other-account',
         };
         const state: ApiTokenSettingsState = {
             phase: 'ready', tokens: [], isRefreshing: false, listError: null,
@@ -391,48 +364,30 @@ describe('ApiTokensSettingsScreen', () => {
         const screen = await renderScreen(<ApiTokensSettingsScreen controller={controller} />);
         expect(refresh).toHaveBeenCalledOnce();
 
-        await act(async () => {
-            runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
-            for (const listener of runtime.activeServerAccountScopeListeners) listener();
-        });
-
-        expect(refresh).toHaveBeenCalledTimes(2);
+        await createApiTokenSettingsControllerHarness({ mode: 'plain' });
+        await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
     });
 
     it('loads rows after a direct route mount waits for the Account scope to become current', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.executeApiTokenAction.mockResolvedValue({
-            ok: true,
-            result: {
-                tokens: [{
-                    tokenId: '11111111-1111-4111-8111-111111111111',
-                    label: 'CI',
-                    displayPrefix: 'hap_v1_11111111',
-                    createdAt: '2026-08-22T12:00:00.000Z',
-                    lastUsedAt: null,
-                    expiresAt: null,
-                    hasEncryptionAccess: false,
-                    hasUnattendedTeamAccess: false,
-                    grant: API_TOKEN_FULL_GRANT_V1,
-                    parentTokenId: null,
-                    activeChildCount: 0,
-                    embedConfig: null,
-                }],
-            },
-        });
+        const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const beforeAdmission = vi.fn(async () => new Response(null, { status: 401 }));
+        setRuntimeFetch(beforeAdmission);
+        let screen: Awaited<ReturnType<typeof renderScreen>>;
+        try {
+            screen = await renderScreen(<ApiTokensSettingsScreen />);
+            expect(beforeAdmission).not.toHaveBeenCalled();
+            expect(screen.findByTestId(`settings-api-tokens-row:${TOKEN_ID}`)).toBeNull();
+        } finally {
+            resetRuntimeFetch();
+        }
 
-        const screen = await renderScreen(<ApiTokensSettingsScreen />);
-        expect(runtime.executeApiTokenAction).not.toHaveBeenCalled();
-
-        await act(async () => {
-            runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
-            runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
-            for (const listener of runtime.activeServerAccountScopeListeners) listener();
-        });
+        const onListRequest = vi.fn();
+        await createApiTokenSettingsControllerHarness({ mode: 'plain', rows: [tokenListRow], onListRequest });
 
         await vi.waitFor(() => {
-            expect(runtime.executeApiTokenAction).toHaveBeenCalledOnce();
-            expect(screen.findByTestId('settings-api-tokens-row:11111111-1111-4111-8111-111111111111')).toBeTruthy();
+            expect(onListRequest).toHaveBeenCalledOnce();
+            expect(screen.findByTestId(`settings-api-tokens-row:${TOKEN_ID}`)).toBeTruthy();
         });
     });
 
@@ -503,27 +458,8 @@ describe('ApiTokensSettingsScreen', () => {
 
     it('keeps its owned controller current through StrictMode effect replay', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
-        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
-        runtime.executeApiTokenAction.mockResolvedValue({
-            ok: true,
-            result: {
-                tokens: [{
-                    tokenId: '11111111-1111-4111-8111-111111111111',
-                    label: 'CI',
-                    displayPrefix: 'hap_v1_11111111',
-                    createdAt: '2026-08-22T12:00:00.000Z',
-                    lastUsedAt: null,
-                    expiresAt: null,
-                    hasEncryptionAccess: false,
-                    hasUnattendedTeamAccess: false,
-                    grant: API_TOKEN_FULL_GRANT_V1,
-                    parentTokenId: null,
-                    activeChildCount: 0,
-                    embedConfig: null,
-                }],
-            },
-        });
+        const onListRequest = vi.fn();
+        await createApiTokenSettingsControllerHarness({ mode: 'plain', rows: [tokenListRow], onListRequest });
 
         const screen = await renderScreen(
             <React.StrictMode>
@@ -532,23 +468,23 @@ describe('ApiTokensSettingsScreen', () => {
         );
 
         await vi.waitFor(() => {
-            expect(runtime.executeApiTokenAction).toHaveBeenCalledOnce();
-            expect(screen.findByTestId('settings-api-tokens-row:11111111-1111-4111-8111-111111111111')).toBeTruthy();
+            expect(onListRequest).toHaveBeenCalledOnce();
+            expect(screen.findByTestId(`settings-api-tokens-row:${TOKEN_ID}`)).toBeTruthy();
         });
     });
 
     it('retires an owned controller and cancels its pending list request on actual unmount', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
-        runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
-        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
-        let requestSignal: AbortSignal | undefined;
-        runtime.executeApiTokenAction.mockImplementationOnce(async (_actionId, _input, context) => {
-            requestSignal = context?.signal;
-            return await new Promise((resolve) => {
-                requestSignal?.addEventListener('abort', () => {
-                    resolve({ ok: false, errorCode: 'aborted', error: 'aborted' });
-                }, { once: true });
-            });
+        let requestSignal: AbortSignal | null | undefined;
+        await createApiTokenSettingsControllerHarness({
+            mode: 'plain',
+            async onListRequest(signal) {
+                requestSignal = signal;
+                if (!signal) throw new Error('Expected an abortable list request');
+                await new Promise<void>((resolve) => {
+                    signal.addEventListener('abort', () => resolve(), { once: true });
+                });
+            },
         });
 
         const screen = await renderScreen(<ApiTokensSettingsScreen />);

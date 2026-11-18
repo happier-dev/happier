@@ -27,7 +27,9 @@ describe('API Tokens Settings route', () => {
         expect(englishWords).toEqual(expect.arrayContaining(['api token', 'personal access token', 'automation']));
 
         const chrome = getSettingsStackScreenDefinitions((key) => key);
-        expect(chrome.find((definition) => definition.name === 'account/api-tokens')?.options.headerTitle)
-            .toBe('settingsApiTokens.title');
+        const tokenChrome = chrome.find((definition) => definition.name === 'account/api-tokens')?.options;
+        // The page owns its title. The stack header supplies the parent Back control.
+        expect(tokenChrome?.headerTitle).toBe('');
+        expect(tokenChrome?.headerLeft).toEqual(expect.any(Function));
     });
 });

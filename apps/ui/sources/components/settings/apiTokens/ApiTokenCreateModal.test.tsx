@@ -684,6 +684,8 @@ describe('ApiTokenCreateModal', () => {
         const screen = await renderScreen(
             <ApiTokenCreateModal controller={controller} onClose={vi.fn()} setChrome={vi.fn()} />,
         );
+        const idleTabIndex = screen.findByTestId('settings-api-tokens-reveal-copy')?.props.tabIndex;
+        expect(idleTabIndex).not.toBe(-1);
         let pendingCopy!: Promise<void>;
 
         await act(async () => {
@@ -692,7 +694,11 @@ describe('ApiTokenCreateModal', () => {
         });
 
         expect(screen.findByTestId('settings-api-tokens-reveal-copy')?.props).toMatchObject({
-            disabled: true,
+            // Web keeps the opener in the tab order while refusing repeat activations.
+            disabled: false,
+            tabIndex: idleTabIndex,
+            'aria-disabled': true,
+            'aria-busy': true,
             accessibilityState: { disabled: true, busy: true },
         });
         screen.findByTestId('settings-api-tokens-reveal-copy')?.props.onPress();
@@ -705,6 +711,9 @@ describe('ApiTokenCreateModal', () => {
 
         expect(screen.findByTestId('settings-api-tokens-reveal-copy')?.props).toMatchObject({
             disabled: false,
+            tabIndex: idleTabIndex,
+            'aria-disabled': undefined,
+            'aria-busy': undefined,
             accessibilityState: { disabled: false, busy: false },
         });
         expect(controller.acknowledgeReveal).toHaveBeenCalledOnce();

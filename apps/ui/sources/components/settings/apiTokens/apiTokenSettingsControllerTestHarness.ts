@@ -1,5 +1,6 @@
 import React from 'react';
 import { expect } from 'vitest';
+import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import 'fake-indexeddb/auto';
 import {
     API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -32,6 +33,8 @@ export type ApiTokenSettingsControllerHarnessOptions = Readonly<{
     readiness?: 'available' | 'unavailable';
     /** Token rows the Home already holds, as its list returns them. */
     rows?: readonly Record<string, unknown>[];
+    /** Observe or hold the list response at the Home HTTP boundary. */
+    onListRequest?: (signal: AbortSignal | null | undefined) => void | Promise<void>;
 }>;
 
 export type ApiTokenSettingsControllerHarnessRequest = Readonly<{ path: string; body: Record<string, unknown> }>;
@@ -57,8 +60,18 @@ export async function disposeApiTokenSettingsControllerHarnesses(): Promise<void
 export async function createApiTokenSettingsControllerHarness(options: ApiTokenSettingsControllerHarnessOptions = {}) {
     installDisconnectedServerSocketBoundary();
     await loadSyncSingletonForTests();
+    const requests: ApiTokenSettingsControllerHarnessRequest[] = [];
+    const rows: Record<string, unknown>[] = [...(options.rows ?? [])];
+    let listAvailable = true;
     const account = await createSecretSettingsTestHarness({
         mode: options.mode ?? 'e2ee', sharedEnabled: false, serverIdentityId: `srv_token-ui-${++nextHome}`,
+        async handleRequest(path, init) {
+            if (path !== ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return null;
+            requests.push({ path, body: init?.body ? JSON.parse(String(init.body)) : {} });
+            await options.onListRequest?.(init?.signal);
+            if (!listAvailable) throw new Error('Home unavailable');
+            return Response.json({ tokens: rows });
+        },
     });
     accounts.push(account);
     const { credentials, encryption } = account;
@@ -69,10 +82,7 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
         credentials, children: React.createElement(React.Fragment),
     })));
     expect(getCurrentAuth()?.credentialAuthorityKind).toBe('account');
-    const requests: ApiTokenSettingsControllerHarnessRequest[] = [];
-    const rows: Record<string, unknown>[] = [...(options.rows ?? [])];
     let currentnessAvailable = true;
-    let listAvailable = true;
     let failure = options.failure;
     let revokeFailure = options.revokeFailure;
     let readiness = options.readiness ?? 'available';
@@ -80,6 +90,7 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
     if (!requestAccount) throw new Error('API token fixture requires its real Account HTTP boundary');
     account.request.mockImplementation(async (input, init) => {
         const url = new URL(String(input));
+        if (url.pathname === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return requestAccount(input, init);
         const tokenRequest = url.pathname.startsWith('/v1/auth/api-tokens/');
         const privateLabelCensusRequest = url.pathname === '/v1/account/private-labels/recipient-census';
         if (!tokenRequest && !privateLabelCensusRequest && url.pathname !== '/v1/account/encryption/currentness') return requestAccount(input, init);
@@ -182,10 +193,6 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
                 };
                 response = { apiToken: rows[rowIndex] };
             }
-        }
-        if (url.pathname.endsWith('/list')) {
-            if (!listAvailable) throw new Error('Home unavailable');
-            response = { tokens: rows };
         }
         if (url.pathname.endsWith('/revoke')) {
             if (revokeFailure === 'network') throw new Error('revoke failed');
