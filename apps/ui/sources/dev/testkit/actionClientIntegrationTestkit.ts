@@ -8,7 +8,9 @@ import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -19,6 +21,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { loadSyncSingletonForTests } from './harness/syncSingletonLoader';
+import { waitForTestEvent } from './hooks/waitForTestEvent';
 import { createPublishedHomeOutputFetch } from './machineClientEnrollmentOutputFixture';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } from './harness/serverAccountConnectionHarness';
@@ -28,6 +31,7 @@ export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
 export { mountUiRetainedProjectTerminal } from './projectTerminalPresentationIntegrationTestkit';
 export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests } from './mocks/bundledPluginUiAssets';
 export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';
+export { connectUiTriageActionClient } from './triageActionClientIntegrationTestkit';
 export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
 
 /** Native desktop HTTP and the person's answer are physical platform boundaries. */
@@ -168,6 +172,23 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
                 } finally { voiceSession.resetVoiceSessionStoreForTests(); }
             },
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
+            lendScopedSocketClient: () => apiSocket.lendScopedSocketClient({
+                serverUrl: params.serverUrl, token: params.credentials.token,
+            }),
+            async waitForPluginAccountAvailability(): Promise<void> {
+                await getSyncSingleton().refreshPluginAccountAvailability();
+                const scope = getActiveServerAccountScope();
+                if (!scope) throw new Error('Person App Account scope unavailable');
+                const reader = readPluginAccountAvailability(scope);
+                // Observe the real projection push, as the mounted App does.
+                const availability = await waitForTestEvent(reader.subscribe, () => ({
+                    admission: reader.readMaterializations(),
+                    failure: reader.readUiProjectionInputs()?.unavailableReasonCode,
+                }), value => value.admission.kind === 'available' || value.failure !== undefined);
+                if (availability.admission.kind !== 'available') {
+                    throw new Error('UI plugin availability unavailable: ' + JSON.stringify(availability.failure ?? availability.admission.kind));
+                }
+            },
             readSessionAgentState: (sessionId: string) => selectHomeQualifiedSession(storage.getState(),
                 sessionId, serverId, serverId)?.agentState ?? null,
             isMachineActive: (machineId: string) => {
@@ -193,6 +214,11 @@ export async function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
+    /** Triage fixtures provide their own Account projection and executable port. */
+    withAppShellActions?: boolean;
+    withCurrentUiActionPort?: boolean;
+    /** Triage fixtures keep the restored Account lifetime as their authority. */
+    withAccountLifecycle?: boolean;
 }>): ReturnType<typeof connectUiActionClient> {
     const credentials = await authGetTokenAtEndpoint({
         endpointUrl: params.serverUrl,
@@ -216,7 +242,8 @@ export async function connectUiPersonActionClient(params: Readonly<{
             import('@/components/appShell/plugins/AppShellPluginUiProjection'),
             import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness'),
         ]);
-        const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: true, withAccountLifecycle: true });
+        const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: params.withAppShellActions !== false,
+            withCurrentUiActionPort: params.withCurrentUiActionPort, withAccountLifecycle: params.withAccountLifecycle !== false });
         const scope = getActiveServerAccountScope();
         const shell = await renderHook((kind: RegistryKindV1 | undefined) => {
             const projection = useAppShellPluginUiProjection();

@@ -66,6 +66,11 @@ export function connectUiActionClient(params: Readonly<{
     close(): Promise<void>;
 }>>;
 
+export function connectUiTriageActionClient(params: Readonly<{
+    serverUrl: string;
+    accountSecret: Uint8Array;
+}>): ReturnType<typeof connectUiPersonActionClient>;
+
 export function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
