@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
 import { resolvePluginSurfaceStateAction } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -58,16 +59,23 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
             manageAction: props.recoveryAction,
         });
     const offline = props.offline === true && !pending;
-    const title = offline ? offlineNotice.title : card.title;
+    // The host already knows why this body cannot run (its widget's Machine notice, "installed but isn't ready
+    // anywhere"): the whole body's failure claims that sentence and says it here, once, with the host's way forward,
+    // instead of a generic "can't open" under the host's own line (LABPARITY-ACCEPT-B fix 8).
+    const hostNotice = React.useContext(PluginUiSurfaceNoticeContext);
+    const claimedSentence = useClaimedPluginUiSurfaceNotice(!pending);
+    const title = claimedSentence ?? (offline ? offlineNotice.title : card.title);
     usePublishPluginSurfaceStateTitle(pending ? null : title);
     return (
         <SurfaceStateCard
             testID="plugin-rn-ui-unavailable"
-            kind={offline ? offlineNotice.kind : card.kind}
+            kind={claimedSentence !== null ? 'unavailable' : offline ? offlineNotice.kind : card.kind}
             title={title}
-            reason={offline ? offlineNotice.reason : card.reason}
-            action={action ?? (offline ? machineRecovery?.retry : undefined)}
-            secondaryAction={offline ? machineRecovery?.chooseMachine : undefined}
+            {...(claimedSentence !== null ? { size: 'line' as const }
+                : { reason: offline ? offlineNotice.reason : card.reason })}
+            action={claimedSentence !== null && hostNotice?.action !== undefined ? hostNotice.action ?? undefined
+                : action ?? (offline ? machineRecovery?.retry : undefined)}
+            secondaryAction={claimedSentence === null && offline ? machineRecovery?.chooseMachine : undefined}
             accessibilitySemantics={card.accessibilitySemantics}
             animationEnabled={props.animationEnabled}
             // The full diagnostic set stays reachable for QA via the testID

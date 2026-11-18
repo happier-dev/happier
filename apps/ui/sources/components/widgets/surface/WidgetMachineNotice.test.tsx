@@ -168,6 +168,26 @@ describe('WidgetMachineNoticeBoundary', () => {
         await act(async () => { action.props.onPress(); });
         expect(routerMock.pushed).toEqual(['/settings/machines/add']);
     });
+
+    it('says a refused plugin once when the whole body could not open: the host card takes the sentence and its Manage plugin (ACCEPT-B fix 8)', async () => {
+        const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');
+        const sentence = 'PRs & Issues is installed but isn’t ready to run on any of your machines.';
+        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence, managePluginId: 'happier.prs' });
+        function RefusedBody() {
+            const lend = React.useContext(WidgetFrameBodyNoticeContext);
+            React.useEffect(() => { lend?.(notice); }, [lend]);
+            return <PluginReactNativeUnavailable subjectName="PRs & Issues" onRetry={() => {}} />;
+        }
+        const screen = await renderScreen(<WidgetMachineNoticeBoundary testID="widget"><RefusedBody /></WidgetMachineNoticeBoundary>);
+        await flushHookEffects({ cycles: 3 });
+        // One cause, said once, in the body's place; no second generic "can't open" beside it.
+        expect(screen.findByTestId('widget-machine-notice')).toBeNull();
+        const cards = screen.tree.root.findAllByType(SurfaceStateCard).filter(card => card.props.testID === 'plugin-rn-ui-unavailable');
+        expect(cards).toHaveLength(1);
+        expect(cards[0]!.props.title).toBe(sentence);
+        expect(cards[0]!.props.action?.label).toBe('settingsPlugins.managePlugin');
+        expect(JSON.stringify(screen.getTextContent()).split(sentence)).toHaveLength(2);
+    });
 });
 
 
