@@ -4,7 +4,7 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import { hasRawComposerAttachmentSelectionV1, hasRawSessionAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { sanitizeSessionUserMessageSendMeta, SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
-import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { isModelRefGrantedByConstraintsV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -224,8 +224,8 @@ export function registerSessionUserMessageSendHandler(
                 : 'automatic'
               : effective?.modelSelection ?? 'automatic';
         const mode = normalizePermissionModeToIntent(meta.permissionMode) ?? effective?.permissionMode ?? 'default';
+        if (!isModelRefGrantedByConstraintsV1(inputConstraints, model)) return 'model_not_granted';
         for (const constraints of inputConstraints) {
-          if (!isModelRefGrantedV1(constraints, model)) return 'model_not_granted';
           if (!isPermissionModeGrantedV1(constraints, mode)) return 'permission_mode_not_granted';
         }
         return null;
