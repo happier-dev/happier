@@ -198,8 +198,11 @@ describe('Session Team launch composition', () => {
       expect(error).toMatchObject({ code: 'provider_catalog_unavailable', phase: 'resource_catalog' });
       if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw new Error('Expected Home catalog failure');
       expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code,
-      }))).toMatchObject({ retryable: true, launchError: { code: 'provider_catalog_unavailable' } });
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.message,
+        errorDetail: { kind: 'launch_error', code: error.code, message: error.message, failureCause: error.failureCause },
+      }))).toMatchObject({ retryable: true, launchError: { code: 'provider_catalog_unavailable',
+        failureCause: { actionCause: { phase: 'providers.team_credential.resource_catalog', httpStatus: 500 } },
+      } });
       expect(http).toHaveBeenCalledTimes(1);
     } finally { http.mockRestore(); }
   });

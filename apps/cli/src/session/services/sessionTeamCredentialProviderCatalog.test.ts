@@ -10,7 +10,6 @@ import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-
 import type { TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { readSessionTeamCredentialProviderModels } from './sessionTeamCredentialLaunch';
 import { prepareSessionTeamCredentialLaunch } from '@/daemon/startup/prepareSessionTeamCredentialLaunch';
-import { TeamPolicyV1Schema, NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams';
 import { qualifySessionTeamCredentialProviderModels } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { PROVIDER_REASONING_EFFORT_LEVELS_V1 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
@@ -40,7 +39,7 @@ const resourceDisplayName = projectPrivateLabelForRecipientV1({
 });
 
 describe('Session Team runtime catalog', () => {
-  it.each([false, true])('preserves worker qualification without Team experimental consent (experimental=%s)', async experimental => {
+  it.each([false, true])('launches the exact offered Team model without directory discovery (experimental=%s)', async experimental => {
     const worker = await createManagedRunLaunchFixture({ experimental, acceptedCredentialFormats: ['raw', 'bearer'],
       supportsReasoningEffort: true, reasoningEffortValues: PROVIDER_REASONING_EFFORT_LEVELS_V1,
       catalogModels: [{ id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' }] });
@@ -74,17 +73,20 @@ describe('Session Team runtime catalog', () => {
         options: { directory: worker.happyHomeDir,
           modelSelection: { v: 1, ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.6-luna' }, updatedAt: 1 },
           teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource', teamId: 'team',
-            expectedResourceRevision: 4, deliveryMode: 'brokered' }],
+            expectedResourceRevision: 4, deliveryMode: 'brokered',
+            providerModelSelection: { agentTargetKey: worker.agentTargetKey, modelId: 'gpt-5.6-luna',
+              application: resource.providerModels[0]!.application, executionMachineId: worker.machineId },
+          }],
         }, agentId: worker.agentId, agentTargetKey: worker.agentTargetKey, executionMachineId: worker.machineId, lease: worker.lease,
         // Home HTTP is the boundary. Plugin admission, source facts, worker
         // qualification, catalog parsing and launch normalization stay real.
         homeDomainAction: async request => {
-          if (request.actionId === 'teams.list') return { items: [{ id: 'team', name: 'Team',
-            description: null, logo: null, archivedAt: null, recovery: null, counts: null,
-            policy: TeamPolicyV1Schema.parse({ v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
-              defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null }), viewerRole: 'member',
-            capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true }, admission: resolveTeamAdmissionProjectionV1(),
-          }], nextCursor: null };
+          if (request.actionId === 'teams.list') throw new Error('Team directory response could not be read');
+          expect(request.actionId).toBe('teams.credentials.entitled.list');
+          expect(TeamCredentialResourceReadInputV1Schema.parse(request.input)).toMatchObject({
+            teamId: 'team', resourceId: 'resource', executionMachineId: worker.machineId,
+            application: resource.providerModels[0]!.application,
+          });
           catalogReads++;
           return { resources: [resource], nextCursor: null };
         },

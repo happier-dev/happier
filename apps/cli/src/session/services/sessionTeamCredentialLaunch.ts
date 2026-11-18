@@ -15,7 +15,9 @@ import { SessionTeamCredentialLaunchUnavailableError, projectTeamCredentialLaunc
 import { selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readSessionModelSelectionProviderConnectionId, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
-export { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
+import { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
+
+export { readSessionTeamCredentialResourceCatalog };
 export { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 export { readSessionTeamCredentialProviderModels } from './sessionTeamCredentialProviderCatalog';
 
@@ -31,7 +33,8 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   executionMachineId?: string;
   contributions: AgentSpawnPurposeContributions & Pick<ResolvedContributionRegistry, 'providersByContributionKey'>;
   applications: readonly ProviderBrokerApplicationBindingV1[];
-  readCatalog(): Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
+  readCatalog(scope: Pick<Parameters<typeof readSessionTeamCredentialResourceCatalog>[0],
+    'teamIds' | 'resourceId' | 'applications'>): Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
 }>): Promise<NormalizedSessionTeamCredentialLaunch> {
   const typedModel = input.options.modelSelection?.v === 2 ? input.options.modelSelection : undefined;
   const typedModelBinding = typedModel ? sessionModelSelectionV2TeamBindingIntent(typedModel) : undefined;
@@ -62,7 +65,18 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   if (model && model.agentTargetKey !== input.agentTargetKey) {
     throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent', 'agent_target');
   }
-  const resources = await input.readCatalog().catch(error => {
+  // A binding that covers every selected purpose already names its entitlement.
+  // Legacy selections and launches using additional resources still need discovery.
+  const exactResource = explicitModelBinding?.resourceId && explicitModelBinding.teamId
+    && selectedPurposes.every(({ selection }) => selection.resourceId === explicitModelBinding.resourceId)
+    ? { teamIds: [explicitModelBinding.teamId], resourceId: explicitModelBinding.resourceId } : {};
+  const selectedApplication = explicitTeamModel?.application;
+  const exactApplication = exactResource.resourceId && selectedApplication
+    && explicitTeamModel?.executionMachineId === input.executionMachineId
+    ? input.applications.find(application => isSameTeamCredentialBrokerApplication(application, selectedApplication))
+    : undefined;
+  const catalogApplications = exactApplication ? [exactApplication] : input.applications;
+  const resources = await input.readCatalog({ ...exactResource, applications: catalogApplications }).catch(error => {
     throw projectTeamCredentialLaunchFailure(error, 'resource_catalog', 'provider_catalog_unavailable');
   });
   const fresh = !options.existingSessionId && !options.resume;
@@ -132,7 +146,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   const resource = explicitModelResource ?? resources.find(candidate => candidate.id === resourceId);
   if (!resource) throw new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'resource_selection');
   const automatic = selectSessionTeamCredentialProviderModel({ resource, agentTargetKey: model.agentTargetKey,
-    modelId: model.modelId, applications: input.applications });
+    modelId: model.modelId, applications: catalogApplications });
   const deliveryMode = explicitModelBinding && explicitModelBinding.resourceId !== null
     ? explicitModelBinding.deliveryMode : automatic?.selection.deliveryMode ?? 'brokered';
   if (fresh && explicitModelBinding && resource.deliveryPolicy && resource.allowedRoutes
@@ -148,7 +162,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     && candidate.selection.deliveryMode === deliveryMode
     && candidate.selection.agentTargetKey === model.agentTargetKey
     && candidate.selection.modelId === model.modelId
-    && input.applications.some(application => isSameTeamCredentialBrokerApplication(application, candidate.application))
+    && catalogApplications.some(application => isSameTeamCredentialBrokerApplication(application, candidate.application))
   ));
   const row = automatic?.selection.deliveryMode === deliveryMode
     ? automatic : matchingRows.find(candidate => candidate.availability === 'available');

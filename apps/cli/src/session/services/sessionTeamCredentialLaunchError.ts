@@ -47,11 +47,12 @@ export class SessionTeamCredentialLaunchUnavailableError extends Error {
     super(`The Team credential could not be used (${code}). Choose an available credential for this Session.`);
     // The runner may fail before its webhook. Its existing stderr cause record
     // must retain this closed refusal independently of the process exit code.
+    const actionPhase = `providers.team_credential.${phase}`;
     this.failureCause = { code, phase: 'authentication', failureReason: 'unknown',
       // A refusal is itself a typed decision, even without a nested exception.
       // The daemon's Action carrier consumes this cause rather than the runtime envelope.
-      actionCause: { phase: `providers.team_credential.${phase}`, errorClass: 'Error', errorCode: code, httpStatus: null },
-      ...projectSessionRuntimeFailureCause(cause, 'authentication') };
+      actionCause: { phase: actionPhase, errorClass: 'Error', errorCode: code, httpStatus: null },
+      ...projectSessionRuntimeFailureCause(cause, 'authentication', actionPhase) };
     if (ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success) {
       this.details = { v: 1, source: 'team_credential' };
     }

@@ -70,8 +70,8 @@ export async function prepareSessionTeamCredentialLaunch(input: Readonly<{
         options: input.options, agentId, agentTargetKey: input.agentTargetKey,
         executionMachineId: input.executionMachineId,
         contributions: input.lease.registry.contributes, applications,
-        readCatalog: async () => Promise.all((await readSessionTeamCredentialResourceCatalog({
-            homeDomainAction, applications, ...(input.signal ? { signal: input.signal } : {}),
+        readCatalog: async (scope) => Promise.all((await readSessionTeamCredentialResourceCatalog({
+            ...scope, homeDomainAction, ...(input.signal ? { signal: input.signal } : {}),
             ...(input.executionMachineId ? { executionMachineId: input.executionMachineId } : {}),
         })).map(resource => qualifySessionTeamCredentialProviderModels({ resource, lease: input.lease,
             agentId, signal: input.signal }))),
