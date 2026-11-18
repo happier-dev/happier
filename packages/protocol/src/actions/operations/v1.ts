@@ -462,7 +462,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     kind: z.literal('machineSetup'),
     serverId: ActionOperationIdentifierV1Schema,
     machineId: ActionOperationIdentifierV1Schema,
-    preset: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()) })),
+    preset: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()), name: z.optional(ActionOperationIdentifierV1Schema) })),
     managedId: z.optional(ActionOperationIdentifierV1Schema),
     /** Reviewed native steps in plan order; display facts, never effect operands. */
     steps: z.optional(z.array(z.strictObject({

@@ -145,6 +145,7 @@ export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject(
 export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Schema>;
 export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
   desiredRevision: revision(), recipePlans: z.array(MachineSetupRecipePlanV1Schema),
+  preset: z.optional(z.strictObject({ id: id(), revision: revision(), name: z.optional(id()) })),
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
   removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),

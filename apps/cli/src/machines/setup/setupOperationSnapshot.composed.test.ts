@@ -7,11 +7,22 @@ import {
   type MachineSetupNativeCommandResult,
 } from '@happier-dev/cli-common/machineSetup';
 import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
+import { ActionOperationDomainRefV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { runMachineSetupEffectInternal } from './effectInternal';
 import { MachineEffectInternalRecordSchema } from './effectInternalProtocol';
 import { createSetupOperationSnapshot } from './setupOperationSnapshot';
 
 describe('native setup progress operation snapshot', () => {
+  it('retains the selected preset identity on the operation projection', () => {
+    const updates: ActionOperationOwnerUpdate[] = [];
+    createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'home-a', machineId: 'devbox',
+      preset: { id: 'acme-dev', revision: 7, name: 'Acme dev box' } }, [], update => updates.push(update));
+    const reference = ActionOperationDomainRefV1Schema.parse(updates[0]?.domainRef);
+    expect(reference).toMatchObject({ kind: 'machineSetup', machineId: 'devbox', preset: {
+      id: 'acme-dev', revision: 7, name: 'Acme dev box',
+    } });
+  });
+
   it.each(['unavailable', 'throw', 'satisfied', 'drifted'] as const)(
     'projects a later initially satisfied step after native re-observation (%s)', async observation => {
       const installed = new Set(['second']);

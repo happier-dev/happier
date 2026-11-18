@@ -538,7 +538,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
               operationId, actionId: mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply', signal: cancellationSignal });
             return await (await processCredentials).produce(environment, processSignal);
           },
-          ...(creation ? { preset: creation.preset } : {}), requesterAccountId, userHomeDirectory: homedir(),
+          ...(input.preset ? { preset: input.preset } : creation ? { preset: creation.preset } : {}), requesterAccountId, userHomeDirectory: homedir(),
           ...(elevation ? { elevation } : {}), operation, signal: cancellationSignal, terminalSessions,
           settleNative: () => custody.release(),
           onScriptCompleted: index => { completedScripts.add(index); },

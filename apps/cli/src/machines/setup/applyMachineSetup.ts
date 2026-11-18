@@ -58,7 +58,7 @@ export type BoundMachineSetupTarget = Readonly<{
 export type ApplyMachineSetupInput = Readonly<{
   homeId: string;
   machineId: string;
-  preset?: Readonly<{ id: string; revision: number }>;
+  preset?: Readonly<{ id: string; revision: number; name?: string }>;
   requesterAccountId: string;
   userHomeDirectory: string;
   /** Ordered admitted source copies; a single internal stage uses the same owner. */
