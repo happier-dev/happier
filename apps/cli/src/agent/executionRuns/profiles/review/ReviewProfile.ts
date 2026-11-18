@@ -58,7 +58,8 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
     const scmReviewScope = await resolveScope({ cwd,
       intentInput: { ...existing, ...(captured ? { comparison: captured.comparison } : {}) } });
     if (scmReviewScope.status === 'unsupported'
-      && (existing.comparisonId !== undefined || existing[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY] !== undefined)) {
+      && (existing.comparisonId !== undefined || existing[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY] !== undefined
+        || existing.selectedPaths !== undefined || existing.selectedFiles !== undefined)) {
       const diagnostic = scmReviewScope.diagnostics[0];
       throw Object.assign(new Error(diagnostic?.message ?? 'The selected review scope is unavailable.'), {
         code: diagnostic?.code ?? 'scm_status_unavailable',

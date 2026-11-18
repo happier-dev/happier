@@ -9653,6 +9653,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Review engine inventory and discovery retain the declared
+`repository` scope alongside `worktree` and `paths`. Repository Review admission
+rejects explicit selected-file aliases, captured comparisons and pull requests
+instead of broadening them. Matching development Protocol and CLI consumers
+reload together; earlier strict scope readers reject `repository`. This changes
+no persisted selection or wire epoch.
+
 Unreleased 0.3 bundled Action declarations optionally carry `personOnly: true`
 for a UI Action whose author omits agent access. The bundled parity test
 recognizes this exception. The declared surfaces continue to drive invocation

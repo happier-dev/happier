@@ -1525,10 +1525,26 @@ describe('createActionExecutor (inventory/discovery)', () => {
     deps.reviewEnginesList = vi.fn(async () => ({ items: [{ value: 'codex', label: 'Codex' }] }));
     const executor = createActionExecutor(deps);
     expect(await executor.execute('action.options.resolve', {
-      actionId: 'review.start', fieldPath: 'engineIds',
+      actionId: 'review.start', fieldPath: 'reviewers',
       draftInput: { sessionId: null, machineId: 'machine-review' },
     }, { defaultSessionId: 'session-active' })).toMatchObject({ ok: true, result: { options: [{ value: 'codex' }] } });
-    expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: null, machineId: 'machine-review' });
+    expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: null, machineId: 'machine-review', scope: 'worktree' });
+  });
+
+  it.each(['discovery', 'picker'])('retains repository-only reviewers through repository-scoped %s', async surface => {
+    const deps = createDeps();
+    const engine = { engineId: 'deepsec', value: 'deepsec', label: 'DeepSec', reviewScopes: ['repository'] };
+    // The daemon inventory transport owns the returned eligibility facts.
+    deps.reviewEnginesList = async args => ({ items: args.scope === 'repository' ? [engine] : [] });
+    const executor = createActionExecutor(deps);
+    if (surface === 'discovery') {
+      const result = await executor.execute('review.engines.list', { sessionId: 's1', scope: 'repository' });
+      expect(result).toMatchObject({ ok: true, result: { items: [engine] } });
+    } else {
+      const result = await executor.execute('action.options.resolve', { actionId: 'review.start', fieldPath: 'reviewers',
+        draftInput: { sessionId: 's1', scope: 'repository' } });
+      expect(result).toMatchObject({ ok: true, result: { options: [{ value: 'deepsec' }] } });
+    }
   });
 
   it('keeps execution-run list scope out of the transport request', async () => {

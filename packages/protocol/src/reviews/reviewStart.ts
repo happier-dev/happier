@@ -151,7 +151,9 @@ export function reviewStartDeferredFieldsV1(fields: ReadonlySet<string>): Readon
 /** Shared by public start validation and direct execution-run scope admission. */
 export function hasConflictingReviewScope(input: Readonly<Record<string, unknown>>): boolean {
   return input.scope === 'repository'
-    && Boolean(input.comparisonId || input[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]);
+    && Boolean(input.comparisonId || input[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]
+      || (Array.isArray(input.selectedPaths) && input.selectedPaths.length > 0)
+      || (Array.isArray(input.selectedFiles) && input.selectedFiles.length > 0));
 }
 
 export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
@@ -200,7 +202,7 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     teamCredentialSessionBindingConsent: zMini.optional(ExecutionRunTeamCredentialSessionBindingConsentV1Schema),
   }).check(z.superRefine((value, ctx) => {
     if (hasConflictingReviewScope(value)) {
-      ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Repository reviews cannot be restricted to a captured comparison or pull request' });
+      ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Repository reviews cannot be restricted to selected files, a captured comparison or pull request' });
     }
     if (!value.sourceSession && [...value.reviewers, ...(value.steps?.flatMap(step => step.reviewers) ?? [])]
       .some(reviewer => reviewer.kind === 'engine' && reviewer.includeSessionTranscript === true)) {

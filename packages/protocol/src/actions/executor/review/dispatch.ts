@@ -17,7 +17,7 @@ import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } fr
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
 import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } from '../../../inputs/inputOptions.js';
-import { resolveReviewNarratorPolicy } from '../../../reviews/reviewEngines.js';
+import { resolveReviewNarratorPolicy, type ReviewEngineScope } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
@@ -28,9 +28,10 @@ import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 import { dispatchReviewRoundAction } from './rounds.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
 
-export function reviewScopeForInput(input: unknown): 'paths' | undefined {
+export function reviewScopeForInput(input: unknown): ReviewEngineScope {
   const record = readRecord(input);
-  return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : undefined;
+  if (record.scope === 'repository') return 'repository';
+  return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : 'worktree';
 }
 
 export async function readReviewTranscriptEvidence(sourceSession: ReviewTranscriptEvidence['sourceSession'],
@@ -387,7 +388,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ? { machineId: executionRunDispatchOpts.targetMachineId } : {}),
           includeDisabled: false,
           ...(profileSelections.length > 0 ? { profileSelections } : {}),
-          ...(reviewScopeForInput(reviewInput) ? { scope: 'paths' as const } : {}),
+          scope: reviewScopeForInput(reviewInput),
         }, ctx);
         const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
         const explicitProfileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });

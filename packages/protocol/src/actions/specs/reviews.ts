@@ -8,7 +8,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ReviewFindingsApplyInputV1Schema, ReviewFindingsApplyResultV1Schema } from '../../reviews/reviewApplyV1.js';
 import { reviewStartCompletion, reviewWalkthroughCompletion } from './executionRunCompletion.js';
 import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';
-import { ReviewEngineProfileSelectionSchema } from '../../reviews/reviewEngines.js';
+import { ReviewEngineProfileSelectionSchema, ReviewEngineScopeSchema } from '../../reviews/reviewEngines.js';
 import { ReviewWalkthroughInputSchema, ReviewExplainFindingsInputSchema } from '../../reviews/reviewNarration.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
@@ -330,7 +330,7 @@ export const ReviewEnginesListInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   includeDisabled: z.optional(z.boolean()),
-  scope: z.optional(z.literal('paths')),
+  scope: z.optional(ReviewEngineScopeSchema),
   profileSelections: z.optional(z.array(ReviewEngineProfileSelectionSchema)),
 }));
 

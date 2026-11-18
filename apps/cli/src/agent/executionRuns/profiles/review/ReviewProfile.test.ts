@@ -48,6 +48,15 @@ describe('ReviewProfile', () => {
       questions: [{ id: 'question' }], assumptions: [{ id: 'assumption' }],
     });
   });
+  it.each(['selectedPaths', 'selectedFiles'])('refuses unsupported repository %s before preparing an engine Run', async key =>
+    runWithScmAccountScope(`review-conflicting-${key}`, async () => {
+      await expect(ReviewProfile.prepareStartParams!({ cwd: '/repo', request: {
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review.',
+        permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
+        intentInput: { scope: 'repository', [key]: ['src/auth.ts'] },
+      } })).rejects.toMatchObject({ code: 'scm_status_unavailable' });
+    }));
+
   it('prepares scope from the retained selected comparison even after checkout HEAD moves', async () => runWithScmAccountScope('review-captured-scope', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-captured-scope-' });
     const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();

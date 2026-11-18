@@ -327,7 +327,7 @@ export async function resolveInputOptions(params: Readonly<{
   executeOwnerAction?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   readFailure: (result: unknown) => Extract<ActionExecuteResult, { ok: false }> | null;
   resolveSessionId: (input: unknown, ctx: ActionExecutorContext) => string | null;
-  reviewScope: (input: unknown) => 'paths' | undefined;
+  reviewScope: (input: unknown) => import('../reviews/reviewEngines.js').ReviewEngineScope;
 }>): Promise<Extract<ActionExecuteResult, { ok: false }> | Readonly<{
   ok: true;
   result: readonly InputOption[];
@@ -703,7 +703,7 @@ export async function resolveInputOptions(params: Readonly<{
     const result = await deps.reviewEnginesList({
       ...target.target,
       ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : {}),
-      ...(params.reviewScope(input) ? { scope: 'paths' as const } : {}),
+      scope: params.reviewScope(input),
     });
     const failure = params.readFailure(result);
     if (failure) return failure;

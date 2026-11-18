@@ -7,6 +7,13 @@ const reviewStartExports = reviewStart as typeof reviewStart & {
 };
 
 describe('ReviewStartInputSchema', () => {
+  it.each(['selectedPaths', 'selectedFiles'])('refuses repository scope with explicit %s instead of broadening it', key => {
+    const input = { reviewers: [{ kind: 'engine', engineId: 'deepsec' }], instructions: 'Review.', scope: 'repository' };
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, [key]: ['src/auth.ts'] }).success).toBe(false);
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, [key]: [] }).success).toBe(true);
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, scope: 'changes', [key]: ['src/auth.ts'] }).success).toBe(true);
+  });
+
   it('distinguishes whole-repository reviews from changed-file reviews at admission', () => {
     const input = { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Find security issues.' };
     expect(reviewStart.ReviewStartInputSchema.parse(input).scope).toBe('changes');
@@ -15,21 +22,21 @@ describe('ReviewStartInputSchema', () => {
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, scope: 'repository', comparisonId: 'diff-1' }).success).toBe(false);
   });
   it('admits the canonical explicit child default and rejects an invalid child selection', () => {
-    const input = { engineIds: ['codex'], instructions: 'Review.' };
+    const input = { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review.' };
     expect(reviewStart.ReviewStartInputSchema.parse({ ...input, childSelection: 'agentDefault' }).childSelection)
       .toBe('agentDefault');
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, childSelection: 'inherit' }).success).toBe(false);
   });
 
   it('validates the authored detached working directory before routing a Run', () => {
-    const input = { target: { kind: 'detached' }, engineIds: ['claude'], instructions: 'Review.' };
+    const input = { target: { kind: 'detached' }, reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review.' };
     expect(reviewStart.ReviewStartInputSchema.parse({ ...input, cwd: '/repo/exact' }).cwd).toBe('/repo/exact');
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, cwd: 42 }).success).toBe(false);
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, cwd: '   ' }).success).toBe(false);
   });
 
   it('owns narration selection strictly while retaining findings-only defaults', () => {
-    const input = { engineIds: ['codex'], instructions: 'Review.' };
+    const input = { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review.' };
     expect(reviewStart.ReviewStartInputSchema.parse(input).outputs).toBeUndefined();
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, outputs: ['summary'] }).success).toBe(false);
     expect(reviewStart.ReviewStartInputSchema.safeParse({
@@ -48,17 +55,17 @@ describe('ReviewStartInputSchema', () => {
     };
 
     expect(reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['codex'],
+      reviewers: [{ kind: 'engine', engineId: 'codex' }],
       instructions: 'Review.',
       teamCredentialModel,
     }).teamCredentialModel).toEqual(teamCredentialModel);
     expect(reviewStart.ReviewStartInputSchema.safeParse({
-      engineIds: ['codex', 'claude'],
+      reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }],
       instructions: 'Review.',
       teamCredentialModel,
     }).success).toBe(false);
     expect(reviewStart.ReviewStartInputSchema.safeParse({
-      engineIds: ['codex'],
+      reviewers: [{ kind: 'engine', engineId: 'codex' }],
       instructions: 'Review.',
       runLocation: 'current_session',
       teamCredentialModel,
@@ -71,7 +78,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('preserves additive fields in the review start payload and engine config', () => {
     const parsed = reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       base: { kind: 'none' },
       futureStartField: {
@@ -96,7 +103,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('defaults review scope without injecting engine-specific config', () => {
     const parsed = reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       base: { kind: 'none' },
     });
@@ -107,7 +114,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('preserves a qualified execution profile and its committed generation', () => {
     const parsed = reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       profileId: 'acme.plugin/review',
       profileSourceCustody: { kind: 'managed', immutableGenerationId: 'generation-7', installSource: 'archive' },
@@ -121,7 +128,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('rejects a review profile without its committed generation', () => {
     expect(reviewStart.ReviewStartInputSchema.safeParse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       profileId: 'acme.plugin/review',
     }).success).toBe(false);
@@ -129,7 +136,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('accepts execution-run profiles for current-session reviews through the canonical Run owner', () => {
     expect(reviewStart.ReviewStartInputSchema.safeParse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       runLocation: 'current_session',
       profileId: 'acme.plugin/review',
@@ -154,7 +161,7 @@ describe('ReviewStartInputSchema', () => {
     };
 
     const parsed = reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       scmPullRequestReviewScope: scope,
     });
@@ -165,7 +172,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('rejects a malformed selected pull request review scope rather than passing it through', () => {
     expect(reviewStart.ReviewStartInputSchema.safeParse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       scmPullRequestReviewScope: {
         kind: 'scm_pull_request_review_scope.v1',
@@ -181,7 +188,7 @@ describe('ReviewStartInputSchema', () => {
 
   it('rejects malformed host-resolved SCM review scope', () => {
     expect(() => reviewStart.ReviewStartInputSchema.parse({
-      engineIds: ['acme.review'],
+      reviewers: [{ kind: 'engine', engineId: 'acme.review' }],
       instructions: 'Review.',
       base: { kind: 'none' },
       scmReviewScope: {

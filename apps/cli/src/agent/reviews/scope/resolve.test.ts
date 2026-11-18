@@ -98,6 +98,12 @@ function createGitBackend(snapshot: ScmStatusSnapshotResponse['snapshot']): ScmB
 }
 
 describe('resolveReviewScmScope', () => {
+  it.each(['selectedPaths', 'selectedFiles'])('refuses repository scope with %s at direct scope admission', async key => {
+    const scope = await resolveReviewScmScope({ cwd: '/repo', registry: createScmBackendRegistry([]),
+      intentInput: { scope: 'repository', [key]: ['src/auth.ts'] } });
+    expect(scope).toMatchObject({ status: 'unsupported', diagnostics: [{ code: 'scm_status_unavailable' }] });
+  });
+
   it('uses selected PR source endpoints without asking ambient Git for a base or head', async () => {
     const baseOid = '1'.repeat(40);
     const headOid = '2'.repeat(40);
@@ -276,7 +282,7 @@ describe('resolveReviewScmScope', () => {
         cwd,
         registry,
         intentInput: {
-          engineIds: ['coderabbit'],
+          reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
           instructions: 'Review.',
           changeType: 'uncommitted',
           base: { kind: 'none' },
@@ -393,7 +399,7 @@ describe('resolveReviewScmScope', () => {
         cwd,
         registry,
         intentInput: {
-          engineIds: ['deepsec'],
+          reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
           instructions: 'Review.',
           changeType: 'uncommitted',
           base: { kind: 'none' },

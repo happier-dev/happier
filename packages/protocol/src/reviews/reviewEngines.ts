@@ -10,6 +10,9 @@ export const ReviewEngineCapabilitiesSchema = lazyZodSchema(() => z.strictObject
 }));
 export type ReviewEngineCapabilities = z.infer<typeof ReviewEngineCapabilitiesSchema>;
 
+export const ReviewEngineScopeSchema = lazyZodSchema(() => z.enum(['worktree', 'paths', 'repository']));
+export type ReviewEngineScope = z.infer<typeof ReviewEngineScopeSchema>;
+
 /** Daemon Review inventory; the optional launch model is a read-only projection. */
 export const ReviewEngineListItemSchema = lazyZodSchema(() => z.strictObject({
   engineId: z.string(),
@@ -22,7 +25,7 @@ export const ReviewEngineListItemSchema = lazyZodSchema(() => z.strictObject({
   available: z.optional(z.boolean()),
   unavailableCode: z.optional(z.string()),
   readiness: z.optional(MachineAgentExecutionStateV1Schema),
-  reviewScopes: z.optional(z.array(z.enum(['worktree', 'paths']))),
+  reviewScopes: z.optional(z.array(ReviewEngineScopeSchema)),
   profileId: z.optional(z.string()),
   profileSourceCustody: z.optional(PluginSourceCustodyV1Schema),
   description: z.optional(z.string()),

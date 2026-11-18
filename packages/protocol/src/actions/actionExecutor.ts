@@ -6668,7 +6668,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.reviewEnginesList({
             ...target.target,
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
-            ...(data.scope === 'paths' ? { scope: 'paths' as const } : {}),
+            ...(args.scope ? { scope: args.scope } : {}),
             ...(args.profileSelections ? { profileSelections: args.profileSelections } : {}),
           }, ctx);
           return completeActionResult(res);

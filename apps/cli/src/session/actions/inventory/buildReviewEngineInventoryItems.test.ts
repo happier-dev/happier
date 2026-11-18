@@ -40,6 +40,28 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it('preserves repository-only profiles and generic repository reviewers through inventory selection', async () => {
+    const agents = ['generic', 'slices'].map(id => projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    }));
+    const registrySnapshot = { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] };
+    const profileCatalog = buildExecutionRunProfileCatalog([{ pluginId: 'acme.review', definition: {
+      id: 'slices', title: 'Slices', intent: 'review', compatibleAgents: ['slices'], promptAsset: 'prompt',
+      metadata: { reviewScopes: ['repository'] },
+      defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' },
+    } }], { resolveAgentIdentity: id => agents.find(agent => agent.id === id)?.identity ?? null });
+    const list = (scope?: 'repository' | 'paths') => buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog, registrySnapshot, profileCatalog, ...(scope ? { scope } : {}),
+    });
+    const all = await list();
+    expect(all.items.map(item => item.engineId)).toEqual(agents.map(agent => agent.id));
+    expect(all.items.find(item => item.engineId === agents[1]!.id)?.reviewScopes).toEqual(['repository']);
+    expect((await list('repository')).items.map(item => item.engineId)).toEqual(agents.map(agent => agent.id));
+    expect((await list('paths')).items.map(item => item.engineId)).toEqual([agents[0]!.id]);
+  });
+
   beforeEach(() => {
     registryMocks.getReloadState.mockReturnValue({ activeRegistry: null });
     registryMocks.isRuntimeRegistryCurrent.mockReturnValue(true);
@@ -76,7 +98,7 @@ describe('buildReviewEngineInventoryItems', () => {
     });
     expect(scopedInventory.items).toEqual([]);
     expect(scopedInventory.selectionItems).toEqual([expect.objectContaining({ profileId: 'acme.review/text-review',
-      reviewScopes: ['worktree', 'paths'] })]);
+      reviewScopes: ['worktree', 'paths', 'repository'] })]);
   });
 
   it('retains every executable reviewer while consuming one Machine readiness projection and setup reason', async () => {
@@ -360,7 +382,7 @@ describe('buildReviewEngineInventoryItems', () => {
     expect((await buildSelectedInventory()).map((item) => item.engineId)).toEqual(['coderabbit', 'deepsec']);
     expect(await buildSelectedInventory()).toEqual([
       expect.objectContaining({ engineId: 'coderabbit', profileId: 'review', reviewScopes: ['worktree'], retentionPolicy: 'ephemeral', available: true }),
-      expect.objectContaining({ engineId: 'deepsec', reviewScopes: ['worktree', 'paths'], retentionPolicy: 'resumable', available: true }),
+      expect.objectContaining({ engineId: 'deepsec', reviewScopes: ['worktree', 'paths', 'repository'], retentionPolicy: 'resumable', available: true }),
     ]);
     expect(readReviewNarratorOptions({ items: await buildSelectedInventory() })).toContainEqual(
       expect.objectContaining({ retentionPolicy: 'ephemeral' }),

@@ -1,6 +1,6 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { ReviewEngineListItemSchema, type ReviewEngineListItem, type ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ReviewEngineListItemSchema, ReviewEngineScopeSchema, type ReviewEngineListItem, type ReviewEngineProfileSelection, type ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -28,7 +28,7 @@ export type ActionReviewEngineInventoryItem = ReviewEngineListItem & Readonly<{
   backendId: string;
 }>;
 
-export type ReviewEngineScope = NonNullable<ReviewEngineListItem['reviewScopes']>[number];
+export type { ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 
 type ReviewAgentCatalog = Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById' | 'executionRunProfiles'>;
 
@@ -66,7 +66,7 @@ function readReviewEngineDescription(
 
 function selectReviewEngineAgents(
   registry: ReviewAgentCatalog,
-  scope: ReviewEngineScope = 'worktree',
+  scope?: ReviewEngineScope,
   profileCatalog?: ExecutionRunProfileContributionCatalog,
 ) {
   const agents = new Map<string, ReturnType<typeof resolveReviewProfileFacts>>();
@@ -75,7 +75,7 @@ function selectReviewEngineAgents(
     const definition = agent.richDefinition?.definition;
     if (!readAgentExecutionRunCapabilities(definition)?.open.includes('create')) continue;
     const facts = resolveReviewProfileFacts(agent.id, profileCatalog);
-    if (!facts.reviewScopes.includes(scope)) continue;
+    if (scope && !facts.reviewScopes.includes(scope)) continue;
     agents.set(agent.id, facts);
   }
   return agents;
@@ -92,8 +92,9 @@ function resolveReviewProfileFacts(
   const selected = catalog ? resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId, ...selection }) : null;
   const profile = selected && catalog ? resolveExecutionRunProfileContributionDescriptor(catalog, selected.profileId) : null;
   const declaredScopes = profile?.metadata?.reviewScopes;
-  const reviewScopes: ReviewEngineScope[] = Array.isArray(declaredScopes) && !declaredScopes.includes('paths')
-    ? ['worktree'] : ['worktree', 'paths'];
+  const reviewScopes = Array.isArray(declaredScopes)
+    ? declaredScopes.filter((scope): scope is ReviewEngineScope => ReviewEngineScopeSchema.safeParse(scope).success)
+    : [...ReviewEngineScopeSchema.options];
   return { reviewScopes, retentionPolicy: profile?.defaults.retention ?? 'resumable',
     sessionTranscript: profile?.metadata?.reviewTranscriptInput !== 'unsupported',
     ...(selected ? { profileId: selected.profileId,
@@ -103,7 +104,7 @@ function resolveReviewProfileFacts(
 /** Shared selector; contributed behavior comes only from the selected catalog profile. */
 export function selectReviewEngineAgentIds(
   registry: ReviewAgentCatalog,
-  scope: ReviewEngineScope = 'worktree',
+  scope?: ReviewEngineScope,
   profileCatalog?: ExecutionRunProfileContributionCatalog,
 ): ReadonlySet<string> {
   return new Set(selectReviewEngineAgents(registry, scope, profileCatalog).keys());
@@ -160,7 +161,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       backendId: item.backendId,
       capabilities: { structuredNarration: false, sessionTranscript: true },
       retentionPolicy: 'resumable',
-      reviewScopes: ['worktree', 'paths'],
+      reviewScopes: [...ReviewEngineScopeSchema.options],
       ...(item.description ? { description: item.description } : {}),
     }));
   const roster = [...agentItems, ...configuredItems];
