@@ -151,10 +151,32 @@ describe('shared menu selection and keyboard semantics', () => {
       preferredMinAvailable: 240,
       available: { top: 240, bottom: 120, left: 320, right: 24 },
     })).toBe('left');
+  });
+
+  // A popover from a top-of-page trigger (Export…, History, a database picker) opened beside it, over the page
+  // title, because a wide window has more room on a side than below (DBW-UI-4 N3). Auto prefers below, then above,
+  // and takes a side only when neither holds it.
+  it('opens an auto popover below, above when below is short, and beside only when neither holds it', () => {
     expect(resolveHappierPopoverPlacement({
       placement: 'auto',
-      available: { top: 240, bottom: 320, left: 600, right: 480 },
-    })).toBe('left');
+      preferredMinAvailable: 320,
+      available: { top: 60, bottom: 700, left: 900, right: 1100 },
+    })).toBe('bottom');
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto',
+      preferredMinAvailable: 320,
+      available: { top: 600, bottom: 120, left: 900, right: 1100 },
+    })).toBe('top');
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto',
+      preferredMinAvailable: 320,
+      available: { top: 200, bottom: 240, left: 300, right: 900 },
+    })).toBe('right');
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto',
+      preferredMinAvailable: 320,
+      available: { top: 200, bottom: 240, left: 100, right: 90 },
+    })).toBe('bottom');
   });
 
   // A submenu from a menu that fills a phone has room on neither side: squeezed beside it, it was 66 px wide

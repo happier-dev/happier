@@ -1065,6 +1065,7 @@ export {
   HappierFreshnessClauses,
   resolveHappierStateAnnouncement,
   resolveHappierStateFailureGlyph,
+  resolveHappierStateLineGlyphTone,
   type HappierSurfaceStateKind,
   type HappierInfoStateProps,
   type HappierInfoTileProps,

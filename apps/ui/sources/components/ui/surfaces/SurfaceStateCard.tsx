@@ -1,4 +1,4 @@
-import { defineHappierScene, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
+import { defineHappierScene, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierStateLineGlyphTone, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -45,10 +45,7 @@ const DEFAULT_ICONS: Partial<Record<SurfaceStateKind, IconName>> = {
     warning: 'warning-circle',
 };
 
-/**
- * In a line only a warning tints its glyph (amber: needs you). A failure keeps its mark in the line's ink, as a
- * card keeps its glyph calm: the words carry the trouble, so a list of folders never reads as a row of alarms.
- */
+/** A line's glyph when its kind has no failure glyph; its tint is the shared `resolveHappierStateLineGlyphTone`. */
 const LINE_ICONS: Partial<Record<SurfaceStateKind, IconName | null>> = {
     empty: null,
     success: 'check-circle',
@@ -199,7 +196,7 @@ export function SurfaceStateCard(props: Readonly<{
         reportContent(contentKey, { empty: reportedEmpty, line: size === 'line', loading: props.kind === 'loading' });
         return () => reportContent(contentKey, null);
     }, [contentKey, props.replacesContent, props.kind, reportedEmpty, size, reportContent]);
-    const failureGlyph = resolveHappierStateFailureGlyph(props.kind, size === 'line');
+    const failureGlyph = resolveHappierStateFailureGlyph(props.kind);
     const kindIconName = failureGlyph ? resolvePluginUiIconName(failureGlyph) : undefined;
     const animationEnabled = props.animationEnabled !== false;
 
@@ -238,9 +235,10 @@ export function SurfaceStateCard(props: Readonly<{
 
     if (size === 'line') {
         const lineIconName = props.iconName ?? kindIconName ?? LINE_ICONS[props.kind];
-        const lineTint = props.kind === 'error'
-            ? theme.colors.text.secondary
-            : props.kind === 'warning'
+        const lineTone = resolveHappierStateLineGlyphTone(props.kind);
+        const lineTint = lineTone === 'danger'
+            ? theme.colors.state.danger.foreground
+            : lineTone === 'warning'
                 ? theme.colors.state.warning.foreground
                 : theme.colors.text.tertiary;
         const lineGlyph = props.kind === 'loading' ? (

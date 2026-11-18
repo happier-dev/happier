@@ -14,12 +14,22 @@ import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 export type HappierSurfaceStateKind = 'empty' | 'loading' | 'success' | 'error' | 'warning' | 'unavailable' | 'denied';
 
-/** Failure kind and layout select one semantic glyph, resolved by the icon adapter. */
-export function resolveHappierStateFailureGlyph(kind: HappierSurfaceStateKind, line = false) {
-  if (kind === 'error') return line ? 'warning' as const : 'failure' as const;
+/** A failure kind selects one semantic glyph, in a card and a line alike, resolved by the icon adapter. */
+export function resolveHappierStateFailureGlyph(kind: HappierSurfaceStateKind) {
+  if (kind === 'error') return 'failure' as const;
   if (kind === 'unavailable') return 'unavailable' as const;
   if (kind === 'denied') return 'denied' as const;
   return undefined;
+}
+
+/**
+ * The one tint of a state line's glyph: rose for a failure and amber for a warning (DESIGN: amber needs you, rose
+ * failed); everything else is muted. A card keeps its glyph calm; its words carry the trouble.
+ */
+export function resolveHappierStateLineGlyphTone(kind: HappierSurfaceStateKind): HappierTone {
+  if (kind === 'error') return 'danger';
+  if (kind === 'warning') return 'warning';
+  return 'muted';
 }
 
 /** Static cards stay quiet; the lifecycle caller owns the urgency of a transition. */

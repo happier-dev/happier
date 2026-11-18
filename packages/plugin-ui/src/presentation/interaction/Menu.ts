@@ -578,7 +578,11 @@ export function resolveHappierPopoverPlacement(input: Readonly<{
       ? opposite
       : input.placement;
   }
-  const entries = Object.entries(input.available) as Array<[HappierResolvedPopoverPlacement, number]>;
-  entries.sort((left, right) => right[1] - left[1]);
-  return entries[0]?.[0] ?? 'top';
+  // Auto reads like a menu from its trigger: below, else above, and beside only when neither holds it. Most room
+  // alone put a top-of-page popover beside its trigger, over the page title, because a wide window has more room
+  // on a side than below it.
+  const preferredMinAvailable = Math.max(0, input.preferredMinAvailable ?? 0);
+  const fitting = (['bottom', 'top', 'right', 'left'] as const).find(side => input.available[side] >= preferredMinAvailable);
+  if (fitting) return fitting;
+  return input.available.top > input.available.bottom ? 'top' : 'bottom';
 }

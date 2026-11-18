@@ -126,12 +126,14 @@ describe('SurfaceStateCard', () => {
             .flatMap((node) => React.Children.toArray(node.props.children))
             .filter((child) => typeof child === 'string')).toEqual([]);
     });
-    it('keeps a failed line calm in ink and tints only a warning line amber: the words carry the failure (ui-craft "glyphs stay ink")', async () => {
+    // DESIGN: amber needs you, rose failed. A failed line drew a warning-coloured triangle in plugin surfaces (DBW-UI-4 N8);
+    // both hosts take the line glyph's tint from the shared `resolveHappierStateLineGlyphTone`.
+    it('tints a failed line rose and a warning line amber', async () => {
         const glyphColor = async (kind: 'error' | 'warning') => {
             const screen = await renderScreen(<SurfaceStateCard size="line" kind={kind} title="Couldn't update this comment" />);
             return screen.findAll((node) => typeof node.props?.name === 'string' && node.props?.color !== undefined)[0]?.props.color;
         };
-        expect(await glyphColor('error')).toBe(lightTheme.colors.text.secondary);
+        expect(await glyphColor('error')).toBe(lightTheme.colors.state.danger.foreground);
         expect(await glyphColor('warning')).toBe(lightTheme.colors.state.warning.foreground);
     });
     it.each([undefined, 'inline'] as const)('reads failure detail before recovery in %s layout', async (layout) => {
@@ -620,7 +622,7 @@ describe('SurfaceStateCard pane-state composition', () => {
             />,
         );
         expect(screen.getTextContent()).toContain('Couldn’t load who has access.');
-        expect(screen.findAll((node) => node.props?.name === 'warning')).toHaveLength(1);
+        expect(screen.findAll((node) => node.props?.name === 'warning-circle')).toHaveLength(1);
         // One row (owner 11-06): a failure line offers its code behind a quiet Details beside its recovery,
         // and keeps the code out of the tree until it is opened.
         expect(screen.findByTestId('state-line-details-toggle')).toBeTruthy();

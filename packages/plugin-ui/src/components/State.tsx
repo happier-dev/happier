@@ -32,6 +32,7 @@ import {
   HappierStateLine,
   resolveHappierStateAnnouncement,
   resolveHappierStateFailureGlyph,
+  resolveHappierStateLineGlyphTone,
   HAPPIER_STATE_LINE_METRICS,
   type HappierStateSize,
   type HappierSurfaceStateKind,
@@ -572,14 +573,14 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
   const line = size === 'line';
   const metrics = size && size !== 'line' ? HAPPIER_STATE_SIZE_METRICS[size] : null;
   const loadingLabel = title ?? translate(STATE_LOADING_TRANSLATION_KEY, 'Loading');
-  const iconName = props.icon ?? resolveHappierStateFailureGlyph(props.kind, line) ?? STATE_DEFAULT_GLYPH[props.kind];
+  const iconName = props.icon ?? resolveHappierStateFailureGlyph(props.kind) ?? STATE_DEFAULT_GLYPH[props.kind];
   const glyph = props.kind === 'loading'
     ? <Spinner size={line ? HAPPIER_STATE_LINE_METRICS.glyphPx - 2 : metrics ? metrics.glyphPx - 4 : 28} accessibilityLabel={loadingLabel} />
     : iconName
       ? <PluginUiIconGlyph
           name={iconName}
           size={line ? HAPPIER_STATE_LINE_METRICS.glyphPx : metrics?.glyphPx ?? UNSIZED_STATE_GLYPH_PX}
-          tone={line ? (props.kind === 'error' || props.kind === 'warning' ? 'warning' : 'muted') : 'secondary'}
+          tone={line ? resolveHappierStateLineGlyphTone(props.kind) : 'secondary'}
         />
       : undefined;
   const bindings: HappierSurfaceStateBindings = {
