@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "A tarefa foi criada, mas a ligação à revisão não está confirmada. Repare a ligação sem criar outra tarefa.",
+  "plugins.triage.tasks.review.repair": "Reparar ligação à revisão",
   "plugins.triage.sourceFailure.phase": "Fase",
   "plugins.triage.sourceFailure.effectAttempted": "Efeito tentado",
   "plugins.triage.sourceFailure.reason": "Motivo",

@@ -1,3 +1,5 @@
+import { admitTaskReviewSelection } from './taskReview.js';
+import { setTaskOriginReview } from '../corpus/marks/setPinned.js';
 import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
@@ -150,9 +152,10 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
 
 export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<TriageCreateTaskActionInputV1, TriageCreateTaskActionResultV1> {
     return async (input, context) => {
+        if (input.originReview !== undefined) await admitTaskReviewSelection(input.originReview, context);
         const creation = await writeTask({ role: 'create', input }, context);
         // A response-loss create is never replayed, and its uncertain observation cannot authorize a link.
-        if (creation.kind !== 'applied' || input.linkSession === undefined && input.originError === undefined) return creation;
+        if (creation.kind !== 'applied' || input.linkSession === undefined && input.originError === undefined && input.originReview === undefined) return creation;
         const entryRef = { source: input.source, ...creation.observation.localRef };
         const attemptLink = async (link: () => Promise<'linked' | 'failed' | 'unknown'>) => {
             if (context.signal.aborted) return 'failed' as const;
@@ -182,9 +185,19 @@ export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<T
             }, { signal: context.signal }));
             return result.status === 'linked' ? 'linked' : 'failed';
         });
+        const originReview = input.originReview;
+        const reviewLink = originReview === undefined ? undefined : await attemptLink(async () => {
+            const result = await setTaskOriginReview({
+                collections: bindCorpusCollections(requireTriageAccountStorage(context)), entryRef,
+                displayAtMark: { title: creation.observation.snapshot.title, scopeLabel: creation.observation.snapshot.scopeLabel },
+                originReview, nowMs: context.invokedAtMs, signal: context.signal,
+            });
+            return result.status === 'linked' ? 'linked' : 'failed';
+        });
         return { kind: 'createdAndLinkAttempted', creation,
             ...(sessionLink === undefined ? {} : { sessionLink }),
             ...(originErrorLink === undefined ? {} : { originErrorLink }),
+            ...(reviewLink === undefined ? {} : { reviewLink }),
         };
     };
 }

@@ -95,6 +95,7 @@ describe('durable Collection declarations', () => {
                     markTag: `a${'1'.repeat(42)}`, pinned: true, markedAtMs: 1,
                     entryRef, displayAtMark: display,
                     originError: { entryRef, display },
+                    originReview: { reviewId: 'review-1', findingIds: ['finding-1', 'finding-2'] },
                     fixPullRequests: { linked: [{ entryRef, displayAtLink: display, linkedAtMs: 1 }], dismissed: [] },
                 }),
             },
@@ -169,7 +170,7 @@ describe('durable Collection declarations', () => {
         for (const contract of admitted) {
             expect(contract.contractDigest).toMatch(/^[A-Za-z0-9_-]+$/);
         }
-        expect(admitted.map((contract) => contract.schemaVersion)).toEqual([4, 2, 2]);
+        expect(admitted.map((contract) => contract.schemaVersion)).toEqual([4, 2, 3]);
     });
 
     it('keeps the preceding mark contract readable without projecting the new private origin', () => {
@@ -194,10 +195,10 @@ describe('durable Collection declarations', () => {
     it('preserves existing source configuration and user intent through the widening migrations', async () => {
         for (const definition of CORPUS_ACCOUNT_COLLECTIONS) {
             const contract = admit(definition);
-            expect(contract.readableSchemaVersions).toEqual(definition.id === 'source-instances' ? [1, 2, 3, 4] : [1, 2]);
+            expect(contract.readableSchemaVersions).toEqual(definition.id === 'source-instances' ? [1, 2, 3, 4] : definition.id === 'user-marks' ? [1, 2, 3] : [1, 2]);
             const migrations = collectionMigrations[definition.id]!;
             expect(migrations.map(migration => [migration.fromSchemaVersion, migration.toSchemaVersion]))
-                .toEqual(definition.id === 'source-instances' ? [[1, 2], [2, 3], [3, 4]] : [[1, 2]]);
+                .toEqual(definition.id === 'source-instances' ? [[1, 2], [2, 3], [3, 4]] : definition.id === 'user-marks' ? [[1, 2], [2, 3]] : [[1, 2]]);
             const retained = definition.id === 'source-instances'
                 ? toCorpusStoredValue({
                     instanceTag: `a${'0'.repeat(42)}`, sourceQualifiedId: 'happier.example.source/example-forge', lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,

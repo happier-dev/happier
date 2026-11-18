@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "Die Aufgabe wurde erstellt, aber ihr Review-Link ist nicht bestätigt. Repariere den Link, ohne eine weitere Aufgabe zu erstellen.",
+  "plugins.triage.tasks.review.repair": "Review-Link reparieren",
   "plugins.triage.sourceFailure.phase": "Phase",
   "plugins.triage.sourceFailure.effectAttempted": "Effekt versucht",
   "plugins.triage.sourceFailure.reason": "Grund",

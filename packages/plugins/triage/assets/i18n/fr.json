@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "La tâche a été créée, mais son lien vers la revue n’est pas confirmé. Réparez le lien sans créer une autre tâche.",
+  "plugins.triage.tasks.review.repair": "Réparer le lien de revue",
   "plugins.triage.sourceFailure.phase": "Phase",
   "plugins.triage.sourceFailure.effectAttempted": "Effet tenté",
   "plugins.triage.sourceFailure.reason": "Raison",

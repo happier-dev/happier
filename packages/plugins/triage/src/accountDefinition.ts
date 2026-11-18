@@ -11,6 +11,8 @@ import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TRIAGE_READ_PULL_REQUEST_S
 import { createTriageListEntriesActionHandler } from './actions/listEntries.js';
 import { createTriageSearchEntriesActionHandler } from './actions/searchEntries.js';
 import { createTriageCreateTaskActionHandler, createTriageEditTaskActionHandler, createTriageTransitionTaskActionHandler } from './actions/tasks.js';
+import { createTriageReadTaskOriginReviewActionHandler, createTriageSetTaskOriginReviewActionHandler } from './actions/taskReview.js';
+import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TriageReadTaskOriginReviewInputV1Schema, TriageReadTaskOriginReviewResultV1Schema, TriageSetTaskOriginReviewInputV1Schema, TriageSetTaskOriginReviewResultV1Schema } from './actions/taskReviewProtocol.js';
 import { createTriageReadTaskOriginErrorActionHandler, createTriageSetTaskOriginErrorActionHandler } from './actions/taskOrigin.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema, TriageReadTaskOriginErrorResultV1Schema, TriageSetTaskOriginErrorInputV1Schema, TriageSetTaskOriginErrorResultV1Schema } from './actions/taskOriginProtocol.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1, TriageCreateTaskActionInputV1Schema, TriageCreateTaskActionResultV1Schema, TriageEditTaskActionInputV1Schema, TriageTransitionTaskActionInputV1Schema } from './actions/tasksProtocol.js';
@@ -48,6 +50,8 @@ export type TriageAccountActionSchemas = {
   readonly [TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1]: readonly [typeof PluginWorkItemTransitionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
   readonly [TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1]: readonly [typeof TriageListEntriesInputV1Schema, typeof TriageListEntriesResultV1Schema];
   readonly [TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageCreateTaskActionInputV1Schema, typeof TriageCreateTaskActionResultV1Schema];
+  readonly [TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSetTaskOriginReviewInputV1Schema, typeof TriageSetTaskOriginReviewResultV1Schema];
+  readonly [TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadTaskOriginReviewInputV1Schema, typeof TriageReadTaskOriginReviewResultV1Schema];
   readonly [TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSetTaskOriginErrorInputV1Schema, typeof TriageSetTaskOriginErrorResultV1Schema];
   readonly [TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadTaskOriginErrorInputV1Schema, typeof TriageReadTaskOriginErrorResultV1Schema];
   readonly [TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1]: readonly [typeof TriageEditTaskActionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
@@ -149,6 +153,25 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         hostAccess: ['account-storage'],
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageCreateTaskActionHandler(),
+      },
+      [TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1]: {
+        title: 'Link or unlink selected Review findings',
+        description: 'Repairs the Review relationship on an existing task without creating another task or copying findings.',
+        surfaces: ['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [],
+        inputSchema: TriageSetTaskOriginReviewInputV1Schema,
+        resultSchema: TriageSetTaskOriginReviewResultV1Schema,
+        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        run: createTriageSetTaskOriginReviewActionHandler(),
+      },
+      [TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1]: {
+        title: 'Read a task Review relationship',
+        description: 'Reads selected Review and finding identities; opening the Review requires its own access.',
+        surfaces: ['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [],
+        dangerLevel: 'safe', readOnly: true,
+        inputSchema: TriageReadTaskOriginReviewInputV1Schema,
+        resultSchema: TriageReadTaskOriginReviewResultV1Schema,
+        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        run: createTriageReadTaskOriginReviewActionHandler(),
       },
 [TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: {
         title: 'Link or unlink a task origin error',

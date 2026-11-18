@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "La tasca s’ha creat, però el seu enllaç a la revisió no està confirmat. Repara l’enllaç sense crear una altra tasca.",
+  "plugins.triage.tasks.review.repair": "Reparar l’enllaç de revisió",
   "plugins.triage.sourceFailure.phase": "Fase",
   "plugins.triage.sourceFailure.effectAttempted": "Efecte intentat",
   "plugins.triage.sourceFailure.reason": "Motiu",

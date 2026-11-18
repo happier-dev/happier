@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "Задача создана, но её связь с проверкой не подтверждена. Восстановите связь, не создавая ещё одну задачу.",
+  "plugins.triage.tasks.review.repair": "Восстановить связь с проверкой",
   "plugins.triage.sourceFailure.phase": "Этап",
   "plugins.triage.sourceFailure.effectAttempted": "Действие предпринято",
   "plugins.triage.sourceFailure.reason": "Причина",

@@ -432,6 +432,19 @@ write keeps the created task in the form with **Repair origin link**; repair
 only calls the relationship Action. Saved task detail reads the persisted origin
 and opens its exact error reference, including after a reload.
 
+In 0.3 development source, a Review selection uses the same task draft and
+`tasks/create-v1` Action with `originReview: { reviewId, findingIds }`. Before
+calling the task provider, the Action reads exactly those IDs through the
+authorized `reviews.comments.list` Action and rejects missing membership.
+The existing list page boundary and all-pages continuation apply. Task creation
+does not grant Review access. The task provider receives only its own task
+fields; neither finding bodies nor dispositions enter the relationship.
+Confirmed creation reports `reviewLink` separately. The registered
+`tasks/set-origin-review-v1` Action repairs, replaces or removes only the private
+relationship, while `tasks/read-origin-review-v1` returns the saved IDs. An
+uncertain create does not write a relationship or replay creation. Pin/unpin,
+error-origin and fix-PR changes preserve the Review relationship.
+
 Uninstalling or disabling a source does not retire its configured instances. The
 mounted list and Manage sources retain those active Account records, with the
 list reporting that source as unavailable. The caller-scoped configured read
@@ -443,11 +456,12 @@ In 0.3 development source, the durable `source-instances` Collection is v4. Its
 binding admits credentialless current Account data; the preceding v3 also admitted
 the reserved `happier/mcp-sign-in` Connected Account identity. The same migration
 artifact carries v1/v2/v3 rows forward unchanged; the widening changes neither
-existing configured-source identity nor private configuration. `session-links` and `user-marks` remain v2 because their
-entry references do not embed that service schema. The canonical Availability
+existing configured-source identity nor private configuration. `session-links`
+remains v2. `user-marks` is v3 for its optional private `originReview` references;
+its identity migration retains v1/v2 rows without rewriting intent. The canonical Availability
 owner permits proven equal-version schema widenings as read-only access;
 writes still require the exact current writer contract. The optional private
-`originError` field widens `user-marks` v2 without rewriting retained rows.
+`originError` field previously widened `user-marks` v2 without rewriting retained rows.
 
 The source plugin retains its private configuration-token encoding and provider-specific behavior. `configuration.token` is non-secret source-selection data, despite its name. Agents obtain the configured instance from `entries/read-detail-v1` and pass it unchanged into source Actions, including issue facts and pin/unpin. A `[REDACTED]` replacement is invalid configuration. Credentials are acquired separately through the admitted binding; keep configuration contents out of user-facing prose. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
 

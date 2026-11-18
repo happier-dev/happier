@@ -13,6 +13,7 @@ import { TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_
 import { TriageMountedUiResultV1Schema } from '../../actions/mountedUiProtocol.js';
 import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1Schema } from '../../actions/reobserveEntryProtocol.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
+import { TriageSetTaskOriginReviewResultV1Schema } from '../../actions/taskReviewProtocol.js';
 import { TriageSetTaskOriginErrorResultV1Schema } from '../../actions/taskOriginProtocol.js';
 import type { TriageCreateTaskActionInputV1 } from '../../actions/tasksProtocol.js';
 import { triageTaskWriteInvocationFailureV1 } from '../../actions/taskWriteFailure.js';
@@ -43,9 +44,11 @@ type TaskWriteSnapshot = Readonly<{
   linkSessionId: string | null;
   originErrorLink: 'linked' | 'failed' | 'unknown' | null;
   originError: TriageCreateTaskActionInputV1['originError'] | null;
+  reviewLink: 'linked' | 'failed' | 'unknown' | null;
+  originReview: TriageCreateTaskActionInputV1['originReview'] | null;
   createdEntryRef: TriageEntryRefV1 | null;
 }>;
-const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originError: null, createdEntryRef: null });
+const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originError: null, reviewLink: null, originReview: null, createdEntryRef: null });
 
 /** This is the mounted commit's state, shared by entry rather than by its row or detail renderer. */
 function createTaskWriteOperation() {
@@ -87,6 +90,8 @@ function createTaskWriteOperation() {
       let linkSessionId = snapshot.linkSessionId;
       let originErrorLink = snapshot.originErrorLink;
       let originError = snapshot.originError;
+      let reviewLink = snapshot.reviewLink;
+      let originReview = snapshot.originReview;
       let createdEntryRef = snapshot.createdEntryRef;
       try {
         if (!execution.ok) throw execution.error;
@@ -99,6 +104,8 @@ function createTaskWriteOperation() {
           linkSessionId = typeof creation.linkSession === 'string' ? creation.linkSession : null;
           originErrorLink = created.originErrorLink ?? null;
           originError = creation.originError ?? null;
+          reviewLink = created.reviewLink ?? null;
+          originReview = creation.originReview ?? null;
           createdEntryRef = result.kind === 'applied' ? { source: creation.source, ...result.observation.localRef } : null;
         }
         else result = TriageTaskWriteResultV1Schema.parse(raw);
@@ -113,13 +120,35 @@ function createTaskWriteOperation() {
       active = null;
       if (result.kind !== 'uncertain') intent = null;
       publish({ result, busy: false, checking: false, rebaseFields: null,
-        progress: result.kind === 'uncertain' ? snapshot.progress : null, sessionLink, linkSessionId, originErrorLink, originError, createdEntryRef });
+        progress: result.kind === 'uncertain' ? snapshot.progress : null, sessionLink, linkSessionId, originErrorLink, originError, reviewLink, originReview, createdEntryRef });
       // A slow aggregate refresh never holds the confirmed write or its UI hostage.
       if (result.kind === 'applied' || result.kind === 'uncertain') void Promise.resolve().then(onApplied).catch(() => {
         host.diagnostic({ code: 'triage_task_reread_unavailable', severity: 'warning',
           message: 'The task write settled, but its authoritative reread was unavailable.' });
       });
       return result;
+    },
+    prepareReviewRepair() {
+      const { result, originReview, createdEntryRef } = snapshot;
+      if (retired || snapshot.busy || result?.kind !== 'applied' || originReview == null || createdEntryRef === null) return null;
+      publish({ ...snapshot, busy: true });
+      return { input: { v: 1, entryRef: createdEntryRef,
+        displayAtMark: { title: result.observation.snapshot.title, scopeLabel: result.observation.snapshot.scopeLabel }, originReview } };
+    },
+    settleReviewRepair(execution: TaskExecution) {
+      if (retired || !snapshot.busy) return false;
+      let reviewLink: TaskWriteSnapshot['reviewLink'];
+      try {
+        if (!execution.ok) throw execution.error;
+        const answer = TriageSetTaskOriginReviewResultV1Schema.parse(execution.result);
+        reviewLink = answer.status === 'linked' ? 'linked' : 'failed';
+      } catch (error) {
+        reviewLink = triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' : 'unknown';
+      }
+      if (retired) return false;
+      active = null;
+      publish({ ...snapshot, busy: false, reviewLink });
+      return reviewLink === 'linked';
     },
     prepareOriginRepair() {
       const { result, originError, createdEntryRef } = snapshot;
@@ -262,6 +291,11 @@ export function useTriageTaskCommit(onApplied: () => Promise<void>, address?: Ta
       adoptCreated(owner);
       return result;
     },
+    prepareReviewRepair: () => {
+      preparedOwner = operation();
+      return preparedOwner?.prepareReviewRepair() ?? null;
+    },
+    settleReviewRepair: (execution: PluginUiActionControlExecution) => preparedOwner?.settleReviewRepair(hostTaskExecution(execution)) ?? false,
     prepareOriginRepair: () => {
       preparedOwner = operation();
       return preparedOwner?.prepareOriginRepair() ?? null;

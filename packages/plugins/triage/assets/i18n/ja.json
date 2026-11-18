@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "タスクは作成されましたが、レビューへのリンクは確認できていません。別のタスクを作成せずにリンクを修復してください。",
+  "plugins.triage.tasks.review.repair": "レビューのリンクを修復",
   "plugins.triage.sourceFailure.phase": "段階",
   "plugins.triage.sourceFailure.effectAttempted": "処理を試行済み",
   "plugins.triage.sourceFailure.reason": "理由",

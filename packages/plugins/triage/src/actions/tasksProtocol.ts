@@ -12,6 +12,7 @@ import {
     TriageTaskTransitionFieldValuesV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageListKindIdV1Schema } from './listEntriesProtocol.js';
+import { TriageTaskOriginReviewV1Schema } from './taskReviewProtocol.js';
 import { TriageTaskOriginErrorV1Schema } from './taskOriginProtocol.js';
 
 export const TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 = 'tasks/list-v1';
@@ -40,6 +41,7 @@ export const TriageTaskDraftV1Schema = defineProtocolObject({
     title: defineProtocolString().optional(), body: defineProtocolString().optional(),
     origin: TriageTaskDraftOriginV1Schema.optional(),
     originError: TriageTaskOriginErrorV1Schema.optional(),
+    originReview: TriageTaskOriginReviewV1Schema.optional(),
     linkSession: SessionTargetV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageTaskDraftV1 = ReturnType<typeof TriageTaskDraftV1Schema.parse>;
@@ -61,6 +63,7 @@ export const TriageCreateTaskActionInputV1Schema = defineProtocolObject({
     /** A separate, optional relationship write after confirmed creation only. */
     linkSession: SessionTargetV1Schema.optional(),
     originError: TriageTaskOriginErrorV1Schema.optional(),
+    originReview: TriageTaskOriginReviewV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageCreateTaskActionInputV1 = ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>;
 
@@ -72,6 +75,7 @@ export const TriageCreateTaskActionResultV1Schema = defineProtocolUnion([
         creation: TriageTaskWriteResultV1Schema,
         sessionLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
         originErrorLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
+        reviewLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
     }, { policy: 'closed' }),
 ]);
 export type TriageCreateTaskActionResultV1 = ReturnType<typeof TriageCreateTaskActionResultV1Schema.parse>;

@@ -1,3 +1,4 @@
+import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import type {
     TriageConfiguredSourceInstanceV1,
     TriageEntryRefV1,
@@ -118,4 +119,6 @@ export type CorpusUserMarkRowV1 = Readonly<{
     fixPullRequests?: CorpusFixPullRequestsV1;
     /** The error the user chose when creating this task; private relationship intent. */
     originError?: CorpusTaskOriginErrorV1;
+    /** Selected Review/finding identities only; never a finding snapshot. */
+    originReview?: TriageTaskOriginReviewV1;
 }>;

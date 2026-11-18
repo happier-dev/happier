@@ -1,3 +1,4 @@
+import { TriageTaskOriginReviewV1Schema } from '../../actions/taskReviewProtocol.js';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import { CORPUS_COLLECTION_MIGRATIONS } from './migrations.js';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -215,8 +216,8 @@ export const CORPUS_SESSION_LINKS_COLLECTION = defineAccountCollection({
 
 export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
     id: CORPUS_USER_MARKS_COLLECTION_ID,
-    schemaVersion: 2,
-    readableSchemaVersions: [1, 2],
+    schemaVersion: 3,
+    readableSchemaVersions: [1, 2, 3],
     schema: {
         type: 'object',
         properties: {
@@ -227,6 +228,7 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
             [CORPUS_USER_MARKS_FIELD.displayAtMark]: MARK_DISPLAY_SCHEMA,
             // Optional private intent widens the existing contract; no new index
             // or row migration is needed for retained marks without an origin.
+            [CORPUS_USER_MARKS_FIELD.originReview]: TriageTaskOriginReviewV1Schema.jsonSchema,
             [CORPUS_USER_MARKS_FIELD.originError]: {
                 type: 'object',
                 properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },

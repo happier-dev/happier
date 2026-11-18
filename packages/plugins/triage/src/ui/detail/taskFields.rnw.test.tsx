@@ -99,6 +99,44 @@ it('creates once from an error and repairs only its failed origin link before op
   expect(created).toEqual([{ source: source.configuredInstance.instance.source, ...source.getResult.localRef }]);
 });
 
+it('creates once from selected Review findings and repairs only the relationship before opening the task', async () => {
+  const source = createTriageSourceV1Fixture();
+  const originReview = { reviewId: 'review-1', findingIds: ['finding-1', 'finding-2'] };
+  const actions: string[] = [];
+  const created: TriageEntryRefV1[] = [];
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'review-create-repair', mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => <TriageCreateTaskFields sources={[{
+      configured: source.configuredInstance, sourceInstanceId: source.configuredInstance.instance.sourceInstanceId,
+      displayLabel: 'Engineering',
+    }]} sourcesLoaded sourcesUnavailableReason={null} draft={{ title: 'Fix selected findings', originReview }}
+      onApplied={async () => undefined} onClose={() => undefined} onCreated={value => created.push(value.entryRef)} />),
+    surfaceContext: createSurfaceContextFixture({
+      targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
+    }),
+    adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit },
+      overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+    handlers: { executeAction: ({ action, input }) => {
+      actions.push(action);
+      if (action === 'tasks/create-v1') {
+        expect(TriageCreateTaskActionInputV1Schema.parse(input)).toMatchObject({ originReview });
+        return { kind: 'createdAndLinkAttempted', creation: { kind: 'applied', observation: source.getResult }, reviewLink: 'failed' };
+      }
+      expect(action).toBe('tasks/set-origin-review-v1');
+      expect(input).toMatchObject({ originReview, entryRef: { source: source.configuredInstance.instance.source, ...source.getResult.localRef } });
+      return { v: 1, status: 'linked' };
+    } },
+  });
+  mounted.push(fixture);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Issue' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(created).toEqual([]);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair Review link' })); });
+  expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-review-v1']);
+  expect(created).toEqual([{ source: source.configuredInstance.instance.source, ...source.getResult.localRef }]);
+});
+
 it('keeps an uncertain creation at its named source and opens its observed locator without resubmitting', async () => {
   const source = createTriageSourceV1Fixture();
   const opened: string[] = [];

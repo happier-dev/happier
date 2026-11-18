@@ -621,11 +621,17 @@
             "fromSchemaVersion": 1,
             "id": "user-marks-v1-to-v2",
             "toSchemaVersion": 2
+          },
+          {
+            "fromSchemaVersion": 2,
+            "id": "user-marks-v2-to-v3",
+            "toSchemaVersion": 3
           }
         ],
         "readableSchemaVersions": [
           1,
-          2
+          2,
+          3
         ],
         "relations": [],
         "rowIdField": "markTag",
@@ -949,6 +955,29 @@
               ],
               "type": "object"
             },
+            "originReview": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false,
+              "properties": {
+                "findingIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "reviewId": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reviewId",
+                "findingIds"
+              ],
+              "type": "object"
+            },
             "pinned": {
               "type": "boolean"
             }
@@ -962,7 +991,7 @@
           ],
           "type": "object"
         },
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "serverReadable": [
           "pinned",
           "markedAtMs"
@@ -588288,6 +588317,42 @@
                         "filter"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "addresses": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "serverId": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "sessionId": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "serverId",
+                              "sessionId"
+                            ],
+                            "type": "object"
+                          },
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "selector": {
+                          "const": "sessions",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "selector",
+                        "addresses"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -588372,6 +588437,28 @@
               "required": [
                 "entryRef",
                 "display"
+              ],
+              "type": "object"
+            },
+            "originReview": {
+              "additionalProperties": false,
+              "properties": {
+                "findingIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "reviewId": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reviewId",
+                "findingIds"
               ],
               "type": "object"
             },
@@ -594113,6 +594200,19 @@
                     }
                   ]
                 },
+                "reviewLink": {
+                  "anyOf": [
+                    {
+                      "const": "linked"
+                    },
+                    {
+                      "const": "failed"
+                    },
+                    {
+                      "const": "unknown"
+                    }
+                  ]
+                },
                 "sessionLink": {
                   "anyOf": [
                     {
@@ -594143,7 +594243,8 @@
           "voice",
           "agent",
           "mcp",
-          "cli"
+          "cli",
+          "plugin"
         ],
         "title": "Create a task"
       },
@@ -631146,6 +631247,42 @@
                         "filter"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "addresses": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "serverId": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "sessionId": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "serverId",
+                              "sessionId"
+                            ],
+                            "type": "object"
+                          },
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "selector": {
+                          "const": "sessions",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "selector",
+                        "addresses"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -631324,6 +631461,28 @@
               ],
               "type": "object"
             },
+            "originReview": {
+              "additionalProperties": false,
+              "properties": {
+                "findingIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "reviewId": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reviewId",
+                "findingIds"
+              ],
+              "type": "object"
+            },
             "title": {
               "type": "string"
             }
@@ -631373,7 +631532,8 @@
           "voice",
           "agent",
           "mcp",
-          "cli"
+          "cli",
+          "plugin"
         ],
         "title": {
           "fallback": "Create task",
@@ -741835,6 +741995,316 @@
           "plugin"
         ],
         "title": "Start a pull request review"
+      },
+      {
+        "dangerLevel": "safe",
+        "description": "Repairs the Review relationship on an existing task without creating another task or copying findings.",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "tasks/set-origin-review-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "displayAtMark": {
+              "additionalProperties": false,
+              "properties": {
+                "scopeLabel": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "title": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "scopeLabel"
+              ],
+              "type": "object"
+            },
+            "entryRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "originReview": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "findingIds": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "reviewId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reviewId",
+                    "findingIds"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "const": null
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "entryRef",
+            "displayAtMark",
+            "originReview"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [],
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "anyOf": [
+                {
+                  "const": "linked"
+                },
+                {
+                  "const": "unlinked"
+                },
+                {
+                  "const": "conflict"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "status"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "ui",
+          "voice",
+          "plugin",
+          "agent",
+          "mcp",
+          "cli"
+        ],
+        "title": "Link or unlink selected Review findings"
+      },
+      {
+        "dangerLevel": "safe",
+        "description": "Reads selected Review and finding identities; opening the Review requires its own access.",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "tasks/read-origin-review-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "entryRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "entryRef"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [],
+        "readOnly": true,
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "originReview": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "findingIds": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "reviewId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reviewId",
+                    "findingIds"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "const": null
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "originReview"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "ui",
+          "voice",
+          "plugin",
+          "agent",
+          "mcp",
+          "cli"
+        ],
+        "title": "Read a task Review relationship"
       }
     ],
     "agents": [],

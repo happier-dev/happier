@@ -33,6 +33,7 @@ import { TaskWriteNotice } from './TaskWriteNotice.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1 } from '../../actions/taskOriginProtocol.js';
+import { TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1 } from '../../actions/taskReviewProtocol.js';
 
 export const TRIAGE_TASK_PROPERTIES_TEST_ID_V1 = 'triage-task-properties';
 export const TRIAGE_TASK_BLOCKERS_TEST_ID_V1 = 'triage-task-blockers';
@@ -427,11 +428,13 @@ export function TriageCreateTaskFields(props: Readonly<{
   const mark = (choice: PlaceChoice) =>
     <TriageSourceMark source={choice.source.configured.instance.source} />;
   React.useEffect(() => {
-    if (chosen !== undefined && write.result?.kind === 'applied' && write.originErrorLink === 'linked') props.onCreated?.({
+    if (chosen !== undefined && write.result?.kind === 'applied' && (props.draft?.originError === undefined || write.originErrorLink === 'linked')
+      && (props.draft?.originReview === undefined || write.reviewLink === 'linked')
+      && (props.draft?.originError !== undefined || props.draft?.originReview !== undefined)) props.onCreated?.({
       entryRef: { source: chosen.source.configured.instance.source, ...write.result.observation.localRef },
       sourceInstanceId: chosen.source.sourceInstanceId,
     });
-  }, [write.result, write.originErrorLink]);
+  }, [write.result, write.originErrorLink, write.reviewLink, props.draft?.originError, props.draft?.originReview]);
   const settled = write.busy || write.result?.kind === 'uncertain' || write.result?.kind === 'applied';
   const choose = (choice: PlaceChoice, refinement?: TriageTaskCreationPlaceV1) => {
     if (settled) return;
@@ -570,12 +573,13 @@ export function TriageCreateTaskFields(props: Readonly<{
       }, ...(placeId === undefined ? {} : { placeId }),
       ...(initialStatus.initialStatusId === undefined ? {} : { initialStatusId: initialStatus.initialStatusId }),
       ...(sessionTarget !== undefined && linkSession ? { linkSession: sessionTarget } : {}),
-      ...(props.draft?.originError === undefined ? {} : { originError: props.draft.originError }) });
+      ...(props.draft?.originError === undefined ? {} : { originError: props.draft.originError }),
+      ...(props.draft?.originReview === undefined ? {} : { originReview: props.draft.originReview }) });
   };
   const settleCreate: typeof write.settle = execution => {
     const result = write.settle(execution);
     // A partial origin link stays here with its created identity; repair never resubmits Create.
-    if (result?.kind === 'applied' && props.draft?.originError === undefined) props.onCreated?.({
+    if (result?.kind === 'applied' && props.draft?.originError === undefined && props.draft?.originReview === undefined) props.onCreated?.({
       entryRef: { source: chosen.source.configured.instance.source, ...result.observation.localRef },
       sourceInstanceId: chosen.source.configured.instance.sourceInstanceId,
     });
@@ -600,6 +604,12 @@ export function TriageCreateTaskFields(props: Readonly<{
           <Action.Control action={TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1} variant="secondary"
             title={text('plugins.triage.tasks.origin.repair', 'Repair origin link')} disabled={write.busy}
             controller={{ prepare: write.prepareOriginRepair, onSettled: execution => { write.settleOriginRepair(execution); } }} />
+        </Stack>}
+        {write.reviewLink !== 'failed' && write.reviewLink !== 'unknown' ? null : <Stack gap="small">
+          <Banner tone="warning" title={text('plugins.triage.tasks.review.partial', 'The task was created, but its Review link is not confirmed. Repair the link without creating another task.')} />
+          <Action.Control action={TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1} variant="secondary"
+            title={text('plugins.triage.tasks.review.repair', 'Repair Review link')} disabled={write.busy}
+            controller={{ prepare: write.prepareReviewRepair, onSettled: execution => { write.settleReviewRepair(execution); } }} />
         </Stack>}
         <Stack gap="small">
           <Row>

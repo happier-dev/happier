@@ -1,4 +1,6 @@
 {
+  "plugins.triage.tasks.review.partial": "The task was created, but its Review link is not confirmed. Repair the link without creating another task.",
+  "plugins.triage.tasks.review.repair": "Repair Review link",
   "plugins.triage.sourceFailure.phase": "Phase",
   "plugins.triage.sourceFailure.effectAttempted": "Effect attempted",
   "plugins.triage.sourceFailure.reason": "Reason",

@@ -23,6 +23,43 @@ afterEach(async () => {
   for (const client of clients.splice(0)) await client.dispose();
 });
 
+it('retains the created task while repairing only its Review relationship', async () => {
+  let write!: ReturnType<typeof useTriageTaskCommit>;
+  const entryRef = testkitEntryRef({ kindId: 'issue' });
+  const originReview = { reviewId: 'review-1', findingIds: ['finding-1', 'finding-2'] };
+  const input = { v: 1, source: entryRef.source, sourceInstanceId: testkitObservation().sourceInstanceId,
+    kindId: entryRef.kindId, fields: { title: 'Fix selected findings' }, originReview };
+  const creation = { kind: 'applied' as const, observation: { ...testkitObservation().outcome,
+    localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId } } };
+  const actions: string[] = [];
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'review-link-repair-state', mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => {
+      write = useTriageTaskCommit(async () => undefined);
+      return <Text value={write.reviewLink ?? 'idle'} />;
+    }),
+    surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    handlers: { executeAction: ({ action }) => {
+      actions.push(action);
+      return { kind: 'createdAndLinkAttempted', creation, reviewLink: 'failed' };
+    } },
+  });
+  mounted.push(fixture);
+  await act(async () => { await commitTaskWriteForTest(fixture.context.hostApi, write, 'tasks/create-v1', input); });
+  expect(write.result).toEqual(creation);
+  expect(write.reviewLink).toBe('failed');
+  // Action.Control retains the controller that prepared this gesture across its busy render.
+  const repair = write;
+  await act(async () => {
+    expect(repair.prepareReviewRepair()?.input).toMatchObject({ entryRef, originReview });
+  });
+  await act(async () => { repair.settleReviewRepair({ ok: true, result: { v: 1, status: 'linked' } }); });
+  expect(write.result).toEqual(creation);
+  expect(write.reviewLink).toBe('linked');
+  expect(actions).toEqual(['tasks/create-v1']);
+});
+
 it.each([
   ['tasks/create-v1', 'unavailable'], ['tasks/edit-v1', 'unavailable'], ['tasks/transition-v1', 'unavailable'],
   ['tasks/create-v1', 'cancelled'], ['tasks/create-v1', 'denied'],

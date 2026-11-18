@@ -11,6 +11,8 @@ import {
     type TriageTaskWriteResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { createTestkitCorpusCollections, selectTestkitConfiguredSources } from '../corpus/testkit/corpusCollections.test-support.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
@@ -56,7 +58,7 @@ async function withExternalTaskSource(
         withContext: (run: (context: PluginAccountActionContext) => Promise<void>) => Promise<void>;
     }>) => Promise<void>,
     options: Readonly<{ readOnly?: boolean; retired?: boolean; secondInstance?: boolean; initialTaskPage?: boolean; firstInstanceKeepsPaging?: boolean; scopeSelection?: boolean; completedScan?: boolean; completedScanSupport?: boolean; unboundedCompleted?: boolean; machineUnavailable?: boolean; accountSource?: boolean; findings?: boolean;
-        linkTransport?: 'failed' | 'lost' | 'malformed' | 'notStarted'; originLinkTransport?: 'failed' | 'lost'; sourceWriteTransport?: 'notStarted' | 'responseLost' | 'denied' | 'cancelled'; setupReadFailure?: boolean; sourceWriteGate?: () => Promise<void>; accountEncryptionMode?: 'plain' | 'e2ee'; taskParent?: typeof entryRef; accountTasksAvailable?: boolean; accountTasksUnavailable?: boolean }> = {},
+        linkTransport?: 'failed' | 'lost' | 'malformed' | 'notStarted'; originLinkTransport?: 'failed' | 'lost'; reviewLinkConflict?: boolean; reviewReadApproval?: boolean; sourceWriteTransport?: 'notStarted' | 'responseLost' | 'denied' | 'cancelled'; setupReadFailure?: boolean; sourceWriteGate?: () => Promise<void>; accountEncryptionMode?: 'plain' | 'e2ee'; taskParent?: typeof entryRef; accountTasksAvailable?: boolean; accountTasksUnavailable?: boolean }> = {},
 ) {
     const configured = options.accountSource ? TriageConfiguredSourceInstanceV1Schema.parse({
         ...fixture.configuredInstance, binding: { purpose: fixture.descriptor.purpose, source: 'accountData' },
@@ -119,10 +121,22 @@ async function withExternalTaskSource(
                         return { kind: 'page', observations: [observedTask], evidence: { kind: 'partial', reason: 'pageLimit' },
                             continuation: { v: 1, token: input.page.kind === 'initial' ? 'after-task' : `${input.page.continuation.token}/next` } };
                     }
+                    if (options.findings) {
+                        const rows = [base, ...['dependabot-alert', 'code-scanning-alert', 'external-finding'].map(kindId => ({
+                            ...base, localRef: { ...base.localRef, kindId, entryId: 'same-number' },
+                        })), observedTask];
+                        // The separately authored source owns this opaque continuation, including its admitted page size.
+                        const [offset, limit] = input.page.kind === 'initial' ? [0, input.page.limit]
+                            : input.page.continuation.token.split('/').map(Number);
+                        if (offset === undefined || limit === undefined) throw new Error('Invalid fixture scan continuation');
+                        const observations = rows.slice(offset, offset + limit);
+                        return offset + limit >= rows.length
+                            ? { kind: 'complete', observations, evidence: { kind: 'walkFinished' } }
+                            : { kind: 'page', observations, evidence: { kind: 'partial', reason: 'pageLimit' },
+                                continuation: { v: 1, token: `${offset + limit}/${limit}` } };
+                    }
                     return input.page.kind === 'initial' && !options.initialTaskPage ? {
-                        kind: 'page', observations: [base, ...(options.findings
-                            ? ['dependabot-alert', 'code-scanning-alert', 'external-finding'].map(kindId => ({ ...base,
-                                localRef: { ...base.localRef, kindId, entryId: 'same-number' } })) : [])], evidence: { kind: 'partial', reason: 'pageLimit' },
+                        kind: 'page', observations: [base], evidence: { kind: 'partial', reason: 'pageLimit' },
                         continuation: { v: 1, token: 'after-pr' },
                     } : { kind: 'complete', observations: [observedTask], evidence: { kind: 'walkFinished' } };
                 } },
@@ -226,10 +240,20 @@ async function withExternalTaskSource(
             },
         }));
     }
+    let reviewConflictPending = options.reviewLinkConflict === true;
+    const userMarks: typeof corpus.collections.userMarks = { ...corpus.collections.userMarks,
+        batch: async (mutations, writeOptions) => {
+            if (reviewConflictPending && mutations.some(mutation => mutation.kind === 'put' && mutation.value.originReview !== undefined)) {
+                reviewConflictPending = false;
+                return { status: 'conflict', conflicts: [] };
+            }
+            return corpus.collections.userMarks.batch(mutations, writeOptions);
+        },
+    };
     const storage = { account: { collection: (definition: { id: string }) => {
         if (definition.id === 'source-instances') return corpus.collections.sourceInstances;
         if (definition.id === 'session-links') return corpus.collections.sessionLinks;
-        if (definition.id === 'user-marks') return corpus.collections.userMarks;
+        if (definition.id === 'user-marks') return userMarks;
         throw new Error(`Unexpected Collection ${definition.id}`);
     } } } as unknown as StorageService;
     let aggregate!: PluginTestkit;
@@ -268,8 +292,35 @@ async function withExternalTaskSource(
                                 if (sourceObservationDisposed) throw new PluginError({ code: 'plugin_action_generation_retired', retryable: false });
                                 return await context.services.actions.executeAdmittedTargetedOperation(operation, sourceInput, executionOptions);
                             };
+                            const reviewAwareActions = { ...context.services.actions,
+                                // Review Actions cross the host transport; authorization and selected data are supplied by that host.
+                                execute: (async (action, reviewInput, actionOptions) => {
+                                    if (action === 'reviews.comments.list') {
+                                        if (options.reviewReadApproval) return ActionApprovalRequestCreatedResultSchema.parse({
+                                            kind: 'approval_request_created', artifactId: 'review-read-approval', actionId: action,
+                                        });
+                                        if (reviewInput === null || typeof reviewInput !== 'object' || !('reviewId' in reviewInput)
+                                            || !('commentIds' in reviewInput) || !Array.isArray(reviewInput.commentIds)
+                                            || reviewInput.reviewId !== 'review-selected') {
+                                            throw new PluginError({ code: 'review_comment_permission_denied', retryable: false });
+                                        }
+                                        const selectedIds = reviewInput.commentIds;
+                                        return { items: ['finding-1', 'finding-2', 'finding-3']
+                                            .filter(id => selectedIds.includes(id)).map(id => ReviewCommentV1Schema.parse({
+                                            v: 1, id, reviewId: reviewInput.reviewId, accountId: 'account-1',
+                                            anchor: { kind: 'file', filePath: 'src/a.ts' },
+                                            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 10, capBytes: 1, capturedAt: 1 },
+                                            body: 'private finding body', bodyVersion: 1, edits: [], author: { kind: 'user', userId: 'user-1' },
+                                            state: 'open', flags: {}, dispositions: {}, threadId: id,
+                                            transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1,
+                                        })), cursor: null };
+                                    }
+                                    return context.services.actions.execute(action, reviewInput, actionOptions);
+                                }) as typeof context.services.actions.execute,
+                            };
                             return handler(input, {
                             ...context, services: { ...context.services, targetedContributions,
+                                ...(id === 'tasks/create-v1' || id === 'tasks/set-origin-review-v1' ? { actions: reviewAwareActions } : {}),
                                 ...(options.sourceWriteGate === undefined ? {} : { actions: { ...context.services.actions,
                                     executeAdmittedTargetedOperation: deferredSourceWrite,
                                 } }),
@@ -577,6 +628,80 @@ describe('Tasks through a separately authored source and registered aggregate Ac
             expect(writes.map(write => write.role)).toEqual(['create']);
             expect(readRequests).toEqual([]);
         }, { originLinkTransport });
+    });
+
+    it('creates a task with only the selected Review references, retaining no finding content', async () => {
+        const originReview = { reviewId: 'review-selected', findingIds: ['finding-1', 'finding-2'] };
+        await withExternalTaskSource(async ({ aggregate, corpus, writes }) => {
+            expect(await aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Address selected findings' }, originReview,
+            }, { surface: 'agent' })).toMatchObject({ kind: 'createdAndLinkAttempted', reviewLink: 'linked', creation: { kind: 'applied' } });
+            expect(await aggregate.invokeAction('tasks/read-origin-review-v1', { v: 1, entryRef }, { surface: 'agent' }))
+                .toEqual({ v: 1, originReview });
+            expect(writes).toHaveLength(1);
+            expect(writes[0].input).not.toHaveProperty('originReview');
+            const rows = (await corpus.collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows;
+            expect(JSON.stringify(rows)).not.toContain('finding-3');
+            expect(JSON.stringify(rows)).not.toContain('private finding body');
+        });
+    });
+
+    it('retries a failed Review link without creating a second task', async () => {
+        const originReview = { reviewId: 'review-selected', findingIds: ['finding-1', 'finding-2'] };
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            expect(await aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Selected findings' }, originReview,
+            }, { surface: 'agent' })).toMatchObject({ kind: 'createdAndLinkAttempted', reviewLink: 'failed', creation: { kind: 'applied' } });
+            const repair = { v: 1, entryRef, displayAtMark: { title: 'Selected findings', scopeLabel: initialTask.snapshot.scopeLabel }, originReview };
+            expect(await aggregate.invokeAction('tasks/set-origin-review-v1', repair, { surface: 'agent' })).toEqual({ v: 1, status: 'linked' });
+            expect(await aggregate.invokeAction('tasks/set-origin-review-v1', repair, { surface: 'agent' })).toEqual({ v: 1, status: 'linked' });
+            expect(await aggregate.invokeAction('tasks/read-origin-review-v1', { v: 1, entryRef }, { surface: 'agent' })).toEqual({ v: 1, originReview });
+            expect(writes.map(write => write.role)).toEqual(['create']);
+        }, { reviewLinkConflict: true });
+    });
+
+    it('refuses unauthorized selected findings before a task provider effect', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes, corpus }) => {
+            await expect(aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Not allowed' },
+                originReview: { reviewId: 'private-review', findingIds: ['finding-1'] },
+            }, { surface: 'agent' })).rejects.toMatchObject({ code: 'review_comment_permission_denied' });
+            expect(writes).toEqual([]);
+            expect((await corpus.collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows).toEqual([]);
+        });
+    });
+
+    it('waits for Review read approval before any task provider effect', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes, corpus }) => {
+            await expect(aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Needs approval' },
+                originReview: { reviewId: 'review-selected', findingIds: ['finding-1'] },
+            }, { surface: 'agent' })).rejects.toMatchObject({ code: 'approval_required' });
+            expect(writes).toEqual([]);
+            expect((await corpus.collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows).toEqual([]);
+        }, { reviewReadApproval: true });
+    });
+
+    it('rejects a selected finding outside the authorized Review before a provider effect', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            await expect(aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Wrong finding' },
+                originReview: { reviewId: 'review-selected', findingIds: ['finding-1', 'another-review-finding'] },
+            }, { surface: 'agent' })).rejects.toMatchObject({ code: 'review_comment_not_found' });
+            expect(writes).toEqual([]);
+        });
+    });
+
+    it('does not link or replay an uncertain create from selected findings', async () => {
+        await withExternalTaskSource(async ({ aggregate, corpus, writes, setWriteResult }) => {
+            setWriteResult({ kind: 'uncertain', observation: initialTask });
+            expect(await aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Maybe created' },
+                originReview: { reviewId: 'review-selected', findingIds: ['finding-1'] },
+            }, { surface: 'agent' })).toEqual({ kind: 'uncertain', observation: initialTask });
+            expect(writes.map(write => write.role)).toEqual(['create']);
+            expect((await corpus.collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows).toEqual([]);
+        });
     });
 
     it('does not record an origin or replay when creation is unknown, even with a returned observation', async () => {

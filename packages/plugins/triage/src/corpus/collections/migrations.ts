@@ -36,5 +36,11 @@ export const CORPUS_COLLECTION_MIGRATIONS = {
         fromSchemaVersion: 1,
         toSchemaVersion: 2,
         migrate: (value) => value,
+    }, {
+        id: 'user-marks-v2-to-v3',
+        fromSchemaVersion: 2,
+        toSchemaVersion: 3,
+        // Optional private Review relationship; retained user intent is unchanged.
+        migrate: (value) => value,
     }],
 } satisfies Readonly<Record<string, readonly PluginAccountCollectionMigration[]>>;

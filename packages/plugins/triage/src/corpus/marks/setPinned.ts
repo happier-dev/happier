@@ -1,3 +1,4 @@
+import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -112,6 +113,12 @@ async function deleteLiveMark(collections: MarkCollections, markTag: string, rev
     }
 }
 
+/** An unpinned mark stays live only while it carries one of the user's or a Review's relationships. */
+function carriesRelationship(row: Pick<CorpusUserMarkRowV1, 'fixPullRequests' | 'originError' | 'originReview'>): boolean {
+    return row.fixPullRequests !== undefined || row.originError !== undefined
+        || row.originReview !== undefined;
+}
+
 function withoutFixPullRequests(row: CorpusUserMarkRowV1): CorpusUserMarkRowV1 {
     const { fixPullRequests: _dropped, ...rest } = row;
     return rest;
@@ -130,7 +137,7 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
         if (!existing) return { status: 'unpinned', markTag };
         if (existing.value.pinned === false) return { status: 'unpinned', markTag };
         // Unpin removes the pin, preserving either relationship on this row.
-        if (existing.value.fixPullRequests !== undefined || existing.value.originError !== undefined) {
+        if (carriesRelationship(existing.value)) {
             return await rewriteLiveMark(
                 collections,
                 existing.revision,
@@ -149,7 +156,7 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
     // and never overwrites the user's own mark with a later pass's rendering.
     if (existing?.value.pinned === true) return { status: 'pinned', markTag };
     // Pin a relationship-only mark in place, preserving the user's choices.
-    if (existing?.value.fixPullRequests !== undefined || existing?.value.originError !== undefined) {
+    if (existing && carriesRelationship(existing.value)) {
         return await rewriteLiveMark(
             collections,
             existing.revision,
@@ -217,7 +224,7 @@ export async function setTaskOriginError(input: Readonly<{
             && current.display.title === input.originError.display.title
             && current.display.scopeLabel === input.originError.display.scopeLabel) return { status };
         const { originError: _removed, ...retained } = existing.value;
-        if (input.originError === null && !retained.pinned && retained.fixPullRequests === undefined) {
+        if (input.originError === null && !retained.pinned && !carriesRelationship(retained)) {
             return await deleteLiveMark(input.collections, markTag, existing.revision, input.signal)
                 ? { status } : { status: 'conflict' };
         }
@@ -307,4 +314,47 @@ export async function setFixPullRequest(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
     });
     return written.status === 'written' ? settled : { status: 'conflict' };
+}
+
+/** Read only references; opening a Review still uses its own access authority. */
+export async function readTaskOriginReview(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; signal?: AbortSignal;
+}>): Promise<TriageTaskOriginReviewV1 | null> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    return (await readLiveMark(input.collections, markTag, options))?.value.originReview ?? null;
+}
+
+/** Shares the mark writer so pin, origin-error and fix-PR intent always survive. */
+export async function setTaskOriginReview(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; displayAtMark: CorpusUserMarkDisplayV1;
+    originReview: TriageTaskOriginReviewV1 | null; nowMs: number; signal?: AbortSignal;
+}>): Promise<CorpusSetFixPullRequestResultV1> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    const existing = await readLiveMark(input.collections, markTag, options);
+    const status = input.originReview === null ? 'unlinked' : 'linked';
+    if (existing) {
+        const current = existing.value.originReview;
+        if (input.originReview === null && current === undefined) return { status };
+        if (input.originReview !== null && current !== undefined && current.reviewId === input.originReview.reviewId
+            && current.findingIds.length === input.originReview.findingIds.length
+            && current.findingIds.every((id, index) => id === input.originReview?.findingIds[index])) return { status };
+        const { originReview: _removed, ...retained } = existing.value;
+        if (input.originReview === null && !retained.pinned && !carriesRelationship(retained)) {
+            return await deleteLiveMark(input.collections, markTag, existing.revision, input.signal)
+                ? { status } : { status: 'conflict' };
+        }
+        return await rewriteLiveMark(input.collections, existing.revision,
+            input.originReview === null ? retained : { ...retained, originReview: input.originReview }, input.signal)
+            ? { status } : { status: 'conflict' };
+    }
+    if (input.originReview === null) return { status };
+    const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({
+        collection: input.collections.userMarks, rowId: markTag,
+        row: { markTag, pinned: false, markedAtMs: input.nowMs, entryRef: input.entryRef,
+            displayAtMark: input.displayAtMark, originReview: input.originReview },
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return written.status === 'written' ? { status } : { status: 'conflict' };
 }
