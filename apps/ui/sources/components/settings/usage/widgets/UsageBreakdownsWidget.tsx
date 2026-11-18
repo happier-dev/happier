@@ -31,7 +31,7 @@ import {
 } from './usageBodyKit';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { usagePageCostRow } from '../usageCostPresentation';
+import { usagePageCostCaption, usagePageCostRow } from '../usageCostPresentation';
 import { UsageCrewBody } from './UsageChartStyleBodies';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
@@ -85,7 +85,6 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
       .filter(([id]) => referenced.has(id)));
   }, [dimensions, machineEntries]));
   const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
-  useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   // One ranked dimension is the card's own title (`readUsageBreakdownsInstanceTitle`); a heading would say it twice.
   const namedByCard = props.query.breakdown.length === 1;
   // The card that names Agents or Sources names the Environments it ranks in Your apps; a name the person gave still wins.
@@ -96,12 +95,16 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const view = useUsageAnalyticsView(props.slice, props.query);
   const accounting = metric === 'cost' ? view?.pageCost.accounting : props.slice.accounting;
   const selection = view?.pageCost.selection ?? null;
+  // The money basis is the card's: said once beside its period, and on a row only where that row's differs.
+  const basisPhrase = metric === 'cost' && view ? usagePageCostCaption(view.pageCost) ?? null : null;
+  useWidgetFrameBodyCaption(basisPhrase ? `${usagePeriodPhrase(props.query)} · ${basisPhrase}` : usagePeriodPhrase(props.query));
   const currency = selection?.currency ?? 'USD';
   const total = accounting
     ? metric === 'cost'
       ? view?.pageCost.amountUsd ?? null
       : resolveUsageMeasuredTokens(accounting.totals.tokens).total
     : null;
+  const rowBasis = (label: string | undefined) => label === basisPhrase ? null : label;
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
@@ -121,7 +124,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
             metric === 'cost'
               ? [tokens.total === null ? null : formatTokenCount(tokens.total),
                 tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
-                usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ')
+                rowBasis(usagePageCostRow(entry.cost, selection)?.label)].filter(Boolean).join(' · ')
               : tokens.fromParts ? t('usage.board.page.tokensFromParts') : undefined,
         };
       });

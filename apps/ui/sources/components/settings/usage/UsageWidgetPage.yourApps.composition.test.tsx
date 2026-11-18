@@ -333,7 +333,13 @@ describe('Usage Sources: Agents or Your apps', () => {
       const ranking = screen.findAllByType(UsageBreakdownsBody)[0]?.props.model;
       expect(ranking?.blocks.map((block: { id: string }) => block.id)).toEqual(['source']);
       expect(ranking?.blocks[0].rows.map((row: { label: string }) => row.label)).toEqual(['Production']);
+      // The money basis is said once, in the card's caption beside its period, never again on each row.
+      const caption = String(screen.findAllByType(WidgetFrame).find((frame) => frame.props.title === 'Environments')?.props.source ?? '');
+      const parts = caption.split(' · ');
+      expect(parts).toHaveLength(2);
+      for (const row of ranking!.blocks[0].rows as readonly { annotation?: string }[]) expect(row.annotation ?? '').not.toContain(parts[1]);
     });
+    expect(screen.findByTestId('usage-page.cards')?.props.accessibilityElementsHidden).not.toBe(true);
     expect(
       home.httpRequests
         .filter((request) => request.path === '/v2/usage/query')
@@ -372,5 +378,9 @@ describe('Usage Sources: Agents or Your apps', () => {
     });
     // Starting a session is the Agents' next step, not the apps'.
     expect(screen.findByTestId('usage-page.header.nothingRecordedAction') ?? null).toBeNull();
+    // The scene says it once: the cards step aside (still reading, so the page keeps deciding) rather than each saying "Nothing yet".
+    expect(screen.findByTestId('usage-page.cards')?.props.accessibilityElementsHidden).toBe(true);
+    await flushHookEffects({ cycles: 40 });
+    expect(screen.findAllByType(EmptyState).some((state) => state.props.testID === 'usage-page.appsNothingRecorded')).toBe(true);
   });
 });

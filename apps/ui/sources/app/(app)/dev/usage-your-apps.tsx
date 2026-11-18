@@ -80,7 +80,7 @@ const APP_CALLS: Readonly<Record<string, readonly [input: number, output: number
 };
 
 /** The App calls slice through the real producer the Usage reader uses (`readUsageAppCallsAccounting`). */
-function appCallsSlice(empty: boolean): Readonly<{ slice: UsageQueryResultSlice; query: UsageQuery }> {
+function appCallsSlice(): Readonly<{ slice: UsageQueryResultSlice; query: UsageQuery }> {
   const until = Date.now();
   const since = until - 30 * 86_400_000;
   const parts = ENVIRONMENTS.map((environment) => {
@@ -92,9 +92,9 @@ function appCallsSlice(empty: boolean): Readonly<{ slice: UsageQueryResultSlice;
       read: {
         ok: true as const, source: { kind: 'environment' as const, serverId: environment.serverId, environmentId: environment.environmentId },
         since, until,
-        items: empty ? [] : [{ bucketStartMs: since, provider: 'openai', modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat',
+        items: [{ bucketStartMs: since, provider: 'openai', modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat',
           callCount, tokens, tokenCategories: tokens, reportedCost: null, firstSeenMs: since, lastSeenMs: until }],
-        coverage: { callCount: empty ? 0 : callCount, tokenCategoryCallCount: empty ? 0 : callCount, reportedCostCallCount: 0, lostObservations: 0, reason: null },
+        coverage: { callCount, tokenCategoryCallCount: callCount, reportedCostCallCount: 0, lostObservations: 0, reason: null },
       },
     };
   });
@@ -108,8 +108,8 @@ function appCallsSlice(empty: boolean): Readonly<{ slice: UsageQueryResultSlice;
 }
 
 /** The Costs preset's ranking card (`breakdown: ['agent']`) in Your apps: the real body lends the frame its title. */
-function CostsRankingCard(props: Readonly<{ empty: boolean }>) {
-  const { slice, query } = React.useMemo(() => appCallsSlice(props.empty), [props.empty]);
+function CostsRankingCard() {
+  const { slice, query } = React.useMemo(appCallsSlice, []);
   const [caption, setCaption] = React.useState<string | null>(null);
   const [identity, setIdentity] = React.useState<WidgetFrameBodyIdentity | null>(null);
   const model = React.useMemo(() => ({ refresh: async () => {} }), []);
@@ -228,12 +228,14 @@ export default function UsageYourAppsSpecimen() {
       </View>
       <View style={styles.state}>
         <Text style={styles.title}>Your apps · Costs ranking · 30 days ($166 + $21 + $2 = $189)</Text>
+        <Bar filters={apps} testID="specimen.appsRanking" />
         <View style={styles.half}>
-          <CostsRankingCard empty={false} />
+          <CostsRankingCard />
         </View>
       </View>
       <View style={styles.state}>
-        <Text style={styles.title}>Your apps · no model calls in the period</Text>
+        <Text style={styles.title}>Your apps · no model calls in the period (the scene stands in the cards' place)</Text>
+        <Bar filters={apps} testID="specimen.appsEmpty" />
         <UsageAppsNothingRecorded />
       </View>
     </ScrollView>

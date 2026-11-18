@@ -1,4 +1,5 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -76,6 +77,12 @@ function mountedCosts(unpriced: boolean | 'all' = false, tokenCount = 10) {
   const model: UsageWidgetBodyModel = { requestedQuery: identity, shownQuery: identity, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
   return { query, slice, model, serverId: 'home' };
+}
+
+/** The caption a mounted body lends its frame (`useWidgetFrameBodyCaption`); a frame owner, not the body, draws it. */
+function lentCaption() {
+  let caption: string | null = null;
+  return { lend: (next: string | null) => { if (next !== null) caption = next; }, read: () => caption };
 }
 
 describe('one selected money basis across Usage bodies', () => {
@@ -274,11 +281,16 @@ describe('one selected money basis across Usage bodies', () => {
   });
   it('retains measured Agent money beside unpriced observations', async () => {
     const props = mountedCosts(true);
-    const screen = await renderScreen(<UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="agents" />);
+    const caption = lentCaption();
+    const screen = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={caption.lend}>
+      <UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="agents" />
+    </WidgetFrameBodyCaptionContext.Provider>);
     const row = screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude');
     expect(row.value).toBe(1);
-    expect(row.annotation).toContain(t('usage.board.page.kindReported'));
-    expect(row.annotation).not.toContain(t('usage.board.page.costUnpricedCaption'));
+    // The card's money basis is said once, beside its period; a row repeats it only where its own differs.
+    expect(caption.read()).toContain(t('usage.board.page.kindReported'));
+    expect(row.annotation ?? '').not.toContain(t('usage.board.page.kindReported'));
+    expect(row.annotation ?? '').not.toContain(t('usage.board.page.costUnpricedCaption'));
   });
   it('names exact token breakdown amounts in tokens rather than the dimension being ranked', async () => {
     const props = mountedCosts(false, 2_093_005);
@@ -722,10 +734,13 @@ describe('one selected money basis across Usage bodies', () => {
     const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
     const props = { query, slice, model, serverId: 'home' };
+    const caption = lentCaption();
     const screen = await renderScreen(<>
       <UsageDailyWidget {...props} id="usage_daily" testID="qa-cost-daily" />
       <UsageFlowWidget {...props} id="usage_flow" testID="qa-cost-flow" />
-      <UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="qa-cost-breakdowns" />
+      <WidgetFrameBodyCaptionContext.Provider value={caption.lend}>
+        <UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="qa-cost-breakdowns" />
+      </WidgetFrameBodyCaptionContext.Provider>
       <UsageEfficiencyWidget {...props} id="usage_efficiency" testID="qa-cost-efficiency" />
     </>);
     for (const chart of screen.findAllByType(StackedSeriesChart)) {
@@ -734,8 +749,9 @@ describe('one selected money basis across Usage bodies', () => {
       expect(values.reduce((sum: number, value: number | null) => sum + (value ?? 0), 0)).toBeCloseTo(total);
     }
     expect(screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude').value).toBeCloseTo(expectedRowCost('claude'));
-    expect(screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude').annotation)
-      .toContain(t('usage.board.page.kindMixed'));
+    expect(caption.read()).toContain(t('usage.board.page.kindMixed'));
+    expect(screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude').annotation ?? '')
+      .not.toContain(t('usage.board.page.kindMixed'));
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'qa-cost-efficiency.perMtok')?.props.value)
       .toBeCloseTo(total / captured.totals.tokens.total! * 1e6);
   });

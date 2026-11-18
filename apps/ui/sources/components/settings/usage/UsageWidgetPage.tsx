@@ -461,6 +461,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     costBasisPending, metricOptions, metric, metricPending, changeMetric]);
 
   const appsShown = readUsageAppCallsEnvironmentIds(page.scope.sources) !== null;
+  // Your apps recorded nothing in the period: the scene says it once, in the cards' place.
+  const appsNothing = appsShown && facts.nothingRecorded;
   // The selected document and the named-view inventory settle independently.
   return (
     <>
@@ -492,8 +494,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           />
         </View>
       ) : null}
-      {/* Your apps recorded nothing in the period: said once here, with its scene; the cards keep their quiet line. */}
-      {appsShown && facts.nothingRecorded ? <UsageAppsNothingRecorded /> : null}
+      {appsNothing ? <UsageAppsNothingRecorded /> : null}
+      {/* Behind the scene the cards stay mounted and reading: their reads are what decide `nothingRecorded`, so the
+          page shows them again as soon as a call is recorded. Hidden, they say nothing to the eye or the reader. */}
+      <View testID="usage-page.cards" style={appsNothing ? styles.cardsWithdrawn : undefined}
+        accessibilityElementsHidden={appsNothing} importantForAccessibility={appsNothing ? 'no-hide-descendants' : 'auto'}>
       <UsageDrillProvider value={drill}>
       <WidgetArea
         port={props.port}
@@ -506,6 +511,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         testID="usage-area"
       />
       </UsageDrillProvider>
+      </View>
     </>
   );
 }
@@ -697,5 +703,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: 14,
   },
   headerBleed: { marginHorizontal: -HAPPIER_PAGE_METRICS.sheetInsetPx },
+  cardsWithdrawn: { display: 'none' },
   textLine: { marginHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx },
 }));
