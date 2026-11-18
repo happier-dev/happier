@@ -378,7 +378,7 @@ function ManagedCreationNotice(
         testID={props.testID}
         tone={failed && !stopped ? 'warning' : 'neutral'}
         title={stopped ? t('projectWorkers.creationStopped', { machine: props.machineName }) : props.presentation.label}
-        description={failed ? undefined : t('projectWorkers.runWaitsForMachine', { script: props.scriptName, machine: props.machineName })}
+        description={failed ? props.presentation.failureMessage ?? undefined : t('projectWorkers.runWaitsForMachine', { script: props.scriptName, machine: props.machineName })}
         action={failed
           ? props.onResume ? { label: t('projectWorkers.continueWithMachine', { machine: props.machineName }),
               testID: `${props.testID}.resume`, onPress: props.onResume } : null

@@ -3,6 +3,9 @@ import {
   resolveActionOperationStatus,
 } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { describeManagedLifecycleState } from '@/components/settings/machines/managed/managedLifecyclePresentation';
+import { describeManagedInstallationFailure } from './managedCreationPresentation';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 import type { ManagedMachineCreationProgress } from './managedMachineCreation';
@@ -44,6 +47,12 @@ export function describeManagedCreationProgress(
       )
     : null;
   const failed = progress.kind === 'failed' || operation?.state === 'failed' || operation?.state === 'cancelled';
+  const failureMessage = operation?.error && (progress.kind !== 'failed' || progress.code === operation.error.errorCode)
+    ? describeManagedInstallationFailure(operation.error, operation.progress)
+    : progress.kind === 'failed'
+      ? resolveActionExecutionErrorMessage({ code: progress.code, failureCause: progress.failureCause },
+        resolveSystemTaskFailureMessage({ code: progress.code }) ?? '') || null
+      : null;
   const steps: ManagedCreationProgressStep[] = [];
   if (progress.kind === 'session_starting') {
     const phase = operation?.progress?.kind === 'phase' ? operation.progress.phase : undefined;
@@ -67,29 +76,26 @@ export function describeManagedCreationProgress(
       }
     }
   }
-  const label = setup
-    ? progress.kind === 'failed'
-      ? `${t('managedMachines.creation.setup')} · ${t('inbox.actionOperations.status.failed')}`
-      : observedStatus
-        ? describeActionOperationStatusLabel(observedStatus.label)
-        : t('managedMachines.creation.setup')
-    : observedStatus
-      ? describeActionOperationStatusLabel(observedStatus.label)
-      : progress.kind === 'approval'
-        ? t('managedMachines.creation.approval', { name: machineName })
-        : progress.kind === 'enrollment_pending'
-          ? describeManagedLifecycleState({ kind: 'resourceReady' }).line
-          : failed
-            ? t('inbox.actionOperations.status.failed')
-            : describeManagedLifecycleState({
-                kind: 'creationWaiting',
-                name: machineName,
-              }).line;
+  let label: string;
+  if (progress.kind === 'failed') {
+    const failedLabel = t('inbox.actionOperations.status.failed');
+    label = setup ? `${t('managedMachines.creation.setup')} · ${failedLabel}` : failedLabel;
+  } else if (observedStatus) {
+    label = describeActionOperationStatusLabel(observedStatus.label);
+  } else if (setup) {
+    label = t('managedMachines.creation.setup');
+  } else if (progress.kind === 'approval') {
+    label = t('managedMachines.creation.approval', { name: machineName });
+  } else {
+    label = describeManagedLifecycleState(progress.kind === 'enrollment_pending'
+      ? { kind: 'resourceReady' }
+      : { kind: 'creationWaiting', name: machineName }).line;
+  }
   const tone: 'warning' | 'neutral' | 'active' = failed
     ? 'warning'
     : setup?.state === 'pending' ||
         (observedStatus && observedStatus.tone !== 'active')
       ? 'neutral'
       : 'active';
-  return { setup, operation, observedStatus, failed, label, tone, steps };
+  return { setup, operation, observedStatus, failed, failureMessage, label, tone, steps };
 }

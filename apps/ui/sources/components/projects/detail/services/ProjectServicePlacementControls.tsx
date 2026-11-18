@@ -705,7 +705,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         action={{ label: t('projectServices.move'), testID: `${testID}.move.confirm`, onPress: confirmManagedMove }}
         secondaryAction={{ label: t('common.cancel'), testID: `${testID}.move.cancel`, onPress: () => { managed.select(null); setManagedMove(null); } }} /> : null}
       {creation && managed.progress?.kind !== 'ready' ? <AttentionBanner testID={`${testID}.creation`}
-        tone={creation.failed ? 'warning' : 'neutral'} title={creation.label}
+        tone={creation.failed ? 'warning' : 'neutral'} title={creation.label} description={creation.failureMessage ?? undefined}
         {...(managed.progress?.kind === 'failed' ? { details: [managed.progress.code] } : {})}
         secondaryAction={managed.busy ? { label: t('common.cancel'), testID: `${testID}.creation.cancel`, onPress: () => { moveAcquisition.current?.abort(); managed.cancel(); setManagedMove(null); } } : null} /> : null}
       {move?.phase === 'resolving' ? (

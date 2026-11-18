@@ -45,7 +45,8 @@ export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'setup_pending'; managedId: string; machineId: string; state: 'pending' | 'running';
         machineSetup: NonNullable<ManagedMachineReadSnapshotV1['machineSetup']>; operation?: ActionOperationSnapshotV1 }>
     | Readonly<{ kind: 'ready'; managedId: string; machineId: string }>
-    | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string; managedId?: string; operation?: ActionOperationSnapshotV1;
+    | Readonly<{ kind: 'failed'; code: string; failureCause?: ActionExecuteFailure['failureCause']; diagnosticDetail?: string;
+        managedId?: string; operation?: ActionOperationSnapshotV1;
         operationObservation?: ActionOperationObservation; retryInstallationAvailable?: boolean;
         machineSetup?: NonNullable<ManagedMachineReadSnapshotV1['machineSetup']>; retrySetupAvailable?: boolean }>;
 
@@ -129,6 +130,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         diagnosticDetail ??= error ? describeManagedActionFailureDiagnostic(code, error.details, error.requestId, error.failureCause) : undefined;
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
         if (input.isCurrent()) input.onProgress({ kind: 'failed', code,
+            ...(error?.failureCause ? { failureCause: error.failureCause } : {}),
             ...(diagnosticDetail ? { diagnosticDetail } : {}),
             ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}),
             ...(observedOperation ? { operation: observedOperation } : {}),
@@ -211,7 +213,8 @@ export async function runManagedMachineCreation(input: Readonly<{
             ? { homeId: alreadyAdmitted.homeId, managedId: alreadyAdmitted.id, expectedIntentRevision: alreadyAdmitted.intentRevision }
             : buildManagedMachineAcquireInput(input.draft, input.agentStart);
         if (!actionInput) return fail('content_unavailable');
-        const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 } | { kind: 'failed'; code: string; diagnosticDetail?: string }>({
+        const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 }
+            | { kind: 'failed'; code: string; diagnosticDetail?: string; failure?: ActionExecuteFailure }>({
             signal: input.signal,
             execute: async callbacks => {
                 input.onProgress({ kind: 'acquiring', ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}) });
@@ -226,9 +229,9 @@ export async function runManagedMachineCreation(input: Readonly<{
                 const outcome = classifyHomeActionOutcome(result);
                 if (outcome.kind === 'failed') {
                     const code = homeDomainFailureCode(outcome.failure);
-                    return { kind: 'failed' as const, code, diagnosticDetail: describeManagedActionFailureDiagnostic(code,
-                        result.ok ? undefined : result.details, result.ok ? acquisition.requestId : result.requestId ?? acquisition.requestId,
-                        result.ok ? undefined : result.failureCause) };
+                    const failure = result.ok ? undefined : result;
+                    return { kind: 'failed' as const, code, failure, diagnosticDetail: describeManagedActionFailureDiagnostic(code,
+                        failure?.details, failure?.requestId ?? acquisition.requestId, failure?.failureCause) };
                 }
                 if (outcome.kind === 'approval_pending') {
                     input.onProgress({ kind: 'approval' });
@@ -240,11 +243,11 @@ export async function runManagedMachineCreation(input: Readonly<{
                 }
                 return { kind: 'accepted' as const, value: ManagedMachineActionOutputSchemasV1[actionId].parse(outcome.result) };
             },
-            succeeded: value => ({ kind: 'accepted', value }), failed: (code, failure) => ({ kind: 'failed', code,
+            succeeded: value => ({ kind: 'accepted', value }), failed: (code, failure) => ({ kind: 'failed', code, failure,
                 diagnosticDetail: describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId ?? acquisition.requestId, failure?.failureCause) }),
             aborted: () => ({ kind: 'failed', code: 'continuation_retired' }),
         });
-        if (accepted.kind === 'failed') return fail(accepted.code, undefined, accepted.diagnosticDetail);
+        if (accepted.kind === 'failed') return fail(accepted.code, undefined, accepted.diagnosticDetail, accepted.failure);
         if (acquisition.managedId && acquisition.managedId !== accepted.value.managedId) return fail('resource_mismatch');
         acquisition = { ...acquisition, managedId: accepted.value.managedId, operation: accepted.value.operation };
         // A retired draft must not write the accepted row into its replacement.

@@ -56,6 +56,8 @@ export function buildSessionIsolationProgressBadge(
     label:
       current?.label ??
       t('machineDetailPage.isolation.progress.title', { machine }),
-    message: t('machineDetailPage.isolation.progress.waiting'),
+    message: described.failureMessage ?? (described.failed
+      ? t('machineDetailPage.isolation.progress.failed', { machine })
+      : t('machineDetailPage.isolation.progress.waiting')),
   });
 }

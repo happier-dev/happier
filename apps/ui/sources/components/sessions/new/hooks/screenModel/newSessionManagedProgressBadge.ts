@@ -7,8 +7,7 @@ import {
 } from '@/components/machines/managed/managedComposerBadges';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
 import { describeManagedActionFailureDiagnostic } from '@/components/settings/machines/managed/managedNativeFailurePresentation';
-import { describeManagedInstallationFailure, isManagedCreationInterrupted, managedCreationStages } from '@/components/settings/machines/managed/managedCreationPresentation';
-import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { isManagedCreationInterrupted, managedCreationStages } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { readMachineAddDevice } from '@/components/machines/add/useMachineAddPaths';
 import { ManagedArchiveChoiceConsequence, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { t } from '@/text';
@@ -57,10 +56,12 @@ export function buildNewSessionManagedProgressBadge(
     const receipt = readManagedMachineSelectionReceipt(selection);
     const machineName = readManagedMachineSelectionName(selection) ?? t('common.machine');
     const origin = managedCreationOrigin(receipt);
-    const { setup, operation, observedStatus, failed, label, tone } = describeManagedCreationProgress(machineName, progress);
+    const { setup, operation, observedStatus, failed, failureMessage, label, tone } = describeManagedCreationProgress(machineName, progress);
     const failureDiagnostic = failed ? progress.kind === 'failed' && progress.diagnosticDetail
         ? progress.diagnosticDetail : operation?.error
             ? describeManagedActionFailureDiagnostic(operation.error.errorCode, operation.error.details, operation.requestId, operation.error.failureCause) : undefined : undefined;
+    const failureCode = progress.kind === 'failed' ? progress.code : operation?.error?.errorCode;
+    const failureDetail = failureMessage && failureDiagnostic === failureCode ? undefined : failureDiagnostic;
     const localRecipe = Boolean(origin) && progress.kind === 'acquiring' && !operation && !failed;
     // A setup row exists only on a joined machine, so Create, Install and Join are observed facts by then.
     const joinedStages: ManagedProgressModel['stages'] = [
@@ -94,11 +95,9 @@ export function buildNewSessionManagedProgressBadge(
             text: t('managedMachines.creation.keepOpen', { name: machineName }), icon: DEVICE_GLYPH[origin.device] } } : {}),
         ...(failed ? { failureLabel: label, failureTitle: setup ? t('managedMachines.creation.setupFailedTitle', { name: machineName }) : `${machineName} · ${label}` } : {}),
         tone,
-        message: [setup ? progress.kind === 'failed' ? t('managedMachines.creation.setupFailedHelp')
-            : t('managedMachines.creation.setupWaiting', { name: machineName }) : failed ?
-                (operation?.error ? describeManagedInstallationFailure(operation.error, operation.progress)
-                    : progress.kind === 'failed' ? resolveSystemTaskFailureMessage({ code: progress.code, message: null }) ?? null : null) ?? t('newSession.failedToStart')
-            : t('managedMachines.creation.messageWaiting', { name: machineName }), failureDiagnostic].filter(Boolean).join('\n'),
+        message: [failureMessage ?? (setup ? progress.kind === 'failed' ? t('managedMachines.creation.setupFailedHelp')
+            : t('managedMachines.creation.setupWaiting', { name: machineName }) : failed ? t('newSession.failedToStart')
+            : t('managedMachines.creation.messageWaiting', { name: machineName })), failureDetail].filter(Boolean).join('\n'),
         archiveChoice: draft.updateArchiveEffect ? {
             scope: draft.creationScope ?? 'session',
             value: selection.archiveEffect, onChange: draft.updateArchiveEffect,

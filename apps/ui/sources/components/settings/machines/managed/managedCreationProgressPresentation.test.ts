@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { t } from '@/text';
 import { describeManagedCreationProgress } from './managedCreationProgressPresentation';
 
 const operation: ActionOperationSnapshotV1 = {
@@ -12,6 +13,21 @@ const operationAddress = { serverId: 'home', machineId: 'controller', operationI
 describe('Session sandbox creation progress', () => {
   it('has no creation steps before Send admits an operation', () => {
     expect(describeManagedCreationProgress('Guest', { kind: 'idle' }).steps).toEqual([]);
+  });
+
+  it.each([false, true])('shows a continuation refusal after install completed (wrapped=%s)', (wrapped) => {
+    const presentation = describeManagedCreationProgress('Guest', {
+      kind: 'failed',
+      code: wrapped ? 'action_failed' : 'credential_scope_denied',
+      ...(wrapped ? { failureCause: { phase: 'machines.managed.get', errorClass: 'ManagedMachineControllerError',
+        errorCode: 'credential_scope_denied', httpStatus: null } } : {}),
+      operation: { ...operation, actionId: 'machines.managed.acquire', state: 'succeeded' },
+    });
+    expect(presentation).toMatchObject({
+      failed: true,
+      label: t('inbox.actionOperations.status.failed'),
+      failureMessage: t('errors.permissionDenied'),
+    });
   });
 
   it.each([

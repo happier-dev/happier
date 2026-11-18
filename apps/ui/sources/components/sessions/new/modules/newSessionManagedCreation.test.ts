@@ -11,6 +11,8 @@ import { createDeferred, createRootLayoutFeaturesResponse } from '@/dev/testkit'
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
+import { t } from '@/text';
 import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
@@ -665,6 +667,9 @@ describe('ordinary managed creation continuation', () => {
         expect(progress.diagnosticDetail).toContain('credential_scope_denied');
         expect(progress.diagnosticDetail).toContain('ManagedMachineControllerError');
         expect(progress.diagnosticDetail).not.toContain('Private native diagnostic');
+        expect(describeManagedCreationProgress('Machine', progress)).toMatchObject({
+            failureMessage: t('errors.permissionDenied'),
+        });
     });
     it.each([false, true])('keeps the managed read refusal in both result and progress (retained=%s)', async retained => {
         const boundary = transport({ unreadableMachine: true });
