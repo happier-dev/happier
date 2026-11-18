@@ -21740,7 +21740,7 @@ const enProfiles = {
   },
   tmux: {
     title: 'Tmux',
-    spawnSessionsTitle: 'Spawn sessions in tmux',
+    spawnSessionsTitle: 'Use tmux',
     spawnSessionsEnabledSubtitle: 'Sessions spawn in new tmux windows.',
     spawnSessionsDisabledSubtitle:
       'Sessions spawn in regular shell (no tmux integration)',

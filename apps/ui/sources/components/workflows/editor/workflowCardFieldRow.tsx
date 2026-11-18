@@ -22,7 +22,7 @@ const styles = StyleSheet.create({
 export function renderWorkflowCardFieldRow(key: string, label: string, control: React.ReactNode): React.ReactElement {
     return (
         <View key={key} style={workflowEditorStyles.actionFieldRow}>
-            <WorkflowFieldPair label={label} trackKey={key}>
+            <WorkflowFieldPair label={label} trackKey={key} labelAlign="control">
                 <View style={styles.field}>{control}</View>
             </WorkflowFieldPair>
         </View>

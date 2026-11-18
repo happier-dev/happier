@@ -2,7 +2,7 @@ import { formatWorkflowResultFieldType, formatWorkflowValueReference, workflowRe
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPageRowFieldLayoutContext, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_TYPE_SCALE, HappierPageRowFieldLayoutContext, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import { useLocalSetting } from '@/sync/store/hooks';
 
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -19,7 +19,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
-import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { focusFirstEntryWithin } from '@/keyboard/webOverlayFocusContainment';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -284,6 +284,11 @@ export function WorkflowBindingRow(props: Readonly<{
 }
 
 const VALUE_TRACK_FIELD_LAYOUT = Object.freeze({ maxWidthPx: null, stacked: true });
+/** A label level with a field box's first line: the box's height less the label's line, halved, above it. */
+const CONTROL_LABEL_ALIGN = Object.freeze({
+    alignSelf: 'flex-start' as const,
+    paddingTop: (FIELD_BOX_METRICS.minHeightPx - HAPPIER_TYPE_SCALE.label.lineHeight) / 2,
+});
 /** The lab's label column (S6 `.uwe-kr`) at the default text size. */
 const ACTION_FIELD_LABEL_COLUMN_PX = 120;
 
@@ -298,6 +303,11 @@ export function WorkflowFieldPair(props: Readonly<{
     trackKey: string;
     marker?: React.ReactNode;
     valueRef?: React.Ref<View>;
+    /**
+     * `control`: the value is a field box with lines beneath it (a Machine's outcome), so the label reads level with the
+     * box's first line rather than centred on the whole value (WF-ACCEPT-1118 item 9). Default: centred on the value.
+     */
+    labelAlign?: 'center' | 'control';
     children: React.ReactNode;
 }>): React.ReactElement {
     const track = React.useContext(WorkflowKindCardLabelTrack);
@@ -307,7 +317,8 @@ export function WorkflowFieldPair(props: Readonly<{
         <>
             <View
                 style={[workflowEditorStyles.actionFieldLabelColumn, { flexBasis: track?.stacked === true ? '100%' : ACTION_FIELD_LABEL_COLUMN_PX * metricScale },
-                    track?.width == null ? null : { width: track.width }]}
+                    track?.width == null ? null : { width: track.width },
+                    props.labelAlign === 'control' && track?.stacked !== true ? CONTROL_LABEL_ALIGN : null]}
                 onLayout={track === null || track.width !== null || track.stacked === true ? undefined
                     : (event) => track.report(props.trackKey, event.nativeEvent.layout.width)}
             >
