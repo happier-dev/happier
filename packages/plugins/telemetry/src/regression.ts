@@ -12,7 +12,7 @@ import { regressionCompareInputSchema, regressionCompareResultSchema, regression
 type Receipt = Extract<PluginActionResultById['deployments.receipts.list'], { ok: true }>['items'][number];
 
 function metadata(id: typeof TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 | typeof TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1) {
-    const { agentDefault: _default, ...declaration } = databaseActionMetadata[id];
+    const declaration = databaseActionMetadata[id];
     return { ...declaration, scopes: ['global', 'machine'] as const, surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] as const,
         execution: { target: 'daemon' as const } };
 }

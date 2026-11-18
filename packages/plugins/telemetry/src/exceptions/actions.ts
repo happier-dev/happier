@@ -38,7 +38,7 @@ type Id =
   | typeof TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1
   | typeof TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1;
 function metadata(id: Id) {
-  const { agentDefault: _default, ...declaration } = databaseActionMetadata[id];
+  const declaration = databaseActionMetadata[id];
   return {
     ...declaration,
     scopes: ['global', 'machine'] as const,

@@ -38,7 +38,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const actions: Record<string, PluginActionDefinition> = {};
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin', 'agent'] } as const;
     const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
-    const { agentDefault: _exportAgentDefault, ...exportMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
+    const exportMetadata = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
     actions[database.databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
         ...common, ...exportMetadata, surfaces: readSurfaces,
         inputSchema: database.DatabaseSelectedRowsExportInputV1ProtocolSchema,
@@ -46,7 +46,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         // The SDK admits the supplied selected-result shape; serialization performs no database read.
         run: (input: JsonValue) => projectNativeJsonValueForTransport(exportSelectedRows(input as database.DatabaseSelectedRowsExportInputV1)),
     };
-    const { agentDefault: _downloadAgentDefault, ...downloadMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1];
+    const downloadMetadata = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1];
     actions[databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1)] = {
         ...common, ...downloadMetadata,
         // The browser or filesystem destination needs a person. Agents use rows/export for the content.
@@ -63,7 +63,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     };
     const listTargets = producers.listTargets;
     if (listTargets) {
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
+        const metadata = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata, surfaces: readSurfaces,
             inputSchema: database.DatabaseTargetsListInputV1ProtocolSchema,
@@ -77,7 +77,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     }
     const connectTarget = producers.connectTarget;
     if (connectTarget) {
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1];
+        const metadata = databaseActionMetadata[database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseTargetsConnectInputV1ProtocolSchema,
@@ -89,7 +89,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     }
     const forgetTarget = producers.forgetTarget;
     if (forgetTarget) {
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_TARGETS_FORGET_ACTION_ID_V1];
+        const metadata = databaseActionMetadata[database.DATABASE_TARGETS_FORGET_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_FORGET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseTargetsForgetInputV1ProtocolSchema,
@@ -104,7 +104,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const executeOperation = producers.executeOperation;
     if (executeOperation) for (const [qualifiedId, inputSchema] of Object.entries(database.DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1)) {
         const actionId = qualifiedId as keyof typeof database.DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1;
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
+        const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata, inputSchema,
             // Agents reach writes too: the access decider and the D13 level decide admission and Ask.
@@ -121,7 +121,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const listFindings = producers.listFindings;
     if (listFindings) {
         const actionId = database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1;
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
+        const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseFindingsListInputV1ProtocolSchema,
@@ -133,7 +133,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const readFinding = producers.readFinding;
     if (readFinding) {
         const actionId = database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1;
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
+        const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseFindingReadInputV1ProtocolSchema,
@@ -145,7 +145,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const buildInsightBrief = producers.buildInsightBrief;
     if (buildInsightBrief) {
         const actionId = database.DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1;
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
+        const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseInsightBriefBuildInputV1ProtocolSchema,
@@ -156,7 +156,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     }
     const readAccess = producers.readAccess;
     if (readAccess) {
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_ACCESS_READ_ACTION_ID_V1];
+        const metadata = databaseActionMetadata[database.DATABASE_ACCESS_READ_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_READ_ACTION_ID_V1)] = {
             ...common, ...metadata, surfaces: readSurfaces,
             inputSchema: database.DatabaseAccessReadInputV1ProtocolSchema,
@@ -167,7 +167,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     }
     const setAccess = producers.setAccess;
     if (setAccess) {
-        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_ACCESS_SET_ACTION_ID_V1];
+        const metadata = databaseActionMetadata[database.DATABASE_ACCESS_SET_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_SET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseAccessSetInputV1ProtocolSchema,

@@ -5,14 +5,12 @@ import { pluginActionDeclarationIsReadOnlyForInput } from '../plugins/actions/re
 type Metadata = Pick<PluginActionContributionV2,
     'title' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'
     | 'approvalScope' | 'approvalInputCustody' | 'secretInputPaths' | 'operation'> & Readonly<{
-        /** C6 policy metadata; U0 declarations omit agent/MCP until P3 admission. */
-        agentDefault: 'allow' | 'ask' | 'authority' | Readonly<{ read: 'allow'; write: 'ask' }>;
         /** Owner-local operand metadata; the plugin declaration projection strips it. */
         automationSubject?: Readonly<{ kind: 'database'; field: 'target' }>;
     }>;
 
-const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [], agentDefault: 'allow' } satisfies Omit<Metadata, 'title'>;
-const write = { dangerLevel: 'writesRemote', readOnly: false, agentDefault: 'ask' } as const;
+const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [] } satisfies Omit<Metadata, 'title'>;
+const write = { dangerLevel: 'writesRemote', readOnly: false } as const;
 const databaseOperation = { version: 1, visibility: 'activity', progress: 'indeterminate',
     cancellation: 'supported', presentation: { onStart: 'activity' } } as const;
 const targetWrite = { ...write, automationSubject: { kind: 'database', field: 'target' } } as const;
@@ -43,7 +41,7 @@ const databaseActionDeclarations = {
         ...selectedExport, title: 'Export selected database rows',
     },
     [database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1]: {
-        ...selectedExport, title: 'Save selected database rows', dangerLevel: 'writesLocal', readOnly: false, agentDefault: 'ask',
+        ...selectedExport, title: 'Save selected database rows', dangerLevel: 'writesLocal', readOnly: false,
         operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
         confirmationWhen: { presentUserUi: false },
         confirmation: { title: 'Save these database rows?', body: 'Save the selected loaded rows to the receiving device’s chosen destination.', confirmLabel: 'Save' },
@@ -55,7 +53,6 @@ const databaseActionDeclarations = {
         ...targetWrite, title: 'Run SQL', placementBindings: ['toolbar'], approvalScope: 'environment',
         operation: databaseOperation,
         approvalInputCustody: 'live_only',
-        agentDefault: { read: 'allow', write: 'ask' },
         readOnly: { op: 'eq', path: 'mode', value: 'read' },
         confirmationWhen: { op: 'eq', path: 'mode', value: 'write' },
         confirmation: { title: 'Run these database changes?' },
@@ -64,7 +61,6 @@ const databaseActionDeclarations = {
     [database.DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1]: {
         ...targetWrite, title: 'Explain SQL', placementBindings: ['toolbar'], approvalScope: 'environment',
         operation: databaseOperation,
-        agentDefault: { read: 'allow', write: 'ask' },
         readOnly: { op: 'or', any: [
             { op: 'eq', path: 'mode', value: 'plan' },
             { op: 'eq', path: 'accessMode', value: 'read' },
@@ -85,7 +81,7 @@ const databaseActionDeclarations = {
     },
     [database.DATABASE_ACCESS_READ_ACTION_ID_V1]: { ...read, title: 'Read database access' },
     [database.DATABASE_ACCESS_SET_ACTION_ID_V1]: {
-        ...targetWrite, dangerLevel: 'writesLocal', title: 'Set database access', placementBindings: ['secondary'], agentDefault: 'authority',
+        ...targetWrite, dangerLevel: 'writesLocal', title: 'Set database access', placementBindings: ['secondary'],
         confirmation: { title: 'Change access to this database?' },
     },
     [database.UI_DATABASE_OPEN_ACTION_ID_V1]: { ...read, title: 'Open database', placementBindings: ['commandPalette', 'secondary'] },

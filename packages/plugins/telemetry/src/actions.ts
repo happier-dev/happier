@@ -77,7 +77,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] } as const;
     const readCapturedCosts = producers.readCapturedCosts;
     if (readCapturedCosts) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.TELEMETRY_COSTS_READ_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.TELEMETRY_COSTS_READ_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.TELEMETRY_COSTS_READ_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureCostsReadInputV1ProtocolSchema,
@@ -88,7 +88,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const captureStatus = producers.captureStatus;
     if (captureStatus) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureStatusInputV1ProtocolSchema,
@@ -100,7 +100,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const listCapturedQueries = producers.listCapturedQueries;
     if (listCapturedQueries) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureQueriesListInputV1ProtocolSchema,
@@ -112,7 +112,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const getCapturedQuery = producers.getCapturedQuery;
     if (getCapturedQuery) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureQueryGetInputV1ProtocolSchema,
@@ -124,7 +124,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const listCapturedTraces = producers.listCapturedTraces;
     if (listCapturedTraces) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureTracesListInputV1ProtocolSchema,
@@ -136,7 +136,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const getCapturedTrace = producers.getCapturedTrace;
     if (getCapturedTrace) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureTraceGetInputV1ProtocolSchema,
@@ -148,7 +148,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const listCapturedLogs = producers.listCapturedLogs;
     if (listCapturedLogs) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureLogsListInputV1ProtocolSchema,
@@ -160,7 +160,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const listCapturedEndpoints = producers.listCapturedEndpoints;
     if (listCapturedEndpoints) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureEndpointsListInputV1ProtocolSchema,
@@ -172,7 +172,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const clearCapture = producers.clearCapture;
     if (clearCapture) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureClearInputV1ProtocolSchema,
@@ -184,7 +184,7 @@ export function createCaptureActions(producers: CapturePublicActionProducers): R
     }
     const configureCapture = producers.configureCapture;
     if (configureCapture) {
-        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1];
+        const metadata = database.databaseActionMetadata[database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseCaptureConfigureInputV1ProtocolSchema,

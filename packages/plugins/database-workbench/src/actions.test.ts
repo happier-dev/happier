@@ -4,7 +4,6 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
     DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_ROWS_EXPORT_ACTION_ID_V1, DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-    DATABASE_ACCESS_SET_ACTION_ID_V1,
     DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DatabaseDescriptorV1Schema,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
@@ -16,10 +15,10 @@ import {
     DatabaseEditsApplyInputV1Schema, DatabaseRowsReadInputV1Schema, DatabaseStatementRunInputV1Schema,
     databaseActionLocalIdV1,
 } from '@happier-dev/database-protocol';
-import { pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import { pluginActionDeclarationIsReadOnlyForInput, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { createDatabaseActions, databaseActionMetadata, databaseActionOperationClass } from './actions.js';
+import { createDatabaseActions, databaseActionOperationClass } from './actions.js';
 import { buildDatabaseFindingBriefV1 } from './insights/brief.js';
 
 const target = {
@@ -133,7 +132,7 @@ describe('producer-backed database Action declarations', () => {
         }
     });
 
-    it('declares Connect and Forget from their producers with write confirmation and no agent exposure', () => {
+    it('declares Connect and Forget from their producers with confirmation for agent calls', () => {
         const producers = {
             connectTarget: async () => { throw new Error('Declaration test does not acquire a connection'); },
             forgetTarget: async () => {},
@@ -148,8 +147,8 @@ describe('producer-backed database Action declarations', () => {
         expect(forget?.confirmation).toBeDefined();
         expect(connect?.secretInputPaths ?? []).toEqual([]);
         expect(forget?.secretInputPaths ?? []).toEqual([]);
-        expect(databaseActionMetadata[DATABASE_TARGETS_CONNECT_ACTION_ID_V1].agentDefault).toBe('ask');
-        expect(databaseActionMetadata[DATABASE_TARGETS_FORGET_ACTION_ID_V1].agentDefault).toBe('ask');
+        expect(pluginActionRequiresPresentUserIntent(connect!, 'agent')).toBe(true);
+        expect(pluginActionRequiresPresentUserIntent(forget!, 'agent')).toBe(true);
     });
 
     it('exposes admitted read operations while retaining canonical write classification', () => {
@@ -172,8 +171,8 @@ describe('producer-backed database Action declarations', () => {
         const edits = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1))!;
         // D13: agents reach writes; the access decider and the Environment level decide admission and Ask.
         expect(edits.surfaces).toEqual(rows.surfaces);
-        expect(databaseActionMetadata[DATABASE_ACCESS_SET_ACTION_ID_V1].agentDefault).toBe('authority');
-        expect(databaseActionMetadata[DATABASE_STATEMENT_RUN_ACTION_ID_V1].agentDefault).toEqual({ read: 'allow', write: 'ask' });
+        expect(pluginActionRequiresPresentUserIntent(run, 'agent', { mode: 'read' })).toBe(false);
+        expect(pluginActionRequiresPresentUserIntent(run, 'agent', { mode: 'write' })).toBe(true);
     });
 
     it('keeps SQL and mutation metadata visible while redacting only nested values', () => {
