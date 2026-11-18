@@ -1,5 +1,6 @@
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { EXISTING_SESSION_FIELD_APPLICATIONS } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
+import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
 import { resolveSessionAuthoringFieldControl, type SessionAuthoringControlFacts, type SessionAuthoringFieldControlModel, type SessionAuthoringFieldId } from './sessionAuthoringFieldControls';
 
@@ -38,8 +39,12 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
     const unavailable = (reason: Extract<SessionAuthoringFieldControlModel, { kind: 'unavailable' }>['reason']): SessionAuthoringFieldControlModel => ({ field, kind: 'unavailable', reason });
     if (field === 'agentTarget' && !params.agentSwitchingEnabled) return unavailable('feature_disabled');
     if (targets.length === 0 || EXISTING_SESSION_FIELD_APPLICATIONS[field].via === 'unsupported') return unavailable('not_supported_on_target');
-    if (!selection.agentTarget && (field === 'modelSelection' || field === 'sessionConfigOptionOverrides' || field === 'connectedServices')
-        && targets.some(target => target.agentId !== targets[0]!.agentId)) return unavailable('requires_agent_target');
+    if (!selection.agentTarget && (field === 'modelSelection' || field === 'sessionConfigOptionOverrides' || field === 'connectedServices')) {
+        const firstTargetKey = readBackendTargetKeyV2(targets[0]!.values.agentTarget);
+        if (targets.some(target => readBackendTargetKeyV2(target.values.agentTarget) !== firstTargetKey)) {
+            return unavailable('requires_agent_target');
+        }
+    }
     const models = targets.map(target => resolveSessionAuthoringFieldControl({
         field, agentId: target.agentId, controls: target.controls, facts: target.facts,
         values: { ...target.values, ...selection,

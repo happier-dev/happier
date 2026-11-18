@@ -19,6 +19,7 @@ import type {
 import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
 import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';
 import {
+    readAgentOwnedBackendProjection,
     resolveAgentCatalogProjection,
     resolveConfiguredAcpAgentCatalogProjection,
     resolveAgentCatalogBackingId,
@@ -356,7 +357,9 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
         return null;
     }
     const isBuiltInAgent = isBundledAgentId(agentId);
-    const agentBackendProjection = readMergedBackendProjection(agentId, params);
+    const agentBackendProjection = isBuiltInAgent
+        ? readAgentOwnedBackendProjection(agentId, agentId, params.mergedBackendProjectionById)
+        : readMergedBackendProjection(agentId, params);
     const backingAgentId = agentBackendProjection?.agentId ?? agentId;
     const agentProviderProjection = readMergedProviderProjection(backingAgentId, params);
     const core = getAgentCore(agentId);
@@ -371,7 +374,7 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
     };
     const agentTarget = resolveAgentExecutionTargetForBackendTarget({
         backendTarget: backendCarrierTarget,
-        daemonMergedProjectionInputs: {
+        daemonMergedProjectionInputs: isBuiltInAgent ? null : {
             mergedProviderProjectionById: params.mergedProviderProjectionById ?? {},
             mergedBackendProjectionById: params.mergedBackendProjectionById ?? {},
         },
@@ -380,9 +383,10 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
     const canonicalTarget: PersistedBackendTargetRefV2 = agentTarget;
     const usesPluginAgentSettingsBackend = settingsBackendId !== null;
     const backendTargetKey = formatBackendTargetKeyV2(canonicalTarget);
-    const backendProjection = settingsBackendId
-        ? readMergedBackendProjection(settingsBackendId, params) ?? agentBackendProjection
-        : agentBackendProjection;
+    const settingsBackendProjection = settingsBackendId
+        ? readAgentOwnedBackendProjection(backingAgentId, settingsBackendId, params.mergedBackendProjectionById)
+        : null;
+    const backendProjection = settingsBackendProjection ?? agentBackendProjection;
     const resolvedAgentId = backendProjection?.agentId ?? backingAgentId;
     const providerProjection = readMergedProviderProjection(resolvedAgentId, params);
     const compatibilityBackendTargets = usesPluginAgentSettingsBackend

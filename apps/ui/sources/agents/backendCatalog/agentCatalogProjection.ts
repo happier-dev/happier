@@ -111,6 +111,16 @@ function readMergedBackendProjection(
     return mergedBackendProjectionById?.[backendId] ?? null;
 }
 
+/** A retained carrier id may also name an unrelated configured backend. */
+export function readAgentOwnedBackendProjection(
+    agentId: string,
+    backendId: string,
+    mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null,
+): MergedBackendProjectionEntry | null {
+    const projected = readMergedBackendProjection(backendId, mergedBackendProjectionById);
+    return projected?.agentId === agentId ? projected : null;
+}
+
 function readFallbackSingleBackendProjectionForAgent(
     agentId: string,
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null,
@@ -131,7 +141,7 @@ function readSettingsBackendProjectionForAgent(
         ? mergedProviderProjection.settingsBackendId.trim()
         : '';
     if (explicitSettingsBackendId) {
-        return readMergedBackendProjection(explicitSettingsBackendId, mergedBackendProjectionById);
+        return readAgentOwnedBackendProjection(agentId, explicitSettingsBackendId, mergedBackendProjectionById);
     }
 
     if (mergedProviderProjection) {

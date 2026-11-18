@@ -15,6 +15,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import {
     type WorkflowSessionAuthoringSelection,
@@ -304,18 +305,15 @@ function unavailable(
 /**
  * The offered option that is exactly this selected target, if any.
  *
- * Agent identity is the contribution identity, not the option id: the same
- * Agent reached through a different catalog route must still read as selected.
+ * The canonical key includes the contribution and, for configured ACP, the definition.
  */
 export function findSessionAuthoringAgentTargetOption(
     targets: readonly SessionAuthoringAgentTargetOption[] | undefined,
     selected: AgentExecutionTargetV1 | null | undefined,
 ): SessionAuthoringAgentTargetOption | null {
-    if (!selected) return null;
-    return targets?.find((option) => (
-        option.target.identity.pluginId === selected.identity.pluginId
-        && option.target.identity.localId === selected.identity.localId
-    )) ?? null;
+    const selectedKey = readBackendTargetKeyV2(selected);
+    if (selectedKey === null) return null;
+    return targets?.find((option) => readBackendTargetKeyV2(option.target) === selectedKey) ?? null;
 }
 
 /**

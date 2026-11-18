@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useCrossSessionAuthoringFieldControl } from './useCrossSessionAuthoringFieldControl';
-import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
 import { buildSessionModelSelectionForAgentTarget } from '../sessionModelSelectionValue';
@@ -51,6 +52,22 @@ const target = (agentTarget = claude, permissionMode: 'default' | 'read-only' = 
 const base = { targets: [target(), target(codex, 'read-only')], agentSwitchingEnabled: true, mixedLabel: 'Mixed' };
 
 describe('Session-specific field intersection', () => {
+    it('keeps separately configured ACP engines distinct even when they share one runtime Agent', () => {
+        const options = ['codex', 'other'].map(definitionId => {
+            const agentTarget = AgentExecutionTargetV1Schema.parse({
+                kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId,
+            });
+            return { id: buildBackendTargetKeyV2(agentTarget), label: definitionId,
+                agentId: 'custom-acp', target: agentTarget };
+        });
+        const targets = options.map(option => ({ ...target(option.target), agentId: option.agentId,
+            facts: { agentTargets: options } }));
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'agentTarget' }))
+            .toMatchObject({ kind: 'options', unselectedLabel: 'Mixed' });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'modelSelection' }))
+            .toMatchObject({ kind: 'unavailable', reason: 'requires_agent_target' });
+    });
+
     it('intersects permissions and shows Mixed through the existing label prop', () => {
         const targets = [target(), { ...target(codex, 'read-only'), controls: { ...controls(), permissionModeOptions: [controls().permissionModeOptions[0]!] } }];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'permissionMode' }))

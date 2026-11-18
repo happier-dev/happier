@@ -3,6 +3,7 @@ import { Platform, View, useWindowDimensions } from 'react-native';
 import { resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionAddressV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import {
@@ -11,7 +12,7 @@ import {
   useRouter,
 } from '@/components/appShell/workspace/destinationRoute';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
-import { isBundledAgentId } from '@/agents/registry/registryCore';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -40,6 +41,7 @@ import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/wo
 import { createUnavailablePluginComposerControlChip } from '@/components/plugins/actions/pluginContributedActionComposerChips';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { CrossSessionAuthoringControlTarget } from '@/components/sessions/authoring/controls/crossSessionAuthoringFieldControls';
+import { findSessionAuthoringAgentTargetOption } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useCrossSessionAuthoringFieldControl } from '@/components/sessions/authoring/controls/useCrossSessionAuthoringFieldControl';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -219,11 +221,20 @@ function BulkSessionComposer(
     disabled: engineControl.kind !== 'options',
     onChangeFields: changeEngineFields,
   });
-  const sharedAgentType = React.useMemo(
-    () =>
-      readSharedValue(facts, (fact) => fact.agentTarget?.identity.localId ?? null),
-    [facts],
+  const sharedAgentTarget = React.useMemo(() => {
+    const first = facts.find(fact => fact.status === 'ready')?.agentTarget;
+    if (!first) return null;
+    const key = buildBackendTargetKeyV2(first);
+    return facts.every(fact => fact.status !== 'ready'
+      || (fact.agentTarget && buildBackendTargetKeyV2(fact.agentTarget) === key)) ? first : null;
+  }, [facts]);
+  const sharedAgentOption = React.useMemo(
+    () => findSessionAuthoringAgentTargetOption(leadFacts?.agentTargets, sharedAgentTarget),
+    [leadFacts, sharedAgentTarget],
   );
+  const sharedBundledAgentId = resolveBundledAgentIdFromContributionIdentity(sharedAgentTarget?.identity);
+  const sharedAgentLabel = sharedAgentOption?.label
+    ?? (sharedBundledAgentId ? resolveAgentCatalogTitle(sharedBundledAgentId) : mixedLabel);
   const engineLabel = composer.selection.agentTarget
     ? enginePicker.label
     : engineControl.kind === 'options'
@@ -232,12 +243,10 @@ function BulkSessionComposer(
         )?.label ??
         engineControl.unselectedLabel ??
         mixedLabel)
-      : sharedAgentType && isBundledAgentId(sharedAgentType)
-        ? resolveAgentCatalogTitle(sharedAgentType)
-        : mixedLabel;
+      : sharedAgentLabel;
   const engineAgentType =
     enginePicker.agentId ??
-    (composer.selection.agentTarget ? undefined : (sharedAgentType ?? undefined));
+    (composer.selection.agentTarget ? undefined : (sharedAgentOption?.agentId ?? sharedBundledAgentId ?? undefined));
   const engineOpens = engineControl.kind === 'options' && enginePicker.options.length > 0;
   // The row the picker opens on: the pending choice, else the one Agent every target runs; none while they differ.
   const sharedEngineOptionId =
@@ -248,7 +257,7 @@ function BulkSessionComposer(
   const engineSelectedOptionId = composer.selection.agentTarget
     ? enginePicker.selectedOptionId
     : sharedEngineOptionId;
-  const engineUnselected = engineSelectedOptionId === null && !engineAgentType;
+  const engineUnselected = engineSelectedOptionId === null && (engineOpens || !engineAgentType);
   const [enginePickerOpen, setEnginePickerOpen] = React.useState(false);
 
   // Attachments and plugin controls are per Session; the + menu names them, disabled, with why (lab bc + menu).
@@ -445,16 +454,6 @@ function countSettingsTargets(
   );
 }
 
-function readSharedValue<T>(
-  facts: readonly BulkSessionAuthoringFact[],
-  read: (fact: BulkSessionAuthoringFact) => T | null,
-): T | null {
-  const ready = facts.filter((fact) => fact.status === 'ready');
-  if (ready.length === 0) return null;
-  const first = read(ready[0]!);
-  return ready.every((fact) => read(fact) === first) ? first : null;
-}
-
 /**
  * The To chip's controlled model: every frozen target, with the ones that can't receive this (archived, can't
  * resume, read only) in a Skipped group with why. Unchecking a target removes it from this compose only.
@@ -502,13 +501,15 @@ function useBulkSessionToModel(
     );
     return {
       targets: reachable.map((target) => {
-        const agentType = factByKey.get(sessionAddressKey(target))?.agentTarget?.identity.localId ?? null;
+        const agentType = resolveBundledAgentIdFromContributionIdentity(
+          factByKey.get(sessionAddressKey(target))?.agentTarget?.identity,
+        );
         return {
           id: sessionAddressKey(target),
           label: nameByKey.get(sessionAddressKey(target)) ?? target.sessionId,
           recipient: target,
           // The agent mark keeps the leading slot (lab bc To list); the row says which agent in words too.
-          ...(agentType && isBundledAgentId(agentType)
+          ...(agentType
             ? { subtitle: resolveAgentCatalogTitle(agentType), icon: <AgentIcon agentId={agentType} size={ICON_SIZE.sm} /> }
             : {}),
         };

@@ -1,4 +1,8 @@
 import { expect, it } from 'vitest';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { planExistingSessionChanges } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { findSessionAuthoringAgentTargetOption } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { projectBulkSessionAuthoringFact } from './bulkSessionAuthoringFacts';
 
@@ -6,9 +10,37 @@ const address = { serverId: 'home-a', sessionId: 'session' };
 const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId, active: true,
     metadata: { path: '/repo', host: 'host', agent: 'codex', machineId: 'machine' } });
 
+it('keeps a Codex session on the built-in engine when the Machine also offers Q codex', () => {
+    // Retained catalog projections can have an unqualified backend id equal to a bundled Agent id.
+    const entries = getResolvedBackendCatalogEntries({
+        enabledAgentIds: ['codex'],
+        mergedBackendProjectionById: {
+            codex: { backendId: 'codex', agentId: 'custom-acp', title: 'Q codex' },
+        },
+        acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [
+            AcpBackendDefinitionV1Schema.parse({
+                id: 'codex', name: 'codex', title: 'Q codex', launch: { kind: 'command', command: 'acp', args: [] },
+                createdAt: 1, updatedAt: 1,
+            }),
+        ] } },
+    });
+    const options = entries.flatMap(entry => entry.backendTarget.kind === 'agent' ? [{
+        id: entry.backendTargetKey, label: entry.title, agentId: entry.agentId, target: entry.backendTarget,
+    }] : []);
+    expect(options).toContainEqual(expect.objectContaining({ label: 'Q codex', target: expect.objectContaining({ definitionId: 'codex' }) }));
+
+    const fact = projectBulkSessionAuthoringFact(address, session);
+    if (!fact.planningTarget || !fact.agentTarget) throw new Error('Codex session must be ready');
+    expect(planExistingSessionChanges({ agentTarget: fact.agentTarget }, [fact.planningTarget], 'hello').stages)
+        .toMatchObject([{ actionId: 'session.message.send', targets: [address] }]);
+    expect(findSessionAuthoringAgentTargetOption(options, fact.agentTarget)).toMatchObject({
+        id: 'agent:happier.agent.codex/codex', label: 'Codex', agentId: 'codex',
+    });
+});
+
 it('projects canonical Agent identity and separates hydration, archive, and resume outcomes', () => {
     expect(projectBulkSessionAuthoringFact(address, session)).toMatchObject({ status: 'ready',
-        agentId: 'happier.agent.codex/codex', machineId: 'machine' });
+        agentId: 'happier.agent.codex/codex', machineId: 'machine', directory: '/repo' });
     expect(projectBulkSessionAuthoringFact(address, null)).toMatchObject({ status: 'unavailable', reason: 'session_not_hydrated' });
     expect(projectBulkSessionAuthoringFact(address, { ...session, archivedAt: 12 })).toMatchObject({ status: 'skipped', reason: 'archived' });
     expect(projectBulkSessionAuthoringFact(address, { ...session, active: false,
