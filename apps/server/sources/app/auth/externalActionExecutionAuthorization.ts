@@ -4152,7 +4152,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Direct and Session-origin Runs use the same requester storage port.
         // Automation workers retain their separate installed-publisher path.
     } else if (verified.binding.actionId === 'discussion.candidates.list' && !admittedReadRootRequesterGet) {
-        // Keep this composed read out of generic read-root Session admission.
+        // Its composed directory/roster reads keep this purpose; its own GETs use the read-root rule.
         // Native directory/roster routes still own current actor and resource access.
         if (!isDiscussionCandidateReadHttpPurpose(verified, proof, snapshotBatch)) return refuse('discussion_candidate_purpose');
     } else if (isSessionStateFieldActionHttpPurpose(verified, proof) || isSessionStopRetirementHttpPurpose(verified, proof)) {
@@ -4371,7 +4371,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             || verified.binding.accountId !== verified.binding.custodianAccountId
             || !isScmReviewedMarksHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1) {
-        // Not folded into the read-root rule: the summary root reads its own KV prefix, not unrelated Account KV.
+        // Not folded into the read-root rule: its tested contract spends only its own KV prefix, and no flow needs more.
         if (verified.effectActionId !== verified.binding.actionId
             || !isMachineOutcomeSummaryHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'session_board_write') {
