@@ -17,4 +17,12 @@ describe('stored Compose document text', () => {
     const authored = '# production\nservices:\n  web:\n    image: example/web:1\n';
     expect(storedComposeDocumentText(authored)).toBe(authored);
   });
+
+  it('reads a legacy shared PostgreSQL definition with quoted JSON nodes as readable Compose', () => {
+    const stored = '"services":\n  "database":\n    "image": "postgres:17"\n    # Keep the private publication.\n    "ports":\n      - target: 5432\n        published: "15433"\n        host_ip: 127.0.0.1\n        protocol: tcp\n';
+    const text = storedComposeDocumentText(stored);
+    expect(text).toContain('services:\n  database:\n    image: postgres:17');
+    expect(text).toContain('# Keep the private publication.');
+    expect(parseDocument(text).toJS()).toEqual(parseDocument(stored).toJS());
+  });
 });
