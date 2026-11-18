@@ -23,7 +23,7 @@ function resolveTargetState(state: ReviewCommentStateV1, decision: ReviewTriageS
  * a finding's decision through it, so `ReviewComment` stays the only place a decision lives.
  */
 export function buildReviewTriageTransitionRequestV1(params: Readonly<{
-  comment: Pick<ReviewCommentV1, 'id' | 'state' | 'serverRevision' | 'projectId' | 'workspace'>;
+  comment: Pick<ReviewCommentV1, 'id' | 'state' | 'serverRevision' | 'reviewId' | 'projectId' | 'workspace'>;
   decision: ReviewTriageStatus;
   note?: string;
   clientMutationId: string;
@@ -34,6 +34,7 @@ export function buildReviewTriageTransitionRequestV1(params: Readonly<{
   const reason = note || (toState === 'dismissed' && comment.state !== 'dismissed' ? IGNORED_REASON : undefined);
   return {
     commentId: comment.id,
+    ...(comment.reviewId ? { reviewId: comment.reviewId } : {}),
     ...(comment.projectId ? { projectId: comment.projectId } : {}),
     ...(comment.workspace ? { workspace: comment.workspace } : {}),
     toState,

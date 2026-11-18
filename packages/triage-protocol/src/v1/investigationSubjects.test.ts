@@ -33,6 +33,15 @@ describe('native investigation subject identity', () => {
         expect(triageFailureSubjectEntryV1({ ...subject, serverId: 'other-home' }).entryRef).not.toEqual(original.entryRef);
         expect(TRIAGE_NATIVE_INVESTIGATION_KINDS_V1.map(kind => kind.id)).toContain(original.entryRef.kindId);
     });
+    it('includes readiness context in an Environment failure identity when it is present', () => {
+        const subject = TriageFailureSubjectV1Schema.parse({ kind: 'deploymentEnvironment', serverId: 'home',
+            environmentId: 'environment', readiness: { projectId: 'project', fact: 'build' } });
+        const entry = triageFailureSubjectEntryV1(subject);
+        expect(entry.entryRef).toMatchObject({ kindId: 'deployment-environment', entryId: 'environment',
+            collisionScope: '["home","project","build"]' });
+        expect(triageFailureSubjectEntryV1({ ...subject, readiness: { projectId: 'project', fact: 'deploy' } }).entryRef)
+            .not.toEqual(entry.entryRef);
+    });
 
     it('keeps a notice on its exact Artifact across execution placement choices', () => {
         const context = { kind: 'healthAlert', notice: { kind: 'host', artifactId: 'notice',

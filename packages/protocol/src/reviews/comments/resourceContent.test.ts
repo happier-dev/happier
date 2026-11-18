@@ -75,7 +75,7 @@ describe('Review resource content binding', () => {
         serverBytes += JSON.stringify(request.body);
         if (request.path.endsWith('/prepare')) {
           const prepared = ReviewCommentPrepareMutationRequestV1Schema.parse(request.body);
-          derived = deriveReviewCommentStructuralMutationV1({ mutation: prepared.mutation, accountId: actor.userId,
+          derived = deriveReviewCommentStructuralMutationV1({ mutation: prepared.mutation, accountId: 'review-owner-account',
             actor, current: [], runtime: { now: () => 2, createId: prefix => `${prefix}-${++sequence}` } });
           return { v: 1, receipt: 'admitted-resource', request: prepared, ...derived, replayed: false };
         }
@@ -83,8 +83,8 @@ describe('Review resource content binding', () => {
         if (!derived) throw new Error('Expected admission');
         const eventEnvelope = commit.records[0]!.eventEnvelope;
         if (!eventEnvelope) throw new Error('Expected confidential event');
-        expect(await resource.open(eventEnvelope)).toMatchObject({ requestBinding: { reviewId: 'review-1' },
-          binding: { reviewId: 'review-1', eventId: derived.records[0]!.event!.eventId,
+        expect(await resource.open(eventEnvelope)).toMatchObject({ requestBinding: { reviewId: 'review-1', accountId: actor.userId },
+          binding: { reviewId: 'review-1', accountId: 'review-owner-account', eventId: derived.records[0]!.event!.eventId,
             commentId: derived.records[0]!.structural.id, serverRevision: 1 }, details: { body: comment.body } });
         const payload = ReviewCommentEventSensitivePayloadV1Schema.parse(await resource.open(eventEnvelope));
         const event = derived.records[0]!.event!;
@@ -100,7 +100,7 @@ describe('Review resource content binding', () => {
           structural: record.structural, sensitiveEnvelope: commit.records[index]!.sensitiveEnvelope })), replayed: false, failed: [] };
       },
     });
-    expect(result).toMatchObject({ comment: { reviewId: 'review-1', body: comment.body, author: actor } });
+    expect(result).toMatchObject({ comment: { reviewId: 'review-1', accountId: 'review-owner-account', body: comment.body, author: actor } });
     expect(serverBytes).not.toContain(comment.body);
     expect(serverBytes).not.toContain(comment.anchor.filePath);
   });

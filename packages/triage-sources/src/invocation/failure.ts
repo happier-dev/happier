@@ -1,7 +1,7 @@
 import { readPluginErrorRequestIdV1, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { ScmRepositoryProvisioningFailureResponseSchema } from '@happier-dev/plugin-sdk/scm';
-import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { TriageSourceFailureV1Schema, type TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 export type TriageSourceReadFailureV1 = TriageSourceFailureV1 & Readonly<{

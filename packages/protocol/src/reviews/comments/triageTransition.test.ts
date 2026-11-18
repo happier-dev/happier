@@ -27,6 +27,12 @@ function request(state: ReviewCommentStateV1, decision: ReviewTriageStatus, note
 }
 
 describe('review finding decisions as ReviewComment transitions', () => {
+  it('keeps native Review scope when deciding a comment without a legacy project or workspace', () => {
+    const comment = { id: 'shared-comment', reviewId: 'review-1', state: 'proposed' as const, serverRevision: 4 };
+    const built = comments.buildReviewTriageTransitionRequestV1({ comment, decision: 'accept', clientMutationId: 'native-decision' });
+    expect(ReviewCommentTransitionRequestV1Schema.parse(built)).toMatchObject({ reviewId: 'review-1',
+      commentId: 'shared-comment', expectedServerRevision: 4, toState: 'open' });
+  });
   it('opens a proposed finding when it is chosen to be fixed, and reopens an ignored one', () => {
     expect(request('proposed', 'accept')).toMatchObject({ toState: 'open', expectedState: 'proposed', reviewTriageStatus: 'accept' });
     expect(request('dismissed', 'accept')).toMatchObject({ toState: 'open', expectedState: 'dismissed', reviewTriageStatus: 'accept' });

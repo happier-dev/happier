@@ -49,7 +49,10 @@ export const TriageFailureSubjectV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('backupRun'), operation: ProjectExecutionOperationRefV1ProtocolSchema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('service'), target: ProtocolServiceHealthNoticePageV1Schema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('domain'), serverId: text, environmentId: text, domainId: text }, closed),
-    defineProtocolObject({ kind: defineProtocolLiteral('deploymentEnvironment'), serverId: text, environmentId: text }, closed),
+    defineProtocolObject({ kind: defineProtocolLiteral('deploymentEnvironment'), serverId: text, environmentId: text,
+        // A Readiness row is context for the existing Environment handoff, never a caller-authored verdict.
+        readiness: defineProtocolObject({ projectId: text, fact: text }, closed).optional(),
+    }, closed),
 ]);
 export type TriageFailureSubjectV1 = ReturnType<typeof TriageFailureSubjectV1Schema.parse>;
 

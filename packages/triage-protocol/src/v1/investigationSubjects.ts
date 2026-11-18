@@ -34,7 +34,8 @@ export function triageFailureSubjectEntryV1(subject: TriageFailureSubjectV1): Tr
         case 'domain':
             return entry(kinds.domain, [subject.serverId, subject.environmentId], subject.domainId);
         case 'deploymentEnvironment':
-            return entry(kinds.deploymentEnvironment, [subject.serverId], subject.environmentId);
+            return entry(kinds.deploymentEnvironment, subject.readiness
+                ? [subject.serverId, subject.readiness.projectId, subject.readiness.fact] : [subject.serverId], subject.environmentId);
         case 'workflowRun':
             return entry(kinds.workflowRun, [subject.serverId], subject.runId);
         case 'service': {
