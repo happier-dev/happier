@@ -85,6 +85,17 @@ describe("Review Comment SQL write currentness", () => {
         expect(query.values.at(-1)).toBe(3);
     });
 
+    it('restricts selected finding identities in the scoped SQL candidate window', async () => {
+        await createSqlReviewCommentStore().listSources({ accountId: 'account-1', filters: {
+            projectId: 'project-1', commentIds: ['selected-1', 'selected-2'], states: [], taxonomyIds: [], includeHistory: true, limit: 2,
+        } });
+        const query = tx.$queryRaw.mock.calls.at(-1)?.[0];
+        if (!query || 'raw' in query) throw new Error('Missing comment SQL request');
+        expect(query.sql).toMatch(/id IN \(\?,\?\)/);
+        expect(query.values).toEqual(expect.arrayContaining(['selected-1', 'selected-2']));
+        expect(query.values).toContain('account-1');
+    });
+
     it.each(["plain", "e2ee"] as const)("admits %s content after an unrelated Account cursor advance", async (mode) => {
         currentAccount.encryptionMode = mode;
         const input = mutation(mode);

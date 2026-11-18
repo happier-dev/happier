@@ -124,6 +124,7 @@ export type ReviewCommentsActionInputById = {
             v: unknown;
         };
         clientMutationId: string;
+        roundOrdinal?: number | undefined;
         appearance?: undefined | {
             roundOrdinal: number;
             runId: string;
@@ -212,6 +213,7 @@ export type ReviewCommentsActionInputById = {
     };
     readonly "reviews.comments.list": {
         reviewId?: string | undefined;
+        commentIds?: string[] | undefined;
         roundOrdinal?: number | undefined;
         workspace?: undefined | {
             machineId: string;
@@ -925,6 +927,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -1261,6 +1264,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -1597,6 +1601,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -1932,6 +1937,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -2267,6 +2273,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -2602,6 +2609,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -2935,6 +2943,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -3270,6 +3279,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -3605,6 +3615,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -3940,6 +3951,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;
@@ -4276,6 +4288,7 @@ export type ReviewCommentsActionResultById = {
             v: 1;
             id: string;
             accountId: string;
+            roundOrdinal?: number | undefined;
             appearances?: undefined | {
                 roundOrdinal: number;
                 runId: string;

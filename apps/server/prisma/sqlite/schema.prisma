@@ -4790,6 +4790,7 @@ model ReviewComment {
     id                   String   @id
     accountId            String   @map("account_id")
     reviewId             String?  @map("review_id")
+    roundOrdinal         Int?     @map("round_ordinal")
     projectId            String?  @map("project_id")
     workspaceJson        String?  @map("workspace_json")
     workspaceId          String?  @map("workspace_id")
@@ -4835,6 +4836,7 @@ model ReviewComment {
     publicationCorrelations ReviewCommentPublicationCorrelation[]
 
     @@unique([reviewId, findingIdentity], map: "review_comments_review_finding_identity_key")
+    @@index([reviewId, roundOrdinal])
     @@index([reviewId, state, updatedAt])
     @@index([projectId, state, updatedAt])
     @@index([projectId, runId, updatedAt])

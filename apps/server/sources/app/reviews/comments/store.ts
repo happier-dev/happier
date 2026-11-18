@@ -144,6 +144,7 @@ type ReviewCommentRow = {
     id: string;
     account_id: string;
     review_id: string | null;
+    round_ordinal: number | bigint | null;
     project_id: string | null;
     workspace_json: string | null;
     workspace_id: string | null;
@@ -203,6 +204,7 @@ const COMMENT_SELECT_COLUMNS = [
     "id",
     "account_id",
     "review_id",
+    "round_ordinal",
     "project_id",
     "workspace_id",
     "workspace_json",
@@ -558,6 +560,7 @@ function rowToComment(row: ReviewCommentRow): ReviewCommentV1 {
         id: row.id,
         accountId: row.account_id,
         reviewId: row.review_id ?? undefined,
+        roundOrdinal: row.round_ordinal == null ? undefined : toNumber(row.round_ordinal),
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         workspaceId: row.workspace_id ?? undefined,
@@ -952,19 +955,28 @@ function buildWhere(params: ReviewCommentStoreListParams): PrismaTypes.Sql[] {
     const filters = normalizeReviewCommentListFilters(params.filters);
     const where = [commentAccessPredicate(params)];
     if (filters.reviewId) where.push(Prisma.sql`review_id = ${filters.reviewId}`);
+    if (filters.commentIds !== undefined) where.push(filters.commentIds.length > 0
+        ? Prisma.sql`id IN (${Prisma.join(filters.commentIds)})` : Prisma.sql`1 = 0`);
     const byAppearance = Boolean(params.reviewAccess && (filters.roundOrdinal || filters.runId || filters.sessionId || filters.engineId));
     if (filters.roundOrdinal && !params.reviewAccess) where.push(Prisma.sql`1 = 0`);
     if (!byAppearance && filters.projectId) where.push(Prisma.sql`project_id = ${filters.projectId}`);
     if (!byAppearance && filters.workspace) where.push(Prisma.sql`workspace_json = ${stringifyJson({ machineId: filters.workspace.machineId, path: filters.workspace.path })}`);
     if (filters.workspaceId) where.push(Prisma.sql`workspace_id = ${filters.workspaceId}`);
     if (byAppearance) {
-        const appearanceWhere = [Prisma.sql`appearance.comment_id = review_comments.id`];
+        const appearanceWhere = [Prisma.sql`appearance.review_id = ${params.reviewAccess!.reviewId}`];
+        const attachedWhere = [Prisma.sql`review_id = ${params.reviewAccess!.reviewId} AND round_ordinal IS NOT NULL`];
+        if (filters.roundOrdinal) attachedWhere.push(Prisma.sql`round_ordinal = ${filters.roundOrdinal}`);
+        if (filters.runId) attachedWhere.push(Prisma.sql`run_id = ${filters.runId}`);
+        if (filters.sessionId) attachedWhere.push(Prisma.sql`session_id = ${filters.sessionId}`);
+        if (filters.engineId) attachedWhere.push(Prisma.sql`engine_id = ${filters.engineId}`);
+        if (filters.workspace) attachedWhere.push(Prisma.sql`workspace_json = ${stringifyJson({ machineId: filters.workspace.machineId, path: filters.workspace.path })}`);
         if (filters.roundOrdinal) appearanceWhere.push(Prisma.sql`appearance.round_ordinal = ${filters.roundOrdinal}`);
         if (filters.runId) appearanceWhere.push(Prisma.sql`appearance.run_id = ${filters.runId}`);
         if (filters.sessionId) appearanceWhere.push(Prisma.sql`appearance.session_id = ${filters.sessionId}`);
         if (filters.engineId) appearanceWhere.push(Prisma.sql`appearance.reviewer_id = ${filters.engineId}`);
         if (filters.workspace) appearanceWhere.push(Prisma.sql`appearance.machine_id = ${filters.workspace.machineId}`);
-        where.push(Prisma.sql`EXISTS (SELECT 1 FROM review_comment_appearances appearance WHERE ${Prisma.join(appearanceWhere, ' AND ')})`);
+        where.push(Prisma.sql`id IN (SELECT id FROM review_comments WHERE ${Prisma.join(attachedWhere, ' AND ')}
+            UNION SELECT appearance.comment_id FROM review_comment_appearances appearance WHERE ${Prisma.join(appearanceWhere, ' AND ')})`);
     } else {
         if (filters.sessionId) where.push(Prisma.sql`session_id = ${filters.sessionId}`);
         if (filters.runId) where.push(Prisma.sql`run_id = ${filters.runId}`);
@@ -1066,6 +1078,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                             id: comment.id,
                             accountId: comment.accountId,
                             reviewId: comment.reviewId,
+                            roundOrdinal: comment.roundOrdinal,
                             projectId: comment.projectId ?? null,
                             workspaceJson: stringifyOptionalJson(comment.workspace),
                             findingIdentity: comment.findingIdentity,
@@ -1186,6 +1199,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     const updated = await tx.$executeRaw(Prisma.sql`
                         UPDATE review_comments
                         SET review_id = ${comment.reviewId ?? null},
+                            round_ordinal = ${comment.roundOrdinal ?? null},
                             project_id = ${comment.projectId ?? null},
                             workspace_json = ${stringifyOptionalJson(comment.workspace)},
                             finding_identity = ${comment.findingIdentity ?? null},
@@ -1225,14 +1239,14 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                 } else {
                     await tx.$executeRaw(Prisma.sql`
                         INSERT INTO review_comments (
-                            id, account_id, review_id, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
+                            id, account_id, review_id, round_ordinal, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
                             finding_id, thread_id, parent_comment_id, state, flags_json, anchor_json,
                             anchor_file_path, anchor_folder_path, snapshot_envelope_json, body_envelope_json,
                             body_version, author_json, edits_json, dispositions_json, evidence_json,
                             transitions_json, fingerprint_json, linked_refs_json, suggested_fix_json,
                             metadata_json, tombstone_json, server_revision, created_at, updated_at
                         ) VALUES (
-                            ${comment.id}, ${comment.accountId}, ${comment.reviewId ?? null}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
+                            ${comment.id}, ${comment.accountId}, ${comment.reviewId ?? null}, ${comment.roundOrdinal ?? null}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
                             ${comment.findingIdentity ?? null}, ${comment.findingSeverity ?? null}, ${comment.reviewedFingerprint ?? null}, ${comment.reviewTriageStatus ?? null}, ${comment.workspaceId ?? null},
                             ${comment.sessionId ?? null}, ${comment.runId ?? null}, ${comment.engineId ?? null},
                             ${comment.findingId ?? null}, ${comment.threadId}, ${comment.parentCommentId ?? null},

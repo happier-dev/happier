@@ -162,7 +162,8 @@ describe('Review comment audience through authenticated HTTP', () => {
             if (mode === 'e2ee') {
                 const events = await db.reviewCommentEvent.findMany({ where: { commentId: rows[0]!.id } });
                 expect(events).toHaveLength(1);
-                const stored = JSON.stringify({ rows, events });
+                const stored = JSON.stringify({ rows, events }, (_key, value: unknown) =>
+                    typeof value === 'bigint' ? value.toString() : value);
                 expect(stored).not.toContain('Recipient private finding');
                 expect(stored).not.toContain('private.ts');
             }

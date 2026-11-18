@@ -22,6 +22,20 @@ const create = { workspace, anchor: { kind: 'file' as const, filePath: 'a.ts' },
   metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'] } };
 
 describe('canonical Review Comment client transport', () => {
+  it.each([[], ['selected-1', 'selected-2']].map(commentIds => ({ commentIds })))('preserves selected finding sets through scalar HTTP query encoding: $commentIds', async ({ commentIds }) => {
+    let queryString = '';
+    await executeReviewCommentTransportV1({ actionId: 'reviews.comments.list', input: { workspace, commentIds },
+      context, actor, randomBytes: length => new Uint8Array(length), request: async ({ query }) => {
+        const search = new URLSearchParams();
+        for (const [key, value] of Object.entries(query ?? {})) {
+          if (Array.isArray(value)) for (const item of value) search.append(key, String(item));
+          else search.append(key, String(value));
+        }
+        queryString = search.toString();
+        return { items: [], cursor: null };
+      } });
+    expect(JSON.parse(new URLSearchParams(queryString).get('commentIds')!)).toEqual(commentIds);
+  });
   it('opens only the demanded encrypted candidate page, keeping continuation when no private filter matches', async () => {
     const stored = (id: string, filePath: string): StoredReviewCommentV1 => {
       const comment: ReviewCommentV1 = { v: 1, id, accountId: context.accountId, workspace,

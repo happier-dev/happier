@@ -130,6 +130,7 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         do {
             const page = parseClassic(z.strictObject({ items: z.array(sourceSchema), cursor: z.nullable(z.string().check(z.minLength(1))) }), await params.request({ method: 'get', path: '/v1/reviews/comments', query: {
                     ...publicFilters, limit: parsed.limit, stored: true,
+                    ...(parsed.commentIds !== undefined ? { commentIds: JSON.stringify(parsed.commentIds) } : {}),
                     ...(publicFilters.workspace ? { workspace: JSON.stringify(publicFilters.workspace) } : {}),
                     ...(serverCursor ? { cursor: serverCursor } : {}),
                 } }));

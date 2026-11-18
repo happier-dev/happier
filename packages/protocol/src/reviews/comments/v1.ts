@@ -22,11 +22,14 @@ export const ReviewCommentScopeV1Schema = lazyZodSchema(() => z.strictObject({
 export type ReviewCommentScopeV1 = z.infer<typeof ReviewCommentScopeV1Schema>;
 
 export function validateReviewCommentScopeV1(
-  value: { reviewId?: string; projectId?: string; workspace?: ReviewCommentWorkspaceV1 },
+  value: { reviewId?: string; roundOrdinal?: number; projectId?: string; workspace?: ReviewCommentWorkspaceV1 },
   ctx: z.core.$RefinementCtx,
 ): void {
   if (!value.reviewId && !value.projectId && !value.workspace) {
     ctx.addIssue({ code: "custom", path: ['workspace'], message: 'A Project or machine workspace is required' });
+  }
+  if (value.roundOrdinal !== undefined && !value.reviewId) {
+    ctx.addIssue({ code: 'custom', path: ['roundOrdinal'], message: 'A round attachment requires its Review' });
   }
 }
 
@@ -394,6 +397,8 @@ export const ReviewCommentV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)),
   accountId: z.string().check(z.minLength(1)),
   ...ReviewCommentScopeV1Schema.shape,
+  /** Direct authored attachment; producing engine findings use their real appearances. */
+  roundOrdinal: z.optional(z.number().check(z.int(), z.positive())),
   /** Read projection of the canonical appearance relation, never client-authored content. */
   appearances: z.optional(z.array(ReviewCommentAppearanceInputV1Schema)),
   scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
@@ -439,6 +444,7 @@ export type ReviewCommentV1 = z.infer<typeof ReviewCommentV1Schema>;
 
 export const ReviewCommentCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ...ReviewCommentScopeV1Schema.shape,
+  roundOrdinal: ReviewCommentV1Schema.shape.roundOrdinal,
   appearance: z.optional(ReviewCommentAppearanceInputV1Schema),
   scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
   extensions: z.optional(ReviewFindingExtensionsSchema),

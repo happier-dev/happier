@@ -59,6 +59,28 @@ function listInput<T extends Record<string, unknown>>(
 }
 
 describe("review comment list queries", () => {
+    it('pages only selected finding identities and binds the cursor to the selection', async () => {
+        const { operations } = createHarness();
+        const created: string[] = [];
+        for (const id of ['selected-1', 'selected-2', 'unselected']) {
+            const result = await operations.create({ accountId: 'account-1', actor: userActor, input: {
+                projectId: 'project-1', anchor: { kind: 'file', filePath: id }, snapshot: textSnapshot([id]),
+                body: id, authorIntent: 'open', clientMutationId: id,
+            } });
+            created.push(result.comment.id);
+        }
+        const selection = { projectId: 'project-1', commentIds: created.slice(0, 2), limit: 1 };
+        expect((await operations.list({ accountId: 'account-1', input: listInput({ ...selection, commentIds: [] }) })).items).toEqual([]);
+        const first = await operations.list({ accountId: 'account-1', input: listInput(selection) });
+        expect(first.items.map(comment => comment.id)).toEqual([created[1]]);
+        expect(first.cursor).not.toBeNull();
+        const second = await operations.list({ accountId: 'account-1', input: listInput({ ...selection, cursor: first.cursor! }) });
+        expect(second.items.map(comment => comment.id)).toEqual([created[0]]);
+        expect(second.cursor).toBeNull();
+        await expect(operations.list({ accountId: 'account-1', input: listInput({ ...selection,
+            commentIds: [created[2]], cursor: first.cursor! }) })).rejects.toMatchObject({ code: 'review_comment_invalid_filter' });
+    });
+
     it("paginates comments with a stable cursor across identical updatedAt values", async () => {
         const { operations } = createHarness();
         const created = [];

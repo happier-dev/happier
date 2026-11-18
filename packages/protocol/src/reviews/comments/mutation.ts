@@ -208,6 +208,7 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
     const state = mutation.actionId === 'reviews.comments.create' && mutation.input.authorIntent === 'open' ? 'open' : 'proposed';
     const structural = ReviewCommentStructuralV1Schema.parse({
       v: 1, id, accountId: params.accountId, reviewId: parent?.reviewId ?? input.reviewId, projectId: input.projectId, workspace: input.workspace,
+      roundOrdinal: mutation.actionId === 'reviews.comments.create' ? mutation.input.roundOrdinal : parent?.roundOrdinal,
       ...(mutation.actionId === 'reviews.comments.create' ? {
         workspaceId: mutation.input.workspaceId,
         sessionId: params.actor.kind === 'workflow' ? mutation.input.sessionId ?? params.workflowOriginSessionId : mutation.input.sessionId,

@@ -495,6 +495,13 @@ function parseReviewCommentRouteQuery(query: unknown): unknown {
     }
     if (decoded.includeHistory === "true") decoded.includeHistory = true;
     if (decoded.includeHistory === "false") decoded.includeHistory = false;
+    if (typeof decoded.commentIds === "string") {
+        try {
+            decoded.commentIds = JSON.parse(decoded.commentIds) as unknown;
+        } catch {
+            throw new ReviewCommentOperationError("review_comment_invalid_filter", "Review comment selection must be canonical JSON");
+        }
+    }
     if (typeof decoded.limit === "string" && /^\d+$/.test(decoded.limit)) decoded.limit = Number(decoded.limit);
     if (typeof decoded.roundOrdinal === "string" && /^\d+$/.test(decoded.roundOrdinal)) decoded.roundOrdinal = Number(decoded.roundOrdinal);
     if (decoded["states[]"] !== undefined) {

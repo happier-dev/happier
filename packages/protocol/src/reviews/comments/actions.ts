@@ -171,6 +171,7 @@ export const REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1 = 200;
 
 export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   reviewId: ReviewCommentScopeV1Schema.shape.reviewId,
+  commentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   roundOrdinal: z.optional(z.number().check(z.int(), z.positive())),
   workspace: z.optional(ReviewCommentWorkspaceV1Schema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),

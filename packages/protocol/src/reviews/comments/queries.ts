@@ -2,10 +2,11 @@ import type { ReviewCommentListRequestV1 } from './actions.js';
 import type { ReviewCommentActorRefV1 } from './v1.js';
 import type { ReviewCommentV1 } from './v1.js';
 
-export type ReviewCommentQueryRecordV1 = Pick<ReviewCommentV1, 'reviewId' | 'appearances' | 'workspace' | 'workspaceId' | 'projectId' | 'sessionId' | 'runId' | 'engineId' | 'state' | 'flags' | 'tombstone' | 'author' | 'metadata' | 'id' | 'updatedAt' | 'serverRevision'> & Readonly<{ anchor: Readonly<{ kind?: ReviewCommentV1['anchor']['kind']; filePath?: string; folderPath?: string }> }>;
+export type ReviewCommentQueryRecordV1 = Pick<ReviewCommentV1, 'reviewId' | 'roundOrdinal' | 'appearances' | 'workspace' | 'workspaceId' | 'projectId' | 'sessionId' | 'runId' | 'engineId' | 'state' | 'flags' | 'tombstone' | 'author' | 'metadata' | 'id' | 'updatedAt' | 'serverRevision'> & Readonly<{ anchor: Readonly<{ kind?: ReviewCommentV1['anchor']['kind']; filePath?: string; folderPath?: string }> }>;
 
 export type ReviewCommentCanonicalFilters = Readonly<{
     reviewId?: string;
+    commentIds?: readonly string[];
     roundOrdinal?: number;
     projectId?: string;
     workspace?: ReviewCommentV1["workspace"];
@@ -29,6 +30,7 @@ export function canonicalReviewCommentListFilters(
     const normalized = normalizeReviewCommentListFilters(filters);
     return {
         reviewId: normalized.reviewId,
+        commentIds: normalized.commentIds === undefined ? undefined : [...new Set(normalized.commentIds)].sort(),
         roundOrdinal: normalized.roundOrdinal,
         projectId: normalized.projectId,
         workspace: normalized.workspace ? { machineId: normalized.workspace.machineId, path: normalized.workspace.path } : undefined,
@@ -90,6 +92,7 @@ export function matchesReviewCommentListFilters(
     filters: ReviewCommentListRequestV1,
 ): boolean {
     const normalized = normalizeReviewCommentListFilters(filters);
+    if (normalized.commentIds !== undefined && !normalized.commentIds.includes(comment.id)) return false;
     if (normalized.reviewId && comment.reviewId !== normalized.reviewId) return false;
     const appearanceScope = comment.reviewId && (normalized.roundOrdinal || normalized.runId || normalized.sessionId || normalized.engineId);
     if (normalized.roundOrdinal && !comment.reviewId) return false;
@@ -98,7 +101,14 @@ export function matchesReviewCommentListFilters(
     if (!appearanceScope && normalized.workspace && (comment.workspace?.machineId !== normalized.workspace.machineId
         || comment.workspace?.path !== normalized.workspace.path)) return false;
     if (appearanceScope) {
-        if (!comment.appearances?.some(appearance => (!normalized.runId || appearance.runId === normalized.runId)
+        const directlyAttached = comment.roundOrdinal !== undefined
+            && (!normalized.roundOrdinal || comment.roundOrdinal === normalized.roundOrdinal)
+            && (!normalized.runId || comment.runId === normalized.runId)
+            && (!normalized.sessionId || comment.sessionId === normalized.sessionId)
+            && (!normalized.engineId || comment.engineId === normalized.engineId)
+            && (!normalized.workspace || (comment.workspace?.machineId === normalized.workspace.machineId
+                && comment.workspace.path === normalized.workspace.path));
+        if (!directlyAttached && !comment.appearances?.some(appearance => (!normalized.runId || appearance.runId === normalized.runId)
             && (!normalized.roundOrdinal || appearance.roundOrdinal === normalized.roundOrdinal)
             && (!normalized.sessionId || appearance.sessionId === normalized.sessionId)
             && (!normalized.engineId || appearance.reviewerId === normalized.engineId)

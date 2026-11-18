@@ -63,7 +63,7 @@ describe('Review resource content binding', () => {
 
   it('seals new records and events under the same Review key through prepare and commit', async () => {
     const resource = resourceCodec();
-    const input = { reviewId: 'review-1', workspace, anchor: comment.anchor, snapshot: comment.snapshot,
+    const input = { reviewId: 'review-1', roundOrdinal: 2, workspace, anchor: comment.anchor, snapshot: comment.snapshot,
       body: comment.body, clientMutationId: 'resource-create', authorIntent: 'open' };
     let sequence = 0;
     const actor = { kind: 'user' as const, userId: 'recipient-account' };
@@ -100,7 +100,7 @@ describe('Review resource content binding', () => {
           structural: record.structural, sensitiveEnvelope: commit.records[index]!.sensitiveEnvelope })), replayed: false, failed: [] };
       },
     });
-    expect(result).toMatchObject({ comment: { reviewId: 'review-1', accountId: 'review-owner-account', body: comment.body, author: actor } });
+    expect(result).toMatchObject({ comment: { reviewId: 'review-1', roundOrdinal: 2, accountId: 'review-owner-account', body: comment.body, author: actor } });
     expect(serverBytes).not.toContain(comment.body);
     expect(serverBytes).not.toContain(comment.anchor.filePath);
   });

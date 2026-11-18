@@ -56,6 +56,19 @@ function textSnapshot() {
 }
 
 describe("review comment routes", () => {
+    it('decodes selected finding sets without treating an empty selection as all findings', async () => {
+        const { app } = createHarness();
+        const create = getRouteHandler(app, 'POST', '/v1/reviews/comments');
+        const created = await create({ userId: 'user-1', body: { projectId: 'project-1',
+            anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+            body: 'Selected finding', authorIntent: 'open', clientMutationId: 'selected-route' } }, createReplyStub());
+        const id = ReviewCommentCreateResponseV1Schema.parse(created).comment.id;
+        const list = getRouteHandler(app, 'GET', '/v1/reviews/comments');
+        expect(await list({ userId: 'user-1', query: { projectId: 'project-1', commentIds: JSON.stringify([id]) } }, createReplyStub()))
+            .toMatchObject({ items: [{ id }] });
+        expect(await list({ userId: 'user-1', query: { projectId: 'project-1', commentIds: '[]' } }, createReplyStub()))
+            .toMatchObject({ items: [], cursor: null });
+    });
     it("registers list/get/create/edit/transition/bulkTransition/redact routes with authenticated prehandlers", () => {
         const { app } = createHarness();
 

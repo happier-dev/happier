@@ -161,6 +161,13 @@ describe('ReviewCommentV1Schema', () => {
     })).toThrow();
   });
 
+  it('requires the owning Review for a direct round attachment', () => {
+    const input = { reviewId: 'review', roundOrdinal: 2, anchor: { kind: 'file', filePath: 'a.ts' },
+      snapshot: { kind: 'none', capturedAt: 1 }, body: 'A human comment', clientMutationId: 'human-round' };
+    expect(ReviewCommentCreateRequestV1Schema.safeParse(input).success).toBe(true);
+    expect(ReviewCommentCreateRequestV1Schema.safeParse({ ...input, reviewId: undefined, projectId: 'project' }).success).toBe(false);
+  });
+
   it('authors issue-linked proposals as a first-class exact entry ref', () => {
     const issueId = createReviewCommentLinkedIssueIdV1({
       source: { pluginId: 'happier.scm.github', localId: 'github' },

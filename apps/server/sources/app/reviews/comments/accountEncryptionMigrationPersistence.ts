@@ -21,6 +21,7 @@ export type ReviewCommentMigrationStorageCommentRow = {
     id: string;
     account_id: string;
     review_id?: string | null;
+    round_ordinal?: number | bigint | null;
     project_id: string | null;
     workspace_json?: string | null;
     finding_identity?: string | null;
@@ -185,6 +186,7 @@ export function buildReviewCommentStructuralFromStorageRow(
         id: row.id,
         accountId: row.account_id,
         reviewId: row.review_id ?? undefined,
+        roundOrdinal: row.round_ordinal == null ? undefined : toNumber(row.round_ordinal),
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         findingIdentity: row.finding_identity ?? undefined,
@@ -450,6 +452,8 @@ export function buildReviewCommentCanonicalStorageValues(params: Readonly<{
 const COMMENT_MIGRATION_SELECT_COLUMNS = [
     "id",
     "account_id",
+    "review_id",
+    "round_ordinal",
     "project_id",
     "workspace_json",
     "finding_identity",
@@ -562,8 +566,7 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                 SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comment_events
                 WHERE account_id = ${accountId}
-                    AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
-                ORDER BY comment_id ASC, server_revision ASC, event_id ASC
+                        ORDER BY comment_id ASC, server_revision ASC, event_id ASC
             `);
             return buildReviewCommentAccountEncryptionMigrationInventory({
                 accountId,

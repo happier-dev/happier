@@ -21,6 +21,10 @@ import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema
 import Ajv from 'ajv';
 
 describe('review comment operation contracts', () => {
+  it('accepts an explicit selected finding set, including an empty selection', () => {
+    expect(ReviewCommentListRequestV1Schema.parse({ reviewId: 'review', commentIds: [] }).commentIds).toEqual([]);
+    expect(ReviewCommentListRequestV1Schema.parse({ reviewId: 'review', commentIds: ['selected'] }).commentIds).toEqual(['selected']);
+  });
   it('matches native publication targets by the exact service without accepting account or credential drift', () => {
     const nativeService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
     const entryRef = { sourceId: 'happier.scm.forge.github/triage', kindId: 'pull-request', collisionScope: 'github:17', entryId: '42' };

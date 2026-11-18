@@ -17,6 +17,35 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await harness?.close(); });
 
+it('reloads a human comment and its reply in their Review round without inventing engine appearances', async () => {
+    const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const review = await db.artifact.create({ data: { id: 'human-round-review', accountId: owner.id,
+        header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+    const store = createSqlReviewCommentStore();
+    let id = 0;
+    const operations = createReviewCommentOperations(store, { now: () => 1000, createId: prefix => `${prefix}-human-${++id}` });
+    const principal = { accountId: owner.id, actor: { kind: 'user' as const, userId: owner.id },
+        reviewAccess: { reviewId: review.id, ownerAccountId: owner.id, level: 'admin' as const, encryptionMode: 'plain' as const } };
+    const input = { reviewId: review.id, anchor: { kind: 'line' as const, filePath: 'a.ts', line: 2 },
+        snapshot: { kind: 'none' as const, capturedAt: 1 }, body: 'Explain this change',
+        authorIntent: 'open' as const, clientMutationId: 'human-control' };
+    const control = await operations.create({ ...principal, input });
+    expect((await operations.list({ ...principal, input: { reviewId: review.id, states: [], includeHistory: true, limit: 50 } })).items)
+        .toMatchObject([{ id: control.comment.id }]);
+    const created = await operations.create({ ...principal, input: { ...input, roundOrdinal: 2, clientMutationId: 'human-round' } });
+    const reply = await operations.reply({ ...principal, input: { reviewId: review.id, parentCommentId: created.comment.id,
+        expectedParentServerRevision: 1, body: 'Here is the reason', clientMutationId: 'human-reply' } });
+    const reload = (roundOrdinal: number) => createReviewCommentOperations(createSqlReviewCommentStore()).list({ ...principal,
+        input: { reviewId: review.id, roundOrdinal, states: [], includeHistory: true, limit: 50 } });
+    expect((await reload(2)).items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: created.comment.id, roundOrdinal: 2, body: 'Explain this change' }),
+        expect.objectContaining({ id: reply.comment.id, roundOrdinal: 2, body: 'Here is the reason' }),
+    ]));
+    expect((await reload(2)).items).toHaveLength(2);
+    expect((await reload(1)).items).toEqual([]);
+    expect(await store.listAppearances({ reviewId: review.id })).toEqual([]);
+});
+
 it('keeps publication plans private to the publishing Account across Review encryption modes', async () => {
     const publisher = await db.account.create({ data: { encryptionMode: 'plain' } });
     const encryptedOwner = await db.account.create({ data: { encryptionMode: 'e2ee' } });
