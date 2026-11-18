@@ -9,6 +9,12 @@ const modelIdFor = (
 ): string => resolveSessionMessageModel(params).modelId;
 
 describe('resolveSessionMessageModel', () => {
+  it.each(['model', 'default'])('refuses an explicit retained model ref for another Agent target (%s)', modelId => {
+    const ref = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId };
+    expect(() => resolveSessionMessageModel({ metadata: { flavor: 'codex' }, sessionActive: true,
+      modelSelectionInput: ref, nowMs: 42 })).toThrowError(expect.objectContaining({ code: 'model_selection_agent_target_unknown' }));
+  });
+
   it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
     'preserves an explicit current V2 %s source on an active prompt', source => {
       const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {

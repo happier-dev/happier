@@ -1,12 +1,12 @@
 import { SessionAgentTransitionRequestV1Schema } from '../../../sessions/agentTransition.js';
 import { resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult } from '../resultProjection.js';
-import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputAdmissionRejectionCodeV1Schema, derivePluginSessionInputLocalIdV1 } from '../../../sessions/messages/sessionInputAdmission.js';
+import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputAdmissionRejectionCodeV1Schema, derivePluginSessionInputLocalIdV1, stripSessionInputProtectedMeta, SESSION_MESSAGE_PROVENANCE_META_KEY } from '../../../sessions/messages/sessionInputAdmission.js';
 import { resolveSubagentLaunchStructuredSend } from '../../../messages/structured/subagentLaunchV1.js';
 import { resolveSubagentCommandStructuredSend } from '../../../messages/structured/subagentCommandV1.js';
 import { PendingRequestedActionV1Schema } from '../../../sessions/pending/pendingRequestedActionV1.js';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema } from '../../../runtime/input/structuredInputV1.js';
-import { SCM_WALKTHROUGH_QUESTION_META_KEY_V1, SESSION_TOOL_ANSWER_DELIVERY_KIND } from '../../../sessions/messages/sessionMessageMeta.js';
+import { SCM_WALKTHROUGH_QUESTION_META_KEY_V1, SESSION_TOOL_ANSWER_DELIVERY_KIND, SessionMessageMetaSchema } from '../../../sessions/messages/sessionMessageMeta.js';
 import { SessionSendMessageInputSchema, type AdmittedActionInputById } from '../../actionSpecs.js';
 import { ParticipantRecipientRoutingIdentityV1Schema } from '../../../messages/structured/participantMessageV1.js';
 import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
@@ -106,6 +106,8 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
             ? data.providerConnectionId
             : undefined;
           const { permissionModeOverride, sessionInputSource } = sessionMessageSendAdmission;
+          const input = parsed.data as AdmittedActionInputById['session.message.send'];
+          const modelSelection = 'message' in input && 'modelSelection' in input ? input.modelSelection : undefined;
           const retainedLocalId = actionCaller.kind === 'plugin'
             ? null
             : resolveSessionMessageSendLocalId(data, ctx);
@@ -121,9 +123,23 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
           );
           const toolAnswerDelivery = actionCaller.kind === 'plugin' && parsedToolAnswerDelivery?.success
             ? parsedToolAnswerDelivery.data : undefined;
-          const messageMeta = structuredSubagentInput || data.structuredInput !== undefined
+          const parsedAuthoredMeta = data.messageMeta === undefined ? undefined : SessionMessageMetaSchema.safeParse(data.messageMeta);
+          if (parsedAuthoredMeta && !parsedAuthoredMeta.success) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+          const authoredMeta = parsedAuthoredMeta?.success ? stripSessionInputProtectedMeta(parsedAuthoredMeta.data) : undefined;
+          if (authoredMeta) {
+            delete authoredMeta[SESSION_MESSAGE_PROVENANCE_META_KEY];
+            // Configuration reaches the effect only through the explicit fields
+            // already checked by Action admission, never through authored context.
+            delete authoredMeta.permissionMode;
+            delete authoredMeta.model;
+            delete authoredMeta.modelSelectionV1;
+          }
+          const messageMeta = authoredMeta || structuredSubagentInput || data.structuredInput !== undefined
             || data.forgeEvidence !== undefined || toolAnswerDelivery || ctx.sessionMessageScmWalkthroughQuestion !== undefined
             ? {
+                ...authoredMeta,
                 ...(structuredSubagentInput
                   ? structuredSubagentInput.messageMeta
                   : data.structuredInput !== undefined
@@ -149,6 +165,7 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
               permissionModes: ctx.externalActionCredential.grant.permissionModes,
             } } : {}),
             sessionId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: structuredSubagentInput?.text ?? String(data.message ?? ''),
             ...(data.recipient === undefined ? {} : {
               recipient: ParticipantRecipientRoutingIdentityV1Schema.parse(data.recipient),

@@ -11489,6 +11489,11 @@ The operation owns execution cancellation after admission. Scheduler-owned
 wakes retain their scheduler lifetime, and explicit operation cancellation
 continues to stop admitted work.
 
+Effective configuration travels through admitted Action fields. The canonical
+full `modelSelection` preserves Team source and binding revision; it cannot be
+combined with the legacy flat model aliases. Model grants are enforced before
+dispatch, and metadata cannot override that admitted selection.
+
 The shared native power owner inspects vendor power before Start or Resume.
 Confirmed-running resources skip native power and retain the existing guest
 daemon startup path. A stored running observation cannot hide a vendor-side stop.

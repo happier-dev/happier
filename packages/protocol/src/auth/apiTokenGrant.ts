@@ -356,6 +356,13 @@ export function isModelRefGrantedV1(constraints: CallerInputConstraintsV1, ref: 
   return !isNativeAutomaticModelSelectionInputV1(accountOrNative)
     && constraints.models.some((candidate) => modelKey(candidate) === modelKey(accountOrNative));
 }
+/** Intersect every authenticated caller constraint using the canonical model membership rule. */
+export function isModelRefGrantedByConstraintsV1(
+  constraints: readonly (CallerInputConstraintsV1 | undefined)[],
+  ref: Parameters<typeof isModelRefGrantedV1>[1],
+): boolean {
+  return constraints.every(constraint => constraint === undefined || isModelRefGrantedV1(constraint, ref));
+}
 /** Keep a permitted selection, or use the first permitted model in grant order. */
 export function resolveEffectiveApiTokenModelRefV1(
   constraints: Pick<CallerInputConstraintsV1, 'models'>,

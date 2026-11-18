@@ -2485,6 +2485,7 @@ export type ActionExecutorDeps = Readonly<{
     permissionModeOverride?: string;
     modelOverride?: string | null;
     providerConnectionId?: ProviderConnectionId | null;
+    modelSelection?: import('../../providers/selection/v2.js').SessionModelSelection;
     reply?: 'none' | 'wait' | 'return';
     /** Exact human-selected return destination; the input owner attests the requester. */
     returnToSessionId?: string;

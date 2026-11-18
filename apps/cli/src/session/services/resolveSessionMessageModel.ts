@@ -3,7 +3,7 @@ import {
 } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ModelSelectionApplyPolicy } from '@happier-dev/protocol';
-import { isNativeAutomaticModelSelectionInputV1, ProviderBoundModelRefSchema, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { isNativeAutomaticModelSelectionInputV1, ProviderBoundModelRefSchema, type ProviderBoundModelRef, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { SessionModelSelectionV2Schema, isSessionModelRefSourceBound, type SessionModelRefV2, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionModelSelectionFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
@@ -28,6 +28,7 @@ function hasPersistedModelIntent(metadata: unknown): boolean {
 /** Resolve structured session identity before projecting any providerless compatibility field. */
 export type SessionMessageModelSelectionInput = Readonly<{
   providerConnectionId?: string | null;
+  agentTargetKey?: ProviderBoundModelRef['agentTargetKey'];
   modelId: string | null;
 }> | SessionModelRefV2;
 
@@ -52,6 +53,14 @@ export function resolveSessionMessageModel(params: Readonly<{
   ) {
     return { modelId: '', selection: null };
   }
+  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
+  const agentTargetKey = backendTarget ? buildBackendTargetKeyV2(backendTarget) : null;
+
+  if (params.modelSelectionInput !== undefined && !('source' in params.modelSelectionInput)
+    && params.modelSelectionInput.agentTargetKey !== undefined
+    && params.modelSelectionInput.agentTargetKey !== agentTargetKey) {
+    throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+  }
   // Every sender shares the native reset semantics before ambient Provider
   // completion. A reset has no per-message structured ref; an explicitly named
   // Provider can still publish a literal model called `default`.
@@ -60,9 +69,6 @@ export function resolveSessionMessageModel(params: Readonly<{
     && isNativeAutomaticModelSelectionInputV1(params.modelSelectionInput)) {
     return { modelId: '', selection: null };
   }
-  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
-  const agentTargetKey = backendTarget ? buildBackendTargetKeyV2(backendTarget) : null;
-
   if (params.modelSelectionInput !== undefined) {
     if (!agentTargetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');

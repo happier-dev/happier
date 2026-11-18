@@ -17,7 +17,7 @@ import type { ActionExecuteFailure } from './types.js';
 import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
-import { isModelRefGrantedV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
+import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
 import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
 import type { SessionModelRefV2 } from '../../providers/selection/v2.js';
@@ -87,8 +87,7 @@ export function refuseExecutionRunStartOutsideCallerModelsV1(
   const constraints = [context.callerInputConstraints, context.externalActionCredential?.grant]
     .filter((value): value is CallerInputConstraintsV1 => value !== undefined && value.models !== null);
   if (constraints.length === 0) return null;
-  const ref = readExecutionRunStartModelRefV1(request);
-  if (constraints.every((constraint) => isModelRefGrantedV1(constraint, ref))) return null;
+  if (isModelRefGrantedByConstraintsV1(constraints, readExecutionRunStartModelRefV1(request))) return null;
   return { ok: false, errorCode: 'model_not_granted', error: 'model_not_granted',
     details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
 }

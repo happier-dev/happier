@@ -21,6 +21,8 @@ import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
 import { resolveActionBackendTargetSelection } from '../../resolveActionBackendTargetSelection.js';
 import { SESSION_SEND_CLI_PROJECTION } from './sendCli.js';
 import { asProtocolZod } from '../../../plugins/actions/internalProtocolZodAdapter.js';
+import { SessionUserMessageSendMetaSchema } from '../../../sessions/userMessageRpc.js';
+import { SessionMessageModelSelectionV1Schema } from '../../../providers/selection/v1.js';
 
 
 export function validateAgentIdAndBackendTargetKeySelection(
@@ -68,6 +70,8 @@ export const SessionSendUserTextInputFieldsSchema = lazyZodSchema(() => z.strict
   message: z.string(),
   /** Raw Composer context; the target's existing input owner admits it before commit. */
   structuredInput: z.optional(RawIngressStructuredInputV1Schema),
+  /** Authored per-message configuration; trusted input provenance is stamped by the receiver. */
+  messageMeta: z.optional(SessionUserMessageSendMetaSchema),
   requestedAction: z.optional(PendingRequestedActionV1Schema),
   /**
    * The caller-retained stable identity for this durable input. Resubmitting
@@ -84,6 +88,7 @@ export const SessionSendUserTextInputFieldsSchema = lazyZodSchema(() => z.strict
   permissionModeOverride: z.optional(z.string().check(z.trim(), z.minLength(1))),
   modelOverride: z.optional(z.union([z.string().check(z.trim(), z.minLength(1)), z.null()])),
   providerConnectionId: z.optional(z.nullable(ProviderConnectionIdSchema)),
+  modelSelection: z.optional(SessionMessageModelSelectionV1Schema),
   wait: z.optional(z.boolean()),
   reply: z.optional(z.enum(['none', 'wait', 'return'])),
   /** Exact destination for a person's Ask; never an Agent causal-turn assertion. */
@@ -95,6 +100,9 @@ export function validateSessionSendProviderSelection(
   value: z.infer<typeof SessionSendUserTextInputFieldsSchema>,
   ctx: z.core.$RefinementCtx,
 ): void {
+  if (value.modelSelection !== undefined && (value.modelOverride !== undefined || value.providerConnectionId !== undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['modelSelection'], message: 'Full model selection and flat model aliases cannot be combined' });
+  }
   if (value.requestedAction?.kind === 'recover_execution_run' && value.recipient?.kind !== 'execution_run') {
     ctx.addIssue({ code: 'custom', path: ['recipient'], message: 'Execution Run recovery requires an exact Run recipient' });
   }
@@ -180,6 +188,11 @@ export const SessionSendMessageInputSchema = lazyZodSchema(() => z.union([
   SessionSendSubagentLaunchPluginInputV1Schema,
   SessionSendSubagentCommandInputSchema,
 ]));
+const sessionSendMessageToolInputSchema = lazyZodSchema(() => z.union([
+  z.omit(SessionSendUserTextInputFieldsSchema, { messageMeta: true }).check(z.superRefine(requireSessionInputContent), z.superRefine(validateSessionSendProviderSelection)),
+  SessionSendSubagentLaunchPluginInputV1Schema,
+  SessionSendSubagentCommandInputSchema,
+]));
 export type SessionMessageSendAuthoredInput = z.infer<typeof SessionSendMessageInputSchema>;
 
 export const SessionMessageReplyInputSchema = lazyZodSchema(() => z.strictObject({
@@ -202,7 +215,30 @@ export const SessionExchangeControlInputSchema = lazyZodSchema(() => sessionExch
 }));
 export const SessionExchangeControlPublicInputSchema = lazyZodSchema(() => sessionExchangeControlInputArms({}));
 
-function createSessionMessageActionSpecs() {
+function createSessionMessageActionSpecs(): readonly [
+  PreNormalizedActionSpec & {
+    readonly id: 'session.message.send';
+    readonly inputSchema: typeof SessionSendMessageInputSchema;
+    readonly outputSchema: typeof SessionMessageSendActionResultV1Schema;
+    readonly surfaceBindings: {
+      readonly agent: { readonly inputSchema: typeof sessionSendMessageToolInputSchema };
+      readonly mcp: { readonly inputSchema: typeof sessionSendMessageToolInputSchema };
+      readonly api: { readonly inputSchema: typeof SessionSendMessagePublicInputSchema; readonly outputSchema: typeof SessionMessageSendActionResultV1Schema };
+      readonly plugin: { readonly inputSchema: typeof SessionSendMessagePluginInputV1Schema; readonly outputSchema: typeof SessionMessageSendActionResultV1Schema };
+    };
+  },
+  PreNormalizedActionSpec & { readonly id: 'session.message.reply'; readonly inputSchema: typeof SessionMessageReplyInputSchema; readonly outputSchema: typeof SessionMessageReplyMutationResultV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'discussion.pass'; readonly inputSchema: typeof DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.pass']; readonly outputSchema: typeof DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.pass'] },
+  PreNormalizedActionSpec & {
+    readonly id: 'session.exchange.control';
+    readonly inputSchema: typeof SessionExchangeControlInputSchema;
+    readonly outputSchema: typeof AutonomousExchangeStatusV1Schema;
+    readonly surfaceBindings: {
+      readonly api: { readonly inputSchema: typeof SessionExchangeControlPublicInputSchema; readonly outputSchema: typeof AutonomousExchangeStatusV1Schema };
+      readonly plugin: { readonly inputSchema: typeof SessionExchangeControlPublicInputSchema; readonly outputSchema: typeof AutonomousExchangeStatusV1Schema };
+    };
+  },
+] {
   return Object.freeze([
   {
     id: 'session.message.send', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
@@ -256,6 +292,8 @@ function createSessionMessageActionSpecs() {
     inputSchema: SessionSendMessageInputSchema,
     cli: { ...SESSION_SEND_CLI_PROJECTION, wholeInputSchema: SessionSendMessagePublicInputSchema },
     surfaceBindings: {
+      agent: { inputSchema: sessionSendMessageToolInputSchema },
+      mcp: { inputSchema: sessionSendMessageToolInputSchema },
       api: {
         inputSchema: SessionSendMessagePublicInputSchema,
         outputSchema: SessionMessageSendActionResultV1Schema,

@@ -25,6 +25,100 @@ function context(ids: string[], sessions = ['s1']): ActionExecutorContext {
 }
 
 describe('ActionExecutor API token grant admission', () => {
+  it.each([
+    { credentialRestricted: false, hostRestricted: false },
+    { credentialRestricted: true, hostRestricted: false },
+    { credentialRestricted: false, hostRestricted: true },
+    { credentialRestricted: true, hostRestricted: true },
+  ])('admits a full Team message selection only when both authenticated constraints allow it: %j', async ({ credentialRestricted, hostRestricted }) => {
+    const delivered: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
+    const executor = createActionExecutor({ sessionSendMessage: async args => {
+      delivered.push(args);
+      return { status: 'accepted', localId: 'team-context' };
+    } });
+    const base = context(['session.message.send']);
+    const credential = base.externalActionCredential;
+    if (!credential) throw new Error('Expected credential fixture');
+    const selection = { v: 2, updatedAt: 1234, ref: { source: 'team_resource',
+      resourceId: 'team-model', teamId: 'team-1', expectedResourceRevision: 7,
+      deliveryMode: 'vendor-native', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'desired-model' } };
+    const restrictedModels = [{ agentTargetKey: 'agent:happier.agent.claude/claude',
+      providerConnectionId: null, modelId: 'desired-model' }];
+    const ctx = { ...base, callerInputConstraints: { models: hostRestricted ? restrictedModels : null, permissionModes: null },
+      externalActionCredential: { ...credential, grant: { ...credential.grant,
+        models: credentialRestricted ? restrictedModels : null } } };
+    const result = await executor.execute('session.message.send', { sessionId: 's1', message: 'Team prompt',
+      localId: 'team-context', reply: 'none', modelSelection: selection }, ctx);
+    if (credentialRestricted || hostRestricted) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(delivered).toHaveLength(0);
+      return;
+    }
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'team-context' } });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatchObject({ modelSelection: selection, authoredInput: { modelSelection: selection } });
+  });
+
+  it('spends full Team model admission once across prepared dispatch', async () => {
+    const delivered: unknown[] = [];
+    const executor = createActionExecutor({ sessionSendMessage: async args => {
+      delivered.push(args);
+      return { status: 'accepted', localId: 'prepared-team' };
+    } });
+    const ctx = context(['session.message.send']);
+    const input = { sessionId: 's1', message: 'Team prompt', localId: 'prepared-team', reply: 'none',
+      modelSelection: { v: 2, updatedAt: 1234, ref: { source: 'team_resource', resourceId: 'team-model', teamId: 'team-1',
+        expectedResourceRevision: 7, deliveryMode: 'vendor-native',
+        agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'desired-model' } } };
+    const prepared = await executor.prepare('session.message.send', input, ctx);
+    expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
+    if (prepared.kind !== 'ready' || !ctx.externalActionCredential) throw new Error('Expected prepared message');
+    ctx.externalActionCredential.grant.models = [];
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: { status: 'accepted' } });
+    expect(delivered).toHaveLength(1);
+    expect(await executor.prepare('session.message.send', input, ctx))
+      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' } });
+    expect(delivered).toHaveLength(1);
+  });
+
+  it.each([false, true, 'invalid'] as const)('keeps authored metadata outside admitted configuration with explicit=%s', async explicit => {
+    const delivered: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
+    // The host delivery port is the authenticated transport boundary; admission and metadata parsing stay real.
+    const executor = createActionExecutor({ sessionSendMessage: async args => {
+      delivered.push(args);
+      return { status: 'accepted', localId: 'authored-context' };
+    } });
+    const base = context(['session.message.send']);
+    const credential = base.externalActionCredential;
+    if (!credential) throw new Error('Expected credential fixture');
+    const ctx = { ...base, externalActionCredential: { ...credential, grant: { ...credential.grant,
+      permissionModes: ['read-only' as const], models: [{ agentTargetKey: 'agent:happier.agent.claude/claude',
+        providerConnectionId: null, modelId: 'allowed-model' }] } } };
+    const result = await executor.execute('session.message.send', { sessionId: 's1', message: 'Authored prompt',
+      localId: 'authored-context', reply: 'none',
+      ...(explicit === true ? { permissionModeOverride: 'read-only', modelOverride: 'allowed-model', providerConnectionId: null } : {}),
+      messageMeta: { permissionMode: 'yolo', model: explicit === 'invalid' ? 42 : 'desired-model', modelSelectionV1: { v: 1, updatedAt: 1234,
+        ref: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_ungranted', modelId: 'desired-model' } },
+        displayText: 'Displayed prompt', providerExtra: { choice: 'preserved' } },
+    }, ctx);
+    if (explicit === 'invalid') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(delivered).toHaveLength(0);
+      return;
+    }
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'authored-context' } });
+    expect(delivered).toHaveLength(1);
+    const input = delivered[0]!;
+    expect(input.messageMeta).toMatchObject({ displayText: 'Displayed prompt', providerExtra: { choice: 'preserved' } });
+    expect(input.messageMeta).not.toHaveProperty('permissionMode');
+    expect(input.messageMeta).not.toHaveProperty('model');
+    expect(input.messageMeta).not.toHaveProperty('modelSelectionV1');
+    expect(input.permissionModeOverride).toBe(explicit ? 'read-only' : undefined);
+    expect(input.modelOverride).toBe(explicit ? 'allowed-model' : undefined);
+    expect(input.providerConnectionId).toBe(explicit ? null : undefined);
+    expect(input.authoredInput).toMatchObject({ messageMeta: { modelSelectionV1: { updatedAt: 1234 } } });
+  });
+
   it('binds an operation Environment to its signed root before the original-host transport', async () => {
     const reads: unknown[] = [];
     const executor = createActionExecutor({

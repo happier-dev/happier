@@ -1,3 +1,4 @@
+import { isModelRefGrantedByConstraintsV1 } from '../auth/apiTokenGrant.js';
 import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1 } from './executor/automaticApprovalContinuation.js';
 import { ApprovalRequestDecideInputSchema } from './specs/approvals.js';
 import type { StoredApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
@@ -2932,6 +2933,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const credentialFailure = existingAdmission || sessionTarget && ctx.sessionTargetsV1 && !options?.sessionTargetLeaf
       ? null : await admitCredentialScope(actionId, ctx, admittedInput, hostInternal, options?.sessionTargetLeaf === true);
     if (credentialFailure) return credentialFailure;
+    if (!existingAdmission && actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
+      const input = parsed.data as AdmittedActionInputById['session.message.send'];
+      if ('message' in input && 'modelSelection' in input && input.modelSelection && !isModelRefGrantedByConstraintsV1(
+        [ctx.callerInputConstraints, ctx.externalActionCredential?.grant], input.modelSelection.ref,
+      )) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+    }
     const callerPolicyFailure = existingAdmission
       ? null
       : pluginActionCallerPolicyFailure(spec, ctx);

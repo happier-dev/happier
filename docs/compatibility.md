@@ -13197,6 +13197,18 @@ acceptance shape. Matching development Home, Protocol and daemon readers reload
 together; older strict development readers reject the observation member. This
 changes no persisted format or released 0.2 contract.
 
+Session Send also carries optional `messageMeta` through the
+canonical Session message schema in unreleased 0.3. Effective permission and
+model choices use explicit Action fields admitted before execution; the carrier
+cannot elevate them. The optional canonical `modelSelection` carries the full
+V1/V2 source and revision. Legacy `modelOverride`/`providerConnectionId` callers
+retain their existing shape; full selection and flat aliases are mutually
+exclusive. Receiving input owners strip and
+stamp protected provenance. Matching development UI, Protocol and daemon readers
+load together because older strict Action readers reject the added members.
+Plugin-authored input remains its existing narrower schema. No persisted format
+or released 0.2 contract changes.
+
 Home's finite-wake authorization carries the admitted controller and installation
 key. CLI and UI consume that result without requiring requester access to the
 controller inventory. Optional `managedFiniteWake.requesterCredentialDisclosure`

@@ -113,6 +113,7 @@ export function createCliMessageActionDeps(
       permissionModeOverride,
       modelOverride,
       providerConnectionId,
+      modelSelection,
       sessionInputSource,
       callerSurface,
       serverId,
@@ -161,14 +162,14 @@ export function createCliMessageActionDeps(
         && (normalizedModelOverride === undefined || normalizedModelOverride === null)) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
-      const modelSelectionInput = normalizedModelOverride === undefined
+      const modelSelectionInput = modelSelection?.ref ?? (normalizedModelOverride === undefined
         ? undefined
         : {
             ...(normalizedProviderConnectionId !== undefined
               ? { providerConnectionId: normalizedProviderConnectionId }
               : {}),
             modelId: normalizedModelOverride,
-          };
+          });
 
       const externalActionRequest = context?.externalActionCredential !== undefined
         || context?.externalActionExecutionAuthorization !== undefined;
@@ -448,6 +449,8 @@ export function createCliMessageActionDeps(
         serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,
         ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
         ...(modelSelectionInput ? { modelSelectionInput } : {}),
+        ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
+        ...(modelSelection ? { modelSelectionUpdatedAt: modelSelection.updatedAt } : {}),
       } as const;
       const explicitForgeEvidence = readSessionInputForgeEvidenceV1(messageMeta);
       const sendMessageMeta = messageMeta || admittedAttachmentMeta || displayText ? {
@@ -692,7 +695,6 @@ export function createCliMessageActionDeps(
           : typeof localId === 'string' && localId.trim().length > 0
             ? { localId }
             : {}),
-        ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
         ...sendModelSelection,
         ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
         ...(params.machineAdmissionTransport
