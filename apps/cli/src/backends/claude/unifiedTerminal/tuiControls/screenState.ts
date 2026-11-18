@@ -250,6 +250,12 @@ function lineIndexAt(text: string, index: number): number {
 const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*$/;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[⏵←⏺✻✶·]|⚠)/;
+// Top border of a composer whose draft rows overflow the box (Claude Code 2.1.327, tmux 80x24,
+// ~620-char single-line paste): Claude scrolls the draft and writes `↑ N more` into the top rule,
+// so the first row with the `❯` glyph is no longer on screen. The rows below this border up to the
+// bottom rule are the visible window of the draft. A `↓ N more` bottom rule needs no handling here:
+// it is not an indented row, so continuation reading already stops on it.
+const SCROLLED_COMPOSER_TOP_BORDER = /(?:^|\n)[^\S\n]*[─━]+[^\S\n]*↑[^\S\n]+\d+[^\S\n]+more[^\S\n]*[─━]*[^\S\n]*(?:\n|$)/g;
 
 /**
  * Continuation lines of a soft-wrapped composer draft (C11, live capture 2026-06-12, runner pid
@@ -439,11 +445,21 @@ function readComposerState(
   text: string,
   rawText: string,
   match: RegExpExecArray | null,
+  scrolledTopBorder: RegExpExecArray | null,
   context?: ClaudeScreenParseContext | undefined,
 ): Readonly<{ content: string | null; shellContent: string | null; cursorRelation: ClaudeScreenState['composerCursorRelation'] }> {
   // Executed prompts echo as `❯ <prompt>` transcript rows (live capture 2026-06-11); the REAL
   // composer is the LAST composer-shaped line on screen (the input box renders at the bottom).
   if (!match) return { content: null, shellContent: null, cursorRelation: null };
+  if (match === scrolledTopBorder) {
+    // Only a visible window of the draft remains; its prompt row and cursor column are off screen.
+    const visibleRows = readComposerContinuationLines(text, match.index + match[0].length);
+    return {
+      content: visibleRows.length === 0 ? null : visibleRows.join('\n'),
+      shellContent: null,
+      cursorRelation: null,
+    };
+  }
   const content = (match[2] ?? '').trim();
   const continuation = readComposerContinuationLines(text, match.index + match[0].length);
   if (match[1] === '!') {
@@ -748,7 +764,15 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     ? resolveDialogSelectionPresentation(visibleTail, null)
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
-  const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  const lastPromptLineMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  // The input box renders at the bottom: a scrolled box below the last prompt-shaped row is the
+  // current composer, and that row above it is a transcript echo of an earlier prompt.
+  const lastScrolledTopBorder = lastMatch(SCROLLED_COMPOSER_TOP_BORDER, text);
+  const scrolledTopBorder = lastScrolledTopBorder !== null
+    && (lastPromptLineMatch === null || lastScrolledTopBorder.index > lastPromptLineMatch.index)
+    ? lastScrolledTopBorder
+    : null;
+  const lastComposerMatch = scrolledTopBorder ?? lastPromptLineMatch;
   // A notice above the current composer belongs to transcript history, not the active footer.
   const currentFooter = lastComposerMatch
     ? text.slice(lastComposerMatch.index + lastComposerMatch[0].length)
@@ -777,7 +801,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // otherwise the selected row masquerades as a draft and suppresses the generic dialog path.
   const composerState = rewindSelectionVisible || visibleDialogSelection?.kind === 'focused'
     ? { content: null, shellContent: null, cursorRelation: null }
-    : readComposerState(text, rawText, lastComposerMatch, context);
+    : readComposerState(text, rawText, lastComposerMatch, scrolledTopBorder, context);
   const composerContent = composerState.content;
   const hasComposer = composerContent !== null;
   // A host cursor on the parsed composer is direct evidence that the composer, not an older

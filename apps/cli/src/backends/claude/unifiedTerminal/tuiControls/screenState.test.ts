@@ -1470,6 +1470,43 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
   });
 });
 
+// Live capture (Claude Code 2.1.327, tmux 80x24, names anonymized): a ~610-character single-line
+// paste overflows the composer box, so Claude scrolls it and writes `↑ 2 more` into the top rule.
+// The `❯` row is off screen; the composer must still be read from the rows inside the box.
+const CLAUDE_2_1_327_SCROLLED_COMPOSER = readFileSync(
+  new URL('./__fixtures__/claude-2.1.327-scrolled-composer.txt', import.meta.url),
+  'utf8',
+);
+
+describe('parseClaudeScreenState — scrolled composer draft', () => {
+  const VISIBLE_WINDOW = [
+    '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen',
+    'Antritt, Ziel, der vorhandene Bestand (backend/app/core/muster_daten) und',
+    'die Grenzen. Ziel: Jede Seite des Projekts „Werkstatt“ in nordlicht app',
+    'zeigt realistischen, erkennbar erfundenen Inhalt, und der Werkstatt-Bereich',
+    '(/workshop/…) kommt mit einem passenden Mitarbeitenden-Konto dazu. Melde',
+    'dich beim Cockpit (@sid:0a1b2c3d) auf dem Board, sobald die ersten Seiten',
+    'gefüllt sind, und noch einmal am Ende.',
+  ].join('\n');
+
+  it('reads the visible rows between the `↑ N more` top rule and the bottom rule as the composer', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER);
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW);
+    expect(state.userDraftPresent).toBe(true);
+    expect(state.inputBoxInteractive).toBe(true);
+    expect(state.modeMarker).toBe('bypassPermissions');
+  });
+
+  it('prefers the scrolled box over an earlier prompt echo in the transcript', () => {
+    const state = parseClaudeScreenState(
+      CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('~/dev/Studio\n', '~/dev/Studio\n\n❯ earlier submitted prompt\n'),
+    );
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW);
+  });
+});
+
 // Live capture 2026-06-12 11:50 (orchestrator runner pid 58731, zellij dump): the AGENTS panel
 // ("← for agents", `↑/↓ to select · Enter to view`) renders its selection cursor as
 // `❯ ◯ <agent-type> <title>` rows. The cursor row parsed as a composer draft → false `user_draft`
