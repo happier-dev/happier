@@ -1,4 +1,5 @@
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { AgentSessionRealtimeConversation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { configuration } from '@/configuration';
 import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, readCurrentRunnerAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -15,7 +16,7 @@ export async function admitNativeRealtimeInput(input: Readonly<{
     admission: NativeRealtimeInputAdmissionV1;
     signal: AbortSignal;
 }>): Promise<Readonly<{ dispose(): Promise<void> }>> {
-    const path = process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+    const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
     // A person turn has cause depth zero, independently of this Session's starter depth.
     const caller = AgentStartSessionCallerV1Schema.safeParse({ kind: 'session', sessionId: input.sessionId,
         starterDepth: input.starterDepth, turnDepth: 0 });

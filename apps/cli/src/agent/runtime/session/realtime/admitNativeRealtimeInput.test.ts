@@ -15,7 +15,10 @@ import { registerAgentSessionRealtimeVoiceRpc } from './registerAgentSessionReal
 
 const processIdentity = vi.hoisted(() => vi.fn());
 // OS process observation is the boundary; retain real authority-file custody and IPC codecs.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+    ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
+    readProcessIdentityByPid: processIdentity,
+}));
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('native Realtime Start input admission', () => {

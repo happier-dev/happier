@@ -38,11 +38,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 import { writeDaemonState } from '@/persistence';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRealtimeConversation } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { admitNativeRealtimeInput } from '../realtime/admitNativeRealtimeInput';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 afterAll(() => rm(home, { recursive: true, force: true }));
 
-it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http'] as const)(
+it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http', 'native-realtime'] as const)(
   'uses each added Session authority for %s on one shared host', async operation => {
     const command = `${process.execPath} /fixture/.runner-snapshots/runner-a/index.mjs daemon start-sync`;
     const runner = { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
@@ -79,7 +82,11 @@ it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http'
       const index = authorities.findIndex(authority => authority.sessionId === request.context.sessionId);
       if (index < 0) throw new Error('Unexpected Session');
       if (request.operation.kind === 'agent_start.policy.read') policyRequests.push(request.context.sessionId);
-      const result = request.operation.kind === 'agent_start.policy.read'
+      const result = request.operation.kind === 'native_realtime.input.admit'
+        ? { kind: 'native_realtime.input.admission', admission: request.operation.admission }
+        : request.operation.kind === 'native_realtime.input.retire'
+        ? { kind: 'native_realtime.input.retired' }
+        : request.operation.kind === 'agent_start.policy.read'
         ? { kind: 'agent_start.policy', policy: policies[index] }
         : { kind: 'execution_run.review_plugin_authority', authority: reviewAuthorities[index] };
       outgoing.setHeader('content-type', 'application/json');
@@ -128,7 +135,32 @@ it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http'
           if (++started === 2) bothAdded.resolve();
           await bothAdded.promise;
           if (delayedCallback) await callbacksFinished.promise;
-          else results.set(sessionId, operation === 'start-policy' ? await readCurrentRunnerAgentStartPolicyV1(sessionId)
+          else if (operation === 'native-realtime') {
+            const lifetime = new AbortController();
+            // The native Agent facet is the external boundary; host admission and
+            // each Session's published daemon authority remain real.
+            const conversation: AgentSessionRealtimeConversation = {
+              inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+              start: async () => ({ status: 'busy' }),
+            };
+            const provider: AgentSessionRuntime & { realtimeConversation: AgentSessionRealtimeConversation } = {
+              realtimeConversation: conversation, send: async () => ({ status: 'admitted' }),
+              watch: () => ({ dispose() {} }), dispose() {},
+            };
+            const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+              context: { signal: lifetime.signal } as AgentSessionRuntimeContext,
+              cwd: home, connectedAccounts: [],
+              capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+              cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+            });
+            try {
+              const admitted = await admitNativeRealtimeInput({ runtime: native, conversation, sessionId,
+                starterDepth: 0, signal: lifetime.signal,
+                admission: { admissionId: `input:${sessionId}`, occurrenceId: `owner:${sessionId}`, attemptId: `voice:${sessionId}` } });
+              results.set(sessionId, 'admitted');
+              await admitted.dispose();
+            } finally { lifetime.abort(); await native.resetOrDisposeRuntime(); }
+          } else results.set(sessionId, operation === 'start-policy' ? await readCurrentRunnerAgentStartPolicyV1(sessionId)
             : await createRunnerReviewHostPluginAuthorityReader(sessionId)('acme.plugin'));
         } catch (error) { errors.push(error); throw error; }
       },
@@ -162,7 +194,7 @@ it.each(['start-policy', 'review-authority', 'registered-agent-tool', 'mcp-http'
       expect(await addedSessions).toEqual([{ exitCode: 0 }, { exitCode: 0 }]);
       expect(errors).toEqual([]);
       if (!delayedCallback) expect([...results.entries()].sort()).toEqual(authorities.map((authority, index) => [authority.sessionId,
-        operation === 'start-policy' ? policies[index] : reviewAuthorities[index]]));
+        operation === 'native-realtime' ? 'admitted' : operation === 'start-policy' ? policies[index] : reviewAuthorities[index]]));
     } finally {
       callbacksFinished.resolve();
       await Promise.all(mcpClients.map(client => client.close()));
