@@ -28,6 +28,7 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
     const author = await active.createAccount('author');
     const actor = await active.createAccount('actor');
     const actorId = readAccountIdFromToken(actor.credentials.token);
+    expect((await active.claimHomeOwner(author)).result.status).toBe('claimed');
     const authorMachine = await active.enrollDaemon(author,
       { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const actorMachine = await active.enrollDaemon(actor, { env: {

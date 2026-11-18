@@ -22,6 +22,39 @@ type WorkflowTriggerConsentDefinition = Readonly<{
   materializer?: Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>;
 }>;
 
+/** Read only the child Artifact revisions needed by the actor-consent currentness check. */
+export async function readWorkflowTriggerChildRevisions(input: Readonly<{
+  definition: WorkflowDefinitionV1;
+  resolveWorkflow(ref: string): Promise<Readonly<{ definition: WorkflowDefinitionV1; revision?: Readonly<{ headerVersion: number; bodyVersion: number }> }>>;
+}>): Promise<Readonly<{
+  revisions: readonly { sourceKey: string; bodyVersion: number }[];
+  steps: readonly { sourceKey: string; blockId: string }[];
+  complete: boolean;
+}>> {
+  const revisions: Array<{ sourceKey: string; bodyVersion: number }> = [];
+  const steps: Array<{ sourceKey: string; blockId: string }> = [];
+  const seen = new Set<string>();
+  let complete = true;
+  const pending: WorkflowDefinitionV1[] = [input.definition];
+  for (let index = 0; index < pending.length; index += 1) {
+    const definition = pending[index]!;
+    for (const block of walkWorkflowBlocks(definition.blocks)) {
+      if (block.kind !== 'workflow') continue;
+      const sourceKey = block.workflowRef;
+      if (seen.has(sourceKey)) continue;
+      seen.add(sourceKey);
+      const child = await input.resolveWorkflow(sourceKey);
+      if (child.revision === undefined) complete = false;
+      else revisions.push({ sourceKey, bodyVersion: child.revision.bodyVersion });
+      for (const childBlock of walkWorkflowBlocks(child.definition.blocks)) {
+        if (childBlock.kind === 'step') steps.push({ sourceKey, blockId: childBlock.id });
+      }
+      pending.push(child.definition);
+    }
+  }
+  return { revisions, steps, complete };
+}
+
 /** Shared consent pins Agent instructions and resolved launch choices, including child Workflows. */
 export function projectWorkflowTriggerConsentAgentSteps(input: Readonly<{
   definition: WorkflowDefinitionV1;

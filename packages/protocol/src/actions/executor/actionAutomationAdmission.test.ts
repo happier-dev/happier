@@ -5,6 +5,7 @@ import { createWorkflowActorConsentPortV1 } from './workflowTriggerActions.js';
 import { createActionAutomationInvocationV1 } from './actionSettlement.js';
 import { createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
 import type { AutomationDefinitionDetail } from '../../automations/automationApiV3.js';
+import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
@@ -27,6 +28,62 @@ it('visibly skips own Action checks without an invoking Machine', async () => {
   })) });
 });
 
+it('checks pinned child revisions without rematerializing or reconciling unchanged consent', async () => {
+  const childRef = '22222222-2222-4222-8222-222222222222';
+  const root = WorkflowDefinitionV1Schema.parse({ version: 1,
+    blocks: [{ kind: 'workflow', id: 'child', workflowRef: childRef }] });
+  const child = WorkflowDefinitionV1Schema.parse({ version: 1,
+    defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+    blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] });
+  const revisions = new Map([["root", 1], [childRef, 1]]);
+  const definitions = new Map([["root", root], [childRef, child]]);
+  let workflowReads = 0;
+  let materializationCalls = 0;
+  let reconcileWrites = 0;
+  let retained: AutomationDefinitionDetail | null = null;
+  const actions = createAccountWorkflowTriggerActions({
+    nativeAccount: { accountId: 'actor', serverId: 'home', isCurrent: async () => true },
+    resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    randomBytes: length => new Uint8Array(length).fill(1), newId: kind => `${kind}-1`,
+    resolveWorkflow: async ref => { workflowReads += 1; return { definition: definitions.get(ref)!, revision: { headerVersion: 1, bodyVersion: revisions.get(ref)! } }; },
+    openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
+    sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
+      workflow: { t: 'plain', v: context }, triggerEvidence: null, managedTarget: null, visibleTeamId: null }),
+    resolveMaterializer: async () => { materializationCalls += 1; return { effects: {} }; },
+    automations: {
+      get: async () => retained,
+      list: async () => ({ automations: [], nextCursor: null }),
+      listDetails: async () => ({ automations: [], nextCursor: null }),
+      create: async input => {
+        retained = { id: input.automationId, name: input.name, description: input.description ?? null, enabled: input.enabled,
+          targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: input.workflowDefinitionId ?? null,
+          scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], executionRecipe: input.executionRecipe,
+          triggers: input.triggers.map(item => AutomationTriggerDetailSchema.parse({ ...item.trigger, id: item.triggerId,
+            revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null })) };
+        return retained;
+      },
+      reconcile: async () => { reconcileWrites += 1; throw new Error('Unexpected consent reconciliation'); },
+      delete: async () => ({ ok: true }),
+    },
+  });
+  const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+    runtimeAccountId: 'actor', serverId: 'home', actionRequestId: 'consent' };
+  const project = { machineId: 'machine', directory: '/repo' };
+  const matching = { actionIds: ['notifications.notify_me'], phase: 'before' as const };
+  const consentTrigger = { kind: 'action' as const, enabled: true,
+    consentFor: { automationId: 'source', triggerId: 'source-trigger' }, consentedWorkflowRevision: 1 };
+  const saved = await actions.saveActorConsent({ workflow: 'root', workflowRevision: 1, matching, project, consentTrigger,
+    decisionInput: { artifactId: 'approval', decision: 'approve', triggerConsent: { automationId: 'source', triggerId: 'source-trigger', decision: 'allow' } } }, caller);
+  workflowReads = 0;
+  materializationCalls = 0;
+  reconcileWrites = 0;
+  const selection = { workflow: 'root', workflowRevision: 1, matching, project,
+    saved: { automationId: saved.automationId, triggerId: saved.triggerId, workflowRevision: saved.workflowRevision }, consentTrigger };
+  expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
+  expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
+  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: 4, materializationCalls: 0, reconcileWrites: 0 });
+});
+
 describe('Approval profile subject admission', () => {
   it('matches only the available admission binding, including after access is withdrawn', async () => {
     const subject = { kind: 'approvalProfile' as const, serverId: 'home', profileId: 'profile' };
@@ -35,8 +92,8 @@ describe('Approval profile subject admission', () => {
       workflowRevision: 1, ownerAccountId: 'actor', actionIds: ['actions.policy.set'], phase: 'before', mode: 'wait',
       subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
     }] }), settle: async () => {} });
-    const args = { actionId: 'actions.policy.set', input: {}, context: {
-      serverIdentityId: 'home', approvalProfileId: 'profile',
+    const args = { actionId: 'actions.policy.set', input: {}, executionPlacement: 'machine' as const, context: {
+      serverIdentityId: 'home', approvalProfileId: 'profile', defaultSessionMachineId: 'machine',
     } };
     // A stored id survives revocation and cannot establish current profile availability.
     expect((await port.select(args)).before).toEqual([]);
@@ -106,12 +163,12 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
     sent.push(request.body);
     return { results: [] };
   } });
-  const context = { actionRequestId: 'original-request' };
-  const empty = await http.select({ actionId: 'account.name.set', input: {}, context, prepareMatching: checks.prepareMatching });
+  const context = { actionRequestId: 'original-request', defaultSessionMachineId: 'machine' };
+  const empty = await http.select({ actionId: 'account.name.set', input: {}, executionPlacement: 'machine', context, prepareMatching: checks.prepareMatching });
   await createActionAutomationInvocationV1({ actionId: 'account.name.set', context, selection: empty, port: http }).settle({ ok: true });
   expect(definitionReads).toBe(0);
   expect(sent).toEqual([]);
-  const selection = await http.select({ actionId, input: {}, context, prepareMatching: checks.prepareMatching });
+  const selection = await http.select({ actionId, input: {}, executionPlacement: 'machine', context, prepareMatching: checks.prepareMatching });
   expect(workflowReads).toBe(0);
   const invocation = createActionAutomationInvocationV1({ actionId, context, selection, port: http });
   await http.start!({ actionId, input: {}, selected: selection.before,
@@ -122,8 +179,8 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   expect(await restored.actionAutomationAdmission!.settle({ ok: true })).toEqual({ ok: true });
   expect(sent).toEqual([]);
   expect(definitionReads).toBe(1);
-  const failedContext = { actionRequestId: 'failed-request' };
-  const failedSelection = await http.select({ actionId, input: {}, context: failedContext, prepareMatching: checks.prepareMatching });
+  const failedContext = { actionRequestId: 'failed-request', defaultSessionMachineId: 'machine' };
+  const failedSelection = await http.select({ actionId, input: {}, executionPlacement: 'machine', context: failedContext, prepareMatching: checks.prepareMatching });
   const failed = createActionAutomationInvocationV1({ actionId, context: failedContext, selection: failedSelection, port: http });
   await failed.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
   expect(sent).toEqual([expect.objectContaining({ evidence: expect.objectContaining({ outcome: 'failed' }),
@@ -139,8 +196,8 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   retainedRow = { ...stored, triggers: [...stored.triggers, { ...stored.triggers[0]!, id: 'unrelated',
     triggerDefinitionEnvelope: 'unavailable unrelated private content' }] };
   http.apply({ automationId: 'own', rows: [selection.after[0]!] });
-  const afterContext = { actionRequestId: 'after-only-request' };
-  const afterOnly = await http.select({ actionId, input: {}, context: afterContext, prepareMatching: checks.prepareMatching });
+  const afterContext = { actionRequestId: 'after-only-request', defaultSessionMachineId: 'machine' };
+  const afterOnly = await http.select({ actionId, input: {}, executionPlacement: 'machine', context: afterContext, prepareMatching: checks.prepareMatching });
   expect(afterOnly.before).toEqual([]);
   // A later removal cannot rewrite the already admitted private matching snapshot.
   retainedRow = { ...stored, triggers: [] };
