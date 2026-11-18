@@ -9,6 +9,7 @@ import { cursorConnectedAccountRuntime } from '../../../../../packages/plugins/c
 import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { mutateQualifiedConnectedAccountCredentialHealthV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -24,7 +25,7 @@ describe('Connected Account derived export publication', () => {
   ] as const)('keeps credential acquisition and spawn ready after Home$status with the typed failure visible', async failure => {
     const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
-    const descriptor = CURSOR_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === 'cursor-account');
+    const descriptor = normalizePluginManifestV2(CURSOR_MANIFEST).contributes.connectedAccountDescriptors.find(entry => entry.id === 'cursor-account');
     if (!descriptor) throw new Error('Cursor account declaration unavailable');
     const account = { service: { pluginId: CURSOR_MANIFEST.id, localId: descriptor.id }, accountId: 'dummy-cursor-account' };
     const revision = 'csr_abcdefghijklmnopqrstuv';

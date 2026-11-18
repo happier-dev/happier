@@ -242,10 +242,10 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     }
     function admit(input: ExternalActionRequestEnvelopeV1['input'], requesterAccountId: string, requestId: string) {
         const target = { kind: 'machine' as const, machineId };
-        issueAuthorization({ v: 1, requestId, target, input: { action: { pluginId: CHANNELS_PLUGIN.manifest.id, localId }, input } },
+        const admittedAuthorization = issueAuthorization({ v: 1, requestId, target, input: { action: { pluginId: CHANNELS_PLUGIN.manifest.id, localId }, input } },
             actionId, requesterAccountId);
         return { authority: 'account_automation' as const, serverId: serverIdentityId,
-            serverIdentityId, actionRequestId: requestId, externalActionExecutionAuthorization: authorization,
+            serverIdentityId, actionRequestId: requestId, externalActionExecutionAuthorization: admittedAuthorization,
             externalActionTarget: target };
     }
     return {

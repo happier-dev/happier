@@ -59,7 +59,7 @@ describe('CLI grant source attribution', () => {
         serverId: 'home', sessionId, machineId: 'reader-machine', caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
         actionId: 'projects.sources.update', requestId: 'original' } });
     const deps = createCliActionDeps({ token: 'daemon-bearer', credentials: { token: 'daemon-bearer', encryption: null },
-      sessionId: '', mode: 'plain', ctx: null, serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+      sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation' });
     expect(await deps.approvalRequestOutcomePublication!({ artifactId: 'approval', request, context })).toBeNull();
     expect(network.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(expect.arrayContaining([
