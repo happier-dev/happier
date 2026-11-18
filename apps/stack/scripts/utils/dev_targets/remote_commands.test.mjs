@@ -3221,6 +3221,15 @@ test('source snapshot launches the canonical Stack entry directly and preserves 
   writeFileSync(recorded, '');
   await assert.rejects(execFileAsync('/bin/bash', ['-c', command], { env: { ...env, FAIL_NEW: '1' } }), error => error.code === 23);
   assert.equal(readFileSync(recorded, 'utf8').trim().split('\n').length, 1);
+  // An existing Stack skips the no-op `stack new --if-missing` process (~9 s on a
+  // loaded host, after a reload's retirement): its env file is what that checks.
+  const { stackEnvPath } = commandPolicy.resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'source-snapshot' });
+  mkdirSync(dirname(stackEnvPath), { recursive: true });
+  writeFileSync(stackEnvPath, '');
+  writeFileSync(recorded, '');
+  await execFileAsync('/bin/bash', ['-c', command], { env: { ...env, FAIL_NEW: '1' } });
+  const existing = readFileSync(recorded, 'utf8').trim().split('\n').filter(line => line.includes('hstack.mjs stack '));
+  assert.deepEqual(existing.map(line => line.split(' ')[2]), ['env', 'start']);
 });
 
 test('source snapshot identity probe observes selected and loaded component identities and fails closed', async (t) => {

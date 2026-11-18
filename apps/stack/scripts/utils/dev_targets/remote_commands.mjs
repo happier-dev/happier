@@ -2709,7 +2709,9 @@ function buildPosixRemoteStackInitializationCommands(target, invocation) {
   const launcher = remoteStackLauncher(invocation);
   return [
     ...invocation.operatorPathCheck,
-    `${launcher} stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
+    // `stack new --if-missing` only checks this env file; skip its process when
+    // it exists (a whole Stack CLI start on the host, after a reload's retirement).
+    `test -f ${posixQuote(invocation.stackEnvPath)} || ${launcher} stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
     ...buildRemoteStackEnvironmentProjection(target, invocation),
   ];
 }
