@@ -14,7 +14,7 @@ type ManagedGuestPublisher = Readonly<{ accountId: string; machineId: string; in
 export async function readManagedGuestActivityPublicationRowInTx(tx: Tx, input: ManagedGuestPublisher): Promise<StoredManagedMachine | null> {
     const row = await tx.managedMachine.findFirst({ where: { enrolledMachineId: input.machineId } });
     if (!row || row.homeId !== await readCurrentServerIdentityId(process.env, tx)
-        || readManagedEnrollmentAccountId(row) !== input.accountId || row.custodianAccountId === input.accountId
+        || readManagedEnrollmentAccountId(row) !== input.accountId
         || row.creationState !== 'active' || row.archivedAt !== null) return null;
     const guest = await tx.machine.findUnique({ where: { id: input.machineId },
         select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true } });

@@ -493,17 +493,11 @@ describe('executionRunRegistry', () => {
     expect(await producer.read()).toMatchObject({ coverage: 'unknown' });
   });
 
-  it('cannot prove an absent watch idle and still exposes retained running work without a visibility marker', async () => {
+  it('covers a fresh empty Run directory on the first read and exposes retained work without a visibility marker', async () => {
     const { createExecutionRunLiveWorkProducer, retainExecutionRunState } = executionRunRegistry;
     const producer = createExecutionRunLiveWorkProducer();
-    let armed!: () => void;
-    const watchEstablished = new Promise<void>(resolve => { armed = resolve; });
-    const unsubscribe = producer.subscribe(armed);
+    const unsubscribe = producer.subscribe(() => {});
     try {
-      expect(await producer.read()).toEqual({ coverage: 'unknown', items: [] });
-      await watchEstablished;
-      // The incumbent marker read has now established its directory. A new
-      // observation arms the native edge source before scanning canonical state.
       expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
       const state = { runId: 'retained-only', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0, intent: 'review',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Private input', permissionMode: 'read_only',

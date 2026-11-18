@@ -1,7 +1,7 @@
 import { configuration } from '../configuration';
 import { logger } from '../ui/logger';
 import { createHash, randomUUID } from 'node:crypto';
-import { statSync, watch, type FSWatcher } from 'node:fs';
+import { mkdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { DaemonExecutionRunMarkerPersistenceReadSchema, DaemonExecutionRunMarkerOwnerWriteSchema, DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -78,6 +78,7 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
     if (watcher && watchedDirectory !== directory) { closeWatcher(); watcherFailed = false; }
     if (!listeners.size || watcher || watcherFailed) return;
     try {
+      mkdirSync(directory, { recursive: true });
       const identity = statSync(directory);
       const armed = watch(directory, { persistent: false }, (_event, filename) => {
         const entry = filename?.toString();
@@ -98,8 +99,8 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
       armed.on('error', unavailable);
       armed.on('close', unavailable);
     } catch (error) {
-      // An absent directory can be established by the incumbent marker owner
-      // before a later read. Other native failures need subscription repair.
+      // Directory removal can race watcher installation. Other native failures
+      // need subscription repair.
       watcherFailed = (error as NodeJS.ErrnoException)?.code !== 'ENOENT';
     }
   };
@@ -145,9 +146,8 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
         } catch { closeWatcher(); notify(); }
       }
       if (observations.some(result => result.status === 'rejected') || !watcher || watcher !== observedWatcher) coverage = 'unknown';
-      // The incumbent marker read can establish a previously absent directory.
-      // Arm its edge source and notify the aggregate to take a covered snapshot;
-      // this first uncovered snapshot itself must still remain unknown.
+      // Re-arm after a directory removal raced the initial watch. The
+      // uncovered scan remains unknown until the aggregate reads it again.
       if (!observedWatcher && !watcherFailed && listeners.size) {
         armWatcher();
         if (watcher) notify();
@@ -173,8 +173,8 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
       const result = observation.finally(() => {
         if (pending !== result) return;
         pending = undefined;
-        // Directory replacement/initial watcher acquisition stays unknown for
-        // that observation, then pushes one fresh covered observation.
+        // Directory replacement leaves that observation unknown and pushes
+        // one fresh covered observation.
         if (invalidated && listeners.size) notify();
       });
       pending = result;

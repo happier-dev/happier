@@ -14,6 +14,7 @@ import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarnes
 import { resolveEffectiveMachineRoleInTx, resolveMachineAdmissionInTx, removeMachineAccessGrantInTx, resolveCurrentMachineRecipientAccountIdsInTx,
     resolveMachinePrincipalAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { readManagedMachinePolicyPublicationAudienceInTx } from './managedRows';
+import { publishManagedGuestActivityAvailable } from './managedGuestActivity';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCreatorFixture } from './managedCreatorAccess.testkit';
@@ -35,6 +36,21 @@ describe('managed guest grants and controller Manage', () => {
             initEncrypt: true, env: { HAPPIER_SERVER_IDENTITY_ID: `srv_${'a'.repeat(32)}` } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('wakes the controller policy when a same-Account guest publishes activity', async () => {
+        const { custodian, stranger, create } = await createCreatorFixture();
+        const row = await create(custodian.id);
+        const installationId = randomUUID();
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
+            installationId, metadata: '{}' } });
+        await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id } });
+        const publication = { accountId: custodian.id, machineId: guest.id, installationId };
+        const changes = () => db.accountChange.findMany({ where: { entityId: row.id }, select: { accountId: true } });
+        await publishManagedGuestActivityAvailable({ ...publication, accountId: stranger.id });
+        expect(await changes()).toEqual([]);
+        await publishManagedGuestActivityAvailable(publication);
+        expect(await changes()).toEqual([{ accountId: custodian.id }]);
+    });
 
     it('keeps controller Use separate, inherits Manage, and retains independent guest grants after controller revocation', async () => {
         const { homeId, custodian, creator, stranger, controller, row } = await createCreatorFixture();
