@@ -10,6 +10,7 @@ import { resolveWorkflowAcceptedStepSelectionV1, WorkflowStepSelectionErrorV1 } 
 import { useWorkflowAuthoringComposerCustody } from '@/components/sessions/authoring/authoringComposerCustody';
 import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { WorkflowBlockListEditor, type WorkflowDocumentPresentation } from '@/components/workflows/editor/WorkflowBlockListEditor';
 import type { WorkflowDocumentStepSlots } from '@/components/workflows/editor/workflowDocumentPresentation';
@@ -255,9 +256,10 @@ export function WorkflowRunSteps(props: Readonly<{
                 ? [exactSelection] : progress && (leaf?.participantBindings || leaf?.engineBindings || leaf?.sessionBindings)
                     ? [] : participantChoices ?? leaf?.engineBindings?.selections ?? (leaf ? [leaf] : []);
             const identities = choices.map(choice => {
-                const target = choice.selection.agentTarget;
+                const { agentTarget: target } = choice.selection;
+                const modelId = readAuthoredSessionModelRef(choice.selection)?.modelId;
                 const engine = target == null ? null : presentEngine({ agentTargetKey: resolveBackendTargetKeyV2(target),
-                    ...(choice.selection.modelSelection ? { modelId: choice.selection.modelSelection.ref.modelId } : {}) });
+                    ...(modelId === undefined ? {} : { modelId }) });
                 const participant = choice.participant;
                 const participantSessionLabel = participant?.kind === 'session'
                     ? (participant.session.serverId === props.serverId ? props.sessionDisplayLabelsById?.get(participant.session.sessionId) : undefined)
@@ -267,14 +269,14 @@ export function WorkflowRunSteps(props: Readonly<{
                 const sessionLabel = participantSessionLabel ?? (choice.role === undefined && target == null && sessionId !== null
                     ? props.sessionDisplayLabelsById?.get(sessionId) : null);
                 const name = sessionLabel ?? choice.role?.name ?? engine?.label ?? t('workflows.input.unavailable');
-                return { selection: choice.selection, name,
+                return { target, modelId, name,
                     label: sessionLabel ?? ([choice.role?.name, engine?.label].filter(Boolean).join(' · ') || name) };
             });
             const enginePresentation = leaf === undefined ? undefined : {
-                agentType: identities.length === 1 ? resolveSessionAuthoringAgentId({ agentTarget: identities[0]!.selection.agentTarget }) ?? undefined : undefined,
+                agentType: identities.length === 1 ? resolveSessionAuthoringAgentId({ agentTarget: identities[0]!.target }) ?? undefined : undefined,
                 agentLabel: [...new Set(identities.map(identity => identity.name))].join(', ') || t('workflows.input.unavailable'),
                 engineLabel: [...new Set(identities.map(identity => identity.label))].join(', ') || t('workflows.input.unavailable'),
-                modelMode: identities.length === 1 ? identities[0]!.selection.modelSelection?.ref.modelId : undefined,
+                modelMode: identities.length === 1 ? identities[0]!.modelId : undefined,
             };
             const elapsed = formatWorkflowInvocationElapsedLabel(displayedOccurrence === null
                 ? undefined : props.progressById?.get(displayedOccurrence.id)?.timing);

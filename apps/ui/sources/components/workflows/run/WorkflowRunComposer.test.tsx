@@ -140,8 +140,14 @@ describe('workflow composer admission', () => {
         await screen.unmount();
     });
     it('reviews the workflow agent and execution placement before Start', async () => {
+        const modelId = 'team-review-model';
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
-            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            definition={createWorkflowDefinitionFixture({ defaults: {
+                ...STARTABLE_DEFAULTS, modelSelection: null,
+                teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, teamId: 'team-a',
+                    resourceId: 'resource-a', expectedResourceRevision: 1, deliveryMode: 'brokered',
+                    providerModelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId } }],
+            } })}
             machineId="release-machine" directory="/work/release"
             authoringControls={{ machineName: 'Release Mac' }}
             onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
@@ -150,7 +156,8 @@ describe('workflow composer admission', () => {
         expect(screen.findByTestId('workflow-run-inputs-review-target')).not.toBeNull();
         const text = screen.getTextContent();
         expect(text).toContain('Release Mac');
-        expect(text).toContain(t('agentInput.agent.claude'));
+        expect(text).toContain('Claude');
+        expect(text).toContain(modelId);
         expect(text).toContain('workflows.page.sections.aSession');
         await screen.unmount();
     });

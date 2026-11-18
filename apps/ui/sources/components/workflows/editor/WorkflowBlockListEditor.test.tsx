@@ -742,6 +742,37 @@ it('reads admitted engines from their frozen source in Run Steps, including coll
     expect(childComposer().props.engineLabel).toBeUndefined();
 });
 
+it('shows the Team model selected by Run again in Run Steps history', async () => {
+    const harness = await loadHarness();
+    const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const modelId = 'team-replay-model';
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const definition = createWorkflowDefinitionFixture({ defaults: { agentTarget } });
+    const materialize = { definition, admission: { kind: 'user' as const },
+        effects: { resolveTargetAvailability: async () => true },
+        context: { source: { kind: 'inline' as const }, inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' as const },
+            workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' as const }, authorization: { principal: { kind: 'host' as const } } } };
+    const original = await materializeWorkflowAcceptedSnapshotV1(materialize);
+    if (!original.ok) throw new Error(original.error.code);
+    const replay = await materializeWorkflowAcceptedSnapshotV1({ ...materialize, replay: {
+        snapshot: original.snapshot,
+        agentOverride: { sourceKey: '$root', blockId: 'analyze', agentTarget, modelSelection: null,
+            teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, teamId: 'team-a',
+                resourceId: 'resource-a', expectedResourceRevision: 1, deliveryMode: 'brokered',
+                providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId } }] },
+    } });
+    if (!replay.ok) throw new Error(replay.error.code);
+    const screen = await renderScreen(<WorkflowRunSteps runId="replayed-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={replay.snapshot.authoredDefinition} materializedLeaves={replay.snapshot.materializedLeaves}
+        invocations={[]} structure={new Map()} selectedInvocationId={null} onSelectInvocation={() => {}}
+        occurrenceLabel={() => null} testIDPrefix="replayed-steps" />);
+    expect(screen.getTextContent()).toContain(modelId);
+    expect(screen.findByTestId('replayed-steps-step-analyze-prompt')!.findByType(harness.AgentInput).props.modelMode).toBe(modelId);
+});
+
 it('reads admitted engines for participant steps from the exact executed Session rather than an authoring choice', async () => {
     const harness = await loadHarness();
     const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');

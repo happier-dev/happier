@@ -51,6 +51,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Item } from '@/components/ui/lists/Item';
 import { formatSessionAuthoringEngineLabel } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { useServerScopedMachineLabel } from '@/sync/domains/state/storage';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -307,8 +308,9 @@ function WorkflowRunAgentSummary(props: Readonly<{
     defaults: props.definition.defaults, purpose: 'authoring',
   }).selection, [props.definition.defaults]);
   const presentEngine = useRoleEnginePresentation(props.serverId);
+  const modelId = readAuthoredSessionModelRef(values)?.modelId;
   const engine = values.agentTarget ? presentEngine({ agentTargetKey: buildBackendTargetKeyV2(values.agentTarget),
-    ...(values.modelSelection?.ref.modelId ? { modelId: values.modelSelection.ref.modelId } : {}) }) : null;
+    ...(modelId ? { modelId } : {}) }) : null;
   const summary = formatSessionAuthoringEngineLabel({ values,
     engine: props.definition.defaults.engine, workflowRoles: props.definition.roles,
     agentLabel: engine?.label ?? t('workflows.input.unavailable') });
