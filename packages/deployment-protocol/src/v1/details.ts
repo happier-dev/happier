@@ -32,6 +32,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         /** Opened serving address; null means none resolved, omission means unknown. */
         liveAddress: z.optional(z.nullable(z.string())),
         runtimeTargetLink: z.optional(z.nullable(DeploymentTargetLinkHeaderV1Schema)),
+        /** Current live health borrowed from the selected Environment read; omission means it is not observed. */
+        healthAggregate: z.optional(DeploymentEnvironmentHealthAggregateV1Schema),
         currentDeployment: z.optional(z.nullable(z.extend(DeploymentReceiptHeaderV1Schema, {
             title: z.optional(z.string()),
             /** Latest-attempt source facts; omission means unreadable, null means not captured. */

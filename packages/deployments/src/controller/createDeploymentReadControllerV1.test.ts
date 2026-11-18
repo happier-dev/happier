@@ -7,6 +7,7 @@ import { createDeploymentHealthAggregateLeaseV1 } from '../projection/deployment
 import type { DeploymentHealthServicesObservationV1 } from '../projection/deploymentHealthAggregate.js';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentDomainPageV1, DeploymentEnvironmentHealthFeedV1, DeploymentReadDemandV1, DeploymentReadTransportV1 } from './deploymentReadControllerTypes.js';
 
 const active: DeploymentReadDemandV1 = { mounted: true, visible: true, focused: true };
@@ -524,6 +525,30 @@ describe('deployment demand read controller', () => {
             expect(bindings[1]!.retirementSignal.aborted).toBe(true);
             expect(bindings).toHaveLength(3);
         } finally { environment.release(); receiptPage.release(); controller.retire(); }
+    });
+    it('publishes selected live health into the existing collection row', async () => {
+        const base = networkBoundary();
+        const link = base.environmentDetail.targetLinks[0]!.targetLink;
+        const aggregate: DeploymentEnvironmentHealthAggregateV1 = {
+            v: 1, environmentId: base.environment.id, targetLinkId: link.id, protection: base.environment.protection,
+            status: 'down', n: 1, down: 1, degraded: 0, unknown: 0, members: [], affectedMachineIds: ['machine-a'],
+            edgeUnreachable: false, authoritativeRecovery: false,
+        };
+        let publishHealth: ((feed: DeploymentEnvironmentHealthFeedV1, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void) | undefined;
+        base.transport.observeEnvironmentHealth = (_scope, _detail, publish) => {
+            publishHealth = publish;
+            return () => {};
+        };
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const collection = controller.acquireCollection({}, active);
+        const environment = controller.acquireEnvironment(base.environment.id, active, { health: true });
+        try {
+            await collection.refresh();
+            await environment.refresh();
+            expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toBeUndefined();
+            publishHealth!({ environmentId: base.environment.id, status: 'ready', members: [] }, aggregate);
+            expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toEqual(aggregate);
+        } finally { environment.release(); collection.release(); controller.retire(); }
     });
     it('withdraws the edge Resource when its controller or admitted link revision changes', async () => {
         const base = networkBoundary();

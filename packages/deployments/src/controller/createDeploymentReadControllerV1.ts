@@ -70,7 +70,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     const active = (entry: Entry) => !retired && [...entry.demands].some(demand => isDeploymentReadDemandActiveV1(demand.current));
     const syncHealthObservation = (entry: Entry) => {
         if (entry.resource.kind === 'environment') reconcileDeploymentEnvironmentHealthObservationV1(entry,
-            !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport);
+            !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport,
+            publishCollectionHealth);
         if (entry.resource.kind === 'domains') reconcileDeploymentDomainHealthObservationV1(entry, active(entry),
             scope, entry.resource.environmentId!, transport);
     };
@@ -140,6 +141,26 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             if (snapshot.value) entry.projection.publish({ ...snapshot, value: withMemberVersions(snapshot.value as DeploymentEnvironmentDetailV1) });
         }
     }
+    function currentEnvironmentHealth(environmentId: string): DeploymentEnvironmentDetailV1['healthAggregate'] | undefined {
+        const entry = [...entries.values()].find(candidate => candidate.resource.kind === 'environment'
+            && candidate.resource.environmentId === environmentId);
+        return (entry?.projection.getSnapshot().value as DeploymentEnvironmentDetailV1 | null)?.healthAggregate;
+    }
+    function publishCollectionHealth(environmentId: string, healthAggregate: DeploymentEnvironmentDetailV1['healthAggregate'] | undefined) {
+        for (const collection of entries.values()) {
+            if (collection.resource.kind !== 'collection' || !active(collection)) continue;
+            const snapshot = collection.projection.getSnapshot();
+            const page = snapshot.value as DeploymentEnvironmentReadCollectionV1 | null;
+            if (!page || !page.items.some(row => row.environment.id === environmentId)) continue;
+            const items = page.items.map(row => {
+                if (row.environment.id !== environmentId) return row;
+                if (healthAggregate) return { ...row, healthAggregate };
+                const { healthAggregate: _removed, ...withoutHealth } = row;
+                return withoutHealth;
+            });
+            collection.projection.publish({ ...snapshot, value: { ...page, items } });
+        }
+    }
     function publishValue(entry: Entry, value: unknown) {
         entry.dirty = false;
         if (entry.resource.kind === 'domains') {
@@ -159,8 +180,11 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         }
         if (entry.resource.kind === 'collection') {
             const page = value as DeploymentEnvironmentCollectionV1;
-            value = { ...page, items: page.items.map(row => ({ ...row,
-                chip: row.currentDeployment ? projectDeploymentChipV1(row.currentDeployment) : null })) };
+            value = { ...page, items: page.items.map(row => {
+                const healthAggregate = currentEnvironmentHealth(row.environment.id);
+                return { ...row, chip: row.currentDeployment ? projectDeploymentChipV1(row.currentDeployment) : null,
+                    ...(healthAggregate ? { healthAggregate } : {}) };
+            }) };
         }
         if (entry.resource.kind === 'collection' || entry.resource.kind === 'history' || entry.resource.kind === 'domains' || entry.resource.kind === 'domainPage' || entry.resource.kind === 'dataServicePage') {
             const { nextCursor, ...facts } = value as { nextCursor: string | null };
