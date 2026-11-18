@@ -33,7 +33,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     children(view: StoreThemeListingViewProps): React.ReactNode }>) {
     const presented = useLayoutPresentationActive();
     const scope = useAccountSettingsScope();
-    const { execute, ready, isCurrent } = useMountedActionExecution(scope);
+    const { execute, executeForPresentation, ready, isCurrent } = useMountedActionExecution(scope);
     const router = useRouter();
     const owner = getThemeTryOnOwner();
     const { sourceId, itemId, version } = props.listing;
@@ -101,7 +101,8 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const run = async (kind: NonNullable<StoreThemeListingViewProps['busy']>, actionId: ActionId, input: unknown) => {
         setBusy(kind);
         try {
-            const result = await execute(actionId, input);
+            const result = await executeForPresentation(actionId, input, kind === 'uninstall' ? { retainEffectResult: true } : undefined);
+            if (!result) return;
             if (!result.ok) {
                 if (kind === 'acquire') { setFailed(result.error); return; }
                 if (kind !== 'install' && kind !== 'update') {

@@ -159,6 +159,16 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         if (!binding || !scope || !isCurrent()) return retired(operation?.actionRequestId);
         return executeCaptured(binding, actionId, input, operation);
     }, [binding, executeCaptured, isCurrent, scope]);
+    /** Present terminal results only to the live view. Retained effects can finish after it closes. */
+    const executeForPresentation = React.useCallback(async (...args: Parameters<typeof execute>): Promise<ActionExecuteResult | null> => {
+        try {
+            const result = await execute(...args);
+            return isCurrent() && (result.ok || result.errorCode !== 'cancelled') ? result : null;
+        } catch (error) {
+            if (isCurrent()) throw error;
+            return null;
+        }
+    }, [execute, isCurrent]);
     /** The mounted command dispatcher binds an ordinary child to this same engine and its private ports. */
     const executeForCaller = React.useCallback(async (actionId: ActionId, input: unknown, caller: ActionExecutorContext,
         operation?: MountedOperation): Promise<ActionExecuteResult> => {
@@ -171,5 +181,5 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         requireActionSuccess(result);
         return result.result;
     }, [execute]);
-    return { execute, executeForCaller, executeCaptured, executeValue, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
+    return { execute, executeForCaller, executeCaptured, executeValue, executeForPresentation, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
 }

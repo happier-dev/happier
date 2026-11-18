@@ -24,7 +24,7 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
     children(view: StoreThemeListingViewProps): React.ReactNode }>) {
     const presented = useLayoutPresentationActive();
     const scope = useAccountSettingsScope();
-    const { execute, ready } = useMountedActionExecution(scope);
+    const { executeForPresentation, ready } = useMountedActionExecution(scope);
     const router = useRouter();
     const entry = useThemeLibraryEntry(props.reference, presented);
     const document = useThemeProfileDocument(props.reference, presented);
@@ -56,7 +56,8 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
         if (!ready) return;
         setBusy(kind);
         try {
-            const result = await execute(action, input);
+            const result = await executeForPresentation(action, input);
+            if (!result) return;
             if (!result.ok) Modal.alert(t('common.error'), result.error);
             else if (kind === 'duplicate') {
                 const { entry: duplicate } = result.result as ThemeActionOutput<typeof THEME_ACTION_IDS.duplicate>;

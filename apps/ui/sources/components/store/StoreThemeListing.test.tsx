@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { expect, it, onTestFinished, vi } from 'vitest';
-import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -44,6 +45,7 @@ const { preloadTranslations, setPreferredLanguageFromSettings, t } = await impor
 await initializeArtifactInventoryDemandHarness();
 
 async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisition?: boolean;
+    beforeDelete?: (signal: AbortSignal | null | undefined) => Promise<void>;
     licence?: Pick<RegistryThemeListingV1, 'license' | 'licenseKind' | 'licenseUrl'> }> = {}) {
     const indexUrl = 'https://theme-listing.example.test/index.json';
     const contentUrl = 'https://theme-listing.example.test/palette.json';
@@ -57,6 +59,9 @@ async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisi
     const state = { acquisitions: 0, sourceReads: 0, catalogReads: 0, failLight: true,
         failAcquisition: options.failAcquisition ?? false, catalogVersion: '1.0.0' };
     const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
+        if (url.pathname.startsWith('/v1/artifacts/') && init?.method === 'DELETE') {
+            await options.beforeDelete?.(init.signal);
+        }
         if (url.pathname.startsWith('/v1/account/entity-rows/prompt-library') && (init?.method ?? 'GET') === 'GET') state.sourceReads++;
         const config = await catalog.handle(`${url.pathname}${url.search}`, init);
         if (config) return config;
@@ -90,6 +95,46 @@ async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisi
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
     return { sourceId, preview, artifacts, state };
 }
+
+it('ends a Library Try and completes uninstall without an alert when the detail closes mid-request', async () => {
+    const { Modal } = await import('@/modal');
+    const { useThemeActionExecution } = await import('@/components/settings/appearance/themeProfiles/useThemeActionExecution');
+    const deleting = createDeferred<AbortSignal | null | undefined>();
+    const release = createDeferred<void>();
+    onTestFinished(() => { release.resolve(); });
+    const { sourceId, artifacts, state } = await createRegistryThemeListingFixture({ beforeDelete: async signal => {
+        deleting.resolve(signal);
+        await release.promise;
+        signal?.throwIfAborted();
+    } });
+    state.failLight = false;
+    const alert = vi.spyOn(Modal, 'alert');
+    onTestFinished(() => { alert.mockRestore(); });
+    const reference = { type: 'registryItem' as const, kind: 'theme' as const, sourceId, itemId: 'palette' };
+    const listing = <StoreListingBody reference={reference} presentation="pane" onClose={() => {}} />;
+    const screen = await renderScreen(<>{listing}<ThemeTryBarHost /></>);
+    const view = () => screen.findAllByType(StoreThemeListing)[0]!.props;
+    await vi.waitFor(() => expect(view().facesState).toBe('ready'));
+    await act(async () => { await view().onTryFace('dark'); });
+    await act(async () => { await view().onInstall(); });
+    await vi.waitFor(() => expect(view().installed).toBe(true));
+    const installed = readThemeLibrarySnapshot(storage.getState().settingsScope!)!.entries.find(entry => entry.mode === 'dark')!;
+    const library = await renderHook(useThemeActionExecution);
+    await act(async () => {
+        const { document } = await library.getCurrent()(THEME_ACTION_IDS.get, { ref: installed.reference, include: ['document'] });
+        await library.getCurrent()(THEME_ACTION_IDS.tryOn, { mode: 'dark', document: document!, origin: { kind: 'editor' } });
+    });
+    expect(screen.findAllByType(ThemeTryBar)[0]?.props.visible).toBe(true);
+    let uninstalling: unknown;
+    await act(async () => { uninstalling = view().onUninstall!(); });
+    const signal = await deleting.promise;
+    await screen.update(<ThemeTryBarHost />);
+    await act(async () => { release.resolve(); await uninstalling; });
+    expect.soft(screen.findAllByType(ThemeTryBar)[0]?.props.visible).toBe(false);
+    expect.soft(artifacts.list()).toHaveLength(0);
+    expect.soft(alert).not.toHaveBeenCalled();
+    expect.soft(signal?.aborted).toBe(false);
+});
 
 it('browses an admitted plugin theme and keeps its reference from the shared Store listing', async () => {
     const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');

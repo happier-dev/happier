@@ -24,8 +24,12 @@ const registry = createThemeRegistryLifecycle({
     readMode: () => resolveThemeRuntimeVisualTheme(getStorage().getState().localSettings.themePreference, readSystemTheme()),
     revertStorePreview: listing => {
         const current = preview.read();
-        if (current?.origin.kind === 'store' && 'listing' in current.origin && current.origin.listing.sourceId === listing.sourceId
-            && current.origin.listing.itemId === listing.itemId) preview.revert(current.previewRef);
+        if (!current) return;
+        const source = current.document?.profile.source;
+        // Library Try previews an installed artifact using the same editor-origin controls.
+        const target = current.origin.kind === 'store' && 'listing' in current.origin ? current.origin.listing
+            : current.selection?.kind === 'artifact' && source?.kind === 'store' ? source.provenance : null;
+        if (target?.sourceId === listing.sourceId && target.itemId === listing.itemId) preview.revert(current.previewRef);
     },
 });
 
