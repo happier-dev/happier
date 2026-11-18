@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
+import type { MachineAccessGrantSetInputV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionEditResultV1Schema, WorkflowRunListResultV1Schema,
   WorkflowRunGetResultV1Schema, WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -106,16 +107,21 @@ describe('AE.P02.F8-shared-consent', () => {
       observeActionRequests: true, serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const author = await fixture.createAccount('author');
     const actor = await fixture.createAccount('actor');
+    expect((await fixture.claimHomeOwner(author)).result.status).toBe('claimed');
     const machine = await fixture.enrollDaemon(author, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
-    const teamResult = await author.executeAsPerson('teams.create', { v: 1, name: 'Environment managers', requestKey: randomUUID() });
+    const teamResult = await author.executeAsPerson('teams.create', { v: 1, name: 'Environment managers', requestKey: randomUUID(),
+      initialOwnerAccountId: readAccountIdFromToken(author.credentials.token) });
     expect(teamResult.ok, JSON.stringify(teamResult)).toBe(true);
     if (!teamResult.ok) throw new Error(teamResult.errorCode);
     const teamId = TeamSummaryV1Schema.parse(teamResult.result).id;
     expect(await author.executeAsPerson('teams.members.add', { v: 1, teamId, role: 'admin', historyAccess: 'from_membership',
       accountId: readAccountIdFromToken(actor.credentials.token) })).toMatchObject({ ok: true });
-    expect(await author.executeAsPerson('machines.access.grant.set', { ...machine.target,
-      principal: { kind: 'account', accountId: readAccountIdFromToken(actor.credentials.token) }, level: 'manage' }))
-      .toMatchObject({ ok: true });
+    const machineGrant = await author.executeAsPerson('machines.access.grant.set', { ...machine.target,
+      principal: { kind: 'account', accountId: readAccountIdFromToken(actor.credentials.token) }, level: 'admin' } satisfies MachineAccessGrantSetInputV1);
+    expect(machineGrant, JSON.stringify(machineGrant)).toMatchObject({ ok: true, result: { kind: 'saved' } });
+    const sourceOwnerMachineGrant = await author.executeAsPerson('machines.access.grant.set', { ...machine.target,
+      principal: { kind: 'team', teamId }, level: 'view' } satisfies MachineAccessGrantSetInputV1);
+    expect(sourceOwnerMachineGrant, JSON.stringify(sourceOwnerMachineGrant)).toMatchObject({ ok: true, result: { kind: 'saved' } });
     const sourceResult = await author.executeAsPerson('projects.sources.create', { serverId: fixture.serverId,
       name: 'Shared Environment', owner: { kind: 'team', teamId }, requestKey: randomUUID() });
     expect(sourceResult.ok, JSON.stringify(sourceResult)).toBe(true);
@@ -145,17 +151,18 @@ describe('AE.P02.F8-shared-consent', () => {
       principal: { kind: 'team', teamId }, accessLevel: 'view' })).toMatchObject({ ok: true });
     const activeFixture = fixture;
     let environmentRevision = environment.revision;
-    let actorSession: Readonly<{ sessionId: string }> | undefined;
+    let actorSession: Readonly<{ sessionId: string; machineId: string }> | undefined;
     const exercisePhase = async (phase: 'before' | 'after') => {
       const initialRuns = await actor.execute('workflow.run.list', { sourceArtifactId: workflow.definitionId, starter: 'current_account' });
       if (!initialRuns.ok) throw new Error(initialRuns.errorCode);
       const initialRunIds = WorkflowRunListResultV1Schema.parse(initialRuns.result).runs.map(run => run.id);
       const assertNoConsentReadOrCard = () => {
+        const occurrences = activeFixture.readActionOccurrences();
         const requests = activeFixture.takeRequestObservations();
         expect(requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations/')
           && request.path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toEqual([]);
         expect(requests.filter(request => request.method === 'POST' && request.path === '/v1/artifacts')).toEqual([]);
-        expect(activeFixture.readActionOccurrences()).toEqual([]);
+        expect(occurrences).toEqual([]);
         return requests;
       };
       const linked = await author.executeAsPerson('workflow.trigger.add', { workflow: workflow.definitionId, visibleTeamId: teamId,
@@ -192,54 +199,30 @@ describe('AE.P02.F8-shared-consent', () => {
         expect(WorkflowRunListResultV1Schema.parse(runs.result).runs.map(run => run.id)).toEqual(account === actor ? initialRunIds : []);
       }
 
-      // Obtain current consent through the same Action with an actual Session's
-      // placement, then remove that binder on the next Account invocation.
+      // An Account Action still has no execution Machine when its caller has
+      // a configured Session. That binder must not launch the shared check.
       if (!actorSession) {
         const actorMachine = await activeFixture.enrollDaemon(actor,
           { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
-        actorSession = await activeFixture.assertKnownGoodSessionControl(actor, actorMachine);
+        const control = await activeFixture.assertKnownGoodSessionControl(actor, actorMachine);
+        actorSession = { sessionId: control.sessionId, machineId: actorMachine.target.machineId };
       }
+      activeFixture.takeRequestObservations();
       const bound = await actor.executeAsPerson('deployments.environments.controller.set', {
         serverId: activeFixture.serverId, environmentId: environment.environmentId,
         expectedRevision: firstEdit.revision, controllerMachineId: machine.target.machineId,
-      }, { defaultSessionId: actorSession.sessionId });
+      }, { defaultSessionId: actorSession.sessionId, defaultSessionMachineId: actorSession.machineId });
       expect(bound.ok, JSON.stringify(bound)).toBe(true);
       if (!bound.ok) throw new Error(bound.errorCode);
-      const approval = ActionApprovalRequestCreatedResultSchema.parse(bound.result);
-      expect(await actor.execute('approval.request.get', { artifactId: approval.artifactId }))
-        .toMatchObject({ ok: true, result: { request: { status: 'open', automaticChecks: { phase: 'consent' } } } });
-      expect(await actor.executeAsPerson('approval.request.decide', { artifactId: approval.artifactId,
-        decision: 'approve', triggerConsent: { automationId: shared.set.automationId,
-          triggerId: shared.triggerId, decision: 'allow' } })).toMatchObject({ ok: true });
-      await waitFor(async () => {
-        const read = await actor.execute('approval.request.get', { artifactId: approval.artifactId });
-        expect(read.ok, JSON.stringify(read)).toBe(true);
-        if (!read.ok) throw new Error(read.errorCode);
-        return ApprovalRequestGetResultV1Schema.parse(read.result).request.status === 'executed';
-      }, { context: 'Bound Environment check and controller edit settle', failFast: true });
-      expect(await actor.execute('approval.request.get', { artifactId: approval.artifactId }))
-        .toMatchObject({ ok: true, result: { request: { execution: { ok: true } } } });
-      const currentIndex = await fetchJson<unknown>(`${activeFixture.server.baseUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`,
-        { headers: { Authorization: `Bearer ${actor.credentials.token}` } });
-      expect(currentIndex.status).toBe(200);
-      const currentRows = ActionAutomationIndexV1Schema.parse(currentIndex.data).rows.filter(row =>
-        row.consentFor?.automationId === shared.set.automationId && row.consentFor.triggerId === shared.triggerId);
-      expect(currentRows).toHaveLength(1);
-      const before = await actor.execute('workflow.run.list', { sourceArtifactId: workflow.definitionId, starter: 'current_account' });
-      expect(before.ok, JSON.stringify(before)).toBe(true);
-      if (!before.ok) throw new Error(before.errorCode);
-      const runIds = WorkflowRunListResultV1Schema.parse(before.result).runs.map(run => run.id);
-      expect(runIds).toHaveLength(initialRunIds.length + 1);
-      const readEnvironment = await actor.executeAsPerson('deployments.environments.get', {
-        serverId: activeFixture.serverId, environmentId: environment.environmentId });
-      expect(readEnvironment.ok, JSON.stringify(readEnvironment)).toBe(true);
-      if (!readEnvironment.ok) throw new Error(readEnvironment.errorCode);
-      const currentEnvironment = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(readEnvironment.result);
-      if (!currentEnvironment.ok) throw new Error(currentEnvironment.error);
+      expect(bound).toMatchObject({ automationNotices: [expect.objectContaining({
+        code: 'action_automation_skipped', reason: 'machineRequired' })] });
+      assertNoConsentReadOrCard();
+      const boundEdit = DeploymentActionOutputSchemasV1['deployments.environments.controller.set'].parse(bound.result);
+      if (!boundEdit.ok) throw new Error(boundEdit.error);
       activeFixture.takeRequestObservations();
       const unboundCurrent = await actor.executeAsPerson('deployments.environments.controller.set', {
         serverId: activeFixture.serverId, environmentId: environment.environmentId,
-        expectedRevision: currentEnvironment.environment.revision, controllerMachineId: machine.target.machineId });
+        expectedRevision: boundEdit.revision, controllerMachineId: machine.target.machineId });
       expect(unboundCurrent).toMatchObject({ ok: true, automationNotices: [expect.objectContaining({
         code: 'action_automation_skipped', reason: 'machineRequired' })] });
       assertNoConsentReadOrCard();
@@ -250,13 +233,13 @@ describe('AE.P02.F8-shared-consent', () => {
       const after = await actor.execute('workflow.run.list', { sourceArtifactId: workflow.definitionId, starter: 'current_account' });
       expect(after.ok, JSON.stringify(after)).toBe(true);
       if (!after.ok) throw new Error(after.errorCode);
-      expect(WorkflowRunListResultV1Schema.parse(after.result).runs.map(run => run.id)).toEqual(runIds);
+      expect(WorkflowRunListResultV1Schema.parse(after.result).runs.map(run => run.id)).toEqual(initialRunIds);
       const afterIndex = await fetchJson<unknown>(`${activeFixture.server.baseUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`,
         { headers: { Authorization: `Bearer ${actor.credentials.token}` } });
       expect(afterIndex.status).toBe(200);
       expect(ActionAutomationIndexV1Schema.parse(afterIndex.data).rows.filter(row =>
         row.consentFor?.automationId === shared.set.automationId && row.consentFor.triggerId === shared.triggerId))
-        .toEqual(currentRows);
+        .toEqual([]);
       expect(await author.executeAsPerson('workflow.trigger.update', { automationId: shared.set.automationId,
         triggerId: shared.triggerId, expectedRevision: shared.set.revision, patch: { enabled: false } })).toMatchObject({ ok: true });
     };
