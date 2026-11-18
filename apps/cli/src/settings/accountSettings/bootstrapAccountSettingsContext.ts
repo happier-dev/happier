@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import type { AgentId } from '@happier-dev/agents';
+import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import {
   accountSettingsParse,
   AccountSettingsV2GetResponseSchema,
@@ -316,8 +317,38 @@ function shouldTreatVersionAsFresh(current: number | null | undefined, minimum: 
 
 const inMemoryByScopeKey = new Map<string, AccountSettingsContext>();
 
+// A failed refresh keeps serving the cache, which stays stale, so without this
+// every caller re-read the server (a 502ing server saw ~1 read/s). Failures back
+// off on the server reconnect policy; success, a forced refresh, a required
+// minimum version or a connection boundary (reset) try the server at once.
+type RefreshBackoff = Readonly<{ consecutiveFailures: number; nextAttemptAtMs: number }>;
+const refreshBackoffByScopeKey = new Map<string, RefreshBackoff>();
+// An equal-version network read does not replace the active snapshot, so its
+// loadedAtMs stays old; remember the validation so the TTL restarts from it.
+const networkValidationByScopeKey = new Map<string, Readonly<{ settingsVersion: number; validatedAtMs: number }>>();
+
+function recordRefreshFailure(scopeKey: string, nowMs: number): RefreshBackoff {
+  const consecutiveFailures = (refreshBackoffByScopeKey.get(scopeKey)?.consecutiveFailures ?? 0) + 1;
+  const retryInMs = computeManagedConnectionBackoffMs({
+    attempt: consecutiveFailures,
+    minMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs,
+    maxMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs,
+    jitterRatio: DEFAULT_MANAGED_CONNECTION_POLICY.jitterRatio,
+  });
+  const backoff = { consecutiveFailures, nextAttemptAtMs: nowMs + retryInMs };
+  refreshBackoffByScopeKey.set(scopeKey, backoff);
+  return backoff;
+}
+
+/** Reconnect boundary: the next Settings read tries the server at once. */
+export function resetAccountSettingsRefreshBackoff(): void {
+  refreshBackoffByScopeKey.clear();
+}
+
 export function resetInMemoryAccountSettingsContextForTests(): void {
   inMemoryByScopeKey.clear();
+  refreshBackoffByScopeKey.clear();
+  networkValidationByScopeKey.clear();
   resetActiveAccountSettingsSnapshotForTests();
 }
 
@@ -433,10 +464,15 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const existing = active?.scopeKey === scopeKey
     ? contextFromActiveSnapshot(active)
     : (inMemoryByScopeKey.get(scopeKey) ?? null);
+  const validation = networkValidationByScopeKey.get(scopeKey);
+  const existingValidatedAtMs = existing && validation?.settingsVersion === existing.settingsVersion
+    ? Math.max(existing.loadedAtMs, validation.validatedAtMs)
+    : existing?.loadedAtMs;
   if (
     refresh === 'auto'
     && existing
-    && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)
+    && existingValidatedAtMs !== undefined
+    && shouldTreatCacheAsFresh({ version: 2, cachedAt: existingValidatedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)
     && shouldTreatVersionAsFresh(existing.settingsVersion, minSettingsVersion)
   ) {
     return publishContext(existing).context;
@@ -497,7 +533,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (!shouldTreatVersionAsFresh(candidate.settingsVersion, minSettingsVersion)) {
       throw new AccountSettingsStaleError();
     }
+    refreshBackoffByScopeKey.delete(scopeKey);
     const publication = publishContext(candidate);
+    if (publication.context.settingsVersion === settingsVersion) {
+      networkValidationByScopeKey.set(scopeKey, { settingsVersion, validatedAtMs: nowMs });
+    }
     if (!publication.didCommit && publication.context.settingsVersion > candidate.settingsVersion) {
       return publication.context;
     }
@@ -521,13 +561,20 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     ? shouldTreatCacheAsFresh(cache, nowMs, ttlMs) && shouldTreatVersionAsFresh(cache.settingsVersion, minSettingsVersion)
     : false;
   const shouldForceFetch = refresh === 'force';
+  const backoff = refreshBackoffByScopeKey.get(scopeKey);
+  const refreshBackedOff = !shouldForceFetch && minSettingsVersion === null
+    && backoff !== undefined && nowMs < backoff.nextAttemptAtMs;
+  const logRefreshFailure = (message: string, err: unknown) => {
+    const { consecutiveFailures, nextAttemptAtMs } = recordRefreshFailure(scopeKey, nowMs);
+    logger.debug(message, { ...serializeAxiosErrorForLog(err), consecutiveFailures, retryInMs: nextAttemptAtMs - nowMs });
+  };
 
   const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
 
   if (effectiveMode === 'fast') {
     const base = await useCache();
     const needsRefresh = shouldForceFetch || !cacheFresh;
-    if (!needsRefresh) return base;
+    if (!needsRefresh || refreshBackedOff) return base;
 
     // Fire refresh immediately; expose promise for long-running processes.
     const whenRefreshed = fetchAndPersist().catch(async (err) => {
@@ -535,14 +582,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       if (minSettingsVersion !== null) {
         throw err;
       }
-      logger.debug('[accountSettings] background refresh failed; using cache', serializeAxiosErrorForLog(err));
+      logRefreshFailure('[accountSettings] background refresh failed; using cache', err);
       return base;
     });
     return { ...base, whenRefreshed };
   }
 
   // blocking mode
-  if (!shouldForceFetch && cacheFresh) {
+  if ((!shouldForceFetch && cacheFresh) || refreshBackedOff) {
     return useCache();
   }
 
@@ -553,7 +600,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (minSettingsVersion !== null) {
       throw err;
     }
-    logger.debug('[accountSettings] fetch failed; falling back to cache', serializeAxiosErrorForLog(err));
+    logRefreshFailure('[accountSettings] fetch failed; falling back to cache', err);
     return useCache();
   }
 }
