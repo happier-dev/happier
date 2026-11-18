@@ -18,6 +18,8 @@ const GITHUB_URL = 'https://github.com/happier-dev/happier';
 const DISCORD_URL = 'https://discord.gg/W6Pb8KuHfg';
 /** The links sit 10px apart (`actionsRow*` gap); each hit area reaches half of it sideways. */
 const LINK_HIT_REACH = { left: 5, right: 5 } as const;
+// The glyphs sit on the label's text edge (welcome-1115 r2); the reach keeps a 28 px target around the 16 px mark.
+const ICON_HIT_REACH = { left: 6, right: 6 } as const;
 
 export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
@@ -72,7 +74,7 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
                             testID="welcome-footer-github-action"
                             onPressIn={githubFeedback.onPressIn}
                             onPressOut={githubFeedback.onPressOut}
-                            hitReach={LINK_HIT_REACH}
+                            hitReach={ICON_HIT_REACH}
                             style={styles.iconButton}
                         >
                             <Animated.View style={githubFeedback.animatedStyle}>
@@ -86,7 +88,7 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
                             testID="welcome-footer-discord-action"
                             onPressIn={discordFeedback.onPressIn}
                             onPressOut={discordFeedback.onPressOut}
-                            hitReach={LINK_HIT_REACH}
+                            hitReach={ICON_HIT_REACH}
                             style={styles.iconButton}
                         >
                             <Animated.View style={discordFeedback.animatedStyle}>
@@ -159,13 +161,13 @@ const stylesheet = StyleSheet.create(() => ({
     actionsRowStart: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 16,
     },
     actionsRowCenter: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 10,
+        gap: 16,
     },
     trailingDesktop: {
         alignSelf: 'flex-end',
@@ -178,7 +180,7 @@ const stylesheet = StyleSheet.create(() => ({
         textDecorationLine: 'underline',
     },
     iconButton: {
-        width: 28,
+        width: 16,
         height: 28,
         alignItems: 'center',
         justifyContent: 'center',
