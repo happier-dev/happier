@@ -1,4 +1,4 @@
-import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewHistoryRequestV1Schema, ReviewHistoryResponseV1Schema } from '../../reviews/reviewListV1.js';
+import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewGetRequestV1Schema, ReviewGetResponseV1Schema, ReviewHistoryRequestV1Schema, ReviewHistoryResponseV1Schema } from '../../reviews/reviewListV1.js';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIdsReviewHumanV1.js';
 import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema } from '../../reviews/reviewHumanV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
@@ -16,16 +16,19 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScope.js';
 
 
-import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewNewRoundInputV1Schema, ReviewNewRoundResultV1Schema } from '../../reviews/reviewRoundActionsV1.js';
-import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
+import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewSettleRoundInputV1Schema, ReviewNewRoundInputV1Schema, ReviewNewRoundResultV1Schema } from '../../reviews/reviewRoundActionsV1.js';
+import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
+import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_SETTLE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
 
 function createReviewActionSpecs(): readonly [
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.get; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewHumanGetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.setReviewers; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewReviewersSetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'present_user'; readonly inputSchema: typeof ReviewVerdictActionInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_PREPARE_ROUND_ACTION_ID_V1; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewPrepareRoundInputV1Schema; readonly outputSchema: typeof ReviewPreparedRoundV1Schema },
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_SETTLE_ROUND_ACTION_ID_V1; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewSettleRoundInputV1Schema; readonly outputSchema: typeof ReviewRoundBindingV1Schema },
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_NEW_ROUND_ACTION_ID_V1; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewNewRoundInputV1Schema; readonly outputSchema: typeof ReviewNewRoundResultV1Schema },
   PreNormalizedActionSpec & { readonly id: 'reviews.list'; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewListRequestV1Schema; readonly outputSchema: typeof ReviewListResponseV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'review.get'; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewGetRequestV1Schema; readonly outputSchema: typeof ReviewGetResponseV1Schema },
   PreNormalizedActionSpec & { readonly id: 'review.history.list'; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewHistoryRequestV1Schema; readonly outputSchema: typeof ReviewHistoryResponseV1Schema },
   PreNormalizedActionSpec & { readonly id: 'review.start'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewStartInputSchema; readonly outputSchema: typeof StrictJsonValueSchema },
   PreNormalizedActionSpec & { readonly id: 'review.apply'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewFindingsApplyInputV1Schema; readonly outputSchema: typeof ReviewFindingsApplyResultV1Schema },
@@ -82,6 +85,14 @@ function createReviewActionSpecs(): readonly [
     inputSchema: ReviewPrepareRoundInputV1Schema, outputSchema: ReviewPreparedRoundV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
+    id: REVIEW_SETTLE_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    title: 'Finish Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
+    description: 'Settle one admitted Review round from its host-published reviewer outcomes.',
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'review_settle_round', voiceClientToolName: 'review_settle_round' },
+    inputSchema: ReviewSettleRoundInputV1Schema, outputSchema: ReviewRoundBindingV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
     id: REVIEW_NEW_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
     title: 'New Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
     description: 'Review current code in the same Review, reusing the accepted workflow or retained native reviewer.',
@@ -102,6 +113,17 @@ function createReviewActionSpecs(): readonly [
       { path: 'projectSourceId', title: 'Project source', widget: 'text' },
       { path: 'needsDecision', title: 'Needs a decision', widget: 'boolean' }] },
     inputSchema: ReviewListRequestV1Schema, outputSchema: ReviewListResponseV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'review.get', executionPlacement: 'account', requiredAuthority: 'account_automation',
+    approval: { result: 'required' }, title: 'Read Review', safety: 'safe', sideEffectClass: 'read',
+    description: 'Read authorized Review metadata, requested people, verdicts and needs-you facts in one snapshot.',
+    placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'review_get', voiceClientToolName: 'review_get' },
+    serverTransport: { method: 'POST', path: '/v1/reviews/get' },
+    cli: { acceptsServerId: true, commands: [{ path: ['review', 'get'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true }] },
+    inputSchema: ReviewGetRequestV1Schema, outputSchema: ReviewGetResponseV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.history.list', executionPlacement: 'account', requiredAuthority: 'account_automation',
