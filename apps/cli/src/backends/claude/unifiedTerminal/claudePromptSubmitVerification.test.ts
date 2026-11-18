@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
 
 import { createClaudePromptSubmitVerificationPolicy } from './claudePromptSubmitVerification';
+import { parseClaudeScreenState } from './tuiControls/screenState';
 
 describe('createClaudePromptSubmitVerificationPolicy', () => {
   it('hands a positively foreign composer back without submitting it, while ambiguous capture still waits', async () => {
@@ -153,6 +156,114 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       promptText,
       screenText: screenText.replace('remaining', 'unrelated'),
     })).toThrow();
+  });
+
+  describe('composer scrolled past its prompt row (Claude Code 2.1.327, tmux 80x24)', () => {
+    // A ~610-character single-line paste wraps, is too short to collapse into a paste marker and
+    // scrolls the composer: the top rule reads `↑ 2 more` and the `❯` row is off screen. Names in
+    // the capture are anonymized; row lengths and punctuation are kept.
+    const promptText = [
+      'Du bist MDS · Musterdaten für die Werkstatt-Vorschau. Hol zuerst den Cockpit-Stand',
+      '(git -C ~/dev/Studio pull --ff-only) und lies dann ~/dev/Studio/auftraege/beispiel-musterdaten-4711.md',
+      'ganz – dort stehen Antritt, Ziel, der vorhandene Bestand (backend/app/core/muster_daten) und die',
+      'Grenzen. Ziel: Jede Seite des Projekts „Werkstatt“ in nordlicht app zeigt realistischen, erkennbar',
+      'erfundenen Inhalt, und der Werkstatt-Bereich (/workshop/…) kommt mit einem passenden',
+      'Mitarbeitenden-Konto dazu. Melde dich beim Cockpit (@sid:0a1b2c3d) auf dem Board, sobald die',
+      'ersten Seiten gefüllt sind, und noch einmal am Ende.',
+    ].join(' ');
+    const scrolledScreen = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.327-scrolled-composer.txt', import.meta.url),
+      'utf8',
+    );
+    const topRule = '─── ↑ 1 more ───────────────────────────';
+    const bottomRule = '─'.repeat(topRule.length);
+
+    it('submits the prompt once its visible window is staged', async () => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const submitEnter = vi.fn(async () => 'success' as const);
+
+      expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText: scrolledScreen })).toBe(true);
+      expect(await runTerminalPromptSubmission({
+        promptText,
+        verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText: scrolledScreen }),
+        submitEnter,
+        verifyAfterSubmit: async () => false,
+        remainingTimeoutMs: () => 0,
+        wait: async () => {},
+        postSubmitSettleMs: 0,
+      })).toEqual({ success: true });
+      expect(submitEnter).toHaveBeenCalledOnce();
+      expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText: scrolledScreen })).toBe(true);
+    });
+
+    it('stages the prompt when the first visible draft row starts with a status glyph', () => {
+      const firstRow = '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen';
+      const draftRow = '· Check the affected tests';
+      const policy = createClaudePromptSubmitVerificationPolicy();
+
+      expect(policy.isPromptStagedBeforeSubmit({
+        promptText: promptText.replace(firstRow, draftRow),
+        screenText: scrolledScreen.replace(firstRow, draftRow),
+      })).toBe(true);
+    });
+
+    it('treats the prompt as sent once the composer is empty again', () => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const afterSubmit = [
+        ' ▐▛███▛█   Claude Code v2.1.327',
+        '▝▜██████▀  Opus 5.5 with low effort · Claude Ultra',
+        ' ▝▝   ▝▝   ~/dev/Studio',
+        '',
+        '❯ Du bist MDS · Musterdaten für die Werkstatt-Vorschau. Hol zuerst den',
+        '  Cockpit-Stand (git -C ~/dev/Studio pull --ff-only) und lies dann',
+        '  ~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen',
+        '',
+        '─'.repeat(80),
+        '❯ ',
+        '─'.repeat(80),
+        '  Opus 5.5',
+        '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
+      ].join('\n');
+
+      expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText: afterSubmit })).toBe(false);
+    });
+
+    it('does not stage a scrolled composer that holds different text', () => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const foreignScreen = scrolledScreen.replace('gefüllt sind', 'geleert sind');
+
+      expect(() => policy.isPromptStagedBeforeSubmit({ promptText, screenText: foreignScreen }))
+        .toThrow('Claude composer changed before prompt submission');
+      expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText: foreignScreen })).toBe(false);
+    });
+
+    it.each([
+      ['an indented dash', '  —'],
+      ['a short rule', '─'],
+      ['a rule with different glyphs', '━'.repeat(topRule.length)],
+      ['a rule starting in a different column', `  ${bottomRule.slice(2)}`],
+      ['an interrupted rule', `${bottomRule.slice(2)} ─`],
+    ])('rejects an edited draft after %s inside the scrolled composer', (_description, draftRow) => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const screenText = [
+        topRule, '  Visible draft start', draftRow, '  Edited draft ending', bottomRule, '  Opus 5.5',
+      ].join('\n');
+      const authorizedPrompt = ['Hidden first line', 'Visible draft start', draftRow, 'Original draft ending'].join('\n');
+
+      expect(parseClaudeScreenState(screenText).composerContent)
+        .toBe(['Visible draft start', draftRow.trim(), 'Edited draft ending'].join('\n'));
+      expect(() => policy.isPromptStagedBeforeSubmit({ promptText: authorizedPrompt, screenText })).toThrow();
+    });
+
+    it('keeps the outer pipes on both table rows when staging a scrolled draft', () => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const table = ['| a | b |', '| a | b |'];
+      const screenText = [topRule, ...table.map((row) => `  ${row}`), bottomRule].join('\n');
+      const authorizedPrompt = ['Hidden first line', ...table].join('\n');
+
+      expect(parseClaudeScreenState(screenText).composerContent).toBe(table.join('\n'));
+      expect(policy.isPromptStagedBeforeSubmit({ promptText: authorizedPrompt, screenText })).toBe(true);
+    });
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {

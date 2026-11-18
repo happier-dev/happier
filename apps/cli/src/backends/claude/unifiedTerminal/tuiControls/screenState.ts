@@ -250,33 +250,78 @@ function lineIndexAt(text: string, index: number): number {
 const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*$/;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[⏵←⏺✻✶·]|⚠)/;
+// Top border of a composer whose draft rows overflow the box (Claude Code 2.1.327, tmux 80x24,
+// ~620-char single-line paste): Claude scrolls the draft and writes `↑ N more` into the top rule,
+// so the first row with the `❯` glyph is no longer on screen. The rows below this border up to the
+// bottom rule are the visible window of the draft.
+const SCROLLED_COMPOSER_TOP_BORDER = /(?:^|\n)([^\S\n]*[─━]+[^\S\n]*↑[^\S\n]+\d+[^\S\n]+more[^\S\n]*[─━]*[^\S\n]*)(?:\n|$)/g;
 
 /**
  * Continuation lines of a soft-wrapped composer draft (C11, live capture 2026-06-12, runner pid
  * 20327): a draft longer than the pane width wraps onto indented lines inside the composer box.
  * Capturing only the `❯` line truncated the draft, so an own-injected leftover could never
- * exact-match the own-text registry. Continuation = indented, non-border, non-status lines
- * between the composer line and the box bottom border.
+ * exact-match the own-text registry. Without a known bottom border, stop at the first border,
+ * status row, or non-indented text row.
  */
-function readComposerContinuationLines(text: string, afterIndex: number): string[] {
-  const rest = text.slice(afterIndex);
+function readComposerContinuationLines(
+  text: string,
+  afterIndex: number,
+  { beforeIndex, stripSideBorders = true }: Readonly<{ beforeIndex?: number; stripSideBorders?: boolean }> = {},
+): string[] {
+  const rest = text.slice(afterIndex, beforeIndex);
   const lines = rest.length === 0 ? [] : rest.split('\n');
   const continuation: string[] = [];
   for (const rawLine of lines) {
     // Strip box border verticals so `│   wrapped text   │` reads as an indented line.
-    const line = rawLine.replace(/^[^\S\n]*[│|]/, '').replace(/[│|][^\S\n]*$/, '');
-    if (COMPOSER_BORDER_LINE.test(line)) break;
-    if (COMPOSER_CONTINUATION_STOP.test(line)) break;
+    const line = stripSideBorders
+      ? rawLine.replace(/^[^\S\n]*[│|]/, '').replace(/[│|][^\S\n]*$/, '')
+      : rawLine;
     const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continuation.push('');
-      continue;
-    }
-    if (!/^[^\S\n]/.test(line)) break;
+    if (beforeIndex === undefined && (
+      COMPOSER_BORDER_LINE.test(line)
+      || COMPOSER_CONTINUATION_STOP.test(line)
+      || (trimmed.length > 0 && !/^[^\S\n]/.test(line))
+    )) break;
     continuation.push(trimmed);
   }
   while (continuation.at(-1) === '') continuation.pop();
   return continuation;
+}
+
+function readScrolledComposer(
+  text: string,
+  lastPromptLine: RegExpExecArray | null,
+): Readonly<{ content: string | null; footer: string }> | null {
+  const topBorder = lastMatch(SCROLLED_COMPOSER_TOP_BORDER, text);
+  if (topBorder === null) return null;
+  const topRow = topBorder[1]!;
+  const startColumn = topRow.search(/\S/u);
+  const ruleGlyph = topRow.charAt(startColumn);
+  const draftStart = topBorder.index + topBorder[0].length;
+  const lastPromptIndex = lastPromptLine?.index ?? -1;
+
+  // This layout has horizontal rules only. The top rule establishes the width, column and glyph
+  // of the closing rule, so short or indented draft rows cannot close the box.
+  let rowStart = draftStart;
+  for (const row of text.slice(draftStart).split('\n')) {
+    const nextRowStart = rowStart + row.length + 1;
+    if (
+      row.length >= topRow.length
+      && row.search(/\S/u) === startColumn
+      && row.slice(startColumn) === ruleGlyph.repeat(row.length - startColumn)
+    ) {
+      // Prompt-shaped rows between the rules belong to the draft. A later prompt owns the input.
+      if (lastPromptIndex >= rowStart) return null;
+      const rows = readComposerContinuationLines(text, draftStart, { beforeIndex: rowStart, stripSideBorders: false });
+      return { content: rows.join('\n') || null, footer: text.slice(nextRowStart) };
+    }
+    rowStart = nextRowStart;
+  }
+
+  // A clipped box still supports conservative draft reading. Its footer boundary is unknown.
+  if (lastPromptIndex >= topBorder.index) return null;
+  const rows = readComposerContinuationLines(text, draftStart, { stripSideBorders: false });
+  return { content: rows.join('\n') || null, footer: '' };
 }
 
 function readComposerContentStartColumn(line: string): number | null {
@@ -748,11 +793,12 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     ? resolveDialogSelectionPresentation(visibleTail, null)
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
-  const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  const lastPromptLineMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  const scrolledComposer = readScrolledComposer(text, lastPromptLineMatch);
   // A notice above the current composer belongs to transcript history, not the active footer.
-  const currentFooter = lastComposerMatch
-    ? text.slice(lastComposerMatch.index + lastComposerMatch[0].length)
-    : visibleTail;
+  const currentFooter = scrolledComposer?.footer ?? (lastPromptLineMatch
+    ? text.slice(lastPromptLineMatch.index + lastPromptLineMatch[0].length)
+    : visibleTail);
   const usageLimitWaitVisible = USAGE_LIMIT_WAIT_FOOTER.test(currentFooter);
 
   const switchModelDialogVisible = SWITCH_MODEL_DIALOG.test(text);
@@ -777,7 +823,9 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // otherwise the selected row masquerades as a draft and suppresses the generic dialog path.
   const composerState = rewindSelectionVisible || visibleDialogSelection?.kind === 'focused'
     ? { content: null, shellContent: null, cursorRelation: null }
-    : readComposerState(text, rawText, lastComposerMatch, context);
+    : scrolledComposer
+      ? { content: scrolledComposer.content, shellContent: null, cursorRelation: null }
+      : readComposerState(text, rawText, lastPromptLineMatch, context);
   const composerContent = composerState.content;
   const hasComposer = composerContent !== null;
   // A host cursor on the parsed composer is direct evidence that the composer, not an older

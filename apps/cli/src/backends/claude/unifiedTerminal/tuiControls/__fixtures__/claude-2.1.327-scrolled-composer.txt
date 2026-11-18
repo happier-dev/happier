@@ -1,0 +1,15 @@
+ ▐▛███▛█   Claude Code v2.1.327
+▝▜██████▀  Opus 5.5 with low effort · Claude Ultra
+ ▝▝   ▝▝   ~/dev/Studio
+
+─── ↑ 2 more ───────────────────────────────────────────────────────────────────
+  ~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen
+  Antritt, Ziel, der vorhandene Bestand (backend/app/core/muster_daten) und
+  die Grenzen. Ziel: Jede Seite des Projekts „Werkstatt“ in nordlicht app
+  zeigt realistischen, erkennbar erfundenen Inhalt, und der Werkstatt-Bereich
+  (/workshop/…) kommt mit einem passenden Mitarbeitenden-Konto dazu. Melde
+  dich beim Cockpit (@sid:0a1b2c3d) auf dem Board, sobald die ersten Seiten
+  gefüllt sind, und noch einmal am Ende.
+────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

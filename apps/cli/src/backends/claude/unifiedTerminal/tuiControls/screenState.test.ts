@@ -1470,6 +1470,83 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
   });
 });
 
+// Live capture (Claude Code 2.1.327, tmux 80x24, names anonymized): a ~610-character single-line
+// paste overflows the composer box, so Claude scrolls it and writes `↑ 2 more` into the top rule.
+// The `❯` row is off screen; the composer must still be read from the rows inside the box.
+const CLAUDE_2_1_327_SCROLLED_COMPOSER = readFileSync(
+  new URL('./__fixtures__/claude-2.1.327-scrolled-composer.txt', import.meta.url),
+  'utf8',
+);
+
+describe('parseClaudeScreenState — scrolled composer draft', () => {
+  const VISIBLE_WINDOW = [
+    '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen',
+    'Antritt, Ziel, der vorhandene Bestand (backend/app/core/muster_daten) und',
+    'die Grenzen. Ziel: Jede Seite des Projekts „Werkstatt“ in nordlicht app',
+    'zeigt realistischen, erkennbar erfundenen Inhalt, und der Werkstatt-Bereich',
+    '(/workshop/…) kommt mit einem passenden Mitarbeitenden-Konto dazu. Melde',
+    'dich beim Cockpit (@sid:0a1b2c3d) auf dem Board, sobald die ersten Seiten',
+    'gefüllt sind, und noch einmal am Ende.',
+  ].join('\n');
+
+  it('reads the visible rows between the `↑ N more` top rule and the bottom rule as the composer', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER);
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW);
+    expect(state.userDraftPresent).toBe(true);
+    expect(state.inputBoxInteractive).toBe(true);
+    expect(state.modeMarker).toBe('bypassPermissions');
+  });
+
+  it('prefers the scrolled box over an earlier prompt echo in the transcript', () => {
+    const state = parseClaudeScreenState(
+      CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('~/dev/Studio\n', '~/dev/Studio\n\n❯ earlier submitted prompt\n'),
+    );
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW);
+  });
+
+  it('includes a first draft row that starts with a status glyph inside the rules', () => {
+    const firstRow = '~/dev/Studio/auftraege/beispiel-musterdaten-4711.md ganz – dort stehen';
+    const draftRow = '· Check the affected tests';
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER.replace(firstRow, draftRow));
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.replace(firstRow, draftRow));
+  });
+
+  it('stops reading the draft at a status glyph when the bottom rule is missing', () => {
+    const screen = CLAUDE_2_1_327_SCROLLED_COMPOSER
+      .replace(/\n─+\n/, '\n')
+      .replace('  Antritt, Ziel,', '  · Antritt, Ziel,');
+    const state = parseClaudeScreenState(screen);
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.split('\n')[0]);
+  });
+
+  it('includes a prompt-shaped quote inside the scrolled box', () => {
+    const lastRow = 'gefüllt sind, und noch einmal am Ende.';
+    const quote = '> zitiert';
+    const state = parseClaudeScreenState(CLAUDE_2_1_327_SCROLLED_COMPOSER.replace(lastRow, quote));
+
+    expect(state.composerContent).toBe(VISIBLE_WINDOW.replace(lastRow, quote));
+  });
+
+  it('prefers a newer prompt below the scrolled box', () => {
+    const state = parseClaudeScreenState(`${CLAUDE_2_1_327_SCROLLED_COMPOSER}\n❯ newer draft`);
+
+    expect(state.composerContent).toBe('newer draft');
+  });
+
+  const usageWaitRow = '    Continuing automatically at 5:10pm · esc to cancel';
+
+  it.each([
+    ['inside the box', CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('  gefüllt sind, und noch einmal am Ende.', usageWaitRow), false],
+    ['below the box', CLAUDE_2_1_327_SCROLLED_COMPOSER.replace('  Opus 5.5\n', `${usageWaitRow}\n  Opus 5.5\n`), true],
+  ])('classifies a usage-limit wait row %s by its position', (_position, screen, visible) => {
+    expect(parseClaudeScreenState(screen).usageLimitWaitVisible).toBe(visible);
+  });
+});
+
 // Live capture 2026-06-12 11:50 (orchestrator runner pid 58731, zellij dump): the AGENTS panel
 // ("← for agents", `↑/↓ to select · Enter to view`) renders its selection cursor as
 // `❯ ◯ <agent-type> <title>` rows. The cursor row parsed as a composer draft → false `user_draft`
