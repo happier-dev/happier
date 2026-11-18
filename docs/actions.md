@@ -6218,6 +6218,10 @@ reads invocation provenance, while raw input, output and exception text have no
 declared path. After evidence includes its terminal status. The trigger owner
 supplies the same declaration to stored, intended and inline validation.
 
+The CLI and daemon retain one Action-trigger index per Account and Home across
+caller credentials. Pushed rows reach every retained consumer; each occurrence
+HTTP request keeps its originating caller's credential and currentness callback.
+
 In 0.3 development source, the Home derives shared Action-trigger reach when
 the trigger is written, using the subject's existing edit/manage owner. It
 recomputes that decision on later trigger edits; a caller's `reachesOthers`
