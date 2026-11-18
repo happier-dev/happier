@@ -377,3 +377,34 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(radio.props.accessibilityRole ?? radio.props.role).toBe('radio');
     });
 });
+
+describe('a sourced input with nothing to choose (DESIGN-1118-B M6)', () => {
+    const sourced = (optionsSourceId: string, options: readonly { value: string; label: string }[] = []) => ({
+        entry: { field: { path: 'check', title: 'Check', prompt: 'Which check?', widget: 'select' as const, required: true, optionsSourceId } },
+        row: { kind: 'needed' as const }, options, optionsStatus: 'ready' as const, plainValue: undefined,
+        phone: false, onChange: vi.fn(), testID: 'setup.check',
+    });
+    it('says there is nothing to choose yet and offers the source’s next step instead of a picker that cannot succeed', async () => {
+        const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(<WidgetSetupFieldRow {...sourced('health.checks.saved')} />);
+        expect(screen.findAllByType(HappierInputField)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('projects.deployments.monitoring.widgetNoChecks');
+        expect(screen.findByTestId('setup.check.emptyAction')).not.toBeNull();
+        await screen.unmount();
+    });
+    it('says the same for any other source, without an action it does not have', async () => {
+        const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(<WidgetSetupFieldRow {...sourced('sessions')} />);
+        expect(screen.findAllByType(HappierInputField)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('widgetAdd.noChoices');
+        expect(screen.findByTestId('setup.check.emptyAction')).toBeNull();
+        await screen.unmount();
+    });
+    it('keeps the choice field when the source has choices', async () => {
+        const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(<WidgetSetupFieldRow {...sourced('health.checks.saved', [{ value: 'a', label: 'Checkout' }])} />);
+        expect(screen.findAllByType(HappierInputField)).toHaveLength(1);
+        expect(screen.findByTestId('setup.check.emptyAction')).toBeNull();
+        await screen.unmount();
+    });
+});

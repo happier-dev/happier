@@ -78,6 +78,7 @@ const en = {
   widgetChooseCheck: 'Choose a check to show here',
   widgetCheckMissing: 'This check is no longer saved',
   widgetWhichCheck: 'Which check?',
+  widgetNoChecks: 'No saved checks yet. Add one from an app’s Checks and alerts in Services.',
 };
 type MonitoringCopy = typeof en;
 
@@ -158,6 +159,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Tria una comprovació per mostrar-la aquí',
     widgetCheckMissing: 'Aquesta comprovació ja no està desada',
     widgetWhichCheck: 'Quina comprovació?',
+    widgetNoChecks: 'Encara no hi ha comprovacions desades. Afegeix-ne una des de Comprovacions i alertes d’una aplicació, a Serveis.',
   },
   de: {
     title: 'Überwachung',
@@ -234,6 +236,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Wähle eine Prüfung, die hier erscheinen soll',
     widgetCheckMissing: 'Diese Prüfung ist nicht mehr gespeichert',
     widgetWhichCheck: 'Welche Prüfung?',
+    widgetNoChecks: 'Noch keine gespeicherten Prüfungen. Füge eine unter „Prüfungen und Warnungen“ einer App in Dienste hinzu.',
   },
   es: {
     title: 'Monitorización',
@@ -310,6 +313,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Elige una comprobación para mostrarla aquí',
     widgetCheckMissing: 'Esta comprobación ya no está guardada',
     widgetWhichCheck: '¿Qué comprobación?',
+    widgetNoChecks: 'Aún no hay comprobaciones guardadas. Añade una desde Comprobaciones y alertas de una aplicación, en Servicios.',
   },
   fr: {
     title: 'Surveillance',
@@ -388,6 +392,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Choisissez une vérification à afficher ici',
     widgetCheckMissing: 'Cette vérification n’est plus enregistrée',
     widgetWhichCheck: 'Quelle vérification ?',
+    widgetNoChecks: 'Aucune vérification enregistrée pour l’instant. Ajoutez-en une depuis Vérifications et alertes d’une application, dans Services.',
   },
   it: {
     title: 'Monitoraggio',
@@ -464,6 +469,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Scegli un controllo da mostrare qui',
     widgetCheckMissing: 'Questo controllo non è più salvato',
     widgetWhichCheck: 'Quale controllo?',
+    widgetNoChecks: 'Nessun controllo salvato. Aggiungine uno da Controlli e avvisi di un’app, in Servizi.',
   },
   ja: {
     title: 'モニタリング',
@@ -538,6 +544,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'ここに表示するチェックを選んでください',
     widgetCheckMissing: 'このチェックは保存されていません',
     widgetWhichCheck: 'どのチェックですか?',
+    widgetNoChecks: '保存したチェックはまだありません。サービスでアプリの「チェックとアラート」から追加できます。',
   },
   pl: {
     title: 'Monitorowanie',
@@ -612,6 +619,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Wybierz sprawdzenie, które ma się tu pojawić',
     widgetCheckMissing: 'To sprawdzenie nie jest już zapisane',
     widgetWhichCheck: 'Które sprawdzenie?',
+    widgetNoChecks: 'Brak zapisanych sprawdzeń. Dodaj je w sekcji Sprawdzenia i alerty aplikacji, w Usługach.',
   },
   pt: {
     title: 'Monitorização',
@@ -688,6 +696,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Escolha uma verificação para mostrar aqui',
     widgetCheckMissing: 'Esta verificação já não está guardada',
     widgetWhichCheck: 'Qual verificação?',
+    widgetNoChecks: 'Ainda não há verificações guardadas. Adicione uma em Verificações e alertas de uma aplicação, em Serviços.',
   },
   ru: {
     title: 'Мониторинг',
@@ -763,6 +772,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Выберите проверку, чтобы показать её здесь',
     widgetCheckMissing: 'Эта проверка больше не сохранена',
     widgetWhichCheck: 'Какая проверка?',
+    widgetNoChecks: 'Сохранённых проверок пока нет. Добавьте её в разделе «Проверки и оповещения» приложения в «Сервисах».',
   },
   'zh-Hans': {
     title: '监控',
@@ -837,6 +847,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: '选择要在这里显示的检查',
     widgetCheckMissing: '此检查已不再保存',
     widgetWhichCheck: '哪项检查？',
+    widgetNoChecks: '还没有已保存的检查。可在“服务”中应用的“检查和提醒”里添加。',
   },
   'zh-Hant': {
     title: '監控',
@@ -911,5 +922,6 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: '選擇要在這裡顯示的檢查',
     widgetCheckMissing: '此檢查已不再儲存',
     widgetWhichCheck: '哪項檢查？',
+    widgetNoChecks: '還沒有已儲存的檢查。可在「服務」中應用程式的「檢查和提醒」裡新增。',
   },
 } satisfies Record<SupportedLanguage, MonitoringCopy>;

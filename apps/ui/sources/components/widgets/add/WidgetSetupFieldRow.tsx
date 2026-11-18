@@ -7,7 +7,9 @@ import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
@@ -19,6 +21,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+import { readOptionSourceEmptyState } from './optionSourceEmptyState';
 import {
     type WidgetSetupField,
     type WidgetSetupRow,
@@ -259,6 +262,13 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     // A value the choices cannot name (a period) is read from the row's own label.
     const valueLabel = row.kind === 'pinned' ? row.label : row.kind === 'follows' ? row.valueLabel ?? undefined : row.kind === 'invalid' ? row.label ?? undefined : undefined;
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
+    // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
+    // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
+    if (choices && field.optionsSourceId !== undefined && field.inputType === undefined && field.allowCustomValue !== true
+        && props.optionsStatus === 'ready' && choicesOptions.length === 0 && value === undefined && !followsSurface(row)) {
+        return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
+            phone={props.phone} testID={props.testID} />;
+    }
     if (entry.follow && followsSurface(row)) {
         // Following the surface: the binding control is the row's one control and names the value.
         return (
@@ -315,6 +325,25 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 />
                 </View>
             )}
+        />
+    );
+}
+
+/** An input whose source has nothing to choose yet: says so, and offers the source's next step when it has one. */
+function NothingToChooseRow(props: Readonly<{ title: string; optionsSourceId: string; phone: boolean; testID: string }>): React.ReactElement {
+    const router = useRouter();
+    const empty = readOptionSourceEmptyState(props.optionsSourceId);
+    const action = empty.action;
+    return (
+        <Item
+            testID={props.testID}
+            title={props.title}
+            subtitle={empty.message}
+            subtitleLines={0}
+            showChevron={false}
+            accessoryLayout={props.phone ? 'stacked' : 'adaptive'}
+            {...(action ? { rightElement: <RoundButton testID={`${props.testID}.emptyAction`} size="small" display="secondary"
+                title={action.label} onPress={() => router.push(action.href as Parameters<typeof router.push>[0])} /> } : {})}
         />
     );
 }
