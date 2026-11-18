@@ -15,7 +15,8 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installSessionActionFixture } from '@/dev/testkit/harness/sessionActionRpcBoundary';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { widgetProjectionEntry } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -247,11 +248,10 @@ describe('WidgetSetupStep discovery', () => {
     });
     it.each([false, true])('reads contributed choices from the widget producer instead of the first reachable machine (union: %s)', async union => {
         discovery.unrelatedMachine = true;
-        const access = createPlainMachineRowFixture({ id: 'unrelated', accountId: scope.accountId }).access;
-        storage.setState({ machines: {
-            unrelated: createMachineFixture({ id: 'unrelated', createdAt: 2, active: true, activeAt: Date.now(), access }),
-            machine_1: createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now(), access }),
-        } });
+        await publishMachineInventoryForTest(scope, [
+            createHydratedPlainMachineFixture({ id: 'unrelated', accountId: scope.accountId, machine: { createdAt: 2, activeAt: Date.now() } }),
+            createHydratedPlainMachineFixture({ id: 'machine_1', accountId: scope.accountId, machine: { activeAt: Date.now() } }),
+        ]);
         const { resolveUiAccountActionFallbackMachineId } = await import('@/sync/ops/actions/accountActionDeps');
         expect(resolveUiAccountActionFallbackMachineId(scope)).toBe('unrelated');
         const setup = buildWidgetCandidateSetup({ candidate: { ...candidate, target: 'app', sessionInputPath: undefined,
@@ -332,10 +332,6 @@ describe('WidgetSetupStep discovery', () => {
             scope, audience: 'personal', context: {}, mode: { kind: 'add', submitLabel: 'Add' }, submit: async () => ({ ok: true }),
             renderPreview: () => <SurfaceStateCard kind="error" replacesContent title="Read failed" /> });
         const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} presentation="pane" onDone={() => {}} testID="read-failed" />);
-        // Sized widget bodies mount after their real viewport has been measured.
-        await act(async () => { screen.findByTestId('read-failed.previewCard.viewport')!.props.onLayout({
-            nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 200 } },
-        }); });
         expect(screen.root.findAllByType(SurfaceStateCard).some(node => node.props.kind === 'error')).toBe(true);
         expect(screen.root.findByType(WidgetPreviewStage).props.live).not.toBe(true);
         expect(screen.findByTestId('read-failed.preview.live')).toBeNull();
@@ -355,12 +351,14 @@ describe('WidgetSetupStep discovery', () => {
         storage.setState({ endpointStatus: 'online', socketStatus: 'connected' });
         const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} serverId={scope.serverId}
             onDone={completed} testID="pending-home" />);
+        const submit = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'pending-home.submit')!;
         try {
-            await act(async () => { screen.findByTestId('pending-home.submit')!.props.onPress(); });
+            await act(async () => { submit().props.onPress(); });
+            expect(finish).toBeTypeOf('function');
             await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
             expect(screen.getTextContent()).not.toContain('settingsPlugins.targetSelection.unreachableThisHome');
-            expect(screen.findByTestId('pending-home.submit')!.props.disabled).toBe(true);
-            expect(screen.findAllByType(RoundButton).find(node => node.props.testID === 'pending-home.submit')!.props.loading).toBe(true);
+            expect(submit().props.disabled).toBe(true);
+            expect(submit().props.loading).toBe(true);
             expect(completed).not.toHaveBeenCalled();
             await act(async () => { finish({ ok: true }); });
             expect(completed).toHaveBeenCalledWith({ ok: true });

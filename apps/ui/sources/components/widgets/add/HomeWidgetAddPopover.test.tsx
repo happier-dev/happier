@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HEALTH_BUILTIN_WIDGET_IDS_V1, HOME_BUILTIN_WIDGET_IDS_V1, MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, WIDGET_SIZE_POLICY_V1, widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { HEALTH_BUILTIN_WIDGET_IDS_V1, HOME_BUILTIN_WIDGET_IDS_V1, MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, isProjectSurfaceBuiltinWidgetIdV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, WIDGET_SIZE_POLICY_V1, widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { describeAuthoredWidgetDefinitionV1, selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 
@@ -137,7 +137,7 @@ describe('Add to Home', () => {
         ]);
         const companion = sections.find(section => section.id === 'builtins:session')!.entries;
         expect(sections.filter(section => section.id.startsWith('builtins')).flatMap(section => section.entries.map(entry => entry.id)).sort()).toEqual([
-            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1, ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
+            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1.filter(id => !isProjectSurfaceBuiltinWidgetIdV1(id)), ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
         ].sort());
         expect(sections.find(section => section.id === 'plugin:happier.triage')!.entries.map((entry) => entry.id)).toEqual(['plugin-happier.triage/latest']);
         const setup = companion[0]!.setup!();

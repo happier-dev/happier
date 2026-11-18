@@ -2,7 +2,7 @@ import type * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
-import { HEALTH_BUILTIN_WIDGET_IDS_V1, HOME_BUILTIN_WIDGET_IDS_V1, MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1 } from '@happier-dev/protocol/widgets';
+import { HEALTH_BUILTIN_WIDGET_IDS_V1, HOME_BUILTIN_WIDGET_IDS_V1, MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, isProjectSurfaceBuiltinWidgetIdV1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1 } from '@happier-dev/protocol/widgets';
 
 import { selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { projectSessionBoard } from '@/sync/domains/session/board';
@@ -185,7 +185,7 @@ describe('buildCompanionWidgetAddSections', () => {
         ]);
         const builtins = byId.get('builtins')!;
         expect(ids(builtins)).toEqual([
-            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1, ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
+            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1.filter(id => !isProjectSurfaceBuiltinWidgetIdV1(id)), ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
         ]);
         expect(ids(byId.get('plugin:happier.channels')!)).toEqual(['plugin-happier.channels/pr']);
         expect(ids(byId.get('plugin:happier.checks')!)).toEqual(['plugin-happier.checks/checks']);
@@ -327,7 +327,7 @@ describe('configurable widgets in the Add popovers', () => {
             openPlugins: vi.fn(),
         });
         expect(ids(content.sections.find((section) => section.id === 'builtins')!.entries)).toEqual([
-            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1, ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
+            ...[...SESSION_COMPANION_BUILTIN_ITEM_IDS, ...PROJECT_BUILTIN_WIDGET_IDS_V1.filter(id => !isProjectSurfaceBuiltinWidgetIdV1(id)), ...USAGE_BUILTIN_WIDGET_IDS_V1, ...MACHINE_BUILTIN_WIDGET_IDS_V1, ...HOME_BUILTIN_WIDGET_IDS_V1, ...HEALTH_BUILTIN_WIDGET_IDS_V1].map(id => `plugin-builtin:${id}`),
         ]);
         expect(ids(content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries)).toEqual(['plugin-happier.channels/summary']);
     });
@@ -382,7 +382,10 @@ describe('built-in widgets by host surface', () => {
         });
         expect(sections.map(section => section.id)).toEqual([...families.map(id => `builtins:${id}`), 'builtins']);
         const projects = sections.find(section => section.id === 'builtins:projects');
-        expect(projects?.entries.map(entry => entry.id)).toEqual(PROJECT_BUILTIN_WIDGET_IDS_V1.map(id => `plugin-builtin:${id}`));
+        const projectWidgetIds = owner === null || owner.kind === 'project'
+            ? PROJECT_BUILTIN_WIDGET_IDS_V1
+            : PROJECT_BUILTIN_WIDGET_IDS_V1.filter(id => !isProjectSurfaceBuiltinWidgetIdV1(id));
+        expect(projects?.entries.map(entry => entry.id)).toEqual(projectWidgetIds.map(id => `plugin-builtin:${id}`));
     });
 
     it('offers the ten Machine widgets as one built-in Machines group, apart from the other built-ins (plan 60 AGW-14)', () => {
