@@ -145,7 +145,7 @@ describe('Home endpoint publication → server set → daemon launch', () => {
   // still names the shared identity it established earlier. The Stack's profile reconciliation
   // re-establishes only onto the identity its own server recorded; a record naming any other
   // Home leaves the established descriptor in place.
-  it.each(['own-record', 'foreign-record'] as const)('re-establishes a Stack profile only on its own server identity record (%s)', async scenario => {
+  it.each(['own-record', 'foreign-record', 'malformed-record'] as const)('re-establishes a Stack profile only on its own server identity record (%s)', async scenario => {
     await withTempDir('happier-home-identity-record-', async homeDir => {
       const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
         'HAPPIER_WEBAPP_URL', 'HAPPIER_CLI_SUBPROCESS_PREFER_TSX', 'DBUS_SESSION_BUS_ADDRESS']);
@@ -176,7 +176,9 @@ describe('Home endpoint publication → server set → daemon launch', () => {
           resolveIrohEndpointState: () => ({ status: 'not-composed', snapshot: null, failureReason: null }),
         });
         expect(published?.homeServerIdentityId).toBe(minted);
+        let requests = 0;
         server.on('request', (request, response) => {
+          requests += 1;
           if (request.url !== '/v1/features/authenticated' || request.headers.authorization !== 'Bearer fixture-endpoint-token') {
             response.writeHead(401).end();
             return;
@@ -187,7 +189,8 @@ describe('Home endpoint publication → server set → daemon launch', () => {
         });
         const recordPath = join(homeDir, 'server-light', 'runtime', 'server.identity');
         await mkdir(dirname(recordPath), { recursive: true });
-        await writeFile(recordPath, `${scenario === 'own-record' ? minted : 'srv_some_other_home'}\n`);
+        await writeFile(recordPath, `${{ 'own-record': minted, 'foreign-record': 'srv_some_other_home',
+          'malformed-record': 'not-a-home-identity' }[scenario]}\n`);
 
         await handleServerCommand(['set', '--server-id', id, '--server-url', origin, '--local-server-url', origin,
           '--webapp-url', origin, '--home-identity-record', recordPath, '--json']);
@@ -202,6 +205,11 @@ describe('Home endpoint publication → server set → daemon launch', () => {
           expect(process.exitCode).toBe(1);
           expect((await getServerProfile(id)).homeConnectionDescriptor).toEqual(sharedDescriptor);
           expect(launches).toEqual([]);
+          // A record the server could never have written is refused before any Home is asked.
+          if (scenario === 'malformed-record') {
+            expect(result.error.code).toBe('server_identity_unavailable');
+            expect(requests).toBe(0);
+          }
         }
       } finally {
         if (server.listening) {

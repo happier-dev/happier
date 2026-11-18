@@ -5,11 +5,12 @@ import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/
 import { HomeApplicationOriginV1Schema, HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { readServerIdentityRecord } from '@happier-dev/cli-common/firstPartyRuntime/personalHome/layout';
 import { configuration } from '@/configuration';
 
 function normalizeServerUrlForEnvId(url: string): string {
@@ -887,8 +888,17 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
   // A Stack shared-database server mints its own Home identity, so a Stack profile established
   // on the shared identity is re-established only onto the identity that server recorded, and
   // only when the live authenticated Home at the profile's carrier publishes exactly that one.
+  // A named record must hold an identity the server could have written (one cli-common parser).
   const recordedIdentity = previousDescriptor && opts.homeIdentityRecordPath
-    ? (await readFile(opts.homeIdentityRecordPath, 'utf8')).trim() : '';
+    ? await readServerIdentityRecord(opts.homeIdentityRecordPath).then(identity => {
+      if (identity) return identity;
+      throw new Error('Home identity record holds no identity');
+    }).catch((error: unknown) => {
+      throw Object.assign(new Error('Home endpoint refresh requires a valid Home identity record', { cause: error }), {
+        code: 'server_identity_unavailable',
+      });
+    })
+    : '';
   const reestablishesHome = Boolean(recordedIdentity) && recordedIdentity !== previousDescriptor?.homeServerIdentityId;
   if (reestablishesHome) {
     await adoptServerProfileHomeConnectionDescriptor({
