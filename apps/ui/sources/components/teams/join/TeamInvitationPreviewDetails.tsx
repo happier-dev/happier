@@ -39,6 +39,17 @@ function terminalPresentation(state: Exclude<TeamInvitationPreviewV1['state'], '
     }
 }
 
+/** A terminal reason the bounded preview explicitly lets this bearer see. */
+export function describeTeamInvitationPreviewRefusal(state: TeamInvitationPreviewState) {
+    if (state.kind === 'feature_unavailable' || (state.kind === 'unavailable' && state.reason === 'teams_disabled')) {
+        return presentTeamsDisabledOnHome();
+    }
+    if (state.kind === 'unavailable' && state.reason) {
+        return { ...resolveTeamJoinPresentation({ outcome: state.reason }), kind: 'warning' as const };
+    }
+    return null;
+}
+
 export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPreviewDetails(props: Readonly<{
     state: TeamInvitationPreviewState;
     /** Re-reads this exact invitation; the invitation itself is untouched. */
@@ -61,8 +72,8 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
     }
 
     if (state.kind === 'unavailable') {
-        const presentation = state.reason === 'teams_disabled' ? presentTeamsDisabledOnHome()
-            : resolveTeamJoinPresentation({ outcome: state.reason ?? 'not_found' });
+        const presentation = describeTeamInvitationPreviewRefusal(state)
+            ?? resolveTeamJoinPresentation({ outcome: 'not_found' });
         return (
             <SurfaceStateCard
                 testID="team-join-preview-unavailable"

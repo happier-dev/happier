@@ -13,7 +13,7 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
     waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
-import { TeamInvitationAcceptResultV1Schema } from '@happier-dev/protocol/teams';
+import { TeamInvitationAcceptResultV1Schema, TeamInvitationPreviewResultV1Schema } from '@happier-dev/protocol/teams';
 import { parseToken } from '@/utils/auth/parseToken';
 import { t } from '@/text';
 
@@ -622,6 +622,29 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.getTextContent()).toContain(t('teams.unavailable.title'));
         expect(screen.getTextContent()).toContain(t('teams.unavailable.disabled'));
         expect(screen.getTextContent()).not.toContain(t('teams.errors.notFound'));
+    });
+
+    it.each([
+        ['revoked', 'teams.join.revokedTitle'],
+        ['used', 'teams.join.usedTitle'],
+        ['expired', 'teams.join.expiredTitle'],
+        ['team_archived', 'teams.join.archivedTitle'],
+    ] as const)('shows the exact invitation refusal and recovery for %s', async (reason, title) => {
+        endpointFetch.mockImplementation(async (path: string) => new Response(JSON.stringify(
+            path === PREVIEW_PATH
+                ? TeamInvitationPreviewResultV1Schema.parse({ outcome: 'unavailable', reason })
+                : AuthEntryProjectionV1Schema.parse({
+                    v: 1, state: 'unavailable', scope: { kind: 'invitation' },
+                    reason: 'invitation_unavailable', autoRedirect: null,
+                }),
+        ), { status: 200 }));
+
+        const screen = await renderScreen(<TeamAuthEntrySurface invitation={{ token: 'F'.repeat(43) }}
+            target={target} onSelectAction={() => {}} onAdmissionComplete={() => {}} />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(title)));
+        expect(screen.getTextContent()).toContain(t('teams.join.askForNew'));
+        expect(screen.findByTestId('team-auth-entry-unavailable-secondary-action')).not.toBeNull();
+        expect(screen.findByTestId('team-auth-entry-unavailable-action')).toBeNull();
     });
 
     it('offers a way out of a Team it cannot enter instead of only an endless retry', async () => {

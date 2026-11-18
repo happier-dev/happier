@@ -42,7 +42,7 @@ import {
     presentTeamsDisabledOnHome,
 } from '@/components/teams/entry/teamAuthenticationFailure';
 import { resolveTeamJoinPresentation } from '@/components/teams/join/teamJoinOutcome';
-import { TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
+import { describeTeamInvitationPreviewRefusal, TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
 import { TeamInvitationJoinActions, TeamInvitationOffer } from '@/components/teams/entry/TeamInvitationOffer';
 import { TeamJoinedCard } from '@/components/teams/join/TeamJoinedCard';
 import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitationPreview';
@@ -1050,14 +1050,11 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
         const updateRequired = isIncompatible && featureArm === 'unsupported';
         const isOffline = loadState.kind === 'offline'
             || (isIncompatible && featureArm === 'unknown');
-        // A Home that named its reason gets §10 copy that says what to do next;
-        // `entry_not_available` keeps the opaque card that reveals nothing —
-        // unless this Home's own invitation preview already declared that Teams
-        // are turned off here, which is a current Home stating an operator
-        // choice, not a missing Team.
+        // The bounded preview may disclose a more specific reason to this exact bearer.
         const contextualReason = loadState.kind === 'unavailable'
-            ? presentTeamEntryUnavailableReason(loadState.reason)
-                ?? (previewState.kind === 'feature_unavailable' ? presentTeamsDisabledOnHome() : null)
+            ? loadState.reason === 'invitation_unavailable' || loadState.reason === 'entry_not_available'
+                ? describeTeamInvitationPreviewRefusal(previewState) ?? presentTeamEntryUnavailableReason(loadState.reason)
+                : presentTeamEntryUnavailableReason(loadState.reason)
             : null;
         const named = contextualReason ?? (featureArm === 'server_disabled' || featureArm === 'policy_disabled'
             ? presentTeamsDisabledOnHome()
