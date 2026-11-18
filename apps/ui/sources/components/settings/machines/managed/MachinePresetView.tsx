@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { RowArrivalReveal } from '@/components/settings/shell/SettingRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -178,6 +179,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const [pendingEdit, setPendingEdit] = React.useState<EditPatch | null>(null);
     const [savingEdit, setSavingEdit] = React.useState<EditPatch | null>(null);
     const [mutationError, setMutationError] = React.useState<string | null>(null);
+    const revealArchiveFeedback = React.useRef(false);
     const busy = mutating || approval.approvalPending;
     const teamDenied = preset?.owner.kind === 'team' && (teamState?.team.capabilities.viewTeam === false
         || (team.kind === 'bound' && team.state.kind === 'unavailable' && isAuthoritativeScopedSnapshotRefusal(team.state.error)));
@@ -208,8 +210,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         navigate(buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: contribution, presetId: visibleCreation.id,
             ...(edit ? { presetOnly: true } : {}) }));
     };
-    const runMutation = React.useCallback(async (mutation: () => ReturnType<typeof detail.archiveOrRestore>) => {
+    const runMutation = React.useCallback(async (mutation: () => ReturnType<typeof detail.archiveOrRestore>, revealFeedback = false) => {
         if (!canManage || busy) return;
+        revealArchiveFeedback.current = revealFeedback;
         setMutating(true);
         setMutationError(null);
         try {
@@ -224,7 +227,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         }
         finally { setMutating(false); }
     }, [canManage, busy]);
-    const archiveOrRestore = () => runMutation(detail.archiveOrRestore);
+    const archiveOrRestore = () => runMutation(detail.archiveOrRestore, preset?.archivedAt === undefined);
     const edit = (patch: EditPatch) => {
         if (canManage) setPendingEdit(current => ({ ...current, ...patch }));
     };
@@ -299,7 +302,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     // Why this preset can't create here is said once, by the line above the page; Create one then waits for it.
     const configurationUnavailable = configuration.unavailable;
     const cannotCreateHere = Boolean(catalog.error) || configurationUnavailable;
-    const notice = <>{approvalNotice}
+    // Archive is below the fold; reveal its existing feedback inside the page scroller.
+    const notice = <RowArrivalReveal testID="machine-preset.feedback-reveal"
+        active={revealArchiveFeedback.current && (approval.approvalPending || (!mutating && Boolean(conflict || mutationError || refusal)))}>
+        <>{approvalNotice}
         {configuration.creationDisabled ? <ManagedCreationDisabledBanner testID="machine-preset.creation-disabled" /> : null}
         {archived ? <AttentionBanner testID="machine-preset.archived" tone={cleanupRequired ? 'warning' : 'neutral'} title={t('machinePresets.archived')}
             description={cleanupRequired ? t('machinePresets.preparedImageCleanupRequired', { host: cleanupHost }) : undefined}
@@ -321,7 +327,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
                 diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t(conflict ? 'managedMachines.actions.review' : 'common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
         </ItemGroup> : null}
-    </>;
+        </>
+    </RowArrivalReveal>;
     // What it puts on a Machine leads the page; whoever can manage it edits it in the one editor.
     const editSetup = canManage && !archived ? visibleCreation ? () => openConfiguration(true)
         : () => navigate(`/settings/machines/presets/${encodeURIComponent(visiblePreset.id)}?serverId=${encodeURIComponent(props.serverId)}&edit=true`) : undefined;

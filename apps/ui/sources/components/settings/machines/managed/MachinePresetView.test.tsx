@@ -3098,6 +3098,57 @@ describe('reachable preset detail', () => {
     } finally { await screen.unmount(); }
   });
 
+  it.each([false, true])('reveals an Archive refusal above the scrolled page and keeps the preset actionable (confirmation=%s)', async confirmation => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    if (confirmation) await harness.requireUiApproval(serverId, 'machines.presets.archive');
+    const { PresetMutationResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    harness.answer(serverId, '/v1/machines/presets/archive', {
+      status: 503, body: PresetMutationResultV1Schema.parse({ kind: 'refused', code: 'controller_unavailable' }),
+    });
+    const modalHost = await renderSettingsView(<ModalProvider />);
+    // Browser scrolling is the boundary; retain the real ItemList/provider and reveal owner.
+    let pageTop = 1200;
+    const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />, {
+      createNodeMock: () => ({ scrollIntoView: () => { pageTop = 0; } }),
+    });
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.archive')?.props.disabled).toBe(false));
+      const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+      harness.answer(serverId, '/v1/machines/presets/get', { status: 503, body: { kind: 'refused', code: 'controller_unavailable' } });
+      await act(async () => publishHomeAccountChange(scopeId));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.refresh-error')).not.toBeNull());
+      await flushHookEffects();
+      expect(pageTop).toBe(1200);
+      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(preset) } });
+      await act(async () => publishHomeAccountChange(scopeId));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.refresh-error')).toBeNull());
+      await screen.pressByTestIdAsync('machine-preset.detail.archive');
+      if (confirmation) {
+        await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(harness.requestsFor('/v1/machines/presets/archive')).toEqual([]);
+        expect(pageTop).toBe(1200);
+        await act(async () => publishHomeAccountChange(scopeId));
+        await flushHookEffects();
+        await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+      }
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.mutation-error')).not.toBeNull());
+      await waitForHomeGovernance(() => expect(pageTop).toBe(0));
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'machine-preset.mutation-error')?.props.diagnosticCode)
+        .toBe('controller_unavailable');
+      expect(screen.findByTestId('machine-preset.archived')).toBeNull();
+      expect(screen.findByTestId('machine-preset.detail.archive')?.props.disabled).toBe(false);
+      expect(harness.requestsFor('/v1/machines/presets/archive')).toHaveLength(1);
+      if (!confirmation) {
+        pageTop = 1200;
+        await screen.pressByTestIdAsync('machine-preset.detail.archive');
+        await waitForHomeGovernance(() => expect(pageTop).toBe(0));
+        expect(harness.requestsFor('/v1/machines/presets/archive')).toHaveLength(2);
+      }
+    } finally { await screen.unmount(); await modalHost.unmount(); }
+  });
+
   it('archives and restores the preset with its reviewed revision without changing its admitted resources', async () => {
     const serverId = await seed();
     const archived = { ...preset, revision: 4, archivedAt: 1 } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
