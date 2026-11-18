@@ -83,6 +83,7 @@ import { CrosshairIcon } from 'phosphor-react-native/src/icons/Crosshair';
 import { CubeIcon } from 'phosphor-react-native/src/icons/Cube';
 import { CurrencyDollarIcon } from 'phosphor-react-native/src/icons/CurrencyDollar';
 import { CursorIcon } from 'phosphor-react-native/src/icons/Cursor';
+import { DatabaseIcon } from 'phosphor-react-native/src/icons/Database';
 import { DesktopIcon } from 'phosphor-react-native/src/icons/Desktop';
 import { DeviceMobileIcon } from 'phosphor-react-native/src/icons/DeviceMobile';
 import { DiamondIcon } from 'phosphor-react-native/src/icons/Diamond';
@@ -245,6 +246,7 @@ import { StarIcon } from 'phosphor-react-native/src/icons/Star';
 import { StopCircleIcon } from 'phosphor-react-native/src/icons/StopCircle';
 import { StopIcon } from 'phosphor-react-native/src/icons/Stop';
 import { SunIcon } from 'phosphor-react-native/src/icons/Sun';
+import { TableIcon } from 'phosphor-react-native/src/icons/Table';
 import { TagIcon } from 'phosphor-react-native/src/icons/Tag';
 import { TargetIcon } from 'phosphor-react-native/src/icons/Target';
 import { TerminalIcon } from 'phosphor-react-native/src/icons/Terminal';
@@ -357,6 +359,7 @@ export const ICON_REGISTRY = {
     get 'cube'() { return CubeIcon; },
     get 'currency-dollar'() { return CurrencyDollarIcon; },
     get 'cursor'() { return CursorIcon; },
+    get 'database'() { return DatabaseIcon; },
     get 'desktop'() { return DesktopIcon; },
     get 'device-mobile'() { return DeviceMobileIcon; },
     get 'diamond'() { return DiamondIcon; },
@@ -524,6 +527,7 @@ export const ICON_REGISTRY = {
     get 'stop'() { return StopIcon; },
     get 'stop-circle'() { return StopCircleIcon; },
     get 'sun'() { return SunIcon; },
+    get 'table'() { return TableIcon; },
     get 'tag'() { return TagIcon; },
     get 'target'() { return TargetIcon; },
     get 'terminal'() { return TerminalIcon; },

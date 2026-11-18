@@ -79,6 +79,7 @@ import Cursor01Icon from '@hugeicons/core-free-icons/Cursor01Icon';
 import CursorRectangleSelection01Icon from '@hugeicons/core-free-icons/CursorRectangleSelection01Icon';
 import DashboardSpeed01Icon from '@hugeicons/core-free-icons/DashboardSpeed01Icon';
 import DashboardSquare01Icon from '@hugeicons/core-free-icons/DashboardSquare01Icon';
+import Database02Icon from '@hugeicons/core-free-icons/Database02Icon';
 import Delete01Icon from '@hugeicons/core-free-icons/Delete01Icon';
 import DiscordIcon from '@hugeicons/core-free-icons/DiscordIcon';
 import Dollar01Icon from '@hugeicons/core-free-icons/Dollar01Icon';
@@ -232,6 +233,7 @@ import StarIcon from '@hugeicons/core-free-icons/StarIcon';
 import StopCircleIcon from '@hugeicons/core-free-icons/StopCircleIcon';
 import StopIcon from '@hugeicons/core-free-icons/StopIcon';
 import Sun01Icon from '@hugeicons/core-free-icons/Sun01Icon';
+import TableIcon from '@hugeicons/core-free-icons/TableIcon';
 import Tag02Icon from '@hugeicons/core-free-icons/Tag02Icon';
 import Target01Icon from '@hugeicons/core-free-icons/Target01Icon';
 import TerminalIcon from '@hugeicons/core-free-icons/TerminalIcon';
@@ -345,6 +347,7 @@ export const HUGE_ICON_REGISTRY = {
     'cube': CubeIcon,
     'currency-dollar': Dollar01Icon,
     'cursor': Cursor01Icon,
+    'database': Database02Icon,
     'desktop': ComputerPhoneSyncIcon,
     'device-mobile': SmartPhone01Icon,
     'discord-logo': DiscordIcon,
@@ -507,6 +510,7 @@ export const HUGE_ICON_REGISTRY = {
     'stop': StopIcon,
     'stop-circle': StopCircleIcon,
     'sun': Sun01Icon,
+    'table': TableIcon,
     'tag': Tag02Icon,
     'target': Target01Icon,
     'terminal': TerminalIcon,

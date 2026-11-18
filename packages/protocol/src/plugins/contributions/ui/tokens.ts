@@ -90,6 +90,10 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   // An app's live health and one measure over time (Telemetry widgets: vitals, key flows, a metric).
   'pulse',
   'chart',
+  // A database, a table and a view: the Database workbench's identity marks.
+  'database',
+  'table',
+  'view',
 ] as const;
 
 export const PluginUiIconTokenV1Schema = lazyZodSchema(() => z.enum(PLUGIN_UI_ICON_TOKENS_V1));

@@ -76,6 +76,9 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     edit: 'pencil-simple',
     pulse: 'pulse',
     chart: 'chart-line',
+    database: 'database',
+    table: 'table',
+    view: 'eye',
 });
 
 describe('resolvePluginUiIconToken', () => {
