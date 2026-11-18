@@ -687,6 +687,8 @@ export type ActionExecutorContext = Readonly<{
   sessionTargetsV1?: import('../sessionTargetV1.js').ActionResolvedSessionTargetsV1;
   /** Host-only exact routing constraint derived from validated execution options, never raw Action context/input. */
   expectedSessionAddress?: import('../sessionTargetV1.js').ActionSessionAddressV1;
+  /** Host-only placement fact read from the admitted Session for target routing. */
+  expectedSessionMachineId?: string;
   /** Host-only read admission for Coach mutations; ordinary usage.query remains progressive. Never wire input. */
   usageQueryReadiness?: 'coach_evidence' | 'public_profile';
   /** Exact prepared public disclosure, retained only by the live host invocation. Never wire input. */

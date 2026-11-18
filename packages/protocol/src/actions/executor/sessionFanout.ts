@@ -13,7 +13,7 @@ export async function runActionSessionFanout(args: Readonly<{
   targets: readonly ActionSessionAddress[];
   context: ActionExecutorContext;
   deps: ActionExecutorDeps;
-  execute: (target: ActionSessionAddress, position: number) => Promise<ActionExecuteResult>;
+  execute: (target: ActionSessionAddress, position: number, machineId: string | null) => Promise<ActionExecuteResult>;
 }>) {
   const groups = new Map<string, number[]>();
   const machines = await Promise.all(args.targets.map(async target => {
@@ -42,7 +42,7 @@ export async function runActionSessionFanout(args: Readonly<{
   await Promise.all([...groups.values()].map(async positions => {
     for (const position of positions) {
       const target = args.targets[position];
-      const result = await args.execute(target, position);
+      const result = await args.execute(target, position, machines[position]);
       results[position] = { target, result };
       args.context.onSessionTargetResult?.({ actionId: args.actionId, position, target, result });
     }

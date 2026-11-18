@@ -396,6 +396,14 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             machineId: string;
             serverId?: string | null;
           }>;
+          const expectedMachineId = ctx.expectedSessionMachineId
+            ?? (deps.sessionStatusGet ? readRecord(readRecord(await deps.sessionStatusGet({
+              sessionId: input.sessionId, serverId: ctx.expectedSessionAddress?.serverId ?? ctx.serverId,
+              context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+            })).session).machineId : undefined);
+          if (typeof expectedMachineId === 'string' && expectedMachineId.trim() && input.machineId !== expectedMachineId) {
+            return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
+          }
           const result = await deps.sessionConnectedServicesAuthSet(input, ctx);
           const completed = completeActionResult(result);
           // The auth-switch owner supplies the service and executable recovery diagnostic.
