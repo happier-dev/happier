@@ -3,11 +3,13 @@ import {
     PluginUiSelectActionInputRequestV1Schema,
     PluginUiSelectActionInputResultV1Schema,
     PluginUiJsonValueV1Schema,
+    PluginUiJsonObjectV1Schema,
     type PluginUiHostApiErrorCodeV1,
     type PluginUiJsonObjectV1,
     type PluginUiJsonValueV1,
     type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { registerHostSelectedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -263,7 +265,9 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                     }
                     const machineId = typeof input.host.machineId === 'string' ? input.host.machineId.trim() : '';
                     const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
-                    const draft = 'draft' in parsed.data && !('sessionId' in parsed.data) ? parsed.data.draft : undefined;
+                    const draft = 'draft' in parsed.data && parsed.data.draft !== undefined
+                        ? PluginUiJsonObjectV1Schema.parse(projectNativeJsonValueForTransport(parsed.data.draft))
+                        : undefined;
                     const outcome = await composer({
                         serverId,
                         ...(draft === undefined ? {} : { draft }),
