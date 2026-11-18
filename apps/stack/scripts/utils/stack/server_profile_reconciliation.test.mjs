@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import {
   assertStackServerProfileReconciled,
   classifyStackServerProfileFailure,
   buildStackServerProfileSetArgs,
+  readStackOwnServerIdentity,
   stackOwnsServerProfile,
 } from './server_profile_reconciliation.mjs';
 
@@ -155,4 +156,15 @@ test('an explicit --server naming a profile of the stack public URL is the stack
   assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'qa.localhost-3039', publicServerUrl }), true);
   assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'cloud', publicServerUrl }), false);
   assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'missing', publicServerUrl }), false);
+});
+
+test('the stack reads its own server identity record with the server parser and refuses a malformed one', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'hstack-own-identity-'));
+  const env = { HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'main', HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir };
+  assert.equal(readStackOwnServerIdentity(env), null);
+  await mkdir(join(dataDir, 'runtime'), { recursive: true });
+  await writeFile(join(dataDir, 'runtime', 'server.identity'), 'srv_stack_own\n');
+  assert.equal(readStackOwnServerIdentity(env), 'srv_stack_own');
+  await writeFile(join(dataDir, 'runtime', 'server.identity'), 'not-a-home-identity\n');
+  assert.throws(() => readStackOwnServerIdentity(env), /server\.identity/);
 });

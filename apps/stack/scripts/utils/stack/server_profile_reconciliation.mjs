@@ -5,7 +5,11 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { resolveServerIdentityRecordPath } from '@happier-dev/cli-common/firstPartyRuntime/personalHome/layout';
+import {
+  isSharedDatabaseConsumer,
+  readServerIdentityRecordSync,
+  resolveServerIdentityRecordPath,
+} from '@happier-dev/cli-common/firstPartyRuntime/personalHome/layout';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
 import { getServerLightDataDirFromEnvOrDefault } from './dirs.mjs';
@@ -96,16 +100,18 @@ export function readStackServerProfileHomeDescriptor({ homeDir, serverId }) {
 // (owner ruling 2026-11-18, 2129113c152). That record is the only authority by which this stack
 // recognizes a Home identity change as one it originated; every other stack has none.
 export function resolveStackOwnServerIdentityRecordPath(env) {
-  if (!String(env?.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) return null;
+  if (!isSharedDatabaseConsumer(env ?? {})) return null;
   const stackBaseDir = resolveStackEnvPath(null, env).baseDir;
   return resolveServerIdentityRecordPath(getServerLightDataDirFromEnvOrDefault({ stackBaseDir, env }));
 }
 
-/** The identity this stack's own server recorded, or null when the stack has no such record. */
+/**
+ * The identity this stack's own server recorded, or null when the stack has no such record. Read
+ * with the server's own parser (cli-common), so a record it could never have written is refused.
+ */
 export function readStackOwnServerIdentity(env) {
   const recordPath = resolveStackOwnServerIdentityRecordPath(env);
-  if (!recordPath || !existsSync(recordPath)) return null;
-  return readFileSync(recordPath, 'utf-8').trim() || null;
+  return recordPath ? readServerIdentityRecordSync(recordPath) : null;
 }
 
 // An explicit `--server <id>` that names a saved profile of the stack's own public URL selects the
