@@ -52,6 +52,14 @@ import { clearSessionExplicitStopV1FromMetadata, writeSessionExplicitStopV1ToMet
 import { readSessionFollowReceiverAvailabilityChangedV1 } from '@happier-dev/protocol/changes';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 
+async function publishAcceptedTurnFixture(sessionId: string, turnId: string): Promise<void> {
+    await db.sessionTurn.upsert({
+        where: { sessionId_turnId: { sessionId, turnId } },
+        create: { sessionId, turnId, status: 'in_progress', startedAt: 1n, updatedAt: 1n },
+        update: {},
+    });
+}
+
 describe('session → Follow WorkerUpdate acceptance', () => {
     let harness: LightSqliteHarness;
     const cleanups: (() => void | Promise<void>)[] = [];
@@ -233,7 +241,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 managerSessionId: null, expectedManagerSessionId: destination.id, authentication })).toMatchObject({ ok: true });
         };
         const acceptedPrompts: string[] = [];
-        const originals = async (usePublisherSocket = false, entry: 'receiver' | 'source' = 'receiver') => {
+        const placeDestination = async () => {
             const homeId = await getOrCreateServerIdentityId();
             const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, installationId: randomUUID(),
                 active: true, metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
@@ -243,6 +251,10 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 metadata: JSON.stringify({ machineId: machine.id, path: '/receiver', host: 'host' }),
                 runtimeMachineTarget: { homeId, accountId: account.id, sessionId: destination.id,
                     machineId: machine.id, installationId: machine.installationId! } } });
+            return { homeId, machine };
+        };
+        const originals = async (usePublisherSocket = false, entry: 'receiver' | 'source' = 'receiver') => {
+            const { homeId, machine } = await placeDestination();
             if (entry === 'source') {
                 await db.accessKey.create({ data: { accountId: account.id, sessionId: source.id, machineId: machine.id, data: 'opaque' } });
                 await db.session.update({ where: { id: source.id }, data: {
@@ -379,25 +391,12 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             // Original hydration uses the same real authenticated source reads
             // as the dispatcher. Only the HTTP carrier is adapted to Fastify.
             hydrateObservation = createSessionFollowSourceHydrator({ session, credentials: { token, encryption: null } });
-            const { createSessionFollowOccurrenceDispatcher } = await vi.importActual<{
-                createSessionFollowOccurrenceDispatcher(input: { accountId: string; credentials: { token: string; encryption: null };
-                    serverId: string; serverHttpBaseUrl: string; machineId: string; installationId: string; signal: AbortSignal;
-                    isCurrent: () => Promise<boolean>; subscribeInvalidation: () => () => void;
-                    isPersonalCurrent: () => boolean;
-                    rulesCache?: unknown;
-                    resolveSourceKeyContext: () => Promise<null>; dispatchPersonal: () => Promise<void> }): {
-                        dispatch(occurrence: SessionFollowRuleSourceOccurrenceV1): Promise<unknown>;
-                        dispatchReceiverRange(input: { observations: SessionFollowPendingObservationV1[]; destinationSessionId: string }): Promise<unknown>;
-                        dispose(): void;
-                    };
-            }>('../../../../../cli/src/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher');
-            const { createAccountSessionFollowRuleCache } = await vi.importActual<{
-                createAccountSessionFollowRuleCache(input: { accountId: string; credentials: { token: string; encryption: null };
-                    serverHttpBaseUrl: string; signal: AbortSignal; isCurrent: () => Promise<boolean>;
-                    subscribeInvalidation: () => () => void }): { dispose(): void; hasEnabledSessionReceiver(sessionId: string): Promise<boolean>;
-                      originalWork: { state(receiver: string, original: Extract<SessionFollowInputV1['original'], { sourceSessionId: string }>): unknown };
-                      observeSourceChange(sessionId: string | null, receiver?: true): void };
-            }>('../../../../../cli/src/agent/runtime/session/follow/accountSessionFollowRuleCache');
+            const { createSessionFollowOccurrenceDispatcher } = await vi.importActual<
+                typeof import('../../../../../cli/src/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher')
+            >('../../../../../cli/src/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher');
+            const { createAccountSessionFollowRuleCache } = await vi.importActual<
+                typeof import('../../../../../cli/src/agent/runtime/session/follow/accountSessionFollowRuleCache')
+            >('../../../../../cli/src/agent/runtime/session/follow/accountSessionFollowRuleCache');
             const { createRequesterCurrentnessSocketHarness } = await vi.importActual<{
                 createRequesterCurrentnessSocketHarness(): Promise<{ close(): Promise<void> }>;
             }>('../../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness');
@@ -410,11 +409,13 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 serverHttpBaseUrl: 'http://original-follow.test', signal: lifetime.signal,
                 isCurrent: async () => true, subscribeInvalidation: () => () => {} });
             cleanups.push(() => { lifetime.abort(); rulesCache.dispose(); });
-            const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId: account.id, credentials: { token, encryption: null },
+            const dispatcher: ReturnType<typeof createSessionFollowOccurrenceDispatcher> = createSessionFollowOccurrenceDispatcher({
+                accountId: account.id, credentials: { token, encryption: null },
                 serverId: homeId, serverHttpBaseUrl: 'http://original-follow.test', machineId: machine.id,
                 installationId: machine.installationId!, signal: new AbortController().signal, isCurrent: async () => true,
                 isPersonalCurrent: () => false,
                 rulesCache,
+                dispatchReceiverRange: async (request, publisher) => { await dispatcher.dispatchReceiverRange(request, publisher); },
                 subscribeInvalidation: () => () => {}, resolveSourceKeyContext: async () => null, dispatchPersonal: async () => {} });
             cleanups.push(() => dispatcher.dispose());
             const deliveries: { delivery: SessionFollowInputV1; localInputId: string; userMessageSeq: number | null }[] = [];
@@ -520,12 +521,13 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 return prepared;
             };
             const settleAcceptance = async (localId: string) => {
-                expect(await resolveAcceptedPendingDelivery({ actorUserId: account.id, sessionId: destination.id,
+                await publishAcceptedTurnFixture(destination.id, 'receiver-turn');
+                const settlement = await resolveAcceptedPendingDelivery({ actorUserId: account.id, sessionId: destination.id,
                     publisherAuthority: { accountId: account.id, sessionId: destination.id, machineId: machine.id,
                         committedFence: (await db.session.findUniqueOrThrow({ where: { id: destination.id } })).lastActiveAt },
                     localId, acceptedTurn: { kind: 'followUp', turnId: 'receiver-turn' },
-                    acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: 1, delivery: { kind: 'followUp', turnId: 'receiver-turn' } } } }))
-                    .toMatchObject({ ok: true, didResolve: true });
+                    acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: 1, delivery: { kind: 'followUp', turnId: 'receiver-turn' } } } });
+                expect(settlement, JSON.stringify(settlement)).toMatchObject({ ok: true, didResolve: true });
             };
             const { createSessionProviderInputOutcomeNormalizer } = await vi.importActual<{
                 createSessionProviderInputOutcomeNormalizer(input: {
@@ -604,7 +606,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             await db.session.update({ where: { id: source.id }, data: { seq } });
             return seq;
         };
-        return { account, authentication, hydrateOptions, hydrationReads, source, destination, observe, wake, makeReconciler, offline, acknowledgements, advanceTranscript,
+        return { account, authentication, hydrateOptions, hydrationReads, source, destination, observe, wake, makeReconciler, offline, acknowledgements, advanceTranscript, placeDestination,
             commitWorkerWake, ackTransport, follow, detachManager, originals, appendReply, appendReport, appendTurnInput, recordTerminalTurn, acceptedPrompts };
     }
 
@@ -819,6 +821,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             { prompt: 'Choose the deployment region?', choices: [{ label: 'Europe', description: 'Keep the existing European deployment' }] },
             { prompt: 'Which revision?' },
         ]);
+        await publishAcceptedTurnFixture(manager.id, 'manager-turn');
         expect((await resolveAcceptedPendingDelivery({ actorUserId: f.account.id, sessionId: manager.id,
             publisherAuthority: managerFence, localId: managerInput.message.localId,
             acceptedTurn: { kind: 'followUp', turnId: 'manager-turn' },
@@ -1656,27 +1659,31 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         const prefix = await original.prepare('natural', 4096, true);
         expect(original.deliveries).toHaveLength(5);
         expect(prefix?.workerUpdates?.map(update => update.transcriptPointer?.kind === 'session' ? update.transcriptPointer.seq : null))
-            .toEqual([7, 8]);
+            .toEqual([7, 8, 9]);
+        expect(prefix?.workerUpdates?.[2]).toMatchObject({
+            truncated: true, transcriptPointer: { kind: 'session', sessionId: f.source.id, seq: 9 },
+        });
         await original.accept(prefix!);
         expect(f.acceptedPrompts[0]).not.toContain('Report B');
         expect(f.acceptedPrompts[0]).not.toContain(artifactId);
         // Each ACK reobserves publisher custody independently. Its request order
         // need not match representation order; durable progress must not regress.
         const prefixAcknowledgements = await Promise.all(f.acknowledgements);
-        expect(prefixAcknowledgements).toHaveLength(2);
+        expect(prefixAcknowledgements).toHaveLength(3);
         expect(prefixAcknowledgements).toEqual(expect.arrayContaining([
             expect.objectContaining({ ok: true, delivered: expect.objectContaining({ transcriptSeq: 7 }) }),
             expect.objectContaining({ ok: true, delivered: expect.objectContaining({ transcriptSeq: 8 }) }),
+            expect.objectContaining({ ok: true, delivered: expect.objectContaining({ transcriptSeq: 9 }) }),
         ]));
         expect(await inTx(tx => readSessionManagerInTx(tx, f.source.id)))
-            .toMatchObject({ deliveredTranscriptSeq: 8 });
-        const suffixIds = original.deliveries.slice(2).map(row => row.localInputId);
-        expect(await db.sessionPendingMessage.count({ where: { sessionId: f.destination.id, localId: { in: suffixIds } } })).toBe(3);
+            .toMatchObject({ deliveredTranscriptSeq: 9 });
+        const suffixIds = original.deliveries.slice(3).map(row => row.localInputId);
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: f.destination.id, localId: { in: suffixIds } } })).toBe(2);
         const suffix = await original.prepare('natural', 8192, true);
         expect(suffix?.representedFollowLocalInputIds).toEqual(suffixIds);
         expect(suffix?.workerUpdates?.map(update => update.transcriptPointer?.kind === 'session' ? update.transcriptPointer.seq : null))
-            .toEqual([9, 10, 11]);
-        expect(suffix?.workerUpdates?.[1]?.deliverables).toEqual([{ kind: 'artifact', artifactId }]);
+            .toEqual([10, 11]);
+        expect(suffix?.workerUpdates?.[0]?.deliverables).toEqual([{ kind: 'artifact', artifactId }]);
         await original.accept(suffix!);
         expect(f.acceptedPrompts[1]!.indexOf('Report A')).toBeLessThan(f.acceptedPrompts[1]!.indexOf('Report B'));
         expect(f.acceptedPrompts[1]).toContain(artifactId);
@@ -2367,6 +2374,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
 
     it.each(['important', 'quiet'] as const)('delivers an ordinary %s follower stall through presence and accepted context only', async preset => {
         const f = await fixture();
+        await f.placeDestination();
         await f.follow({ preset });
         await f.detachManager();
         await f.offline();
@@ -2454,6 +2462,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
 
     it('delivers exactly one stalled update after offline mid-turn, ACKs it, and recovers without duplicate or completion', async () => {
         const f = await fixture();
+        await f.placeDestination();
         expect(await f.wake()).toBeNull();
         const leadChangeBefore = await db.accountChange.findFirstOrThrow({
             where: { kind: 'session', entityId: f.destination.id }, select: { cursor: true },
@@ -2493,9 +2502,11 @@ describe('session → Follow WorkerUpdate acceptance', () => {
 
     it.each(['presence recovers', 'turn completes'] as const)('withdraws a prepared stalled wake if %s before dispatch', async (recovery) => {
         const f = await fixture();
+        await f.placeDestination();
         await f.offline();
         const prepared = await f.wake();
         expect(prepared?.workerUpdates?.[0]?.ownerState).toBe('stalled');
+        expect(await prepared?.recheckAdmission(new AbortController().signal)).toBe(true);
         await f.advanceTranscript(); // Recovery still has a pending ordinary frontier.
         await db.session.update({ where: { id: f.source.id }, data: recovery === 'presence recovers'
             ? { active: true } : { latestTurnStatus: 'completed' } });

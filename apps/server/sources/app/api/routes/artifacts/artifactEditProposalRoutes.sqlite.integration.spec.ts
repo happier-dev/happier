@@ -16,7 +16,8 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
-import { createDiscussion } from '@/app/discussions/mutations';
+import { createDiscussion, postDiscussionMessage } from '@/app/discussions/mutations';
+import { readDiscussionMessages } from '@/app/discussions/queries';
 import { createArtifact, updateArtifactTx } from '@/app/artifacts/artifactWriteService';
 import { readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { eventRouter } from '@/app/events/eventRouter';
@@ -49,14 +50,24 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
             range: { start: 0, end: 7 }, quote: 'Passage' };
         const content = { kind: 'doc_edit_proposal' as const, proposal: {
             target, baseRevision: revision, before: target.quote, after: '**Passage**', reason: 'Emphasis' } };
+        const comment = { kind: 'doc_passage_comment' as const, passage: target, content: {
+            v: 1 as const, parts: [{ t: 'text' as const, text: 'Make the Payments runbook instruction stand out.' }],
+        } };
         const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: buildDiscussionMutationRequestBodyV1({
             kind: 'create', creationLocalId: crypto.randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Proposal' } },
             firstMessage: { localId: crypto.randomUUID(), mentionedAccountIds: [],
-                content: { t: 'plain', v: content }, authoredContent: content,
+                content: { t: 'plain', v: comment }, authoredContent: comment,
                 replyTarget: { kind: 'doc_passage', doc: { ref: target.ref, revision } } },
         }) });
         if (!created.ok) throw new Error(created.error);
-        const proposalRef = createDiscussionMessageRefV1({ serverId: 'home', discussionId: created.value.discussion.id }, created.value.firstMessage);
+        const discussionId = created.value.discussion.id;
+        const proposal = await postDiscussionMessage({ actorAccountId: owner.id, authentication, discussionId,
+            request: buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: crypto.randomUUID(), mentionedAccountIds: [],
+                content: { t: 'plain', v: content }, authoredContent: content,
+                replyTarget: { kind: 'doc_passage', doc: { ref: target.ref, revision } },
+            }) });
+        if (!proposal.ok) throw new Error(proposal.error);
+        const proposalRef = createDiscussionMessageRefV1({ serverId: 'home', discussionId }, proposal.value.message);
         const accept = DocEditAcceptTransportInputV1Schema.parse({ proposalRef, expectedRevision: revision,
             preparation: { doc: { ref: target.ref, revision }, body: encoded({ body: '**Passage** follows' }) } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -73,13 +84,19 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
         const current = () => db.artifact.findUniqueOrThrow({ where: { id: artifactId } });
         const disposition = () => db.discussionMessage.findUniqueOrThrow({ where: { id: proposalRef.messageId },
             select: { docEditProposalDispositionV1: true } });
-        return { owner, artifactId, proposalRef, accept, token, app, post, current, disposition };
+        return { owner, artifactId, discussionId, firstMessageId: created.value.firstMessage.id, comment, proposalRef,
+            accept, token, app, post, current, disposition };
     }
 
-    it('rejoins one accepted proposal and saves a decision from its exact receipt through real HTTP', async () => {
+    it('opens a passage Discussion, rejoins one accepted proposal and saves the exact decision through real HTTP', async () => {
         const f = await fixture();
         const events = vi.spyOn(eventRouter, 'emitUpdate');
         try {
+            expect(await readDiscussionMessages({ authentication, actorAccountId: f.owner.id, discussionId: f.discussionId }))
+                .toMatchObject({ ok: true, value: { messages: [
+                    { id: f.firstMessageId, content: { t: 'plain', v: f.comment } },
+                    { id: f.proposalRef.messageId, content: { t: 'plain', v: { kind: 'doc_edit_proposal' } } },
+                ] } });
             const accepted = await f.post('accept');
             expect(accepted.statusCode, accepted.body).toBe(200);
             const receipt = DocEditDecisionResultV1Schema.parse(accepted.json());

@@ -342,14 +342,14 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         // 04 §4.8: a known refusal stays in the review, never a system alert.
         expect(h.readModals()).toEqual([]);
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-reason-text')?.props.children)
-            .toBe('workflows.problem.targetUnavailable'));
+            .toBe('tester.local: workflows.problem.targetUnavailable'));
         expect(h.readState()).toBe('idle');
         expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
         expect(h.counts()).toEqual({ admissions: 0, reads: 0, dispatches: 1 });
     });
     it.each([
         { outcome: 'admission-unavailable', reason: 'session.startFailure.cause.admission_unavailable' },
-        { outcome: 'not-admitted', reason: 'workflows.contentUnavailable' },
+        { outcome: 'not-admitted', reason: 'workflows.problem.generic' },
     ] as const)('does not reconcile or dispatch after a generic known no-admission result ($outcome)', async ({ outcome, reason }) => {
         const h = await harness(outcome);
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');

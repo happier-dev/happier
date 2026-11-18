@@ -1177,12 +1177,15 @@ describe('First-class Discussions service (SQLite)', () => {
         const busy = new Promise<void>(resolve => { releaseBusy = resolve; });
         const delivered: string[] = [];
         const failures: unknown[] = [];
+        let reportFirstPromptFailure!: (error: unknown) => void;
+        const firstPromptFailure = new Promise<unknown>(resolve => { reportFirstPromptFailure = resolve; });
         // Only the native Agent transport is replaced. Its real adapter and
         // the common host normalizer produce durable Pending acceptance.
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const nativeTurnIds: string[] = [];
         let sequence = 0;
         const nativeSession: AgentSessionRuntime = {
+            async updateConfiguration() { return { status: 'applied', changed: ['permissionIntent'] }; },
             async send(request) {
                 delivered.push(request.input.text);
                 nativeTurnIds.push(request.delivery.turnId);
@@ -1201,19 +1204,28 @@ describe('First-class Discussions service (SQLite)', () => {
             dispose: async () => undefined,
         };
         const runtime = createNativeAgentSessionOperations(nativeSession, receiver.id,
-            undefined, undefined, undefined, undefined, undefined, {
-                // No native control is declared or invoked by this transport fixture.
-                context: {} as AgentSessionRuntimeContext, cwd: '/repo', connectedAccounts: [],
-                capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-                cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+            undefined, undefined, undefined, {
+                mode: { value: null, updatedAtMs: 0 },
+                model: { value: null, updatedAtMs: 0 },
+                permissionIntent: { value: 'default', updatedAtMs: 0 },
+                options: {},
+            }, undefined, {
+                context: { signal: abort.signal } as AgentSessionRuntimeContext, cwd: '/repo', connectedAccounts: [],
+                capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false, configuration: true },
+                cancellation: { declared: false },
+                configuration: { declared: true, updateConfiguration: nativeSession.updateConfiguration! },
+                compaction: { capability: null },
             });
         const outcomes = createSessionProviderInputOutcomeBinding({ getTarget: () => client });
         const unbindOutcomes = bindSessionProviderInputOutcome({ runtime, observe: outcomes.observeProviderInputOutcome,
             wakePendingMaterialization() {} });
+        const lifecycle = createSessionTurnLifecycle({ session: client, agentId: 'codex' });
+        const unbindLifecycle = runtime.subscribeRuntimeEvents(event => lifecycle.observeRuntimeEvent(event));
         let loop: Promise<void> | undefined;
         let cleanup: Promise<void> | undefined;
         const close = () => cleanup ??= (async () => {
             releaseBusy(); abort.abort(); await loop?.catch(() => undefined); unbindOutcomes();
+            unbindLifecycle();
             await runtime.resetOrDisposeRuntime(); await client.close(); await app.close();
         })();
         onTestFinished(close);
@@ -1240,11 +1252,20 @@ describe('First-class Discussions service (SQLite)', () => {
                 keepAlive() {}, setThinking() {}, sendReady() {
                     if (delivered.some(text => text.includes('ORDINARY_AFTER_WITHDRAWAL'))) abort.abort();
                 }, currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
-                formatPromptErrorMessage: String, onPromptFailure: error => { failures.push(error); },
+                formatPromptErrorMessage: String, onPromptFailure: error => { failures.push(error); reportFirstPromptFailure(error); },
                 registerProviderAcceptedEffect: outcomes.registerProviderAcceptedEffect,
             });
             phase = 'waiting for genuine native work';
-            await Promise.race([busyEntered, loop.then(() => { throw new Error('Host loop ended before native work began'); })]);
+            await Promise.race([
+                busyEntered,
+                firstPromptFailure.then(error => { throw error; }),
+                loop.then(() => { throw new Error('Host loop ended before native work began'); }),
+            ]);
+            await lifecycle.drainAcceptedLifecycle();
+            await vi.waitFor(async () => expect(await db.sessionMessage.findUnique({
+                where: { sessionId_localId: { sessionId: receiver.id, localId: busyId } },
+                select: { acceptedTurnId: true },
+            })).toMatchObject({ acceptedTurnId: nativeTurnIds[0] }));
             const question = await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId,
                 request: { ...postRequest('Queued revoked question'), content: { t: 'plain', v: { v: 1, parts: [{ t: 'mention', participant }] } },
                     mentionedSessionIds: [receiver.id] } });
@@ -1252,9 +1273,12 @@ describe('First-class Discussions service (SQLite)', () => {
             const discussion = { discussionId, messageId: question.value.message.id, throughSeq: question.value.message.seq, participantSessionId: receiver.id };
             const localId = deriveDiscussionFollowInputLocalIdV1(discussion);
             await enqueue(localId, 'REVOKED_DISCUSSION_MUST_NOT_REACH_PROVIDER', discussion);
-            phase = 'queued input materialization during native work';
-            expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).toMatchObject({ type: 'materialized', localId });
-            expect(queue.queue).toContainEqual(expect.objectContaining({ message: expect.objectContaining({ localId, discussionAddressing: discussion }) }));
+            phase = 'durable queue during native work';
+            expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).toMatchObject({ type: 'no_pending' });
+            expect(await db.sessionPendingMessage.findUnique({
+                where: { sessionId_localId: { sessionId: receiver.id, localId } },
+                select: { status: true },
+            })).toMatchObject({ status: 'queued' });
             expect(delivered).toHaveLength(1);
             expect(await removeDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId, request: { participant } })).toMatchObject({ ok: true });
             expect(await db.sessionFollowEdge.count({ where: { sourceDiscussionId: discussionId, destinationSessionId: receiver.id } })).toBe(0);
@@ -1263,6 +1287,7 @@ describe('First-class Discussions service (SQLite)', () => {
             phase = 'quiet withdrawal and ordinary provider continuation';
             releaseBusy();
             await loop;
+            await lifecycle.drainAcceptedLifecycle();
             await client.flush();
             expect(delivered).toHaveLength(2);
             expect(delivered[1]).toContain('ORDINARY_AFTER_WITHDRAWAL');
@@ -1271,8 +1296,7 @@ describe('First-class Discussions service (SQLite)', () => {
             expect(transportEvents.filter(event => event.includes('/v1/discussions'))).toEqual([]);
             const transcript = await db.sessionMessage.findMany({ where: { sessionId: receiver.id } });
             expect(JSON.stringify(transcript.map(message => message.content))).not.toContain('turn_failed');
-            expect(transcript.find(message => message.localId === localId)?.replyProgress)
-                .toMatchObject({ disposition: 'released', outcome: { kind: 'cancelled' } });
+            expect(transcript.find(message => message.localId === localId)).toBeUndefined();
             expect(client.hasPendingProviderInput(localId)).toBe(false);
             expect(client.hasPendingProviderInput(busyId)).toBe(false);
             expect(client.hasPendingProviderInput(ordinaryId)).toBe(false);
@@ -1470,7 +1494,8 @@ describe('First-class Discussions service (SQLite)', () => {
                 url: DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', discussionId) });
             expect(response.statusCode).toBe(200);
             const page = DiscussionMessagesResponseV1Schema.parse(response.json());
-            expect(page.messages.find(message => message.id === discussion.messageId)).not.toHaveProperty('participantDeliveryV1');
+            expect(page.messages.find(message => message.id === discussion.messageId)?.participantDeliveryV1)
+                .toEqual([{ participantSessionId: target.id, disposition: 'pending' }]);
         } finally { await app.close(); }
         expect(await inTx(tx => createSessionInputReplyProgressInTx(tx, { accountId: invitee.id,
             reply: { mode: 'return', discussion, sourceSession } }))).toMatchObject({ discussion, sourceSession, disposition: 'return_pending' });
@@ -1506,10 +1531,13 @@ describe('First-class Discussions service (SQLite)', () => {
             producer: { v: 1, kind: 'agent', sessionId: localSource.id, sourceSession: localSourceSession }, request: request() });
         if (!local.ok) throw new Error(local.error);
         const page = await readDiscussionMessages({ authentication, actorAccountId: invitee.id, discussionId });
-        if (page.ok) expect(DiscussionMessagesResponseV1Schema.safeParse(page.value).success).toBe(true);
-        expect.soft(page).toMatchObject({ ok: true, value: { messages: expect.arrayContaining([
-            expect.objectContaining({ id: foreignQuestion.value.message.id }), expect.objectContaining({ id: local.value.message.id })]) } });
-        if (page.ok) for (const message of page.value.messages) expect.soft(message).not.toHaveProperty('participantDeliveryV1');
+        if (!page.ok) throw new Error(page.error);
+        const pendingDelivery = [{ participantSessionId: receiver.id, disposition: 'pending' }];
+        const initialMessages = DiscussionMessagesResponseV1Schema.parse(page.value).messages;
+        for (const question of [foreignQuestion, local]) {
+            expect(initialMessages.find(message => message.id === question.value.message.id)?.participantDeliveryV1)
+                .toEqual(pendingDelivery);
+        }
         const observe = () => inTx(tx => observePendingSessionFollowForDestinationInTx(tx, {
             principal: { kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: receiver.id,
         }));
@@ -1543,7 +1571,8 @@ describe('First-class Discussions service (SQLite)', () => {
             expect.soft(DiscussionMessagesResponseV1Schema.safeParse(visible.value).success).toBe(true);
             expect.soft(visible.value.messages.find(message => message.id === foreignQuestion.value.message.id)?.participantDeliveryV1)
                 .toEqual([{ participantSessionId: receiver.id, disposition: 'held', code: 'session_input_target_unavailable' }]);
-            expect.soft(visible.value.messages.find(message => message.id === local.value.message.id)).not.toHaveProperty('participantDeliveryV1');
+            expect.soft(visible.value.messages.find(message => message.id === local.value.message.id)?.participantDeliveryV1)
+                .toEqual(foreignCause ? pendingDelivery : undefined);
         }
         for (let scan = 0; scan < 3; scan += 1) expect((await observe()).observations).toEqual([]);
         expect.soft((await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceDiscussionId_relation: {
@@ -1628,7 +1657,8 @@ describe('First-class Discussions service (SQLite)', () => {
         const read = () => readDiscussionMessages({ authentication, actorAccountId: invitee.id, discussionId });
         const beforeRemoval = await read();
         if (!beforeRemoval.ok) throw new Error(beforeRemoval.error);
-        expect(beforeRemoval.value.messages.find(message => message.id === question.value.message.id)).not.toHaveProperty('participantDeliveryV1');
+        expect(beforeRemoval.value.messages.find(message => message.id === question.value.message.id)?.participantDeliveryV1)
+            .toEqual([{ participantSessionId: receiver.id, disposition: 'pending' }]);
         expect(await removeDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: receiver.id } } })).toMatchObject({ ok: true });
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
@@ -2258,9 +2288,9 @@ describe('First-class Discussions service (SQLite)', () => {
                     watch(listener) { emitNative = listener; return { dispose() { emitNative = undefined; } }; },
                     dispose() {},
                 }, target.id, undefined, undefined, undefined, undefined, undefined, {
-                    context: {} as AgentSessionRuntimeContext, cwd: '/repo', connectedAccounts: [],
+                    context: { signal: new AbortController().signal } as AgentSessionRuntimeContext, cwd: '/repo', connectedAccounts: [],
                     capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-                    cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+                    cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
                 });
                 // Ordinary native Sessions always cross the replaceable host
                 // adapter. A raw native→lifecycle fixture hides a lost reader.

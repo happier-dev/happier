@@ -37,6 +37,7 @@ it('takes a cold SQL/HTTP proposal through the real codec and repository into Ne
     const authentication = createPresentUserSessionAccessAuthentication();
     const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
     const writer = await db.account.create({ data: { encryptionMode: 'plain' } });
+    await db.userRelationship.create({ data: { fromUserId: writer.id, toUserId: owner.id, status: 'friend' } });
     const home = await serveSessionActionHome({ homes: [{ key: 'inbox', serverUrl: 'https://inbox-actions.test',
         accountId: owner.id, currentAccount: true }], route: () => undefined });
     const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
