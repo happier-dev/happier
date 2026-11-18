@@ -756,6 +756,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       }) : null;
     const openRestore = restoreAction && (retainedBackup && restoreOperands || uploadTarget) ? () => {
       showDeploymentRestoreSheet({
+        serverId: detail.environment.serverId,
         name: detail.content.name,
         machine: machineName(restoreOperands?.machineId ?? uploadTarget!.operands.machineId),
         ...(retainedBackup && restoreOperands ? { backup: retainedBackup, operands: restoreOperands } : {}),
@@ -1005,7 +1006,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                   controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
                     active: props.demand.mounted && props.demand.visible && props.demand.focused }} />
               ) : null}
-              {sourceMethod && platform && runtime ? <ItemGroup header="none">
+              {/* An untitled section, not header="none": it keeps one section gap below the notice slot's banner. */}
+              {sourceMethod && platform && runtime ? <ItemGroup>
                 <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
                   testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
                   onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
