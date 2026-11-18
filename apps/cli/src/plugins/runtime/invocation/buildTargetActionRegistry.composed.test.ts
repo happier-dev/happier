@@ -1462,7 +1462,7 @@ describe('buildTargetActionInvocationRegistry', () => {
                     expect(acquisitions).toBe(1);
                     if (variant === 'mutation') return;
                 } else {
-                    expect(result).toMatchObject({ status: 'unavailable', code: variant === 'controller' ? 'machine_unavailable'
+                    expect(result).toMatchObject({ status: variant === 'controller' ? 'unavailable' : 'failed', code: variant === 'controller' ? 'machine_unavailable'
                         : variant === 'source' ? 'target_mismatch' : 'deployment_access_denied' });
                     expect(requests).toEqual([]);
                     expect(acquisitions).toBe(0);
