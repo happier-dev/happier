@@ -1653,6 +1653,7 @@ describe('resolveUsagePageAggregation', () => {
     const cold = read(undefined, nowMs, 'error');
     expect(cold.results[0]?.work?.allocations).toMatchObject([{ reason: 'missing_evidence', outcome: null }]);
     expect(cold.results[0]?.mergedOutcomes).toBeUndefined();
+    expect(cold.results[0]?.workSummary).toBeUndefined();
     for (const status of ['pending', 'error'] as const) {
       const reread = read(cold, nowMs + 30_000, status);
       expect(reread.results[0]?.mergedOutcomes).toBeUndefined();
@@ -1660,6 +1661,7 @@ describe('resolveUsagePageAggregation', () => {
     }
     const observedEmpty = read(cold, nowMs + 30_000, 'available');
     expect(observedEmpty.results[0]?.mergedOutcomes).toMatchObject({ linkedMergedCount: 0 });
+    expect(observedEmpty.results[0]?.workSummary?.mergedPrCount).toBe(0);
     const failedReplacement = read(observedEmpty, nowMs + 60_000, 'error');
     expect(failedReplacement.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
     expect(failedReplacement.results[0]?.mergedOutcomes).toMatchObject({

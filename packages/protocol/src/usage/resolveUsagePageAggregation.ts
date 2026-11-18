@@ -814,7 +814,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // explicit empty admission/quarantine still withdraws the old witnesses.
     const failedWork = workSnapshot?.status === 'error' && workSnapshot.evidence === undefined
       && workSnapshot.branchEvidence === undefined && canRetainUsageReadFailure(workSnapshot.errorCode)
-      && (prior?.work !== undefined || prior?.workSummary !== undefined || prior?.publicProfileEvidence?.facts.mergedPrs !== undefined);
+      && (prior?.workSummary !== undefined || prior?.mergedOutcomes !== undefined || prior?.publicProfileEvidence?.facts.mergedPrs !== undefined);
     const retainWork = workSnapshot?.status === 'pending' || failedWork;
     const priorWorkSource = prior?.sources.find(source => source.source === 'work');
     const workAsOfMs = failedWork ? priorWorkSource?.asOfMs : workSnapshot?.asOfMs;
@@ -959,10 +959,11 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : readableWork ? workSnapshot?.branchEvidence ?? [] : [],
     }));
     const workProjection = workFacts.value;
-    const workSummary = workProjection ? prior?.work === workProjection && prior.workSummary
+    // Allocation can enumerate unlinked Sessions before their Work evidence answers.
+    const hasMergedOutcomes = retainWork && prior?.mergedOutcomes !== undefined || readableWork;
+    const workSummary = workProjection && hasMergedOutcomes ? prior?.work === workProjection && prior.workSummary
       || projectUsageWorkSummary(workProjection.outcomes, workProjection)
       : readableWork && workSnapshot?.summary || retainWork && prior?.workSummary || undefined;
-    const hasMergedOutcomes = retainWork && prior?.mergedOutcomes !== undefined || readableWork;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
       work: workProjection, startMs, endMs, observed: Boolean(hasMergedOutcomes),
     }, () => workProjection && endMs !== undefined && endMs >= startMs
