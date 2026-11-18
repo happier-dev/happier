@@ -25,7 +25,7 @@ vi.mock('node:fs', async importOriginal => {
 });
 
 describe('operation-owned deployment stage file', () => {
-    it('retains a closed local cause when the native stage-log write fails', async () => {
+    it('records a native stage-log write failure without rejecting diagnostic cleanup', async () => {
         const deploymentRoot = await mkdtemp(join(tmpdir(), 'happier-stage-write-failure-'));
         const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         let file: Awaited<ReturnType<typeof openOwnServerDeploymentStageLog>> | undefined;
@@ -38,6 +38,7 @@ describe('operation-owned deployment stage file', () => {
             nativeWriteBoundary.failure = Object.assign(new Error('PRIVATE native write details'), { code: 'ENOSPC' });
             file.appendRedacted('stderr', Buffer.from('PRIVATE rejected bytes'));
             expect(() => file?.assertWritten()).toThrowError(expect.objectContaining({ code: 'deployment_log_unavailable' }));
+            await expect(file.close()).resolves.toBeUndefined();
             expect(logged).toHaveBeenCalledOnce();
             expect(logged).toHaveBeenCalledWith('[Deployment] Stage log write failed', expect.objectContaining({
                 phase: 'deployment.logs.write', errorClass: 'Error', errorCode: 'ENOSPC',
@@ -46,7 +47,7 @@ describe('operation-owned deployment stage file', () => {
         } finally {
             nativeWriteBoundary.failure = undefined;
             logged.mockRestore();
-            await file?.close().catch(() => undefined);
+            await file?.close();
             await rm(deploymentRoot, { recursive: true, force: true });
         }
     });

@@ -2874,9 +2874,6 @@ describe('installed deployment storage and target composition', () => {
                     expect(logWarnings).toHaveBeenCalledWith('[Deployment] Stage log write failed', expect.objectContaining({
                         errorCode: 'ENOSPC',
                     }));
-                    expect(logWarnings).toHaveBeenCalledWith('[Deployment] Controller build log unavailable', expect.objectContaining({
-                        errorCode: 'deployment_log_unavailable',
-                    }));
                     expect(childInvocations).toBe(1);
                     return;
                 }

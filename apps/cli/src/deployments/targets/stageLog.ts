@@ -80,6 +80,13 @@ export async function openDeploymentStageLog(input: Placement & Readonly<{
     // Reopening a retained placement never recreates missing output.
     if (!input.expected) await createProtectedLocalStateFileExclusive(path, new Uint8Array());
     const handle = await openProtectedLocalStateFile(path, 'a');
+    const closeHandle = async () => {
+        try { await handle.close(); }
+        catch (error) {
+            logger.warnLocalFile('[Deployment] Stage log close failed',
+                projectActionFailureCauseV1(error, 'deployment.logs.close', { allowUnknownErrorCode: false }));
+        }
+    };
     try {
         if (input.expected && (input.expected.machineId !== input.machineId || input.expected.installationId !== input.installationId
             || input.expected.relativePath !== DEPLOYMENT_STAGE_LOG_RELATIVE_PATH)) return unavailable();
@@ -128,9 +135,14 @@ export async function openDeploymentStageLog(input: Placement & Readonly<{
                 }
             },
             assertWritten() { if (closed || failure !== undefined) return unavailable(); },
-            async close() { if (closed) return; closed = true; await handle.close(); if (failure !== undefined) return unavailable(); },
+            async close() {
+                if (closed) return;
+                closed = true;
+                // Write failures are reported at the write and checked at required logging phases.
+                await closeHandle();
+            },
         };
-    } catch (error) { await handle.close(); throw error; }
+    } catch (error) { await closeHandle(); throw error; }
 }
 
 export type DeploymentStageLogReceipt = Readonly<{ deployment: Pick<DeploymentReceiptDetailV1['deployment'], 'id' | 'environmentId' | 'acceptedExecution'>; content: Readonly<{
