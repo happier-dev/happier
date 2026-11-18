@@ -391,6 +391,13 @@ Provider tenants, permissions, stream framing and retention remain release check
 
 ## Platform upload evidence (0.3 development)
 
+Vercel promotes a Preview deployment by rebuilding that exact deployment for
+Production through `POST /v13/deployments`. The receipt observes the new native
+deployment ID and settles when Vercel confirms production traffic. For a selected
+Production deployment, the adapter uses the existing `POST /v10/projects/{projectId}/promote/{deploymentId}`
+alias operation. A `READY` build with a pending alias remains in progress.
+[Vercel promotion guide](https://vercel.com/docs/deployments/promoting-a-deployment)
+
 Cloudflare Workers observations report a `workers.dev` URL only when the script's
 subdomain is enabled, using the account's actual subdomain. An explicitly disabled
 route records an empty URL list; an unavailable address read leaves addresses

@@ -1,5 +1,6 @@
-import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import type {
   DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
   DeploymentTargetProviderEnvironmentV1, DeploymentTargetRepositoryAccessV1,
@@ -121,14 +122,7 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
       headerNames: ['authorization'] },
     ...content,
-  }, { signal: context.signal }).catch((error: unknown) => {
-    // The host reads the body after dispatch; losing it cannot establish a failed write.
-    if (method !== 'GET' && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
-      throw new PluginError({ code: 'outcome_unknown', retryable: false,
-        failureCause: projectActionFailureCauseV1(error, phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`) });
-    }
-    throw error;
-  });
+  }, { signal: context.signal });
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
   if (record(value) && record(value.error)) {
@@ -136,6 +130,7 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
     const needsGitAccess = value.error.action === 'Install GitHub App' || value.error.action === 'Add a Login Connection' || value.error.code === 'repo_not_found';
     throw withActionFailureDiagnostic(new PluginError({ code: needsGitAccess ? 'needsGitAccess' : response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false,
+      ...(phase === 'send' && text(value.error.message) ? { message: projectPluginFailureText(new Error(value.error.message)) } : {}),
       details: { ...(phase === undefined ? {} : { phase }),
         ...(needsGitAccess ? { reason: repositoryKind === 'github' ? 'vercel_github_app_required' : 'vercel_git_connection_required', grantUrl: vercelGitGrantUrl(repositoryKind) } : {}) },
       failureCause: { phase: phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`, errorClass: 'Error',
@@ -144,6 +139,10 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
   return response;
 }
 export { endpoint as vercelEndpoint, send as vercelRequest };
+
+export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id: string, context: VercelPlatformContext) {
+  return send(context, endpoint(`/v13/deployments/${encodeURIComponent(id)}`, providerIdentity.providerAccountId), 'GET');
+}
 function rejected(response: HttpResponse, phase: Phase): DeploymentTargetRoleFailureV1 | null {
   if (response.status >= 200 && response.status < 300) return null;
   return failure(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
@@ -271,7 +270,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
 }
 
 function observation(response: HttpResponse, context: VercelPlatformContext, phase: Phase,
-  expectedId?: string, expectedProject?: string): Outcome {
+  expectedId?: string, expectedProject?: string, promotion = false): Outcome {
   if (phase === 'send' && response.status >= 500) return failure('outcome_unknown', phase);
   const denied = rejected(response, phase);
   if (denied) return denied;
@@ -285,7 +284,13 @@ function observation(response: HttpResponse, context: VercelPlatformContext, pha
   switch (value.readyState) {
     case 'QUEUED': state = 'queued'; break;
     case 'INITIALIZING': case 'BUILDING': state = 'running'; break;
-    case 'READY': state = 'succeeded'; break;
+    case 'READY':
+      if (!promotion) state = 'succeeded';
+      else if (value.target === 'production' && record(value.meta) && value.meta.action === 'promote') {
+        if (value.aliasError != null) state = 'failed';
+        else state = value.aliasAssigned === false ? 'running' : 'outcome_unknown';
+      } else state = 'outcome_unknown';
+      break;
     case 'ERROR': case 'BLOCKED': state = 'failed'; break;
     case 'CANCELED': state = 'cancelled'; break;
     default: state = 'outcome_unknown';
@@ -297,12 +302,13 @@ function observation(response: HttpResponse, context: VercelPlatformContext, pha
 }
 
 /** One finite exact-id read; the host operation/demand owner decides when to observe. */
-export async function observeVercelDeployment(input: ObservationInput, context: VercelPlatformContext): Promise<Outcome> {
+export async function observeVercelDeployment(input: ObservationInput, context: VercelPlatformContext,
+  options?: Readonly<{ promotion: true }>): Promise<Outcome> {
   context.signal.throwIfAborted();
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'observe');
   try {
-    return observation(await send(context, endpoint(`/v13/deployments/${encodeURIComponent(input.providerDeploymentId)}`,
-      input.providerIdentity.providerAccountId), 'GET'), context, 'observe', input.providerDeploymentId);
+    return observation(await requestVercelDeployment(input.providerIdentity, input.providerDeploymentId, context),
+      context, 'observe', input.providerDeploymentId, input.providerIdentity.providerResourceId, options?.promotion);
   } catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
@@ -357,7 +363,7 @@ export async function deployVercelFiles(input: UploadSelection & Readonly<{
     gitMetadata: { commitSha: input.sha, ...(branch ? { commitRef: branch } : {}) } }, context);
 }
 
-async function createVercelDeployment(input: UploadSelection, source: Readonly<Record<string, unknown>>, context: VercelPlatformContext,
+export async function createVercelDeployment(input: UploadSelection, source: Readonly<Record<string, unknown>>, context: VercelPlatformContext,
   repositoryKind?: Repository['kind']): Promise<Outcome> {
   const environment = input.providerEnvironment;
   const target = environment.kind === 'production' ? { target: 'production' }

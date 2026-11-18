@@ -1,7 +1,8 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRollbackInputV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
-import { vercelEndpoint, vercelRequest, type VercelPlatformContext } from './operations.js';
+import { createVercelDeployment, observeVercelDeployment, requestVercelDeployment, vercelEndpoint, vercelRequest,
+  type VercelPlatformContext } from './operations.js';
 import { readVercelBuiltInUrls } from './addresses.js';
 
 type Operation = 'promote' | 'rollback';
@@ -13,10 +14,9 @@ const fail = (code: DeploymentTargetRoleFailureV1['code'], phase: DeploymentTarg
 };
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
-/** Vercel acknowledges the alias job before it settles. Observe that job, never the old build's READY state.
+/** Production traffic settles from the alias job or the project's current production target.
  * openapi.vercel.sh requestPromote (v10), requestRollback (v1), getProject (v9), inspected 2026-11-10.
- * A superseding or missing alias job is unknown unless production already serves the deployment;
- * existing receipt recovery owns the next user decision.
+ * If the project cannot settle the result, a Preview rebuild can still report its native progress.
  */
 export async function observeVercelTraffic(input: Selection, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   if (!input.providerDeploymentId) return fail('outcome_unknown');
@@ -44,6 +44,11 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
   const production = object(project.targets) ? project.targets.production : undefined;
   if (state === 'outcome_unknown' && object(production) && production.id === input.providerDeploymentId
     && (typeof production.aliasAssigned === 'number' || production.aliasAssigned === true) && production.aliasError == null) state = 'succeeded';
+  if (state === 'outcome_unknown' && operation === 'promote') {
+    // A preview rebuild can run or fail before it has an alias job. READY alone does not prove traffic moved.
+    const deployment = await observeVercelDeployment(input, context, { promotion: true });
+    if (!('code' in deployment) && deployment.state !== 'outcome_unknown') return deployment;
+  }
   const builtInUrls = state === 'succeeded' && object(production) && production.id === input.providerDeploymentId
     ? readVercelBuiltInUrls(production) : undefined;
   return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
@@ -53,10 +58,33 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
 export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   context.signal.throwIfAborted();
   if (input.providerEnvironment.kind !== 'production') return fail('unsupported_action', 'admission');
+  if (input.providerDeploymentId) return observeVercelTraffic(input, operation, context);
   const providerDeploymentId = input.priorDeployment.providerDeploymentId;
+  if (operation === 'promote') {
+    let response;
+    try { response = await requestVercelDeployment(input.providerIdentity, providerDeploymentId, context); }
+    catch (error) { context.signal.throwIfAborted(); if (isPluginError(error)) throw error; return fail('provider_request_failed', 'send'); }
+    if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+      : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', 'send');
+    let source: unknown;
+    try { source = JSON.parse(new TextDecoder().decode(response.body)); } catch { return fail('provider_response_invalid', 'send'); }
+    if (!object(source) || source.id !== providerDeploymentId || source.projectId !== input.providerIdentity.providerResourceId) {
+      return fail('provider_response_invalid', 'send');
+    }
+    // Vercel's CLI uses v13 deployment creation for Preview and v10 alias promotion for Production.
+    if (source.target !== 'production') {
+      if (typeof source.name !== 'string' || source.name.trim().length === 0) return fail('provider_response_invalid', 'send');
+      const deployment = await createVercelDeployment({ providerIdentity: input.providerIdentity,
+        providerEnvironment: input.providerEnvironment, projectName: source.name },
+        { deploymentId: providerDeploymentId, meta: { action: 'promote' } }, context);
+      if ('code' in deployment) return fail(deployment.code, deployment.phase);
+      // Persist the returned native id even when the build is already READY. Traffic still needs observation.
+      return deployment.state === 'succeeded' ? { ...deployment, state: 'running' } : deployment;
+    }
+  }
   let response;
   try { response = await vercelRequest(context, vercelEndpoint(`/v${operation === 'promote' ? '10' : '1'}/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}/${operation}/${encodeURIComponent(providerDeploymentId)}`,
-    input.providerIdentity.providerAccountId), 'POST'); }
+    input.providerIdentity.providerAccountId), 'POST', undefined, 'send'); }
   catch (error) { if (isPluginError(error)) throw error; return fail('outcome_unknown', 'send'); }
   if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
     : response.status === 404 ? 'deployment_unavailable' : response.status === 409 ? 'deployment_conflict'
