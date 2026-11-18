@@ -65,36 +65,44 @@ describe('sessionListRuntimeClock', () => {
         await act(async () => screen.tree.unmount());
         expect(vi.getTimerCount()).toBe(0);
     });
-    it('changes every visible minute label in one commit on the wall-clock minute, and keeps hour-old rows off the minute tick', async () => {
+    it('commits every label due on a wall-clock minute together, hour labels within 59 s, and leaves unchanged labels unrendered', async () => {
         vi.useFakeTimers();
         const now = Date.parse('2026-09-30T12:00:20.000Z');
         vi.setSystemTime(now);
         const clock = createSessionListRuntimeClock();
-        let hourRowRenders = 0;
+        const hourRowRenders = new Map<number, number>();
         function MinuteLabel(props: { at: number }) {
             const next = React.useCallback((at: number) => readShortRelativeTimeRefreshAtMs(props.at, at), [props.at]);
             return formatShortRelativeTimeAt(props.at, useSessionListRuntimeDeadlineNowMs(next, true, clock));
         }
         function HourLabel(props: { at: number }) {
-            hourRowRenders += 1;
+            hourRowRenders.set(props.at, (hourRowRenders.get(props.at) ?? 0) + 1);
             const next = React.useCallback((at: number) => readShortRelativeTimeRefreshAtMs(props.at, at), [props.at]);
             return formatShortRelativeTimeAt(props.at, useSessionListRuntimeDeadlineNowMs(next, true, clock));
         }
         let commits = 0;
         // 26 rows active at different seconds of the last minutes, as a freshly seeded list (iOS idle bed).
         const minuteRows = Array.from({ length: 26 }, (_, index) => now - 120_000 - index * 2_300);
+        // "2h" becomes "3h" at 12:01:50 (exact); "2h" for the quiet row only changes at 12:55.
+        const dueHourRow = now - 3 * 3_600_000 + 90_000;
+        const quietHourRow = now - 2 * 3_600_000 - 5_000;
         const screen = await renderScreen(<React.Profiler id="rows" onRender={() => { commits += 1; }}>
             {minuteRows.map((at) => <MinuteLabel key={at} at={at} />)}
-            <HourLabel at={now - 2 * 3_600_000 - 5_000} />
+            <HourLabel at={dueHourRow} />
+            <HourLabel at={quietHourRow} />
         </React.Profiler>);
-        commits = 0; hourRowRenders = 0;
+        commits = 0; hourRowRenders.clear();
         const before = minuteRows.map((at) => formatShortRelativeTimeAt(at, now));
         // One act per second, so separate timer fires cannot be batched into one commit by the test itself.
         for (let step = 0; step < 180; step += 1) await act(async () => { vi.advanceTimersByTime(1_000); });
-        // Three wall-clock minutes passed (12:01, 12:02, 12:03): one commit each, every label moved.
+        // Three wall-clock minutes passed (12:01, 12:02, 12:03): one commit each, every minute label moved.
         expect(commits).toBe(3);
         expect(minuteRows.map((at) => formatShortRelativeTimeAt(at, Date.now()))).not.toEqual(before);
-        expect(hourRowRenders).toBe(0);
+        // The due hour label changed on the 12:02 tick (10 s after its boundary), inside that tick's commit.
+        expect(hourRowRenders.get(dueHourRow)).toBe(1);
+        expect(screen.getTextContent()).toContain('3h');
+        // A label that did not change on any tick never rendered.
+        expect(hourRowRenders.get(quietHourRow)).toBeUndefined();
         await act(async () => screen.tree.unmount());
     });
 

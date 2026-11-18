@@ -18,9 +18,10 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
 /**
- * Minute and hour labels change on the shared wall-clock minute or hour, not on each timestamp's own offset, so every
- * visible label of one granularity changes at the same instant (one shared-clock wake, one commit) instead of one
- * commit per row spread across the minute. Day and longer labels keep their exact boundary (one change per row per day).
+ * Minute and hour labels change on the shared wall-clock minute, not on each timestamp's own offset, so every label due
+ * on a tick changes at the same instant (one shared-clock wake, one commit) instead of one commit per row spread across
+ * the minute, and no label is more than 59 s late. Each row still wakes only for its own boundary, so a label that does
+ * not change on a tick does not render. Day and longer labels keep their exact boundary.
  */
 function alignedBoundaryMs(exactAtMs: number, granularityMs: number): number {
     return Math.ceil(exactAtMs / granularityMs) * granularityMs;
@@ -51,7 +52,7 @@ export function readRelativeTimeShortRefreshAtMs(atMs: number, nowMs: number): n
     const { minutes, hours, days } = relativeTimeUnits(atMs, nowMs);
     if (minutes < 1) return alignedBoundaryMs(atMs + MINUTE_MS, MINUTE_MS);
     if (minutes < 60) return alignedBoundaryMs(atMs + (minutes + 1) * MINUTE_MS, MINUTE_MS);
-    if (hours < 24) return alignedBoundaryMs(atMs + (hours + 1) * HOUR_MS, HOUR_MS);
+    if (hours < 24) return alignedBoundaryMs(atMs + (hours + 1) * HOUR_MS, MINUTE_MS);
     return atMs + (days + 1) * 86_400_000;
 }
 
@@ -76,7 +77,7 @@ export function formatShortRelativeTimeAt(timestamp: number, nowMs: number): str
     return shortRelativeTimeDisplay(timestamp, nowMs).label;
 }
 
-/** Next change of the same label (wall-clock aligned for minutes and hours), so an old row does not tick every minute. */
+/** Next change of the same label (on the wall-clock minute for minute and hour labels), so an old row does not tick every minute. */
 export function readShortRelativeTimeRefreshAtMs(timestamp: number, nowMs: number): number | null {
     return shortRelativeTimeDisplay(timestamp, nowMs).nextAtMs;
 }
@@ -93,7 +94,7 @@ function shortRelativeTimeDisplay(timestamp: number, nowMs: number): Readonly<{ 
         return { label: t('time.compactAge.minutes', { count: minutes }), nextAtMs: alignedBoundaryMs(timestamp + (minutes + 1) * MINUTE_MS, MINUTE_MS) };
     }
 
-    if (hours < 24) return { label: t('time.compactAge.hours', { count: hours }), nextAtMs: alignedBoundaryMs(timestamp + (hours + 1) * HOUR_MS, HOUR_MS) };
+    if (hours < 24) return { label: t('time.compactAge.hours', { count: hours }), nextAtMs: alignedBoundaryMs(timestamp + (hours + 1) * HOUR_MS, MINUTE_MS) };
 
     if (days < 7) return { label: t('time.compactAge.days', { count: days }), nextAtMs: timestamp + (days + 1) * 86_400_000 };
 
