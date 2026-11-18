@@ -3811,6 +3811,16 @@ result cells and staged edits stay out of that record. Staged changes, filters,
 location and widths belong to the workbench instance; its unsaved-change flag
 uses the page navigation guard above.
 
+### Database and telemetry widgets (unreleased 0.3)
+
+The Home Check widget binds one saved Monitoring check and renders its
+existing status and retained check history. Key-flow checks use that same
+presentation. The Telemetry plugin's App metric widget binds a collector-backed
+Environment and metric, with an optional route for request metrics. The
+Environment and route choices come from the host's scoped option sources.
+App vitals and Slowest routes use the same collector assignment. Deployment
+comparison in App metric is shown when available for the selected series.
+
 ### Plugin Project pages (0.3 development source)
 
 `appPage` also admits `target: { kind: 'project' }` through the same surface

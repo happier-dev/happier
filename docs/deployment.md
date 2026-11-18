@@ -2758,6 +2758,18 @@ does no write. Disabling one takes effect at the next ingest admission while
 traces, logs and the other choices remain independent. Regression automation uses
 its existing Workflow's armed state rather than another stored telemetry flag.
 
+The Environment Telemetry tab is the deployment host's reader for this retained
+data. Its Endpoints, Traces, Logs and Queries tabs use the selected time window
+and the Environment's collector assignment. Trace selection opens the shared
+request view, which follows the trace into query and correlated log details.
+Settings uses the Environment binding owner. Clear uses the scoped capture
+Action after confirmation and refreshes the selected view. The host represents
+an unreachable collector as unavailable.
+
+In the Services Apps list, the optional [Requests column](collection-presentation.md#model-and-presentation)
+reads the same collector assignment. Its 24-hour number is scoped to the
+Environment across emitting services.
+
 Native launch preserves a project's authored telemetry values. Empty declared
 slots receive the managed OTLP HTTP/protobuf endpoint, authorization header,
 service name and resource attributes. The managed `OTEL_METRICS_EXPORTER` value is

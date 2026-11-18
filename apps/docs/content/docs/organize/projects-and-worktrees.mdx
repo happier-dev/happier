@@ -93,6 +93,41 @@ dashboard, Can read permits viewing, Can edit permits editing and renaming, and
 the owner or Admin can manage sharing. The recipient cannot reorder or delete
 it from the owner's dashboard inventory.
 
+## Databases and telemetry
+
+These surfaces are in unreleased 0.3 development source. With the Database
+workbench available on your Machine, open **Databases** from the Project's
+development services, or use **Database** in the Project or Session side rail.
+The picker lists targets for that Project. You can connect a database manually
+or pick one discovered from a launched service. An explicit worktree dotenv
+target can resolve a selected variable before the service starts. The picker can
+show the database endpoint and the Machine that runs the workbench. Managed
+databases open from the deployment's Database page.
+
+- In a table, open a row and use **Referenced by** to jump to rows in another
+  table that point to it. The destination opens with the selected row's key
+  values as filters.
+- In the **Console**, enter SQL with placeholders for the selected engine.
+  Happier adds a field for each bind slot it finds. Each field starts as Text.
+  Choose a different type when the query needs one.
+
+When an Environment has a collector, its **Telemetry** tab shows **Endpoints**,
+**Traces**, **Logs**, and **Queries** for the selected time window. Open a trace
+to inspect the request and the steps that contributed to its duration. Use the
+tab's menu to open Settings or, with write access, clear the Environment's
+captured data after confirming. An offline collector leaves that data
+unavailable until the Machine reconnects.
+
+On a wide **Services → Apps** list, enable **Requests · 24 h** from **Columns**
+to see each Environment's request volume and trend when available. A dash
+means the collector has no value for the row. A measured zero appears as zero.
+
+From Home's **Add to Home** picker, choose **Check** for a saved Monitoring
+check, including a saved key-flow check. To graph application data, choose
+**App metric** from Telemetry and select an Environment and metric. Request
+metrics can be narrowed to a route when the collector offers route choices.
+Telemetry also offers **App vitals** and **Slowest routes**.
+
 ## Project root vs selected worktree
 
 This is the most important mental model:
