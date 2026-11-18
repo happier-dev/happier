@@ -63,16 +63,27 @@ function buildReviewScopeGuidanceBlock(intentInput: unknown): string | null {
     ].join('\n');
   }
   const parsed = ReviewStartInputSchema.safeParse(intentInput);
-  if (!parsed.success) return null;
-
-  const payload = parsed.data;
-  if (payload.scope === 'repository') {
+  const supportedScope = resolved.success && resolved.data.status === 'supported' ? resolved.data : null;
+  if (supportedScope ? supportedScope.scope === 'repository' : parsed.success && parsed.data.scope === 'repository') {
     return [
       'Review scope:',
       '- Inspect the entire repository, including unchanged and tracked files outside the current diff.',
       '- Use the requested focus to guide inspection; do not restrict findings to changed files.',
     ].join('\n');
   }
+  if (supportedScope) {
+    return [
+      'Review scope:',
+      `- Selected paths: ${JSON.stringify(supportedScope.selectedPaths)}`,
+      ...(parsed.success ? [`- Change type: ${parsed.data.changeType}`] : []),
+      `- Comparison base: ${supportedScope.baseRef.ref ?? 'unavailable in admitted scope'}`,
+      '- Review only the admitted changes in these paths. An empty selection contains no changed files to review.',
+      '- Inspect supporting context only as needed to validate scoped findings; do not include unrelated checkout changes.',
+    ].join('\n');
+  }
+  if (!parsed.success) return null;
+
+  const payload = parsed.data;
   const baseLine = payload.base.kind === 'branch'
     ? `Base branch: ${payload.base.baseBranch}`
     : payload.base.kind === 'commit'

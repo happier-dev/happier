@@ -3,9 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { buildStandardReviewPrompt } from './buildStandardReviewPrompt';
 
 describe('buildStandardReviewPrompt', () => {
+  it('keeps an ordinary file selection and its admitted base in the generic reviewer input', () => {
+    const prompt = buildStandardReviewPrompt({ instructions: 'Review the selection.', intentInput: {
+      reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the selection.',
+      changeType: 'uncommitted', base: { kind: 'branch', baseBranch: 'unselected-ambient-base' },
+      selectedPaths: ['unselected-raw-path.ts'],
+      scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scope: 'changes',
+        scmBackendId: 'git', scmMode: '.git', repositoryRoot: '/repo', worktreeRoot: '/repo',
+        baseRef: { source: 'explicit', ref: 'admitted-base' }, selectedPaths: ['selected.ts'],
+        committedPaths: [], uncommittedPaths: [], changedPaths: [],
+        diff: { committedAvailable: false, uncommittedAvailable: true }, diagnostics: [] },
+    } });
+    expect(prompt).toContain('selected.ts');
+    expect(prompt).toContain('admitted-base');
+    expect(prompt).not.toContain('unselected-ambient-base');
+    expect(prompt).not.toContain('unselected-raw-path.ts');
+  });
   it.each([true, false])('uses resolved captured scope instead of instructing the reviewer to infer ambient changes (picker fields: %s)', (hasPickerFields) => {
     const prompt = buildStandardReviewPrompt({ instructions: 'Review the selected turn.', intentInput: {
-      ...(hasPickerFields ? { engineIds: ['claude'] } : {}), instructions: 'Review the selected turn.', changeType: 'uncommitted', base: { kind: 'none' },
+      ...(hasPickerFields ? { reviewers: [{ kind: 'engine', engineId: 'claude' }] } : {}), instructions: 'Review the selected turn.', changeType: 'uncommitted', base: { kind: 'none' },
       scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scmBackendId: 'git', scmMode: '.git',
         repositoryRoot: '/repo', worktreeRoot: '/repo', baseRef: { source: 'explicit', ref: 'captured-base' },
         selectedPaths: ['selected.ts'], committedPaths: [], uncommittedPaths: [], changedPaths: [],
@@ -55,7 +71,7 @@ describe('buildStandardReviewPrompt', () => {
     const prompt = buildStandardReviewPrompt({
       instructions: 'Review the current session changes.',
       intentInput: {
-        engineIds: ['claude'],
+        reviewers: [{ kind: 'engine', engineId: 'claude' }],
         instructions: 'Review the current session changes.',
         changeType: 'committed',
         base: { kind: 'none' },
