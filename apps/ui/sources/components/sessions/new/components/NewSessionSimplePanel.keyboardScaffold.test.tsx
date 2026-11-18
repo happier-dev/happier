@@ -87,20 +87,37 @@ vi.mock('@/components/ui/popover', async importOriginal => ({
 
 vi.mock('@/components/sessions/keyboardAvoidance', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/components/sessions/keyboardAvoidance')>();
+    const { ComposerKeyboardProvider } = await import('@/components/sessions/keyboardAvoidance/ComposerKeyboardContext');
+    const { makeMutable } = await import('react-native-reanimated');
     return {
         ComposerKeyboardScaffold: (props: Record<string, unknown> & {
             children?: React.ReactNode;
             composer?: React.ReactNode;
         }) => {
             testState.scaffoldRender = { props };
+            const height = testState.scaffoldAvailablePanelHeight;
+            const composer = height === undefined ? props.composer : (
+                <ComposerKeyboardProvider layout={{
+                    availablePanelHeight: makeMutable(height),
+                    bottomInset: makeMutable(0),
+                    composerHeight: makeMutable(0),
+                    isKeyboardLiftSuppressed: makeMutable(false),
+                    keyboardHeightForInset: makeMutable(0),
+                    keyboardHeightLive: makeMutable(0),
+                    keyboardProgress: makeMutable(0),
+                    listBottomInset: makeMutable(0),
+                    setComposerMeasuredHeight: () => {},
+                }}>
+                    {props.composer}
+                </ComposerKeyboardProvider>
+            );
             return React.createElement(
                 'MockComposerKeyboardScaffold',
                 { testID: props.testID },
                 React.createElement('MockComposerKeyboardScaffoldContent', { testID: props.contentTestID }, props.children),
-                React.createElement('MockComposerKeyboardScaffoldComposer', { testID: props.composerTestID }, props.composer),
+                React.createElement('MockComposerKeyboardScaffoldComposer', { testID: props.composerTestID }, composer),
             );
         },
-        useComposerAvailablePanelHeight: () => testState.scaffoldAvailablePanelHeight,
         // One layout per test: a fresh instance per render would drop the subscription a test uses
         // to raise the keyboard.
         useComposerKeyboardLayoutContext: () => {
