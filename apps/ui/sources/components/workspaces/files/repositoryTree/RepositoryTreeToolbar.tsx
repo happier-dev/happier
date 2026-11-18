@@ -325,8 +325,10 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   field: {
     flex: 1,
-    // Let the other controls wrap before they consume the query's entire width at large text sizes.
-    flexBasis: '50%',
+    // Let the other controls wrap before they consume the query's entire width at large text sizes. At a
+    // phone's 390 px the segment and View menu leave the field 184 px: a half-row basis (183) sat on the wrap
+    // edge and dropped the View menu alone onto a second line.
+    flexBasis: '40%',
     minWidth: 0,
   },
   inline: {

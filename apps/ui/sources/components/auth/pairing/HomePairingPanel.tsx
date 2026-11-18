@@ -596,14 +596,18 @@ function PairingStatusLine(props: Readonly<{
     const { state } = props;
     switch (state.kind) {
         case 'ready':
+            // Two quiet lines, the countdown under the sentence: side by side they overflow a phone's step
+            // column and the sentence broke mid-phrase.
             return (
-                <View style={styles.statusRow}>
-                    <View style={[styles.pulse, { backgroundColor: props.accent, boxShadow: `0 0 0 4px ${theme.colors.state.active.background}` }]} />
-                    <Text style={styles.statusText}>
-                        {t(props.purpose === 'phone' ? 'homeSetup.waitingForPhone' : 'homeSetup.waitingForComputer')}
-                    </Text>
-                    {props.centred ? <Text style={styles.statusText}>·</Text> : <View style={styles.grow} />}
-                    <PairingCountdown testID={`${prefix}-countdown`} expiresAtMs={state.expiresAtMs} style={styles.countdown} />
+                <View style={styles.statusColumn}>
+                    <View style={styles.statusRow}>
+                        <View style={[styles.pulse, { backgroundColor: props.accent, boxShadow: `0 0 0 4px ${theme.colors.state.active.background}` }]} />
+                        <Text style={styles.statusText}>
+                            {t(props.purpose === 'phone' ? 'homeSetup.waitingForPhone' : 'homeSetup.waitingForComputer')}
+                        </Text>
+                    </View>
+                    <PairingCountdown testID={`${prefix}-countdown`} expiresAtMs={state.expiresAtMs}
+                        style={[styles.countdown, styles.underStatusText]} />
                 </View>
             );
         case 'making':
@@ -684,6 +688,8 @@ function PairingStatusLine(props: Readonly<{
             );
     }
 }
+
+const PAIRING_PULSE_SIZE_PX = 8;
 
 const styles = StyleSheet.create((theme) => ({
     root: {
@@ -888,10 +894,14 @@ const styles = StyleSheet.create((theme) => ({
     statusColumn: {
         gap: theme.space.s2,
     },
+    // Under the sentence, past the pulse and the row's gap.
+    underStatusText: {
+        marginLeft: PAIRING_PULSE_SIZE_PX + theme.space.s10,
+    },
     pulse: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
+        width: PAIRING_PULSE_SIZE_PX,
+        height: PAIRING_PULSE_SIZE_PX,
+        borderRadius: PAIRING_PULSE_SIZE_PX / 2,
     },
     statusText: {
         ...Typography.default(),
