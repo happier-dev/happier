@@ -48,6 +48,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it.each([
     { autoRestore: false, members: 2, baseline: true, expectedDown: true, failure: 'machine_unavailable', restores: 2, state: 'failed' },
+    { autoRestore: false, members: 2, baseline: true, rollback: true, thrownFailure: 'rpc', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc-carrier', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'untyped', failure: 'deployment_failed', restores: 0, state: 'failed' },
