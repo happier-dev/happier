@@ -40,6 +40,8 @@ export type DesktopActivityOverlayFrame = Readonly<{
     dock: 'top' | 'left' | 'right' | 'floating';
     growth: Readonly<{ x: 'left' | 'right' | null; y: 'up' | 'down' | null }>;
     anchorOffset: Readonly<{ x: number; y: number }>;
+    /** Island bounds in top-left logical coordinates within the drawing window. */
+    islandRect?: DesktopActivityOverlayRect;
     screenOrigin?: DesktopActivityOverlayScreenOrigin;
 }>;
 export type DesktopActivityOverlayPointer = Readonly<{ kind: 'enter' | 'leave' | 'outsidePress' }>;

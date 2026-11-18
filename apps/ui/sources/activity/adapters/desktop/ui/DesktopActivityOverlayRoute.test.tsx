@@ -312,6 +312,25 @@ describe('DesktopActivityOverlayRoute', () => {
         });
     });
 
+    it('lays out expanded and pinned content inside the native input island when the paint envelope is larger', async () => {
+        reducedMotion.value = true;
+        const base = createWindowState();
+        const frame = {
+            dock: 'left' as const,
+            growth: { x: 'right' as const, y: null },
+            anchorOffset: { x: 0, y: 0 },
+            islandRect: { x: 24, y: 140, width: 464, height: 280 },
+        };
+        const screen = await renderRoute({ ...base, frame });
+        for (const state of ['open', 'pinned'] as const) {
+            await act(async () => { presentation.handler?.({ state, focus: false }); });
+            await flushHookEffects();
+            expect(notchForm(screen)).toBe('open');
+            expect(screen.findByTestId('desktop-activity-overlay-notch')?.props.style)
+                .toMatchObject({ left: 24, top: 140, width: 464, height: 280 });
+        }
+    });
+
     it('opens on a click, tells native the new extent before moving, and acquires detail demand', async () => {
         const screen = await renderRoute(createWindowState());
         expect(notchForm(screen)).toBe('standard');

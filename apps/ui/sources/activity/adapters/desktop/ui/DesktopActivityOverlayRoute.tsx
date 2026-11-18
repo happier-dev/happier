@@ -66,7 +66,7 @@ type PlacementDiagnostics = DesktopActivityOverlayWindowStatePayload['placementD
  * naturally grows (away from the edge, centred along it). From the first frame on, native's `frame`
  * (2D growth toward the display centre, anchor offset after clamping) is the only placement fact.
  */
-function preFramePlacement(dock: NotchDock): Pick<DesktopActivityOverlayFrame, 'growth' | 'anchorOffset'> {
+function preFramePlacement(dock: NotchDock): Pick<DesktopActivityOverlayFrame, 'growth' | 'anchorOffset' | 'islandRect'> {
     return {
         growth: dock === 'left' ? { x: 'right', y: null } : dock === 'right' ? { x: 'left', y: null } : { x: null, y: 'down' },
         anchorOffset: { x: 0, y: 0 },
@@ -468,6 +468,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                     form={form}
                     growth={placement.growth}
                     anchorOffset={placement.anchorOffset}
+                    islandRect={placement.islandRect}
                     camera={camera}
                     tipAccessibilityLabel={accessibilityLabel}
                     onPointerEnter={onShapePointerEnter}

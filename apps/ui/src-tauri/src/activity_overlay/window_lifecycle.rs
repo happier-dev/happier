@@ -224,9 +224,8 @@ fn apply_overlay_state_inner<R: Runtime>(
     #[cfg(target_os = "macos")]
     {
         // Flight layers and previous animation frames are paint bounds, not input bounds.
-        let island = dock::frame_plan(FrameInput { screen_bounds: None, ..input }).rect;
-        super::macos_pointer::set_hit_rect(&window,
-            (island.x - rect.x, island.y - rect.y, island.width, island.height))?;
+        let island = frame.island_rect;
+        super::macos_pointer::set_hit_rect(&window, (island.x, island.y, island.width, island.height))?;
     }
     #[cfg(target_os = "windows")]
     let show = super::windows_fullscreen::configure(&window, true, payload.policy.always_on_top)?;
@@ -597,6 +596,7 @@ mod tests {
         let frame = |x, scale| serde_json::from_value::<FramePresentation>(serde_json::json!({
             "dock":"top", "growth":{"x":null,"y":"down"},
             "anchorOffset":{"x":0.,"y":0.},
+            "islandRect":{"x":0.,"y":0.,"width":464.,"height":300.},
             "screenOrigin":{"x":x,"y":-100.,"scaleFactor":scale}
         })).unwrap();
         let initial = update_projection(&state, Some(frame(-200., 2.)), None).unwrap().unwrap();

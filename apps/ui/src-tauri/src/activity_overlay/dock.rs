@@ -58,6 +58,8 @@ pub(crate) struct FramePresentation {
     pub dock: Dock,
     pub growth: Growth,
     pub anchor_offset: Point,
+    /// The island's bounds in the drawing window's top-left coordinate space.
+    pub island_rect: Rect,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_origin: Option<ScreenOrigin>,
 }
@@ -82,6 +84,8 @@ impl Frame {
         let mut presentation = self.presentation;
         presentation.anchor_offset.x += self.rect.x + self.rect.width / 2. - envelope.x - envelope.width / 2.;
         presentation.anchor_offset.y += self.rect.y + self.rect.height / 2. - envelope.y - envelope.height / 2.;
+        presentation.island_rect.x += self.rect.x - envelope.x;
+        presentation.island_rect.y += self.rect.y - envelope.y;
         presentation.screen_origin = Some(ScreenOrigin { x: envelope.x, y: envelope.y, scale_factor: scale });
         presentation
     }
@@ -169,7 +173,7 @@ pub(crate) fn frame_plan(input: FrameInput) -> Frame {
         ),
         Dock::Floating => (anchor.x - width / 2., anchor.y - height / 2.),
     };
-    let rect = Rect {
+    let island = Rect {
         x: x.clamp(
             visible.x,
             (visible.x + visible.width - width).max(visible.x),
@@ -179,7 +183,7 @@ pub(crate) fn frame_plan(input: FrameInput) -> Frame {
         height,
     };
     // Layer bounds extend the window, never the docked island or its anchor.
-    let rect = envelope(rect, input.screen_bounds, false);
+    let rect = envelope(island, input.screen_bounds, false);
     let island_center = match input.dock {
         Dock::Top => Point {
             x: anchor.x,
@@ -204,6 +208,7 @@ pub(crate) fn frame_plan(input: FrameInput) -> Frame {
                 x: island_center.x - rect.x - rect.width / 2.,
                 y: island_center.y - rect.y - rect.height / 2.,
             },
+            island_rect: Rect { x: island.x - rect.x, y: island.y - rect.y, ..island },
             screen_origin: None,
         },
     }
@@ -392,6 +397,24 @@ mod tests {
             let closing = base.presentation_in(envelope(base.rect, Some(bounds), false), 1.5);
             assert_eq!(closing.screen_origin.unwrap().x, bounds.x);
             assert_eq!(base.presentation_in(envelope(base.rect, Some(bounds), true), 1.5).screen_origin.unwrap().x, base.rect.x);
+        }
+    }
+
+    #[test]
+    fn open_frame_reports_the_input_island_inside_the_retained_paint_envelope() {
+        let paint = Rect { x: -500., y: -200., width: 2000., height: 1400. };
+        for dock in [Dock::Left, Dock::Right, Dock::Top, Dock::Floating] {
+            for surface in [DesktopActivityOverlaySurface::Expanded, DesktopActivityOverlaySurface::Pinned] {
+                let input = FrameInput { surface, ..input(dock) };
+                let island = frame_plan(input).rect;
+                let frame = frame_plan(FrameInput { screen_bounds: Some(paint), ..input });
+                let envelope = envelope(frame.rect, Some(paint), false);
+                let projected = serde_json::to_value(frame.presentation_in(envelope, 2.)).unwrap();
+                assert_eq!(projected["islandRect"], serde_json::json!({
+                    "x": island.x - envelope.x, "y": island.y - envelope.y,
+                    "width": island.width, "height": island.height,
+                }), "{dock:?} {surface:?} must paint in its planned input region");
+            }
         }
     }
 }

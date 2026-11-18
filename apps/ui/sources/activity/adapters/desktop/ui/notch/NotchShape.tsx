@@ -21,6 +21,7 @@ import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
+import type { DesktopActivityOverlayFrame } from '../../runtime/desktopActivityOverlayBridge';
 import {
   buildNotchShoulderPath,
   resolveNotchCameraSeamStops,
@@ -104,7 +105,7 @@ const SHOULDER_UNIT_PATH = buildNotchShoulderPath(1);
  * content, and opens into the panel, growing away from its edge toward the display centre.
  *
  * The presentation reducer picks the form; native frames the window from the extent reported through
- * `onPresent` and says where the island sits in that window (`growth`, `anchorOffset`). Everything that
+ * `onPresent` and says where the island sits in that window. Everything that
  * moves is a shared value: a transition renders nothing per frame.
  */
 export function NotchShape(
@@ -113,6 +114,7 @@ export function NotchShape(
     form: NotchForm;
     growth: NotchGrowth;
     anchorOffset: Readonly<{ x: number; y: number }>;
+    islandRect?: DesktopActivityOverlayFrame['islandRect'];
     camera: NotchCameraBlock | null;
     /**
      * The standard island's content, laid out at its natural size: the status row on Top and Floating,
@@ -244,15 +246,21 @@ export function NotchShape(
     present,
   });
 
-  const windowWidth = windowSize.width;
-  const windowHeight = windowSize.height;
+  // A retained window can cover a previous frame or Extract flight. Lay out open
+  // controls in the island that native accepts input for, even in a larger window.
+  const openIsland = props.form === 'open' ? props.islandRect : undefined;
+  const windowWidth = openIsland?.width ?? windowSize.width;
+  const windowHeight = openIsland?.height ?? windowSize.height;
+  const openShoulder = openIsland ? shoulder : 0;
   const growthX = props.growth.x;
   const growthY = props.growth.y;
   const padX = props.dock === 'top' ? 1 : 0;
   const padY = vertical ? 1 : 0;
   const floating = !isNotchEdgeDock(props.dock);
   const dock = props.dock;
-  const anchorX = props.anchorOffset.x;
+  const anchorX = openIsland
+    ? props.anchorOffset.x + (windowSize.width - openIsland.width) / 2 - openIsland.x
+    : props.anchorOffset.x;
   const restWidth = standardLayout.size.width;
   const restCameraOffset = resolveNotchCameraOffset({
     form: 'standard',
@@ -263,14 +271,19 @@ export function NotchShape(
   const rowOpen = props.form === 'open';
   const openWidth = metrics.openWidth;
 
-  // The body never outgrows the window native framed for it (native clamps to the visible frame).
+  // Native clamps the island to the display. Leave room for the edge shoulders.
+  const bodyWidth = useDerivedValue(() =>
+    openIsland
+      ? Math.min(motion.width.value, Math.max(0, windowWidth - 2 * padX * openShoulder))
+      : motion.width.value,
+  );
   const bodyHeight = useDerivedValue(() =>
     windowHeight > 0
-      ? Math.min(motion.height.value, windowHeight)
+      ? Math.min(motion.height.value, Math.max(0, windowHeight - 2 * padY * openShoulder))
       : motion.height.value,
   );
   const bodyLeft = useDerivedValue(() => {
-    const width = motion.width.value;
+    const width = bodyWidth.value;
     const inset = padX * motion.shoulder.value;
     if (growthX === 'right') return inset;
     if (growthX === 'left') return windowWidth - width - inset;
@@ -290,7 +303,7 @@ export function NotchShape(
     return {
       left: bodyLeft.value,
       top: bodyTop.value,
-      width: motion.width.value,
+      width: bodyWidth.value,
       height: bodyHeight.value,
       opacity: motion.islandOpacity.value,
       borderTopLeftRadius: mask.topLeft ? radius : 0,
@@ -309,7 +322,7 @@ export function NotchShape(
     const size = motion.shoulder.value;
     const left = bodyLeft.value;
     const top = bodyTop.value;
-    const width = motion.width.value;
+    const width = bodyWidth.value;
     const height = bodyHeight.value;
     if (dock === 'top') {
       return { left: index === 0 ? left - size : left + width, top };
@@ -327,7 +340,7 @@ export function NotchShape(
 
   // The status row stays put while the body grows around it; the strip/row fades on the other docks.
   const standardLayerStyle = useAnimatedStyle(() => {
-    const width = motion.width.value;
+    const width = bodyWidth.value;
     const translateX = statusRowStays
       ? resolveNotchStatusRowShift({
           growthX,
@@ -359,13 +372,19 @@ export function NotchShape(
     opacity: motion.standardOpacity.value * motion.islandOpacity.value,
   }));
   const castShadow = floating || props.form === 'open';
-  const openMaxHeight = Math.max(0, windowHeight - statusRowOffset);
+  const openMaxHeight = Math.max(0, windowHeight - statusRowOffset - 2 * padY * openShoulder);
 
   return (
     <View
       testID={props.testID}
       pointerEvents="box-none"
-      style={StyleSheet.absoluteFill}
+      style={openIsland ? {
+        position: 'absolute',
+        left: openIsland.x,
+        top: openIsland.y,
+        width: openIsland.width,
+        height: openIsland.height,
+      } : StyleSheet.absoluteFill}
     >
       {SHOULDERS_FOR(props.dock).map((placement, index) => (
         <Animated.View
