@@ -19,7 +19,11 @@ pub struct CaptureWindowDisplay {
 }
 impl From<DisplayDescriptor> for CaptureWindowDisplay {
     fn from(display: DisplayDescriptor) -> Self {
-        Self { display_id: Some(display.display_id), frame: display.frame, scale: display.scale,
+        // The inventory's origin is in desktop pixels and its extent is display-local points.
+        // The review renderer lays out the entire frame in points, including its origin.
+        let frame = Rect { x: display.frame.x / display.desktop_scale,
+            y: display.frame.y / display.desktop_scale, ..display.frame };
+        Self { display_id: Some(display.display_id), frame, scale: display.scale,
             desktop_scale: display.desktop_scale, storage_key: display.storage_key,
             localized_name: display.localized_name, safe_area_top: display.safe_area_top,
             physical_notch_size: display.physical_notch_size }
@@ -57,12 +61,32 @@ pub(super) fn read(app: &AppHandle, state: &CaptureState, label: &str) -> Result
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     { Ok(crate::activity_overlay::monitor_resolution::read_monitor_facts(app)
         .map_err(|_| CaptureError::NativeFailure)?.into_iter().map(|monitor| CaptureWindowDisplay {
-        // Capture windows take a physical desktop origin and logical extent.
-        display_id: None, frame: Rect { x: monitor.rect.x * monitor.scale, y: monitor.rect.y * monitor.scale,
+        display_id: None, frame: Rect { x: monitor.rect.x, y: monitor.rect.y,
             width: monitor.rect.width, height: monitor.rect.height }, scale: monitor.scale,
         desktop_scale: monitor.scale, storage_key: Some(monitor.storage_key), localized_name: Some(monitor.name),
         safe_area_top: 0., physical_notch_size: None,
     }).collect()) }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     { let _ = app; Err(CaptureError::UnsupportedPlatform) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_placement_and_source_extent_share_the_target_display_point_space() {
+        let display = CaptureWindowDisplay::from(DisplayDescriptor {
+            display_id: 2,
+            frame: Rect { x: 1920., y: -300., width: 1280., height: 720. },
+            scale: 1.5,
+            desktop_scale: 1.5,
+            storage_key: None,
+            localized_name: None,
+            safe_area_top: 0.,
+            physical_notch_size: None,
+        });
+
+        assert_eq!(display.frame, Rect { x: 1280., y: -200., width: 1280., height: 720. });
+    }
 }

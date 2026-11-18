@@ -89,7 +89,10 @@ function ActiveCaptureWindowRoute({ held }: Readonly<{ held: CaptureWindowCaptur
     const { capture, source, recording } = held;
     const origin = capture?.origin ?? recording?.origin ?? null;
     const display = displays.find(({ displayId }) => displayId === origin?.displayId) ?? displays[0];
-    const presentControl = React.useCallback((frame: CaptureRect, glassRadius: number) => { void presentCaptureWindow(frame, { activate: false, glassRadius }); }, []);
+    const displayScale = display?.desktopScale;
+    const presentControl = React.useCallback((frame: CaptureRect, glassRadius: number) => {
+        void presentCaptureWindow(frame, { activate: false, glassRadius, displayScale });
+    }, [displayScale]);
     const finishDiscard = React.useCallback(async () => {
         if (actions.state.status === 'pending') return;
         const captureRef = capture?.captureRef ?? recording?.snapshot.sourceRef;
@@ -239,7 +242,7 @@ function BlockedWindow(props: React.ComponentProps<typeof CaptureWindowStates> &
             y: area.y + (area.height - height) / 2,
             width: CAPTURE_STATE_WINDOW_WIDTH,
             height,
-        }, { glassRadius: theme.borderRadius.xxl });
+        }, { glassRadius: theme.borderRadius.xxl, displayScale: display.desktopScale });
     };
     return (
         <View style={styles.blocked} onLayout={onLayout} {...dragProps} testID="capture-window-blocked-chrome">

@@ -3,8 +3,10 @@ use super::{CaptureSnapshot, CaptureState};
 use happier_desktop_native::capture::recording::Phase;
 use happier_desktop_native::capture::{CaptureError, CaptureTarget, Inventory};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+#[cfg(target_os = "linux")]
+use tauri::LogicalSize;
 #[cfg(not(target_os = "macos"))]
-use tauri::{LogicalSize, PhysicalPosition};
+use tauri::PhysicalPosition;
 
 pub(super) fn release(app: &AppHandle) {
     for (label, window) in app.webview_windows() {
@@ -92,8 +94,12 @@ pub(super) fn show(app: &AppHandle, operation_ref: u64, inventory: &Inventory) -
             #[cfg(not(target_os = "macos"))]
             window.set_position(PhysicalPosition::new(display.frame.x as i32, display.frame.y as i32))
                 .map_err(|_| CaptureError::NativeFailure)?;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
             window.set_size(LogicalSize::new(display.frame.width, display.frame.height))
+                .map_err(|_| CaptureError::NativeFailure)?;
+            #[cfg(target_os = "windows")]
+            window.set_size(tauri::LogicalSize::new(display.frame.width, display.frame.height)
+                .to_physical::<u32>(display.desktop_scale))
                 .map_err(|_| CaptureError::NativeFailure)?;
             window.set_always_on_top(true).map_err(|_| CaptureError::NativeFailure)?;
             #[cfg(target_os = "windows")]

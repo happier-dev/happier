@@ -25,9 +25,9 @@ export function createCaptureWindowPlacement() {
         remembered: positionState.read('centred') ?? null,
         readPreviousFrame: readCaptureWindowPlacement,
         /** `glassRadius`: the resting card's radius when it fills `frame` (see `presentCaptureWindow`). */
-        async present(frame: CaptureRect, signal?: AbortSignal, glassRadius: number | null = null): Promise<void> {
+        async present(frame: CaptureRect, signal?: AbortSignal, glassRadius: number | null = null, displayScale?: number): Promise<void> {
             if (signal?.aborted) return;
-            const position = await presentCaptureWindow(frame, { glassRadius });
+            const position = await presentCaptureWindow(frame, { glassRadius, displayScale });
             if (signal?.aborted) return;
             rememberDrag(position);
             expected = frame;

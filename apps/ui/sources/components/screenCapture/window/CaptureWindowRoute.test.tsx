@@ -144,6 +144,7 @@ describe('Capture permission route', () => {
         vi.stubGlobal('document', browser.window.document);
         const calls: string[] = [];
         let nativeVisible = false;
+        let nativePresentation: Record<string, unknown> | undefined;
         let renders = 0;
         let ready: () => void = () => {};
         let replayed = new Promise<void>(resolve => { ready = resolve; });
@@ -156,7 +157,7 @@ describe('Capture permission route', () => {
                 return true;
             }
             if (command === 'desktop_capture_display_facts') return [{ displayId: 1,
-                frame: { x: 0, y: 0, width: 1440, height: 900 }, scale: 1, desktopScale: 1,
+                frame: { x: 1280, y: 0, width: 1440, height: 900 }, scale: 1.5, desktopScale: 1.5,
                 storageKey: null, localizedName: null, safeAreaTop: 0, physicalNotchSize: null }];
             if (command === 'desktop_capture_shortcuts') return { backend: 'native', availability: 'ready', bindings: [] };
             if (command === 'desktop_get_window_chrome_policy') return { strategy: 'custom-controls' };
@@ -164,7 +165,7 @@ describe('Capture permission route', () => {
                 screen: 'denied', windowText: 'request_required', recoveryActions: { screen: [], windowText: [] },
             } : null;
             if (command === 'desktop_start_window_dragging' || command === 'desktop_capture_cancel') return;
-            if (command === 'desktop_capture_window_present') { nativeVisible = true; return null; }
+            if (command === 'desktop_capture_window_present') { nativeVisible = true; nativePresentation = args; return null; }
             if (command === 'desktop_capture_window_hide') {
                 nativeVisible = false;
                 // Native lifecycle delivery crosses IPC after the close handler has rendered.
@@ -182,6 +183,7 @@ describe('Capture permission route', () => {
         if (kind === 'recording') {
             await act(async () => { chrome!.props.onLayout({ nativeEvent: { layout: { width: 253, height: 44 } } }); });
             expect(nativeVisible).toBe(true);
+            expect(nativePresentation?.displayScale).toBe(1.5);
             expect(vi.getTimerCount()).toBeGreaterThan(0);
             const close = screen.findAllByType(IconButton).find(node => node.props.testID === 'recording-control-hide')!;
             const host = close.findAll(node => typeof node.type === 'string'

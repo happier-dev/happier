@@ -149,8 +149,8 @@ export function CaptureEditorShell(props: Readonly<{
         if (!frame || signal?.aborted || (surface && presented.current === signal)) return;
         presented.current = signal;
         const next = surface ?? frame.union;
-        void placement.present(next, signal).then(() => { if (!signal?.aborted) setSurface(next); });
-    }, [frame, placement, signal, surface]);
+        void placement.present(next, signal, null, display.desktopScale).then(() => { if (!signal?.aborted) setSurface(next); });
+    }, [display.desktopScale, frame, placement, signal, surface]);
 
     const sessionTarget = target?.kind === 'session' ? target.session : null;
     const row = sessionTarget?.row ?? null;
@@ -260,7 +260,7 @@ export function CaptureEditorShell(props: Readonly<{
             onOpenRecent={(entry) => openRecentInCaptureWindow(entry, pinned, { signal })}
             onSurfaceRect={(rect, glassRadius) => {
                 const next = { ...rect, x: rect.x + toSurface.x, y: rect.y + toSurface.y };
-                void placement.present(next, signal, glassRadius).then(() => { if (!signal?.aborted) setSurface(next); });
+                void placement.present(next, signal, glassRadius, display.desktopScale).then(() => { if (!signal?.aborted) setSurface(next); });
             }}
         />
     );

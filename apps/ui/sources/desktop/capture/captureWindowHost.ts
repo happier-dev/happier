@@ -21,9 +21,10 @@ export async function acknowledgeCaptureWindowPaint(): Promise<void> {
  * `glassRadius` is the radius of the one card that fills `frame` at rest: native clips the app's glass to
  * it. Omitted or null (a union frame for motion, nothing resting yet), the window carries no material.
  */
-export const presentCaptureWindow = async (frame: Frame, options?: Readonly<{ activate?: boolean; glassRadius?: number | null }>): Promise<CaptureWindowPosition | null> => {
+export const presentCaptureWindow = async (frame: Frame, options?: Readonly<{ activate?: boolean; glassRadius?: number | null; displayScale?: number }>): Promise<CaptureWindowPosition | null> => {
     const previous = await invokeDesktopHost<CaptureWindowPosition | null>('desktop_capture_window_present', {
         frame, activate: options?.activate ?? true, glassRadius: options?.glassRadius ?? null,
+        displayScale: options?.displayScale,
     });
     await acknowledgeCaptureWindowPaint();
     return previous;

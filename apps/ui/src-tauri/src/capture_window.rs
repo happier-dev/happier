@@ -191,6 +191,7 @@ pub fn desktop_capture_window_present(
     frame: CaptureWindowFrame,
     activate: Option<bool>,
     glass_radius: Option<f64>,
+    display_scale: Option<f64>,
     caller_window: WebviewWindow,
 ) -> Result<Option<CaptureWindowPosition>, String> {
     ensure_caller(&caller_window, &[CAPTURE_WINDOW_LABEL])?;
@@ -206,10 +207,23 @@ pub fn desktop_capture_window_present(
             Ok::<_, String>(())
         }, "Capture window size did not return")??;
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        // The retained host may still have its previous monitor's DPI when it is moved.
+        let scale = display_scale.map_or_else(|| caller_window.scale_factor(), Ok)
+            .map_err(|error| error.to_string())?;
+        caller_window.set_position(LogicalPosition::new(frame.x, frame.y).to_physical::<i32>(scale))
+            .map_err(|error| error.to_string())?;
+        caller_window.set_size(LogicalSize::new(frame.width, frame.height).to_physical::<u32>(scale))
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = display_scale;
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     caller_window
         .set_size(LogicalSize::new(frame.width, frame.height))
         .map_err(|error| error.to_string())?;
+    #[cfg(not(target_os = "windows"))]
     caller_window
         .set_position(LogicalPosition::new(frame.x, frame.y))
         .map_err(|error| error.to_string())?;
