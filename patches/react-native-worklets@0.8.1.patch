@@ -259,3 +259,110 @@ index b9a5df4..74dc5dc 100644
      if (mHybridData != null && mHybridData.isValid()) {
        // We have to destroy extra runtimes when invalidate is called. If we clean
        // it up later instead there's a chance the runtime will retain references
+diff --git a/lib/module/runLoop/uiRuntime/requestAnimationFrame.js b/lib/module/runLoop/uiRuntime/requestAnimationFrame.js
+index 1780368..ed424d3 100644
+--- a/lib/module/runLoop/uiRuntime/requestAnimationFrame.js
++++ b/lib/module/runLoop/uiRuntime/requestAnimationFrame.js
+@@ -11,6 +11,16 @@ export function setupRequestAnimationFrame() {
+   let flushedCallbacks = queuedCallbacks;
+   let flushedCallbacksBegin = 0;
+   let flushedCallbacksEnd = 0;
++  // The native frame is requested only while callbacks are queued, so an idle UI runtime does not
++  // wake the main thread on every vsync. Every other entry point (scheduleOnUI, events through
++  // __flushAnimationFrame) flushes microtasks itself.
++  let nativeFramePending = false;
++  function requestNativeFrame() {
++    if (!nativeFramePending) {
++      nativeFramePending = true;
++      nativeRequestAnimationFrame(nativeFlushQueue);
++    }
++  }
+   function executeQueue(timestamp) {
+     flushedCallbacks = queuedCallbacks;
+     queuedCallbacks = [];
+@@ -26,6 +36,7 @@ export function setupRequestAnimationFrame() {
+   function requestAnimationFrame(callback) {
+     const handle = queuedCallbacksEnd++;
+     queuedCallbacks.push(callback);
++    requestNativeFrame();
+     return handle;
+   }
+   function cancelAnimationFrame(handle) {
+@@ -39,10 +50,11 @@ export function setupRequestAnimationFrame() {
+     }
+   }
+   function nativeFlushQueue(timestamp) {
++    nativeFramePending = false;
+     flushQueue(timestamp);
+-
+-    /* Schedule next frame */
+-    nativeRequestAnimationFrame(nativeFlushQueue);
++    if (queuedCallbacks.length > 0) {
++      requestNativeFrame();
++    }
+   }
+   function flushQueue(timestamp) {
+     globalThis.__frameTimestamp = timestamp;
+@@ -56,8 +68,5 @@ export function setupRequestAnimationFrame() {
+     // Reanimated uses this method to trigger event synchronously.
+     flushQueue(eventTimestamp);
+   };
+-
+-  /* Start the loop */
+-  nativeRequestAnimationFrame(nativeFlushQueue);
+ }
+ //# sourceMappingURL=requestAnimationFrame.js.map
+\ No newline at end of file
+diff --git a/src/runLoop/uiRuntime/requestAnimationFrame.ts b/src/runLoop/uiRuntime/requestAnimationFrame.ts
+index 405e034..1923678 100644
+--- a/src/runLoop/uiRuntime/requestAnimationFrame.ts
++++ b/src/runLoop/uiRuntime/requestAnimationFrame.ts
+@@ -13,6 +13,17 @@ export function setupRequestAnimationFrame() {
+   let flushedCallbacksBegin = 0;
+   let flushedCallbacksEnd = 0;
+ 
++  // The native frame is requested only while callbacks are queued, so an idle UI runtime does not
++  // wake the main thread on every vsync. Every other entry point (scheduleOnUI, events through
++  // __flushAnimationFrame) flushes microtasks itself.
++  let nativeFramePending = false;
++  function requestNativeFrame() {
++    if (!nativeFramePending) {
++      nativeFramePending = true;
++      nativeRequestAnimationFrame(nativeFlushQueue);
++    }
++  }
++
+   function executeQueue(timestamp: number) {
+     flushedCallbacks = queuedCallbacks;
+     queuedCallbacks = [];
+@@ -35,6 +46,7 @@ export function setupRequestAnimationFrame() {
+   ): number {
+     const handle = queuedCallbacksEnd++;
+     queuedCallbacks.push(callback);
++    requestNativeFrame();
+     return handle;
+   }
+ 
+@@ -51,10 +63,11 @@ export function setupRequestAnimationFrame() {
+   }
+ 
+   function nativeFlushQueue(timestamp: number) {
++    nativeFramePending = false;
+     flushQueue(timestamp);
+-
+-    /* Schedule next frame */
+-    nativeRequestAnimationFrame(nativeFlushQueue);
++    if (queuedCallbacks.length > 0) {
++      requestNativeFrame();
++    }
+   }
+ 
+   function flushQueue(timestamp: number) {
+@@ -71,7 +84,4 @@ export function setupRequestAnimationFrame() {
+     // Reanimated uses this method to trigger event synchronously.
+     flushQueue(eventTimestamp);
+   };
+-
+-  /* Start the loop */
+-  nativeRequestAnimationFrame(nativeFlushQueue);
+ }

@@ -127,20 +127,25 @@ const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID
 const androidGradleJvmArgsOverride = String(process.env.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '').trim();
 const androidUsesCleartextTraffic = readBoolEnv('HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC', true);
 // Canonical owner of the generated native build properties. Every prebuild path derives
-// ios/Podfile.properties.json from this: `yarn prebuild`, `expo run:ios`, `hstack mobile`,
-// and EAS (which re-prebuilds because /ios/ is .easignore'd).
+// ios/Podfile.properties.json and android/settings.gradle from this: `yarn prebuild`,
+// `expo run:ios|android`, `hstack mobile`, and EAS (which prebuilds both: /ios/ and /android/
+// are git-ignored).
 //
-// `ios.buildReactNativeFromSource` is load-bearing, not a preference: patches/ edits React
-// Native core .mm sources (composer caret reveal + jiggle, ScrollView MVCP). With prebuilt
-// RNCore, React-RCTFabric compiles headers only, so those patches apply to node_modules and
-// are then silently discarded at compile time. `deploymentTarget` stays at 16.4 because the
-// ExpoGlassEffect pod refuses to build below it.
+// `buildReactNativeFromSource` is load-bearing on both platforms, not a preference: patches/
+// edits React Native core sources. iOS: .mm (composer caret reveal + jiggle, ScrollView MVCP).
+// Android: the idle frame-callback gates (JavaTimerManager, FabricEventDispatcher,
+// FabricUIManager DISPATCH_UI, NativeAnimatedModule; facebook/react-native#58367). With
+// prebuilt RNCore / the react-android AAR those patches apply to node_modules and are then
+// silently discarded at compile time. Android from source needs the SDK's
+// cmdline-tools (sdkmanager) and installs CMake 3.30.5 for Hermes. `deploymentTarget` stays at
+// 16.4 because the ExpoGlassEffect pod refuses to build below it.
 // Enforced by the verify-native-patch-compilation postinstall task.
 const expoBuildPropertiesPlugin = [
     "expo-build-properties",
     {
         android: {
             usesCleartextTraffic: androidUsesCleartextTraffic === true,
+            buildReactNativeFromSource: true,
         },
         ios: {
             buildReactNativeFromSource: true,

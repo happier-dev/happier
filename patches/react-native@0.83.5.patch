@@ -149,3 +149,562 @@ index 75b21b4861366e871d8f943a3abf40218e876eda..2cbacb1b5b6cc0a445932c7595fced31
    ReactNativePodsUtils.fix_library_search_paths(installer)
    ReactNativePodsUtils.update_search_paths(installer)
    ReactNativePodsUtils.set_build_setting(installer, build_setting: "USE_HERMES", value: use_hermes())
+diff --git a/ReactAndroid/hermes-engine/build.gradle.kts b/ReactAndroid/hermes-engine/build.gradle.kts
+index 5a5e138..7e92150 100644
+--- a/ReactAndroid/hermes-engine/build.gradle.kts
++++ b/ReactAndroid/hermes-engine/build.gradle.kts
+@@ -126,8 +126,8 @@ val unzipHermes by
+       from(tarTree(downloadHermesDest)) {
+         eachFile {
+           // We flatten the unzip as the tarball contains a `facebook-hermes-<SHA>`
+-          // folder at the top level.
+-          if (this.path.startsWith("facebook-hermes-")) {
++          // (now `meta-hermes-<SHA>`, after the GitHub org move) folder at the top level.
++          if (this.path.startsWith("facebook-hermes-") || this.path.startsWith("meta-hermes-")) {
+             this.path = this.path.substringAfter("/")
+           }
+         }
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedModule.kt b/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedModule.kt
+index 6c5a505..5c4cd81 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedModule.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedModule.kt
+@@ -23,6 +23,7 @@ import com.facebook.react.bridge.buildReadableMap
+ import com.facebook.react.common.annotations.UnstableReactNativeAPI
+ import com.facebook.react.common.annotations.VisibleForTesting
+ import com.facebook.react.common.build.ReactBuildConfig
++import com.facebook.react.fabric.FabricUIManager
+ import com.facebook.react.module.annotations.ReactModule
+ import com.facebook.react.modules.core.ReactChoreographer
+ import com.facebook.react.uimanager.GuardedFrameCallback
+@@ -203,6 +204,10 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+   @Volatile private var currentBatchNumber: Long = 0
+ 
+   private var initializedForFabric = false
++
++  // Fabric runs queued operations from didDispatchMountItems, so queueing one must arm a
++  // DISPATCH_UI frame even when no mount item is pending.
++  @Volatile private var fabricUIManager: FabricUIManager? = null
+   private var initializedForNonFabric = false
+ 
+   @UIManagerType private var uiManagerType = UIManagerType.LEGACY
+@@ -248,16 +253,19 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+   private fun addOperation(operation: UIThreadOperation) {
+     operation.batchNumber = currentBatchNumber
+     operations.add(operation)
++    fabricUIManager?.scheduleDispatchUIFrame()
+   }
+ 
+   private fun addUnbatchedOperation(operation: UIThreadOperation) {
+     operation.batchNumber = -1
+     operations.add(operation)
++    fabricUIManager?.scheduleDispatchUIFrame()
+   }
+ 
+   private fun addPreOperation(operation: UIThreadOperation) {
+     operation.batchNumber = currentBatchNumber
+     preOperations.add(operation)
++    fabricUIManager?.scheduleDispatchUIFrame()
+   }
+ 
+   // For FabricUIManager only
+@@ -302,6 +310,11 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+ 
+     preOperations.executeBatch(batchNumber, nodesManager)
+     operations.executeBatch(batchNumber, nodesManager)
++    // Batches wait a few dispatch frames (see above): keep the frames coming until they ran.
++    if (!operations.isEmpty || !preOperations.isEmpty) {
++      fabricUIManager?.scheduleDispatchUIFrame()
++    }
++    enqueueFrameCallbackIfAnimating()
+   }
+ 
+   // For non-FabricUIManager only
+@@ -325,7 +338,10 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+ 
+     val preOperationsUIBlock = UIBlock { preOperations.executeBatch(frameNo, nodesManager) }
+ 
+-    val operationsUIBlock = UIBlock { operations.executeBatch(frameNo, nodesManager) }
++    val operationsUIBlock = UIBlock {
++      operations.executeBatch(frameNo, nodesManager)
++      enqueueFrameCallbackIfAnimating()
++    }
+ 
+     assert(uiManager is com.facebook.react.uimanager.UIManagerModule)
+     val uiManagerModule = uiManager as com.facebook.react.uimanager.UIManagerModule
+@@ -355,7 +371,9 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+         val reactApplicationContext = reactApplicationContextIfActiveOrWarn
+ 
+         if (reactApplicationContext != null) {
+-          nodesManagerRef.compareAndSet(null, NativeAnimatedNodesManager(reactApplicationContext))
++          val created = NativeAnimatedNodesManager(reactApplicationContext)
++          created.onAnimationStarted = Runnable { enqueueFrameCallback() }
++          nodesManagerRef.compareAndSet(null, created)
+         }
+       }
+ 
+@@ -365,7 +383,7 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+       nodesManagerRef.set(nodesManager)
+     }
+ 
+-  private var enqueuedAnimationOnFrame = false
++  @Volatile private var enqueuedAnimationOnFrame = false
+   private val animatedFrameCallback =
+       object : GuardedFrameCallback(reactContext) {
+         override fun doFrameGuarded(frameTimeNanos: Long) {
+@@ -376,13 +394,22 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+               nodesManager.runUpdates(frameTimeNanos)
+             }
+ 
+-            enqueueFrameCallback()
++            // Re-arm only while animations run. Operation batches and animations started by
++            // events re-arm it (enqueueFrameCallbackIfAnimating, onAnimationStarted).
++            enqueueFrameCallbackIfAnimating()
+           } catch (ex: Exception) {
+             throw RuntimeException(ex)
+           }
+         }
+       }
+ 
++  @UiThread
++  private fun enqueueFrameCallbackIfAnimating() {
++    if (nodesManagerRef.get()?.hasActiveAnimations() == true) {
++      enqueueFrameCallback()
++    }
++  }
++
+   private fun clearFrameCallback() {
+     reactChoreographer.removeFrameCallback(
+         ReactChoreographer.CallbackType.NATIVE_ANIMATED_MODULE,
+@@ -441,6 +468,7 @@ public class NativeAnimatedModule(reactContext: ReactApplicationContext) :
+       if (uiManager != null) {
+         uiManager.addUIManagerEventListener(this)
+         if (uiManagerType == UIManagerType.FABRIC) {
++          fabricUIManager = uiManager as? FabricUIManager
+           initializedForFabric = true
+         } else {
+           initializedForNonFabric = true
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedNodesManager.kt b/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedNodesManager.kt
+index f723702..12d81de 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedNodesManager.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/animated/NativeAnimatedNodesManager.kt
+@@ -99,6 +99,12 @@ public class NativeAnimatedNodesManager(
+ 
+   public fun hasActiveAnimations(): Boolean = activeAnimations.size() > 0 || updatedNodes.size() > 0
+ 
++  /**
++   * Runs (on the UI thread) when an animation starts, so the owner can arm its frame callback. An
++   * event-driven tracking node can start one outside any frame or operation batch.
++   */
++  internal var onAnimationStarted: Runnable? = null
++
+   @UiThread
+   public fun createAnimatedNode(tag: Int, config: ReadableMap) {
+     if (animatedNodes.get(tag) != null) {
+@@ -260,6 +266,7 @@ public class NativeAnimatedNodesManager(
+     animation.endCallback = endCallback
+     animation.animatedValue = node
+     activeAnimations.put(animationId, animation)
++    onAnimationStarted?.run()
+   }
+ 
+   @UiThread
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java b/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
+index 3f765f8..be2e277 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
++++ b/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
+@@ -103,6 +103,7 @@ import java.util.Map;
+ import java.util.Queue;
+ import java.util.Set;
+ import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.concurrent.atomic.AtomicBoolean;
+ 
+ /**
+  * We instruct ProGuard not to strip out any fields or methods, because many of these methods are
+@@ -197,7 +198,7 @@ public class FabricUIManager
+    */
+   private volatile boolean mDestroyed = false;
+ 
+-  private boolean mDriveCxxAnimations = false;
++  private volatile boolean mDriveCxxAnimations = false;
+ 
+   private long mDispatchViewUpdatesTime = 0l;
+   private long mCommitStartTime = 0l;
+@@ -503,6 +504,7 @@ public class FabricUIManager
+     if (ReactNativeNewArchitectureFeatureFlags.useFabricInterop()) {
+       InteropUIBlockListener listener = getInteropUIBlockListener();
+       listener.addUIBlock(block);
++      mDispatchUIFrameCallback.schedule();
+     }
+   }
+ 
+@@ -514,6 +516,7 @@ public class FabricUIManager
+     if (ReactNativeNewArchitectureFeatureFlags.useFabricInterop()) {
+       InteropUIBlockListener listener = getInteropUIBlockListener();
+       listener.prependUIBlock(block);
++      mDispatchUIFrameCallback.schedule();
+     }
+   }
+ 
+@@ -1114,6 +1117,8 @@ public class FabricUIManager
+           mSynchronousEvents.add(new SynchronousEvent(surfaceId, reactTag, eventName));
+       if (firstEventForFrame) {
+         eventEmitter.dispatchEventSynchronously(eventName, params);
++        // mSynchronousEvents is cleared at the end of the next DISPATCH_UI frame.
++        mDispatchUIFrameCallback.schedule();
+       }
+     } else {
+       if (canCoalesceEvent) {
+@@ -1313,6 +1318,18 @@ public class FabricUIManager
+   @AnyThread
+   public void onAnimationStarted() {
+     mDriveCxxAnimations = true;
++    // A C++ animation may start while the DISPATCH_UI callback is idle; arm it for the first tick.
++    mDispatchUIFrameCallback.schedule();
++  }
++
++  /**
++   * Arms the DISPATCH_UI frame callback for at least one frame. For producers whose work runs in
++   * that frame without queueing a mount item (NativeAnimatedModule operations run from
++   * didDispatchMountItems). Safe to call from any thread.
++   */
++  @AnyThread
++  public void scheduleDispatchUIFrame() {
++    mDispatchUIFrameCallback.schedule();
+   }
+ 
+   // Called from Binding.cpp
+@@ -1398,6 +1415,12 @@ public class FabricUIManager
+         listener.didDispatchMountItems(FabricUIManager.this);
+       }
+     }
++
++    @Override
++    public void onItemsQueued() {
++      // Items may be queued from any thread while the DISPATCH_UI callback is idle.
++      mDispatchUIFrameCallback.schedule();
++    }
+   }
+ 
+   /**
+@@ -1424,24 +1447,34 @@ public class FabricUIManager
+ 
+     private volatile boolean mIsMountingEnabled = true;
+ 
+-    @ThreadConfined(UI)
+-    private boolean mShouldSchedule = false;
++    private volatile boolean mShouldSchedule = false;
+ 
+-    @ThreadConfined(UI)
+-    private boolean mIsScheduled = false;
++    private volatile boolean mIsScheduled = false;
++
++    private final AtomicBoolean mScheduleTaskPending = new AtomicBoolean(false);
+ 
+     private DispatchUIFrameCallback(ReactContext reactContext) {
+       super(reactContext);
+     }
+ 
+-    @UiThread
+-    @ThreadConfined(UI)
+-    private void schedule() {
+-      if (!mIsScheduled && mShouldSchedule) {
+-        mIsScheduled = true;
+-        ReactChoreographer.getInstance()
+-            .postFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
++    @AnyThread
++    void schedule() {
++      if (mIsScheduled || !mShouldSchedule) {
++        return;
++      }
++      if (!UiThreadUtil.isOnUiThread()) {
++        if (mScheduleTaskPending.compareAndSet(false, true)) {
++          UiThreadUtil.runOnUiThread(
++              () -> {
++                mScheduleTaskPending.set(false);
++                schedule();
++              });
++        }
++        return;
+       }
++      mIsScheduled = true;
++      ReactChoreographer.getInstance()
++          .postFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
+     }
+ 
+     @UiThread
+@@ -1454,8 +1487,10 @@ public class FabricUIManager
+     @UiThread
+     @ThreadConfined(UI)
+     void pause() {
+-      ReactChoreographer.getInstance()
+-          .removeFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
++      if (mIsScheduled) {
++        ReactChoreographer.getInstance()
++            .removeFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
++      }
+       mShouldSchedule = false;
+       mIsScheduled = false;
+     }
+@@ -1502,7 +1537,14 @@ public class FabricUIManager
+         mIsMountingEnabled = false;
+         throw ex;
+       } finally {
+-        schedule();
++        // Stay armed only while work remains: pending items (pre-mount items can spill over a
++        // frame) or a C++ animation driven from this callback. Producers re-arm through
++        // onItemsQueued, onAnimationStarted and scheduleDispatchUIFrame.
++        if (mMountItemDispatcher.hasPendingItems()
++            || mDriveCxxAnimations
++            || ReactNativeFeatureFlags.cxxNativeAnimatedEnabled()) {
++          schedule();
++        }
+       }
+ 
+       mSynchronousEvents.clear();
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountItemDispatcher.kt b/ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountItemDispatcher.kt
+index 95a5f17..a753b6c 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountItemDispatcher.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountItemDispatcher.kt
+@@ -33,6 +33,10 @@ internal class MountItemDispatcher(
+   private val mountItems: Queue<MountItem> = ConcurrentLinkedQueue()
+   private val preMountItems: Queue<MountItem> = ConcurrentLinkedQueue()
+ 
++  /** @return true while mount items, pre-mount items or view commands are pending */
++  fun hasPendingItems(): Boolean =
++      !viewCommandMountItems.isEmpty() || !mountItems.isEmpty() || !preMountItems.isEmpty()
++
+   private var inDispatch: Boolean = false
+   var batchedExecutionTime: Long = 0L
+     private set
+@@ -48,10 +52,12 @@ internal class MountItemDispatcher(
+     } else {
+       mountItems.add(mountItem)
+     }
++    itemDispatchListener.onItemsQueued()
+   }
+ 
+   fun addMountItem(mountItem: MountItem) {
+     mountItems.add(mountItem)
++    itemDispatchListener.onItemsQueued()
+   }
+ 
+   fun addPreAllocateMountItem(mountItem: MountItem) {
+@@ -61,6 +67,7 @@ internal class MountItemDispatcher(
+     // both to queue, to drain, and to execute.
+     if (!mountingManager.surfaceIsStopped(mountItem.getSurfaceId())) {
+       preMountItems.add(mountItem)
++      itemDispatchListener.onItemsQueued()
+     } else if (FabricUIManager.IS_DEVELOPMENT_ENVIRONMENT) {
+       FLog.e(
+           TAG,
+@@ -360,6 +367,9 @@ internal class MountItemDispatcher(
+     fun didMountItems(mountItems: List<MountItem>?)
+ 
+     fun didDispatchMountItems()
++
++    /** Called from any thread whenever an item is queued. */
++    fun onItemsQueued()
+   }
+ 
+   private companion object {
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/modules/core/JavaTimerManager.kt b/ReactAndroid/src/main/java/com/facebook/react/modules/core/JavaTimerManager.kt
+index 36116d4..8122739 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/modules/core/JavaTimerManager.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/modules/core/JavaTimerManager.kt
+@@ -56,7 +56,25 @@ public open class JavaTimerManager(
+   private val timerFrameCallback = TimerFrameCallback()
+   private val idleFrameCallback = IdleFrameCallback()
+   private var currentIdleCallbackRunnable: IdleCallbackRunnable? = null
+-  private var frameCallbackPosted = false
++  // Armed: either the frame callback is posted or a delayed wake will post it. Written under
++  // timerGuard where createTimer must observe it.
++  @Volatile private var frameCallbackPosted = false
++  // Target time (ms, nanoTime base) of the delayed wake, or 0 while the frame callback is posted.
++  private var wakeAtMillis = 0L
++  // UI-thread only: the delayed wake is pending in the UI handler.
++  private var delayedWakePending = false
++  private val delayedWake = Runnable {
++    delayedWakePending = false
++    if (isPaused.get() && !isRunningTasks.get()) {
++      synchronized(timerGuard) { frameCallbackPosted = false }
++    } else {
++      synchronized(timerGuard) { wakeAtMillis = 0L }
++      reactChoreographer.postFrameCallback(
++          ReactChoreographer.CallbackType.TIMERS_EVENTS,
++          timerFrameCallback,
++      )
++    }
++  }
+   private var frameIdleCallbackPosted = false
+   private var sendIdleEvents = false
+ 
+@@ -128,23 +146,43 @@ public open class JavaTimerManager(
+   }
+ 
+   private fun setChoreographerCallback() {
+-    if (!frameCallbackPosted) {
++    if (delayedWakePending) {
++      // A timer is due before the delayed wake: tick on the next frame instead.
++      UiThreadUtil.getUiThreadHandler().removeCallbacks(delayedWake)
++      delayedWakePending = false
++      synchronized(timerGuard) { wakeAtMillis = 0L }
++      reactChoreographer.postFrameCallback(
++          ReactChoreographer.CallbackType.TIMERS_EVENTS,
++          timerFrameCallback,
++      )
++    } else if (!frameCallbackPosted) {
++      synchronized(timerGuard) {
++        frameCallbackPosted = true
++        wakeAtMillis = 0L
++      }
+       reactChoreographer.postFrameCallback(
+           ReactChoreographer.CallbackType.TIMERS_EVENTS,
+           timerFrameCallback,
+       )
+-      frameCallbackPosted = true
+     }
+   }
+ 
+   private fun clearFrameCallback() {
+     val headlessJsTaskContext = HeadlessJsTaskContext.getInstance(reactApplicationContext)
+     if (frameCallbackPosted && isPaused.get() && !headlessJsTaskContext.hasActiveTasks()) {
+-      reactChoreographer.removeFrameCallback(
+-          ReactChoreographer.CallbackType.TIMERS_EVENTS,
+-          timerFrameCallback,
+-      )
+-      frameCallbackPosted = false
++      if (delayedWakePending) {
++        UiThreadUtil.getUiThreadHandler().removeCallbacks(delayedWake)
++        delayedWakePending = false
++      } else {
++        reactChoreographer.removeFrameCallback(
++            ReactChoreographer.CallbackType.TIMERS_EVENTS,
++            timerFrameCallback,
++        )
++      }
++      synchronized(timerGuard) {
++        frameCallbackPosted = false
++        wakeAtMillis = 0L
++      }
+     }
+   }
+ 
+@@ -182,9 +220,16 @@ public open class JavaTimerManager(
+   public open fun createTimer(timerId: Int, delay: Long, repeat: Boolean) {
+     val initialTargetTime = nanoTime() / 1000000 + delay
+     val timer = Timer(timerId, initialTargetTime, delay.toInt(), repeat)
++    val needsWake: Boolean
+     synchronized(timerGuard) {
+       timers.add(timer)
+       timerIdsToTimers.put(timerId, timer)
++      // The callback disarms when the queue drains and sleeps until the earliest timer; arm it
++      // when this timer is due sooner than that.
++      needsWake = !frameCallbackPosted || (wakeAtMillis != 0L && initialTargetTime < wakeAtMillis)
++    }
++    if (needsWake && (!isPaused.get() || isRunningTasks.get())) {
++      UiThreadUtil.runOnUiThread { setChoreographerCallback() }
+     }
+   }
+ 
+@@ -289,9 +334,12 @@ public open class JavaTimerManager(
+     /** Calls all timers that have expired since the last time this frame callback was called. */
+     override fun doFrame(frameTimeNanos: Long) {
+       if (isPaused.get() && !isRunningTasks.get()) {
++        synchronized(timerGuard) { frameCallbackPosted = false }
+         return
+       }
+       val frameTimeMillis = frameTimeNanos / 1000000
++      var hasPendingTimers = false
++      var sleepMillis = 0L
+       synchronized(timerGuard) {
+         while (!timers.isEmpty() && timers.peek()!!.targetTime < frameTimeMillis) {
+           var timer = timers.poll()
+@@ -309,12 +357,30 @@ public open class JavaTimerManager(
+             timerIdsToTimers.remove(timer.timerId)
+           }
+         }
++        // Tick every frame only while a timer is due within the next frame; otherwise sleep until
++        // one frame before the earliest timer, or disarm when none is queued.
++        val next = timers.peek()
++        if (next == null) {
++          frameCallbackPosted = false
++        } else {
++          hasPendingTimers = true
++          sleepMillis = next.targetTime - frameTimeMillis - FRAME_DURATION_MS.toLong()
++          wakeAtMillis = if (sleepMillis > FRAME_DURATION_MS) next.targetTime else 0L
++        }
+       }
+       timersToCall?.let { timers ->
+         javaScriptTimerExecutor.callTimers(timers)
+         timersToCall = null
+       }
+-      reactChoreographer.postFrameCallback(ReactChoreographer.CallbackType.TIMERS_EVENTS, this)
++      if (!hasPendingTimers) {
++        return
++      }
++      if (sleepMillis > FRAME_DURATION_MS) {
++        delayedWakePending = true
++        UiThreadUtil.getUiThreadHandler().postDelayed(delayedWake, sleepMillis)
++      } else {
++        reactChoreographer.postFrameCallback(ReactChoreographer.CallbackType.TIMERS_EVENTS, this)
++      }
+     }
+   }
+ 
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/uimanager/events/FabricEventDispatcher.kt b/ReactAndroid/src/main/java/com/facebook/react/uimanager/events/FabricEventDispatcher.kt
+index 8380092..b4a5c8a 100644
+--- a/ReactAndroid/src/main/java/com/facebook/react/uimanager/events/FabricEventDispatcher.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/uimanager/events/FabricEventDispatcher.kt
+@@ -139,9 +139,6 @@ internal class FabricEventDispatcher(
+ 
+   override fun onHostResume() {
+     scheduleDispatchOfBatchedEvents()
+-    if (!ReactNativeFeatureFlags.useOptimizedEventBatchingOnAndroid()) {
+-      currentFrameCallback.resume()
+-    }
+   }
+ 
+   override fun onHostPause() {
+@@ -168,23 +165,19 @@ internal class FabricEventDispatcher(
+     if (ReactNativeFeatureFlags.useOptimizedEventBatchingOnAndroid()) {
+       isDispatchScheduled = false
+       uiThreadHandler.removeCallbacks(dispatchEventsRunnable)
+-    } else {
+-      currentFrameCallback.stop()
+     }
+   }
+ 
+   private inner class ScheduleDispatchFrameCallback : Choreographer.FrameCallback {
+     @Volatile private var isFrameCallbackDispatchScheduled = false
+-    private var shouldStop = false
+ 
+     override fun doFrame(frameTimeNanos: Long) {
+       UiThreadUtil.assertOnUiThread()
+ 
+-      if (shouldStop) {
+-        isFrameCallbackDispatchScheduled = false
+-      } else {
+-        dispatchBatchedEvents()
+-      }
++      // One-shot: events are dispatched as they are emitted, so a posted callback only needs to
++      // notify the batch listeners once. Re-posting here kept the Choreographer armed on every
++      // vsync while idle; the next event (or onHostResume) posts it again.
++      isFrameCallbackDispatchScheduled = false
+ 
+       Systrace.beginSection(Systrace.TRACE_TAG_REACT, "BatchEventDispatchedListeners")
+       try {
+@@ -196,14 +189,6 @@ internal class FabricEventDispatcher(
+       }
+     }
+ 
+-    fun stop() {
+-      shouldStop = true
+-    }
+-
+-    fun resume() {
+-      shouldStop = false
+-    }
+-
+     fun maybeDispatchBatchedEvents() {
+       if (!isFrameCallbackDispatchScheduled) {
+         isFrameCallbackDispatchScheduled = true
