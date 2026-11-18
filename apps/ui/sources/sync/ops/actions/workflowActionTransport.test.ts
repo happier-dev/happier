@@ -10,7 +10,8 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
-import { createUiWorkflowActionTransport, type WorkflowActionTransport } from './workflowActionTransport';
+import { createUiAccountActionTransport, type AccountActionTransport } from './accountActionTransport';
+import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const homes = createHomeGovernanceHarness();
@@ -18,12 +19,11 @@ installHomeGovernanceBoundaries(homes);
 
 async function createHarness() {
     const serverId = await homes.addHome({ name: 'Workflow relay', serverUrl: 'https://workflow-relay.test', accountId: 'account-a' });
-    const { captureLazyActionAccountContext } = await import('./actionAccountContext');
     const lifetime = new AbortController();
     const account = await captureLazyActionAccountContext(serverId, lifetime.signal);
     onTestFinished(() => account.dispose());
-    const transport = vi.fn<WorkflowActionTransport>(async () => ({ definitions: [] }));
-    const execute = createUiWorkflowActionTransport({
+    const transport = vi.fn<AccountActionTransport>(async () => ({ definitions: [] }));
+    const execute = createUiAccountActionTransport({
         account,
         resolveFallbackMachineId: () => 'relay-b',
         transport,

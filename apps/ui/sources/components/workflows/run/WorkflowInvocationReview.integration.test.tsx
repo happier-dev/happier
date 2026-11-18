@@ -44,7 +44,7 @@ import { storage, useSession } from '@/sync/domains/state/storage';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { deriveWorkflowPlanRunId } from '@/sync/domains/workflows/workflowPlanReview';
-import type { WorkflowActionTransport } from '@/sync/ops/actions/workflowActionTransport';
+import type { AccountActionTransport } from '@/sync/ops/actions/accountActionTransport';
 import { WorkflowInvocationReview, type WorkflowInvocationReviewBuffers } from './WorkflowInvocationReview';
 import { WorkflowEditorHostScreen } from '../screens/WorkflowEditorHostScreen';
 import { WorkflowRunScreen } from '../screens/WorkflowRunScreen';
@@ -70,7 +70,7 @@ const routerMock = await vi.hoisted(async () => {
 });
 vi.mock('expo-router', () => routerMock.module);
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
-const machineRpc = vi.hoisted(() => vi.fn<WorkflowActionTransport>(async () => { throw new Error('offline_machine'); }));
+const machineRpc = vi.hoisted(() => vi.fn<AccountActionTransport>(async () => { throw new Error('offline_machine'); }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 type PlanStartBoundary = Extract<Parameters<typeof createExternalActionAccountHttpBoundary>[0], { requesterInvocation?: 'required' }>;
 const startPlan = vi.fn<PlanStartBoundary['execute']>(async () => { throw new Error('offline_machine'); });

@@ -629,8 +629,8 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
         });
         vi.useFakeTimers();
         try {
-            const { createUiWorkflowActionTransport } = await import('@/sync/ops/actions/workflowActionTransport');
-            const execute = createUiWorkflowActionTransport({
+            const { createUiAccountActionTransport } = await import('@/sync/ops/actions/accountActionTransport');
+            const execute = createUiAccountActionTransport({
                 account: { serverId: home.id, accountId: 'account-a', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: request => machineRpcWithServerScope({ ...request, preferScoped: true, timeoutMs: 4_000 }),

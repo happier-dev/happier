@@ -15,7 +15,7 @@ import { callSocketRpc } from '@happier-dev/sync-client';
 import { Server } from 'socket.io';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { loadWorkflowActionTransportForTests } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
+import { loadAccountActionTransportForTests } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -324,7 +324,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             input: [], result: { kind: 'text' } }] } satisfies WorkflowDefinitionV1 },
     ])('admits a saved $name workflow through UI, server forwarding and encrypted daemon RPC', async ({ definition }) => {
         const boundary = await createBoundaryHarness(undefined, definition, true);
-        const { createUiWorkflowActionTransport } = await import('../../../../ui/sources/sync/ops/actions/workflowActionTransport');
+        const { createUiAccountActionTransport } = await import('../../../../ui/sources/sync/ops/actions/accountActionTransport');
         const sockets = new Server(createServer());
         try {
             // Substitute adapter discovery/delivery only. Forwarding, the
@@ -335,7 +335,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             const fetchSockets = async () => [target];
             vi.spyOn(sockets, 'in').mockReturnValue({ fetchSockets,
                 timeout: () => ({ fetchSockets }) } as unknown as ReturnType<Server['in']>);
-            const execute = createUiWorkflowActionTransport({
+            const execute = createUiAccountActionTransport({
                 account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: async request => callSocketRpc({
@@ -537,7 +537,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             }
             return await readHttp(...args);
         });
-        const { createUiWorkflowActionTransport } = await loadWorkflowActionTransportForTests();
+        const { createUiAccountActionTransport } = await loadAccountActionTransportForTests();
         const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import(
             '../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes'
         );
@@ -571,7 +571,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             vi.spyOn(sockets, 'in').mockReturnValue({
                 timeout: () => ({ fetchSockets }), fetchSockets,
             } as unknown as ReturnType<Server['in']>);
-            const action = createUiWorkflowActionTransport({
+            const action = createUiAccountActionTransport({
                 account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: async (request) => await callSocketRpc({
@@ -654,8 +654,8 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 text: 'Reply exactly QA_FIN20_AGENT_READY. Do not use tools, edit files, or run commands.', references: [], attachments: [] },
                 execution: selection, input: [], result: { kind: 'text' } }] };
         const boundary = await createBoundaryHarness(undefined, definition);
-        const { createUiWorkflowActionTransport } = await loadWorkflowActionTransportForTests();
-        const action = createUiWorkflowActionTransport({ account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
+        const { createUiAccountActionTransport } = await loadAccountActionTransportForTests();
+        const action = createUiAccountActionTransport({ account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
             resolveFallbackMachineId: () => null,
             transport: async ({ payload, target }) => boundary.handlers.get('workflow.run.start')!(createTargetedActionRpcRequestV1(payload, target)),
         });
@@ -757,8 +757,8 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         const handler = boundary.handlers.get('workflow.run.start')!;
         let loseFirstResponse = true;
         let firstResponse: unknown;
-        const { createUiWorkflowActionTransport } = await loadWorkflowActionTransportForTests();
-        const action = createUiWorkflowActionTransport({
+        const { createUiAccountActionTransport } = await loadAccountActionTransportForTests();
+        const action = createUiAccountActionTransport({
             account: {
                 serverId: 'server-1',
                 accountId: 'account-1',

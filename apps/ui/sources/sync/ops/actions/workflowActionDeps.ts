@@ -85,7 +85,7 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { listSessionsForVoiceTool } from '@/voice/tools/actionImpl/sessionList';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
-import type { WorkflowActionTransport } from './workflowActionTransport';
+import type { AccountActionTransport } from './accountActionTransport';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { executeDefaultActionInCapturedAccount } from './defaultActionExecutor';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
@@ -152,7 +152,7 @@ export type UiWorkflowAction = WorkflowActionExecute & Readonly<{
 
 export function createUiWorkflowAction(params: Readonly<{
     account: LazyActionAccountContext;
-    transport?: WorkflowActionTransport;
+    transport?: AccountActionTransport;
     listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
 }>): UiWorkflowAction {
     const account = params.account;

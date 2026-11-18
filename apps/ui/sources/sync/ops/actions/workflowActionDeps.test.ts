@@ -86,7 +86,7 @@ import { createUsageCoachController } from '@/components/settings/usage/widgets/
 import { UsageCoachWidget } from '@/components/settings/usage/widgets/UsageCoachWidget';
 import type { UsageWidgetBodyModel } from '@/components/settings/usage/useUsageWidgetResource';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
-import type { WorkflowActionTransport } from './workflowActionTransport';
+import type { AccountActionTransport } from './accountActionTransport';
 import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { buildWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
@@ -575,7 +575,7 @@ async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly
     // Capture follows the app's Account bootstrap; family construction happens
     // afterwards, so its real machine relay cannot re-enter storage creation.
     const { createUiWorkflowAction } = await import('./workflowActionDeps');
-    const transport = vi.fn<WorkflowActionTransport>(async () => ({ run, admission: 'created' }));
+    const transport = vi.fn<AccountActionTransport>(async () => ({ run, admission: 'created' }));
     const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
     // The mounted family's captured lifetime is real; the default factory still
     // owns settings policy, approval and every other Action dependency.
@@ -1944,7 +1944,7 @@ describe('UI Workflow Action front door', () => {
                     metadata: { path: '/repo', host: 'host', homeDir: '/home', machineId: 'machine-a' } }),
             }, machines: {}, machineListByServerId: {} });
             (await installPullRequestProjection(h, sessionId)).setLinks(pullRequestLinks);
-            machineRpc.mockImplementation(async (request: Parameters<WorkflowActionTransport>[0]) => {
+            machineRpc.mockImplementation(async (request: Parameters<AccountActionTransport>[0]) => {
                 if (request.method === 'scm.pullRequest.list') return ScmPullRequestListResponseSchema.parse({ success: true,
                     pullRequests: [{ provider: { kind: 'github', id: 'github', displayName: 'GitHub', baseUrl: 'https://github.com',
                         nameWithOwner: pullRequest.repository }, number: pullRequest.number, title: 'Fix CI',

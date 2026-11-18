@@ -38,7 +38,8 @@ import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBou
 import { createUsageQueryBatchHttpBoundary } from './usageQueryBatchHttpBoundary';
 import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionExecutorContext, WorkflowActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { UiAccountActionExecute } from '@/sync/ops/actions/accountActionTransport';
 import { DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionPostRequestV1Schema,
     type DiscussionCreateResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema,
@@ -131,16 +132,16 @@ export function answerDiscussionThreadForTests(homes: HomeGovernanceHarness, ser
     return { messages, deny: () => { readDenied = true; }, stored: () => stored };
 }
 
-/** Keep the real Workflow transport in its UI program during cross-program tests. */
-export async function loadWorkflowActionTransportForTests() {
-    const transportSource = '@/sync/ops/actions/workflowActionTransport';
-    return vi.importActual<{ createUiWorkflowActionTransport(params: Readonly<{
+/** Keep the real Account transport in its UI program during cross-program tests. */
+export async function loadAccountActionTransportForTests() {
+    const transportSource = '@/sync/ops/actions/accountActionTransport';
+    return vi.importActual<{ createUiAccountActionTransport(params: Readonly<{
         account: Readonly<{ serverId: string; accountId: string; assertCurrent(): void }>;
         resolveFallbackMachineId(): string | null;
         transport(input: Readonly<{ machineId: string; method: string; payload: unknown;
             target: Extract<NonNullable<ActionExecutorContext['externalActionTarget']>, { kind: 'machine' }>;
             signal?: AbortSignal; operationTimeoutMs?: null }>): Promise<unknown>;
-    }>): WorkflowActionExecute }>(transportSource);
+    }>): UiAccountActionExecute }>(transportSource);
 }
 
 /** Cross-program compositions load UI owners in Vitest, under the UI resolver. */
