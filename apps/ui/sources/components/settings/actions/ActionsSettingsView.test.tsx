@@ -525,8 +525,8 @@ describe('ActionsSettingsView', () => {
     // wrapped one fact into four lines.
     expect(reviewRow?.subtitleAccessory).toBeTruthy();
     expect(
-      await screen.findByTestId('settings-actions:action:review.start:status'),
-    ).toBeTruthy();
+      (await screen.findByTestId('settings-actions:action:review.start:status')).props.numberOfLines,
+    ).toBe(1);
     expect(screen.findAllByTestId('settings-actions:action:review.start:status-container')).toHaveLength(0);
     expect(
       await screen.findByTestId(

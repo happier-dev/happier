@@ -290,6 +290,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                     <Text
                         testID={`${actionTestIdPrefix}:status`}
                         style={styles.actionStatusSubtitle}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
                     >
                         {statusText}
                     </Text>
