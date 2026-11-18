@@ -30,6 +30,8 @@ import {
     TriageReviewWorkspaceObservedRevisionV1Schema,
     TriageSelectedWorkspaceScopeV1Schema,
     TriageSourceInstanceIdV1Schema,
+    TriagePrepareReviewWorkspaceResultV1Schema,
+    TriageVerifyReviewWorkspaceResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
@@ -485,6 +487,36 @@ const TriageStartEntrySessionReviewContextV1Schema = defineProtocolObject({
     repositoryPath: triageText,
     pullRequest: defineProtocolJsonValue(),
 }, { policy: 'closed' });
+
+/** Workflow preparation shares the selected-source operand with Session start. */
+export const TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1 = 'entries/prepare-pull-request-review-v1';
+export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    request: TriageStartEntrySessionReviewWorkspaceRequestV1Schema,
+    prepareReviewWorkspaceSelection: TriageStartEntrySessionPrepareReviewWorkspaceSelectionV1Schema,
+    expectedHeadSha: triageIdentifier,
+    sessionId: triageSessionId,
+    comparisonSource: ScmComparisonSourceProtocolSchema,
+}, { policy: 'closed' });
+export type TriagePreparePullRequestReviewInputV1 = ReturnType<typeof TriagePreparePullRequestReviewInputV1Schema.parse>;
+export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        v: defineProtocolLiteral(1), status: defineProtocolLiteral('prepared'),
+        review: TriageStartEntrySessionReviewContextV1Schema,
+        preparedWorkspace: TriagePrepareReviewWorkspaceResultV1Schema,
+        /** Opaque transport of the strict scope produced by the canonical SCM owner. */
+        scmPullRequestReviewScope: defineProtocolJsonValue(),
+        comparisonId: triageIdentifier,
+        comparisonSource: ScmComparisonSourceProtocolSchema,
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        v: defineProtocolLiteral(1), status: defineProtocolUnion([defineProtocolLiteral('refused'), defineProtocolLiteral('unavailable')]),
+        reason: triageIdentifier,
+        sourceResult: defineProtocolUnion([TriagePrepareReviewWorkspaceResultV1Schema, TriageVerifyReviewWorkspaceResultV1Schema]).optional(),
+        failure: TriageNewSessionFailureV1Schema.optional(),
+    }, { policy: 'closed' }),
+]);
+export type TriagePreparePullRequestReviewResultV1 = ReturnType<typeof TriagePreparePullRequestReviewResultV1Schema.parse>;
 
 /**
  * The mounted review chooser's final request. The engine list is intentionally

@@ -1,7 +1,7 @@
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
@@ -9,8 +9,6 @@ import { createPluginActionPresentUserGate, PLUGIN_ACTION_INPUT_SCHEMAS, type Se
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, projectTriagePrepareReviewWorkspaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
-import { activate } from '../activate.js';
-import { activate as activateAccount } from '../accountRuntime.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../accountExecution.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -47,6 +45,8 @@ import {
     createTestkitEntrySessionLinkWriter,
     spawnSuccess,
     createTriageSelectedPrStartApprovalInput,
+    registeredTriageActionHandler as registeredHandler,
+    createTriagePullRequestReviewActionTestkit,
     type TestkitActionInvoker,
 } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import {
@@ -139,28 +139,6 @@ it.each(['start', 'resume'] as const)('carries a typed spawn refusal through the
     expect(TriageStartEntrySessionResultV1Schema.parse(result)).toEqual({ v: 1, type: 'creationFailed',
         failureCode: 'spawn_failed', failureCause });
 });
-
-function registeredHandler(localId: string): ActionHandler<JsonValue, JsonValue> {
-    const handlers = new Map<string, ActionHandler<JsonValue, JsonValue>>();
-    const api = {
-        actions: {
-            register: (id: string, handler: ActionHandler<JsonValue, JsonValue>) => {
-                handlers.set(id, handler);
-            },
-        },
-        composerAttachments: { register: () => {} },
-        resources: { registerDynamicResource: () => {} },
-        backgroundServices: { register: () => {} },
-    } as unknown as PluginApi & PluginAccountApi;
-
-    activate(api);
-    activateAccount(api);
-    const handler = handlers.get(localId);
-    if (handler === undefined) {
-        throw new Error(`activation registers no handler for "${localId}"`);
-    }
-    return handler;
-}
 
 async function createContext(
     collections: CorpusCollectionsV1,
@@ -416,6 +394,55 @@ const REVIEW_COMPARISON = {
     inventory: { state: 'complete', files: [], reasons: [] },
 };
 
+describe('workflow selected-PR preparation without Session creation', () => {
+    it('cancels before source reads or workspace effects when the occurrence is already stopped', async () => {
+        const controller = new AbortController();
+        const kit = await createTriagePullRequestReviewActionTestkit({ signal: controller.signal });
+        controller.abort();
+        await expect(kit.invoke('entries/prepare-pull-request-review-v1', {
+            ...kit.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        expect(kit.events).toEqual([]);
+    });
+
+    it('prepares successive occurrence heads with unchanged saved inputs and refuses a stale occurrence before setup', async () => {
+        const kit = await createTriagePullRequestReviewActionTestkit();
+        const savedBytes = JSON.stringify(kit.savedInput);
+        const revisions = [TESTKIT_OBSERVED_REVISION, { ...TESTKIT_OBSERVED_REVISION,
+            headSha: '3'.repeat(40), nativeRevision: 'pr-17@3' }];
+        for (const revision of revisions) {
+            kit.setRevision(revision);
+            const result = await kit.invoke('entries/prepare-pull-request-review-v1', {
+                ...kit.savedInput, expectedHeadSha: revision.headSha,
+            });
+            const observed = { ...revision, observedAtMs: expect.any(Number) };
+            expect(result).toMatchObject({ v: 1, status: 'prepared', preparedWorkspace: kit.preparedWorkspace,
+                review: { ...formalReviewInput().review, observed }, comparisonId: REVIEW_COMPARISON.id,
+                scmPullRequestReviewScope: { kind: 'scm_pull_request_review_scope.v1', observed } });
+            expect(kit.prepareInputs.at(-1)).toEqual({ ...kit.savedInput.prepareReviewWorkspaceSelection.input, observed });
+            expect(kit.verifyInputs.at(-1)).toMatchObject({ instance: kit.savedInput.request.instance, observed,
+                prepared: { repositoryPath: kit.preparedWorkspace.repositoryPath, pullRequest: kit.preparedWorkspace.pullRequest } });
+            expect(kit.captureInputs.at(-1)).toEqual({ sessionId: 'session-a', cwd: kit.preparedWorkspace.repositoryPath,
+                source: { ...REVIEW_COMPARISON_SOURCE, locator: { ...REVIEW_COMPARISON_SOURCE.locator,
+                    baseOid: revision.baseSha, headOid: revision.headSha } } });
+            expect(JSON.stringify(kit.savedInput)).toBe(savedBytes);
+        }
+        const stale = await kit.invoke('entries/prepare-pull-request-review-v1', {
+            ...kit.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
+        });
+        expect(stale).toEqual({ v: 1, status: 'refused', reason: 'revisionMismatch' });
+        expect(kit.events).toEqual([
+            'source.get', 'source.prepareReviewWorkspace', 'source.verifyReviewWorkspace', 'scm.diffSummary.capture',
+            'source.get', 'source.prepareReviewWorkspace', 'source.verifyReviewWorkspace', 'scm.diffSummary.capture',
+            'source.get',
+        ]);
+        expect(kit.executionOptions).toEqual(Array.from({ length: 4 }, () => ({
+            expectedSelectedConnectedAccountRef: kit.savedInput.prepareReviewWorkspaceSelection.credentialRef,
+            signal: kit.context.signal,
+        })));
+    });
+});
+
 describe('the Session-start Action a mounted header can actually press', () => {
     it.each(['verified', 'otherPlugin', 'wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure', 'typedStatusFailure', 'typedWorkspaceFailure', 'workspaceMismatch', 'sourceRetired', 'cancelled'] as const)(
         'verifies an existing PR checkout through the selected source without preparing it (%s)', async (mode) => {
@@ -588,7 +615,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         ]) {
             const action = declaredAction(localId);
             expect(action.surfaces, localId).toEqual(localId === TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1
-                ? ['ui', 'plugin', 'agent', 'mcp', 'cli'] : ['ui', 'voice', 'agent', 'mcp', 'cli']);
+                ? ['ui', 'plugin', 'agent', 'mcp', 'cli'] : ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin']);
             expect(action.execution.target, localId).toBe(
                 localId === TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 ? TRIAGE_DATA_ACTION_EXECUTION_V1.target : 'daemon',
             );
@@ -1066,7 +1093,7 @@ describe('the registered formal Review transition', () => {
 
     it('shares the confirmed daemon review owner across mounted and automated callers', () => {
         const action = declaredAction(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
-        expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+        expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
         expect(action.execution).toEqual({ target: 'daemon' });
         expect(action.dangerLevel).toBe('writesLocal');
     });

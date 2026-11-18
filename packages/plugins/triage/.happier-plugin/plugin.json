@@ -637657,6 +637657,3353 @@
       },
       {
         "confirmation": {
+          "body": "This prepares the selected workspace and captures the selected pull request comparison.",
+          "confirmLabel": "Prepare review",
+          "title": "Prepare this pull request review?"
+        },
+        "confirmationWhen": {
+          "presentUserUi": false
+        },
+        "dangerLevel": "writesLocal",
+        "description": "Prepares the selected source workspace and captures the pinned pull request comparison without creating a session or starting reviewers.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "entries/prepare-pull-request-review-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "comparisonSource": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "checkpointReceiptId": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "evidenceMode": {
+                      "anyOf": [
+                        {
+                          "const": "checkpoint"
+                        },
+                        {
+                          "const": "agent_reported"
+                        },
+                        {
+                          "const": "reconciled"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "const": "turnCheckpoint"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "session"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sessionId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "workingTree"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "head": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "branch"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "head",
+                    "base"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "commit": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "commit"
+                    },
+                    "parent": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "commit"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "headOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "revisionRange"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "baseOid",
+                    "headOid"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "pullRequest"
+                    },
+                    "locator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseOid": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fileViewedActions": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "read": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "action": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "localId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "pluginId": {
+                                      "maxLength": 256,
+                                      "minLength": 3,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "input": {},
+                                "messageActionReference": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "messageId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "observedRevision": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "sessionId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "v": {
+                                      "const": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "v",
+                                    "sessionId",
+                                    "messageId",
+                                    "observedRevision"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "action"
+                              ],
+                              "type": "object"
+                            },
+                            "set": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "action": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "localId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "pluginId": {
+                                      "maxLength": 256,
+                                      "minLength": 3,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "input": {},
+                                "messageActionReference": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "messageId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "observedRevision": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "sessionId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "v": {
+                                      "const": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "v",
+                                    "sessionId",
+                                    "messageId",
+                                    "observedRevision"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "action"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "read",
+                            "set"
+                          ],
+                          "type": "object"
+                        },
+                        "headOid": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "number": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "providerId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "repository": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sourceAction": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "action": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            "clientId": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "expectedContributorOccurrenceId": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "input": {},
+                            "messageActionReference": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "messageId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "observedRevision": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "sessionId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "v": {
+                                  "const": 1
+                                }
+                              },
+                              "required": [
+                                "v",
+                                "sessionId",
+                                "messageId",
+                                "observedRevision"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "action"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "providerId",
+                        "repository",
+                        "number"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "locator"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "expectedHeadSha": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "prepareReviewWorkspaceSelection": {
+              "additionalProperties": false,
+              "properties": {
+                "credentialRef": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "service": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            },
+                            "pluginId": {
+                              "const": "happier"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                "input": {},
+                "selection": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contributor": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contributionId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "sourceCustody": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "immutableGenerationId": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                },
+                                "installSource": {
+                                  "anyOf": [
+                                    {
+                                      "const": "npm"
+                                    },
+                                    {
+                                      "const": "archive"
+                                    },
+                                    {
+                                      "const": "localPath"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "const": "managed"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "immutableGenerationId",
+                                "installSource"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "bundled_first_party"
+                                },
+                                "packagedRuntime": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "cli_version_root"
+                                        },
+                                        "versionRootId": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "versionRootId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "pinned_runner_snapshot"
+                                        },
+                                        "snapshotId": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "snapshotId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "source_declaration"
+                                        },
+                                        "packageName": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "packageName"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "packagedRuntime"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "development"
+                                },
+                                "registeredRootId": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "registeredRootId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "archiveDigestSha256": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "account_release"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "pluginId",
+                                "version",
+                                "archiveDigestSha256"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "contributionId",
+                        "sourceCustody"
+                      ],
+                      "type": "object"
+                    },
+                    "point": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "pointId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "protocol": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^(?:[a-z0-9]+(?:[-/][a-z0-9]+)*|(?!(?:[a-z0-9-]+\\.)*(?:__proto__|constructor|prototype)(?:\\.|/))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/[a-z0-9]+(?:[-/][a-z0-9]+)*)$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "version": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "version"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "pointId",
+                        "protocol"
+                      ],
+                      "type": "object"
+                    },
+                    "target": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "sourceCustody": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "immutableGenerationId": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                },
+                                "installSource": {
+                                  "anyOf": [
+                                    {
+                                      "const": "npm"
+                                    },
+                                    {
+                                      "const": "archive"
+                                    },
+                                    {
+                                      "const": "localPath"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "const": "managed"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "immutableGenerationId",
+                                "installSource"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "bundled_first_party"
+                                },
+                                "packagedRuntime": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "cli_version_root"
+                                        },
+                                        "versionRootId": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "versionRootId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "pinned_runner_snapshot"
+                                        },
+                                        "snapshotId": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "snapshotId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "source_declaration"
+                                        },
+                                        "packageName": {
+                                          "minLength": 1,
+                                          "pattern": ".*\\S.*",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "packageName"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "packagedRuntime"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "development"
+                                },
+                                "registeredRootId": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "registeredRootId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "archiveDigestSha256": {
+                                  "pattern": "^sha256:[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "account_release"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "minLength": 1,
+                                  "pattern": ".*\\S.*",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "pluginId",
+                                "version",
+                                "archiveDigestSha256"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "sourceCustody"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "target",
+                    "point",
+                    "contributor"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "selection",
+                "input"
+              ],
+              "type": "object"
+            },
+            "request": {
+              "additionalProperties": false,
+              "properties": {
+                "entryRef": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "collisionScope": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 192
+                    },
+                    "entryId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "kindId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "source": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "kindId",
+                    "collisionScope",
+                    "entryId"
+                  ],
+                  "type": "object"
+                },
+                "instance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "binding": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "account": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "accountId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "service": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "pluginId": {
+                                          "maxLength": 256,
+                                          "minLength": 3,
+                                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "const": "mcp-sign-in"
+                                        },
+                                        "pluginId": {
+                                          "const": "happier"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "accountId"
+                              ],
+                              "type": "object"
+                            },
+                            "purpose": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "purpose",
+                            "account"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "purpose": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "service": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            "source": {
+                              "const": "native"
+                            }
+                          },
+                          "required": [
+                            "purpose",
+                            "source",
+                            "service"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "purpose": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "source": {
+                              "const": "accountData"
+                            }
+                          },
+                          "required": [
+                            "purpose",
+                            "source"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "configuration": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "token": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7336
+                        },
+                        "v": {
+                          "const": 1
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "token"
+                      ],
+                      "type": "object"
+                    },
+                    "instance": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "source": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        },
+                        "sourceInstanceId": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "sourceInstanceId"
+                      ],
+                      "type": "object"
+                    },
+                    "localInstanceKey": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "locator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayLabel": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7336
+                        },
+                        "displayPath": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7336
+                        },
+                        "v": {
+                          "const": 1
+                        },
+                        "webUrl": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7336
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "displayLabel"
+                      ],
+                      "type": "object"
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "instance",
+                    "localInstanceKey",
+                    "configuration",
+                    "binding"
+                  ],
+                  "type": "object"
+                },
+                "lastKnownLocator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "routingToken": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 3226
+                    }
+                  },
+                  "required": [
+                    "v"
+                  ],
+                  "type": "object"
+                },
+                "observed": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseSha": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "headSha": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "nativeRevision": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "observedAtMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "baseSha",
+                    "headSha",
+                    "nativeRevision",
+                    "observedAtMs"
+                  ],
+                  "type": "object"
+                },
+                "workflowSubject": {
+                  "const": "pullRequest"
+                },
+                "workspace": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "machineId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "rootPath": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        },
+                        "serverId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "serverId",
+                        "machineId",
+                        "rootPath"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "instance",
+                "entryRef",
+                "workflowSubject",
+                "lastKnownLocator",
+                "observed",
+                "workspace"
+              ],
+              "type": "object"
+            },
+            "sessionId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "request",
+            "prepareReviewWorkspaceSelection",
+            "expectedHeadSha",
+            "sessionId",
+            "comparisonSource"
+          ],
+          "type": "object"
+        },
+        "operation": {
+          "presentation": {
+            "onStart": "current"
+          },
+          "progress": "reported",
+          "version": 1,
+          "visibility": "activity"
+        },
+        "placementBindings": [],
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "comparisonId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "comparisonSource": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "checkpointReceiptId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "evidenceMode": {
+                          "anyOf": [
+                            {
+                              "const": "checkpoint"
+                            },
+                            {
+                              "const": "agent_reported"
+                            },
+                            {
+                              "const": "reconciled"
+                            }
+                          ]
+                        },
+                        "kind": {
+                          "const": "turnCheckpoint"
+                        },
+                        "sessionId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "turnId": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "session"
+                        },
+                        "sessionId": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "sessionId"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "workingTree"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "base": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "head": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "branch"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "head",
+                        "base"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "commit": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "commit"
+                        },
+                        "parent": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "commit"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "revisionRange"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "pullRequest"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "baseOid": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "fileViewedActions": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "read": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "action": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "pluginId": {
+                                          "maxLength": 256,
+                                          "minLength": 3,
+                                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "clientId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "expectedContributorOccurrenceId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "input": {},
+                                    "messageActionReference": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "messageId": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "observedRevision": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "sessionId": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "v": {
+                                          "const": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "v",
+                                        "sessionId",
+                                        "messageId",
+                                        "observedRevision"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "action"
+                                  ],
+                                  "type": "object"
+                                },
+                                "set": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "action": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "pluginId": {
+                                          "maxLength": 256,
+                                          "minLength": 3,
+                                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "clientId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "expectedContributorOccurrenceId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "input": {},
+                                    "messageActionReference": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "messageId": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "observedRevision": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "sessionId": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                          "type": "string"
+                                        },
+                                        "v": {
+                                          "const": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "v",
+                                        "sessionId",
+                                        "messageId",
+                                        "observedRevision"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "action"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "read",
+                                "set"
+                              ],
+                              "type": "object"
+                            },
+                            "headOid": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "number": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "providerId": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "sourceAction": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "action": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "localId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "pluginId": {
+                                      "maxLength": 256,
+                                      "minLength": 3,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "input": {},
+                                "messageActionReference": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "messageId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "observedRevision": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "sessionId": {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "v": {
+                                      "const": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "v",
+                                    "sessionId",
+                                    "messageId",
+                                    "observedRevision"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "action"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "providerId",
+                            "repository",
+                            "number"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "locator"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "preparedWorkspace": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "branch": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        },
+                        "created": {
+                          "anyOf": [
+                            {
+                              "const": true
+                            },
+                            {
+                              "const": false
+                            }
+                          ]
+                        },
+                        "currentness": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "currentAtObservedHead"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "fromSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "kind": {
+                                  "const": "movedToObservedHead"
+                                },
+                                "observedHeadSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "recoveryRef": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "fromSha",
+                                "observedHeadSha",
+                                "recoveryRef"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "preservedStale"
+                                },
+                                "observedHeadSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "reason": {
+                                  "anyOf": [
+                                    {
+                                      "const": "localCommits"
+                                    },
+                                    {
+                                      "const": "dirtyWorktree"
+                                    },
+                                    {
+                                      "const": "unresolvedHead"
+                                    }
+                                  ]
+                                },
+                                "resolvedHeadSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "resolvedHeadSha",
+                                "observedHeadSha",
+                                "reason"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "kind": {
+                          "const": "prepared"
+                        },
+                        "pullRequest": {},
+                        "repositoryPath": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "repositoryPath",
+                        "branch",
+                        "created",
+                        "currentness",
+                        "pullRequest"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "workspaceRequired"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "requiredPermissions": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "workspaceMismatch"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "unsupported"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "requiredPermissions": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "unavailable"
+                        },
+                        "reason": {
+                          "anyOf": [
+                            {
+                              "const": "account"
+                            },
+                            {
+                              "const": "machine"
+                            },
+                            {
+                              "const": "scmResolver"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "requiredPermissions": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "refused"
+                        },
+                        "reason": {
+                          "anyOf": [
+                            {
+                              "const": "instanceMoved"
+                            },
+                            {
+                              "const": "pullRequestMoved"
+                            },
+                            {
+                              "const": "observedHeadMoved"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "review": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "entryRef": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collisionScope": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 192
+                        },
+                        "entryId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "kindId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "source": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "kindId",
+                        "collisionScope",
+                        "entryId"
+                      ],
+                      "type": "object"
+                    },
+                    "instance": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "binding": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "account": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "accountId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "service": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "localId": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                              "type": "string"
+                                            },
+                                            "pluginId": {
+                                              "maxLength": 256,
+                                              "minLength": 3,
+                                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "pluginId",
+                                            "localId"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "localId": {
+                                              "const": "mcp-sign-in"
+                                            },
+                                            "pluginId": {
+                                              "const": "happier"
+                                            }
+                                          },
+                                          "required": [
+                                            "pluginId",
+                                            "localId"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "service",
+                                    "accountId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "purpose": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "purpose",
+                                "account"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "purpose": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "service": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "localId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "pluginId": {
+                                      "maxLength": 256,
+                                      "minLength": 3,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "source": {
+                                  "const": "native"
+                                }
+                              },
+                              "required": [
+                                "purpose",
+                                "source",
+                                "service"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "purpose": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "source": {
+                                  "const": "accountData"
+                                }
+                              },
+                              "required": [
+                                "purpose",
+                                "source"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "configuration": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "token": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 7336
+                            },
+                            "v": {
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "token"
+                          ],
+                          "type": "object"
+                        },
+                        "instance": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "source": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            "sourceInstanceId": {
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "sourceInstanceId"
+                          ],
+                          "type": "object"
+                        },
+                        "localInstanceKey": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayLabel": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 7336
+                            },
+                            "displayPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 7336
+                            },
+                            "v": {
+                              "const": 1
+                            },
+                            "webUrl": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 7336
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "displayLabel"
+                          ],
+                          "type": "object"
+                        },
+                        "v": {
+                          "const": 1
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "instance",
+                        "localInstanceKey",
+                        "configuration",
+                        "binding"
+                      ],
+                      "type": "object"
+                    },
+                    "lastKnownLocator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "displayPath": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        },
+                        "routingToken": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        },
+                        "v": {
+                          "const": 1
+                        },
+                        "webUrl": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        }
+                      },
+                      "required": [
+                        "v"
+                      ],
+                      "type": "object"
+                    },
+                    "observed": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "headSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "observedAtMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "baseSha",
+                        "headSha",
+                        "nativeRevision",
+                        "observedAtMs"
+                      ],
+                      "type": "object"
+                    },
+                    "pullRequest": {},
+                    "repositoryPath": {
+                      "maxLength": 3226,
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
+                    },
+                    "workspace": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "machineId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "rootPath": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 3226
+                        },
+                        "serverId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "serverId",
+                        "machineId",
+                        "rootPath"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "instance",
+                    "entryRef",
+                    "lastKnownLocator",
+                    "observed",
+                    "workspace",
+                    "repositoryPath",
+                    "pullRequest"
+                  ],
+                  "type": "object"
+                },
+                "scmPullRequestReviewScope": {},
+                "status": {
+                  "const": "prepared"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "status",
+                "review",
+                "preparedWorkspace",
+                "scmPullRequestReviewScope",
+                "comparisonId",
+                "comparisonSource"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "codes": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "codes"
+                  ],
+                  "type": "object"
+                },
+                "reason": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "sourceResult": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "branch": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            },
+                            "created": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            },
+                            "currentness": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "const": "currentAtObservedHead"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "fromSha": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "kind": {
+                                      "const": "movedToObservedHead"
+                                    },
+                                    "observedHeadSha": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "recoveryRef": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "fromSha",
+                                    "observedHeadSha",
+                                    "recoveryRef"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "const": "preservedStale"
+                                    },
+                                    "observedHeadSha": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "reason": {
+                                      "anyOf": [
+                                        {
+                                          "const": "localCommits"
+                                        },
+                                        {
+                                          "const": "dirtyWorktree"
+                                        },
+                                        {
+                                          "const": "unresolvedHead"
+                                        }
+                                      ]
+                                    },
+                                    "resolvedHeadSha": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "resolvedHeadSha",
+                                    "observedHeadSha",
+                                    "reason"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "kind": {
+                              "const": "prepared"
+                            },
+                            "pullRequest": {},
+                            "repositoryPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 3226
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "repositoryPath",
+                            "branch",
+                            "created",
+                            "currentness",
+                            "pullRequest"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "const": "workspaceRequired"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "workspaceMismatch"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "const": "unsupported"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "unavailable"
+                            },
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "const": "account"
+                                },
+                                {
+                                  "const": "machine"
+                                },
+                                {
+                                  "const": "scmResolver"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "refused"
+                            },
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "const": "instanceMoved"
+                                },
+                                {
+                                  "const": "pullRequestMoved"
+                                },
+                                {
+                                  "const": "observedHeadMoved"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "const": "verified"
+                            },
+                            "pullRequest": {}
+                          },
+                          "required": [
+                            "kind",
+                            "pullRequest"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "workspaceMismatch"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "unavailable"
+                            },
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "const": "account"
+                                },
+                                {
+                                  "const": "machine"
+                                },
+                                {
+                                  "const": "scmResolver"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "failure": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "class": {
+                                  "anyOf": [
+                                    {
+                                      "const": "authentication"
+                                    },
+                                    {
+                                      "const": "permission"
+                                    },
+                                    {
+                                      "const": "rateLimit"
+                                    },
+                                    {
+                                      "const": "transient"
+                                    },
+                                    {
+                                      "const": "unsupportedContract"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "detail": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "requestId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "requiredPermissions": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 3226
+                                },
+                                "retryNotBeforeMs": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "class",
+                                "code"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "refused"
+                            },
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "const": "instanceMoved"
+                                },
+                                {
+                                  "const": "pullRequestMoved"
+                                },
+                                {
+                                  "const": "observedHeadMoved"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "refused"
+                    },
+                    {
+                      "const": "unavailable"
+                    }
+                  ]
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "status",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "ui",
+          "agent",
+          "mcp",
+          "cli",
+          "plugin"
+        ],
+        "title": "Prepare a pull request review"
+      },
+      {
+        "confirmation": {
           "body": "This creates or rejoins the selected session, records this entry as its work, and opens the session.",
           "confirmLabel": "Start session",
           "title": "Start a session on this entry?"

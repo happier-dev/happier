@@ -105,7 +105,11 @@ import {
   TriageSetEntryPinnedResultV1Schema,
 } from './actions/userMarksProtocol.js';
 import { createTriageStartEntrySessionActionHandler, createTriageStartPullRequestReviewActionHandler } from './actions/entrySession.js';
+import { createTriagePreparePullRequestReviewActionHandler } from './actions/entryReviewWorkspace.js';
 import {
+  TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
+  TriagePreparePullRequestReviewInputV1Schema,
+  TriagePreparePullRequestReviewResultV1Schema,
   TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
   TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
@@ -197,6 +201,7 @@ export { TRIAGE_DISPLAY_NAME };
  */
 /** Named schema references keep declaration emit from expanding every Action payload. */
 type TriageActionSchemas = TriageAccountActionSchemas & {
+  readonly [TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriagePreparePullRequestReviewInputV1Schema, typeof TriagePreparePullRequestReviewResultV1Schema];
   readonly [TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageNativeFailureInputV1Schema, typeof TriageNativeFailureResultV1Schema];
   readonly 'attention/publish-v1': readonly [typeof TriagePublishAttentionInputV1Schema.jsonSchema, typeof TriagePublishAttentionResultV1Schema.jsonSchema];
   readonly [TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof SessionPullRequestLinkCompletionInputV1Schema, typeof SessionPullRequestLinkCompletionResultV1Schema];
@@ -398,6 +403,20 @@ function createTriagePlugin(): TriagePlugin {
         resultSchema: TriageMountedUiResultV1Schema,
       },
 
+      [TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: {
+        title: 'Prepare a pull request review',
+        description: 'Prepares the selected source workspace and captures the pinned pull request comparison without creating a session or starting reviewers.',
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
+        placementBindings: [],
+        operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
+        dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
+        confirmation: { title: 'Prepare this pull request review?', body: 'This prepares the selected workspace and captures the selected pull request comparison.', confirmLabel: 'Prepare review' },
+        inputSchema: TriagePreparePullRequestReviewInputV1Schema,
+        resultSchema: TriagePreparePullRequestReviewResultV1Schema,
+        hostAccess: ['account-storage'],
+        run: createTriagePreparePullRequestReviewActionHandler(),
+      },
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',
         description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',

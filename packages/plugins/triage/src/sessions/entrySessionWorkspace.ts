@@ -18,6 +18,19 @@ import {
 import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { defineProtocolLiteral, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import type { ProjectedObservationV1 } from '../corpus/fold/projectedObservation.js';
+
+/** Builds one preparation operand from the source's exact observed revision. */
+export function observedReviewWorkspacePreparationFor(
+    instance: TriageConfiguredSourceInstanceV1,
+    entryRef: TriageEntryRefV1,
+    observation: Pick<ProjectedObservationV1, 'observedAtMs' | 'outcome'>,
+) {
+    const present = observation.outcome;
+    if (present.kind !== 'present' || present.snapshot.reviewRevision === undefined) return undefined;
+    return { instance, entryRef, lastKnownLocator: present.locator,
+        observed: { ...present.snapshot.reviewRevision, observedAtMs: observation.observedAtMs } };
+}
 
 /**
  * What a Triage Session start knows about the working directory it is about to
@@ -288,11 +301,6 @@ export type TriageResolvedEntrySessionWorkspaceV1 =
 export const TRIAGE_WORKSPACE_PREPARATION_REFUSED_V1: TriageWorkspacePreparationFailureV1 =
     Object.freeze({ reason: 'refused', retryable: false });
 
-const REFUSED_TERMINAL: TriageResolvedEntrySessionWorkspaceV1 = {
-    status: 'failed',
-    failure: TRIAGE_WORKSPACE_PREPARATION_REFUSED_V1,
-};
-
 /**
  * Obtains the one prepared review workspace, or a truthful reason there is none.
  *
@@ -306,21 +314,31 @@ export async function resolveEntrySessionWorkspace(
     deps: TriageReviewWorkspacePreparationDepsV1,
     request: TriageReviewWorkspacePreparationRequestV1,
 ): Promise<TriageResolvedEntrySessionWorkspaceV1> {
+    const result = await prepareEntryReviewWorkspace(deps, request);
+    if (result.kind !== 'prepared') return failureFor(result);
+    return { status: 'prepared', facts: preparedReviewWorkspaceFactsFor(result, request.observed) };
+}
+
+/** The source verdict stays intact for automation; Session start maps it for its own UI. */
+export async function prepareEntryReviewWorkspace(
+    deps: TriageReviewWorkspacePreparationDepsV1,
+    request: TriageReviewWorkspacePreparationRequestV1,
+): Promise<TriagePrepareReviewWorkspaceResultV1> {
     // The target's own preconditions, checked before a `writesLocal` operation
     // can run: only a pull request reaches a worktree at all, and the entry and
     // the configured instance must be the same admitted source, so a selection
     // from one forge can never prepare a checkout through another's account.
-    if (request.workflowSubject !== 'pullRequest') return REFUSED_TERMINAL;
+    if (request.workflowSubject !== 'pullRequest') return { kind: 'unsupported' };
     if (!sameTriageSourceIdentity(
         request.entryRef.source,
         request.instance.instance.source,
     )) {
-        return REFUSED_TERMINAL;
+        return { kind: 'unsupported' };
     }
     const operation = deps.operation;
-    if (operation === undefined) return REFUSED_TERMINAL;
+    if (operation === undefined) return { kind: 'unsupported' };
 
-    const result = await deps.execute(
+    return await deps.execute(
         operation,
         projectTriagePrepareReviewWorkspaceInputV1(request),
         {
@@ -330,11 +348,6 @@ export async function resolveEntrySessionWorkspace(
             ...(deps.signal ? { signal: deps.signal } : {}),
         },
     );
-    if (result.kind !== 'prepared') return failureFor(result);
-    return {
-        status: 'prepared',
-        facts: preparedReviewWorkspaceFactsFor(result, request.observed),
-    };
 }
 
 /**

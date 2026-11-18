@@ -952,6 +952,18 @@ The shared `prepareReviewWorkspace` role admits both plugin calls and the mounte
 UI press used by prepared New Session authoring. It retains `writesLocal`
 approval policy and the selected Machine; mounted callers keep UI authority.
 Final workspace verification remains plugin-only.
+In unreleased 0.3 source, Triage's
+`entries/prepare-pull-request-review-v1` Action exposes that same preparation
+owner to workflows without creating a Session or starting reviewers. Its saved
+input retains the selected source, credential reference and workspace; each
+invocation reads the exact entry through `entries/reobserve-v1` and requires
+the occurrence's `expectedHeadSha`. A moved head returns `revisionMismatch`
+before setup, rather than substituting the latest head. Preparation retains the
+source's currentness result, then uses the same final verifier and strict PR
+scope producer as manual review start and captures the pinned comparison.
+The prepared result carries that comparison and final-start continuation;
+review execution remains a separate Action. Cancellation follows the invoking
+workflow's existing signal throughout.
 Authentication/import and provider writes retain their existing placement and
 approval contracts. This placement change does not authorize a fallback from a
 failed Account credential to a machine's login.

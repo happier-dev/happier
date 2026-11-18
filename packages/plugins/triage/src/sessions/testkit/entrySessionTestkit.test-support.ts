@@ -2,6 +2,7 @@ import type { PluginActionInputById, PluginActionResultById } from '@happier-dev
 import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageSourceInstanceDraftV1Schema,
+    projectTriagePrepareReviewWorkspaceInputV1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     type TriageConfiguredSourceInstanceV1,
     type TriagePrepareReviewWorkspaceInputV1,
@@ -30,6 +31,13 @@ import { createTriageReadSourceSessionLinksActionHandler } from '../../actions/s
 import { TriageReadSourceSessionLinksInputV1Schema } from '../../actions/sessionLinksProtocol.js';
 import type { TriageDataActionContext } from '../../actions/dataContext.js';
 import { administerConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { activate } from '../../activate.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
+import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
+import { testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
+import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../../corpus/collections/ids.js';
 
 /** The Action transport accepts built-ins and exact qualified Triage self-calls. */
 export function testkitTriageActionId(ref: unknown): string {
@@ -318,12 +326,12 @@ export function createTriageSelectedPrStartApprovalInput() {
     const entryRef = testkitEntryRef();
     const instance = testkitConfiguredInstance();
     if (!('account' in instance.binding)) throw new Error('Expected the Connected Account test binding');
-    const selectedInput = {
-        v: 1,
-        instance: { instance: { source: entryRef.source, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID }, binding: {} },
-        entryRef, lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION,
+    const sourceInput = projectTriagePrepareReviewWorkspaceInputV1({
+        instance, entryRef, lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION,
         workspace: TESTKIT_SELECTED_WORKSPACE,
-    };
+    });
+    const { account: _selectedAccount, ...binding } = instance.binding;
+    const selectedInput = { ...sourceInput, instance: { ...sourceInput.instance, binding } };
     return TriageStartEntrySessionInputV1Schema.parse({
         v: 1, workspaceMode: 'pull_request', entryRef,
         display: TESTKIT_LINK_DISPLAY,
@@ -344,4 +352,115 @@ export function createTriageSelectedPrStartApprovalInput() {
             input: selectedInput, credentialRef: instance.binding.account,
         },
     });
+}
+
+/** Real activation and Action schema admission, with only the host registry replaced. */
+export function registeredTriageActionHandler(localId: string): ActionHandler<JsonValue, JsonValue> {
+    const handlers = new Map<string, ActionHandler<JsonValue, JsonValue>>();
+    const api = {
+        actions: { register: (id: string, handler: ActionHandler<JsonValue, JsonValue>) => { handlers.set(id, handler); } },
+        composerAttachments: { register: () => {} }, resources: { registerDynamicResource: () => {} },
+        backgroundServices: { register: () => {} },
+    } as unknown as PluginApi & PluginAccountApi; // Host registration transport boundary.
+    activate(api);
+    activateAccount(api);
+    const handler = handlers.get(localId);
+    if (handler === undefined) throw new Error(`Activation registers no handler for "${localId}"`);
+    return handler;
+}
+
+/**
+ * Real registered prepare/reobserve/finalizer Actions for plugin and coordinator acceptance.
+ * Storage, source dispatch and SCM capture are system boundaries; internal qualification,
+ * preparation, currentness and strict scope production are never stubbed.
+ */
+export async function createTriagePullRequestReviewActionTestkit(options: Readonly<{
+    signal?: AbortSignal;
+    executeReview?: (input: unknown) => Promise<unknown>;
+}> = {}) {
+    const start = createTriageSelectedPrStartApprovalInput();
+    if (start.destination.kind !== 'new' || start.destination.materialization.kind !== 'reviewWorkspace'
+        || start.prepareReviewWorkspaceSelection === undefined) throw new Error('Expected selected PR fixture');
+    const request = start.destination.materialization.request;
+    const selected = start.prepareReviewWorkspaceSelection;
+    const { collections } = createTestkitCorpusCollections();
+    await administerConfiguredSourceInstance({ collections, source: request.entryRef.source,
+        declaredPurpose: request.instance.binding.purpose, request: { kind: 'create', draft: testkitSourceInstanceDraft() },
+        nowMs: 1, mintSourceInstanceId: () => request.instance.instance.sourceInstanceId });
+    let currentRevision = TESTKIT_OBSERVED_REVISION;
+    const events: string[] = [];
+    const prepareInputs: unknown[] = [];
+    const verifyInputs: unknown[] = [];
+    const captureInputs: unknown[] = [];
+    const executionOptions: unknown[] = [];
+    const getOperation = { role: 'get' };
+    const prepareOperation = { identity: { target: { pluginId: selected.selection.target.pluginId },
+        point: selected.selection.point, contributor: { ...selected.selection.contributor, occurrenceId: 'source-1' },
+        role: 'prepareReviewWorkspace' } };
+    const verifyOperation = { role: 'verifyReviewWorkspace' };
+    const comparisonSource = { kind: 'pullRequest' as const, locator: {
+        providerId: 'example-forge', repository: 'example/repository', number: 17,
+        baseOid: request.observed.baseSha, headOid: request.observed.headSha,
+    } };
+    const preparedWorkspace = { kind: 'prepared' as const, repositoryPath: TESTKIT_SELECTED_WORKSPACE.rootPath,
+        branch: 'pr-17', created: false, pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' as const } };
+    const signal = options.signal ?? new AbortController().signal;
+    const context = { surface: 'cli', signal, services: {
+        storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
+            ? collections.sourceInstances : collections.userMarks } },
+        targetedContributions: { observeForSelf: () => ({
+            readCurrent: async () => ({ occurrenceId: 'target-1', sourceCustody: selected.selection.target.sourceCustody,
+                contributions: [{ contributor: { ...selected.selection.contributor, occurrenceId: 'source-1' },
+                    descriptor: testkitReadOnlySourceSnapshot().contributions[0]!.descriptor,
+                    protocol: selected.selection.point.protocol,
+                    operations: { get: getOperation, prepareReviewWorkspace: prepareOperation, verifyReviewWorkspace: verifyOperation } }] }),
+            dispose() {},
+        }) },
+        actions: {
+            executeAdmittedTargetedOperation: async (operation: unknown, input: unknown, invocationOptions: unknown) => {
+                signal.throwIfAborted();
+                if (operation === getOperation) {
+                    events.push('source.get');
+                    return { kind: 'present', localRef: { kindId: request.entryRef.kindId,
+                        collisionScope: request.entryRef.collisionScope, entryId: request.entryRef.entryId },
+                        locator: request.lastKnownLocator, nativeRevision: currentRevision.nativeRevision,
+                        snapshot: testkitSnapshot({ reviewRevision: { baseSha: currentRevision.baseSha,
+                            headSha: currentRevision.headSha, nativeRevision: currentRevision.nativeRevision } }), viewer: testkitViewer() };
+                }
+                executionOptions.push(invocationOptions);
+                if (operation === prepareOperation) {
+                    events.push('source.prepareReviewWorkspace'); prepareInputs.push(input);
+                    return preparedWorkspace;
+                }
+                if (operation !== verifyOperation) throw new Error('Unexpected source operation');
+                events.push('source.verifyReviewWorkspace'); verifyInputs.push(input);
+                return { kind: 'verified', pullRequest: preparedWorkspace.pullRequest };
+            },
+            execute: async (actionId: unknown, input: unknown) => {
+                if (typeof actionId === 'object' && actionId !== null && 'localId' in actionId
+                    && actionId.localId === 'entries/reobserve-v1') {
+                    return await registeredTriageActionHandler('entries/reobserve-v1')(input as JsonValue, context);
+                }
+                if (actionId === 'scm.diffSummary.capture') {
+                    events.push('scm.diffSummary.capture'); captureInputs.push(input);
+                    const source = { ...comparisonSource, locator: { ...comparisonSource.locator,
+                        baseOid: currentRevision.baseSha, headOid: currentRevision.headSha } };
+                    return { success: true, comparison: { id: 'c'.repeat(64), source,
+                        repository: { rootPath: preparedWorkspace.repositoryPath },
+                        endpoints: { before: 'c'.repeat(40), after: currentRevision.headSha },
+                        pullRequest: { baseOid: currentRevision.baseSha }, inventory: { state: 'complete', files: [], reasons: [] } } };
+                }
+                if (actionId === 'review.start' && options.executeReview) {
+                    events.push('review.start'); return await options.executeReview(input);
+                }
+                throw new Error(`Unexpected Action: ${JSON.stringify(actionId)}`);
+            },
+        },
+    } } as unknown as PluginInvocationContext; // Host services and external source/SCM transports.
+    return { context, events, prepareInputs, verifyInputs, captureInputs, executionOptions, preparedWorkspace,
+        savedInput: { v: 1 as const, request, prepareReviewWorkspaceSelection: selected,
+            sessionId: 'session-a', comparisonSource },
+        setRevision: (revision: typeof TESTKIT_OBSERVED_REVISION) => { currentRevision = revision; },
+        invoke: async (localId: string, input: JsonValue) => await registeredTriageActionHandler(localId)(input, context),
+    };
 }
