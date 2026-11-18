@@ -1,4 +1,4 @@
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import type { Socket } from 'socket.io-client';
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
@@ -9,6 +9,8 @@ import {
     buildCurrentCliClientCompatibilitySocketAuth,
 } from '@/api/clientCompatibility/cliClientCompatibility';
 import { buildAccountChangeRowsSocketAuthV1, type ChangeKind } from '@happier-dev/protocol/changes';
+import type { AccountUpdatesSocket } from './client/transport/sessionClientTransport';
+import { openAccountUpdatesSocket } from './sharedAccountUpdatesSocket';
 
 type SessionSocketConnection = Readonly<{
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -60,6 +62,8 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
     }) as SessionSocketConnection;
 }
 
-export function createUserScopedSocket(opts: { token: string; serverUrl?: string; accountChangeRows?: readonly ChangeKind[] }): Socket<ServerToClientEvents, ClientToServerEvents> {
-    return createUserScopedSocketConnection(opts).socket;
+export function createUserScopedSocket(opts: { token: string; serverUrl?: string; accountChangeRows?: readonly ChangeKind[] }): AccountUpdatesSocket {
+    const serverUrl = opts.serverUrl ? normalizeServerHttpBaseUrl(opts.serverUrl) : resolveServerHttpBaseUrl();
+    return openAccountUpdatesSocket(`${serverUrl}\n${opts.token}`, bindToHostedSessionScope(() =>
+        createUserScopedSocketConnection({ ...opts, serverUrl })));
 }

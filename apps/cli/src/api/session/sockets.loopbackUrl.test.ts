@@ -40,7 +40,7 @@ describe('session sockets loopback url resolution', () => {
 
   it('uses 127.0.0.1 instead of localhost for socket.io urls', async () => {
     const mod = await import('./sockets');
-    mod.createUserScopedSocket({ token: 'fake-token' });
+    mod.createUserScopedSocketConnection({ token: 'fake-token' });
 
     expect(mockIo).toHaveBeenCalled();
     const calledUrl = mockIo.mock.calls[0]?.[0];

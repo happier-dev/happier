@@ -1,76 +1,74 @@
-import { EventEmitter } from 'node:events';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 
-// The network socket is the system boundary: everything above it stays real.
-const created = vi.hoisted(() => [] as FakeServerSocket[]);
-class FakeServerSocket extends EventEmitter {
-    connected = false;
-    active = false;
-    connectCalls = 0;
-    disconnectCalls = 0;
-    connect() { this.connectCalls += 1; this.active = true; return this; }
-    disconnect() { this.disconnectCalls += 1; this.active = false; if (this.connected) { this.connected = false; this.emit('disconnect', 'io client disconnect'); } return this; }
-    close() { return this.disconnect(); }
-    onAny(listener: (event: string, ...args: unknown[]) => void) {
-        const emit = this.emit.bind(this);
-        this.emit = (event: string | symbol, ...args: unknown[]) => {
-            if (typeof event === 'string' && event !== 'connect' && event !== 'disconnect') listener(event, ...args);
-            return emit(event, ...args);
-        };
-        return this;
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpdatesSocket';
+import { createAccountSessionClientTransport } from './createAccountSessionClientTransport';
+import { runWithServerHttpBaseUrl } from './serverHttpBaseUrl';
+
+it('keeps standalone Session clients on independent Account connections', async () => {
+    const home = await createRequesterCurrentnessSocketHarness();
+    const open = runWithServerHttpBaseUrl(home.serverUrl,
+        () => createAccountSessionClientTransport('standalone').createAccountUpdatesSocket!);
+    const first = open();
+    const second = open();
+    try {
+        first.connect();
+        second.connect();
+        await expect.poll(() => home.server.sockets.sockets.size).toBe(2);
+        first.disconnect();
+        await expect.poll(() => home.server.sockets.sockets.size).toBe(1);
+        expect(second.connected).toBe(true);
+    } finally {
+        first.close();
+        second.close();
+        await home.close();
     }
-    serverConnects() { this.connected = true; this.emit('connect'); }
-}
-vi.mock('@/api/session/sockets', () => ({
-    createUserScopedSocket: () => { const socket = new FakeServerSocket(); created.push(socket); return socket; },
-}));
+});
 
-const { createAccountSessionClientTransport } = await import('./createAccountSessionClientTransport');
-const { shareAccountUpdatesInThisProcess } = await import('@/api/session/sharedAccountUpdatesSocket');
-
-describe('createAccountSessionClientTransport Account updates', () => {
-    afterEach(() => { created.length = 0; });
-
-    it('keeps one socket per Session client outside a session host', () => {
-        createAccountSessionClientTransport('token-0').createAccountUpdatesSocket!();
-        createAccountSessionClientTransport('token-0').createAccountUpdatesSocket!();
-        expect(created).toHaveLength(2);
+it('restores the shared Account stream after a transport drop without a Session reconnect', async () => {
+    const home = await createRequesterCurrentnessSocketHarness();
+    shareAccountUpdatesInThisProcess();
+    const open = runWithServerHttpBaseUrl(home.serverUrl,
+        () => createAccountSessionClientTransport('account-reconnect').createAccountUpdatesSocket!);
+    const first = open();
+    const second = open();
+    const released = open();
+    const otherCredential = runWithServerHttpBaseUrl(home.serverUrl,
+        () => createAccountSessionClientTransport('other-account').createAccountUpdatesSocket!());
+    const received = [first, second, released].map(view => {
+        const updates: unknown[] = [];
+        view.on('update', (update: unknown) => { updates.push(update); });
+        return updates;
     });
-
-    it('shares one Account update connection across the Sessions of a session host and fans updates out to attached Sessions', async () => {
-        shareAccountUpdatesInThisProcess();
-        const views = [0, 1, 2].map(() => createAccountSessionClientTransport('token-1').createAccountUpdatesSocket!());
-        const received = views.map(() => [] as unknown[]);
-        views.forEach((view, index) => view.on('update', (update: unknown) => { received[index]!.push(update); }));
-        views[0]!.connect();
-        views[1]!.connect();
-        expect(created).toHaveLength(1);
-        const server = created[0]!;
-        expect(server.connectCalls).toBe(1);
-        const connects = views.map(() => 0);
-        views.forEach((view, index) => view.on('connect', () => { connects[index]! += 1; }));
-        server.serverConnects();
-        expect(connects).toEqual([1, 1, 0]);
-        server.emit('update', { body: { t: 'account-change' } });
-        // Delivery follows demand: an unattached Session receives nothing.
-        expect(received.map(list => list.length)).toEqual([1, 1, 0]);
-        // A later attach joins the open connection without another connect.
-        views[2]!.connect();
-        await Promise.resolve();
-        expect(connects[2]).toBe(1);
-        expect(server.connectCalls).toBe(1);
-        expect(views.map(view => view.connected)).toEqual([true, true, true]);
-        // One Session releasing its demand leaves the shared connection open.
-        views[0]!.disconnect();
-        expect(server.disconnectCalls).toBe(0);
-        expect(views[0]!.connected).toBe(false);
-        server.emit('update', { body: { t: 'account-change' } });
-        expect(received.map(list => list.length)).toEqual([1, 2, 1]);
-        views[1]!.close();
-        views[2]!.close();
-        expect(server.disconnectCalls).toBe(1);
-        // A different credential is a different Account stream.
-        createAccountSessionClientTransport('token-2').createAccountUpdatesSocket!();
-        expect(created).toHaveLength(2);
-    });
+    try {
+        first.connect();
+        second.connect();
+        otherCredential.connect();
+        await expect.poll(() => [...home.server.sockets.sockets.values()].map(socket => socket.handshake.auth.token).sort())
+            .toEqual(['account-reconnect', 'other-account']);
+        otherCredential.close();
+        let lateConnect = false;
+        released.on('connect', () => { lateConnect = true; });
+        released.connect();
+        await expect.poll(() => lateConnect).toBe(true);
+        await expect.poll(() => home.server.sockets.sockets.size).toBe(1);
+        home.server.emit('update', { body: { t: 'update-account', id: 'account' } });
+        await expect.poll(() => received.map(updates => updates.length)).toEqual([1, 1, 1]);
+        released.disconnect();
+        const original = [...home.server.sockets.sockets.values()][0]!;
+        original.conn.close();
+        await expect.poll(() => [...home.server.sockets.sockets.keys()].filter(id => id !== original.id)).toHaveLength(1);
+        await expect.poll(() => first.connected && second.connected).toBe(true);
+        home.server.emit('update', { body: { t: 'update-account', id: 'account' } });
+        await expect.poll(() => received.map(updates => updates.length)).toEqual([2, 2, 1]);
+        first.disconnect();
+        second.disconnect();
+        await expect.poll(() => home.server.sockets.sockets.size).toBe(0);
+    } finally {
+        first.close();
+        second.close();
+        released.close();
+        otherCredential.close();
+        await home.close();
+    }
 });

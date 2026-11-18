@@ -21,6 +21,10 @@ class FakeAccountServerSocket extends EventEmitter {
     }
     disconnect() { this.active = false; this.connected = false; return this; }
     close() { return this.disconnect(); }
+    dropTransport() {
+        this.connected = false;
+        this.emit('disconnect', 'transport close');
+    }
     onAny(listener: (event: string, ...args: unknown[]) => void) {
         const emit = this.emit.bind(this);
         this.emit = (event: string | symbol, ...args: unknown[]) => {
@@ -93,7 +97,7 @@ describe('session host Account wakes', () => {
                     createAccountUpdatesSocket: () => openAccountUpdatesSocket(`${serverUrl}\n${token}`, () => {
                         const server = new FakeAccountServerSocket();
                         servers.set(accountId, server);
-                        return server as never;
+                        return { socket: server as never, transport: createSocketTransportAdapter(server as never) };
                     }) },
             });
             // A hosted Session's runtime consumes its provider input: the demand that holds the Account stream.
@@ -121,8 +125,8 @@ describe('session host Account wakes', () => {
             open('host-s2', 'dana');
             open('host-s3', 'erin');
             // One Account update connection per Account in the host.
+            await vi.waitFor(() => expect(servers.get('dana')?.connected && servers.get('erin')?.connected).toBe(true), { timeout: 15_000 });
             expect(servers.size).toBe(2);
-            await vi.waitFor(() => expect(servers.get('dana')!.connected && servers.get('erin')!.connected).toBe(true), { timeout: 15_000 });
             await settled();
             const before = new Map(changesReads);
 
@@ -174,6 +178,17 @@ describe('session host Account wakes', () => {
             pushedWake(6, { cursor: 7, kind: 'session', entityId: 'host-s1', changedAt: 7 });
             await settled();
             expect(changesReads.get('dana')! - before).toBe(1);
+
+            // An Account-only transport drop cannot depend on either Session transport reconnecting.
+            feeds.get('dana')!.push({ cursor: 8, kind: 'account', entityId: 'self', changedAt: 8 });
+            const original = servers.get('dana')!;
+            original.dropTransport();
+            await vi.waitFor(() => {
+                expect(servers.get('dana')).not.toBe(original);
+                expect(changesReads.get('dana')! - before).toBe(2);
+            }, { timeout: 15_000 });
+            await settled();
+            expect(changesReads.get('dana')! - before).toBe(2);
         } finally {
             await Promise.all(clients.map(client => client.close()));
         }

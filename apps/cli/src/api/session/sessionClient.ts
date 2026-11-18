@@ -2835,9 +2835,8 @@ export class ApiSessionClient extends EventEmitter {
             hasProviderInputConsumer: this.providerInputConsumer !== null,
             hasMetadataWaiters: this.interactionApi.hasMetadataWaiters(),
         })) return;
-        if (!this.userSocket?.connected) return;
         try {
-            this.userSocket.disconnect();
+            this.userSocket?.disconnect();
         } catch {
             // ignore
         }

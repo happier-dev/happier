@@ -36,7 +36,7 @@ describe('session sockets transports', () => {
 
   it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
     const mod = await import('./sockets');
-    mod.createUserScopedSocket({ token: 'fake-token' });
+    mod.createUserScopedSocketConnection({ token: 'fake-token' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates/');
@@ -50,7 +50,7 @@ describe('session sockets transports', () => {
     reloadConfiguration();
 
     const mod = await import('./sockets');
-    mod.createUserScopedSocket({ token: 'fake-token' });
+    mod.createUserScopedSocketConnection({ token: 'fake-token' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates/');

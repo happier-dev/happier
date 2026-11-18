@@ -9,8 +9,8 @@ export type SessionClientServerBinding = Readonly<{
 }>;
 
 /**
- * The Account update stream surface a Session client uses. A socket.io socket satisfies it; a
- * session host gives each Session a view of one shared connection (`sharedAccountUpdatesSocket`).
+ * The Account update stream surface a Session client uses. The managed stream emits `reconnect`
+ * after a transport loss during active demand so its consumer can replay missed Account changes.
  */
 export type AccountUpdatesSocket = Readonly<{
     readonly connected: boolean;

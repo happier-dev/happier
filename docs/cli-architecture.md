@@ -8652,6 +8652,9 @@ The metadata authorities are:
 - `{ kind: 'owner', credentials }` — the ordinary CLI/daemon composition. It
   opens and reseals the layout-1 owner envelope, writes owner Agent state,
   converges Account settings, and joins the Account-wide user-scoped socket.
+  In 0.3 development source, a Session host shares that stream per Home and
+  credential. An active standalone or hosted stream reconnects independently
+  of the Session socket and replays missed changes through the Account cursor.
 - `{ kind: 'shared_editor' }` — a restricted Session-runtime composition that
   holds only the Session data key and a Session-scoped runtime token. It writes
   the shared projection through the server's `shared_editor` tuple mode, never

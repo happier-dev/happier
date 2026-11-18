@@ -102,6 +102,14 @@ export function initializeSessionClientConnection(
         params.handleUserScopedUpdate(data, userSocket);
     });
     userSocket?.on('session', () => {});
+    userSocket?.on('reconnect', () => {
+        reconnectCliActionAutomationsV1({ token: params.token, serverHttpBaseUrl: params.transport.serverUrl });
+        void params.syncChangesOnConnect({ reason: 'reconnect' }).catch((error) => {
+            logger.debug('[API] Account changes sync on reconnect failed (non-fatal)', {
+                error: serializeAxiosErrorForLog(error),
+            });
+        });
+    });
 
     let currentTransportSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
     let currentTransportMachineId: string | undefined;
