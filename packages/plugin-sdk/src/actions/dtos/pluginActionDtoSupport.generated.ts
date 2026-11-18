@@ -8,13 +8,20 @@ import type { PluginInvocableActionId } from '../actionTypeMap.generated.js';
 
 export type { ActionFailureCauseV1 } from '../../errors/index.js';
 
-export type SessionInputHandoffSessionChoiceV1 = Readonly<{
-    kind: 'configured';
+export type SessionInputHandoffSessionChoiceV1<Input extends boolean = false> = Input extends true ? Readonly<{
+    kind: "configured";
 }> | Readonly<{
-    kind: 'existing';
+    kind: "existing";
+    session: SessionTargetV1<true>;
+}> | Readonly<{
+    kind: "new";
+}> : Readonly<{
+    kind: "configured";
+}> | Readonly<{
+    kind: "existing";
     session: SessionTargetV1;
 }> | Readonly<{
-    kind: 'new';
+    kind: "new";
 }>;
 export type SessionTargetV1<Input extends boolean = false> = Input extends true ? string | {
     selector: "discussion";
