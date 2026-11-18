@@ -337,11 +337,13 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         activationAvailable: availability => availability.botsRoster === true,
     },
     // Services (pfc-redesign): everything the Account runs, as views, beside its column of Projects and their
-    // Environments; an Environment page keeps that column (lab `sideSvc`). Overflow/pinning policy unchanged (owner 11-12).
+    // Environments; an Environment page and every page under Services (a Check) keep that column (lab `sideSvc`).
+    // Overflow/pinning policy unchanged (owner 11-12).
     {
         id: 'deployments', titleKey: 'projects.deployments.services.title', icon: 'rocket-launch',
         placement: { kind: 'rail', region: 'app' }, band: 'library', column: 'services', activation: 'navigate',
-        routePath: SERVICES_ROUTE, currentRoutePatterns: ['/deployments/[projectSourceId]'], signal: 'deploymentAttentionCount',
+        routePath: SERVICES_ROUTE, currentRoutePatterns: ['/deployments/[projectSourceId]', `${SERVICES_ROUTE}/[...rest]`],
+        signal: 'deploymentAttentionCount',
     },
     // Monitoring (MONITOR-LAB-1115 B): whether everything the Account runs is up, beside Services. Its rows are the
     // saved Checks; a Check's page stays a Services page.

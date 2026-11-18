@@ -172,6 +172,10 @@ describe('app rail model', () => {
         // Projects stands its column beside every project page and the index.
         expect(at('/projects')).toEqual(['projects', 'projects', 'projects']);
         expect(at('/projects/ws-1/code')).toEqual(['projects', 'projects', 'projects']);
+        // Services owns its whole subtree: a Check's page is a Services page, on a direct load too (G6A 11-18).
+        expect(at('/projects/deployments')).toEqual(['deployments', 'deployments', 'services']);
+        expect(at('/projects/deployments/check')).toEqual(['deployments', 'deployments', 'services']);
+        expect(at('/deployments/source-1')).toEqual(['deployments', 'deployments', 'services']);
         // Workflows stands its column beside the library, the editor and every run (FIN 04 §3.1).
         expect(at('/workflows')).toEqual(['workflows', 'workflows', 'workflows']);
         expect(at('/workflows/runs/run-1')).toEqual(['workflows', 'workflows', 'workflows']);
