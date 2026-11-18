@@ -10,6 +10,7 @@ import { PluginIdSchema } from '../pluginId.js';
 import { PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
 import { PluginWebhookEndpointIdV1Schema } from './endpointV1.js';
 import { PluginWebhookAutomationAdmissionUnresolvedV1Schema } from './statusV1.js';
+import { PluginWebhookSignedVerifierKindV1Schema } from '../contributions/webhooks.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1 = 26_214_400;
@@ -20,13 +21,19 @@ export const PLUGIN_WEBHOOK_MAX_STORED_ENVELOPE_BYTES_V1 = 51_380_224;
 
 const ASCII_TOKEN_128_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._:-]{1,128}$/u));
 const WEBHOOK_EVENT_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._-]{1,128}$/u));
-const SIGNED_WEBHOOK_VERIFIER_SCHEMA = z.enum(['github_hmac_sha256_v1', 'sentry_hmac_sha256_v1']);
+const BITBUCKET_WEBHOOK_EVENT_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$/u), z.maxLength(128));
+// GitLab names events such as "Push Hook"; preserve the existing envelope bound.
+const GITLAB_WEBHOOK_EVENT_SCHEMA = z.string().check(z.maxLength(128), z.regex(/^[A-Za-z0-9._-]+(?: [A-Za-z0-9._-]+)*$/u));
+const VERIFIED_EVENT_SCHEMA = z.union([WEBHOOK_EVENT_SCHEMA, GITLAB_WEBHOOK_EVENT_SCHEMA, BITBUCKET_WEBHOOK_EVENT_SCHEMA]);
+const SIGNED_WEBHOOK_VERIFIER_SCHEMA = PluginWebhookSignedVerifierKindV1Schema;
 
 /** The one provider event header each signed verifier selects into delivery content. */
 const SELECTED_EVENT_HEADER_BY_VERIFIER_V1 = {
   github_hmac_sha256_v1: 'x-github-event',
   sentry_hmac_sha256_v1: 'sentry-hook-resource',
-} as const;
+  gitlab_token_v1: 'x-gitlab-event',
+  bitbucket_hmac_sha256_v1: 'x-event-key',
+} as const satisfies Record<z.infer<typeof SIGNED_WEBHOOK_VERIFIER_SCHEMA>, string>;
 const CONTENT_TYPE_SCHEMA = z.string().check(z.maxLength(128), z.regex(/^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/u));
 const DIAGNOSTIC_CODE_SCHEMA = z.string().check(z.regex(/^[a-z0-9._-]{1,64}$/u));
 const ENDPOINT_REVISION_SCHEMA = z.number().check(z.int(), z.positive(), z.int());
@@ -47,10 +54,16 @@ function isCanonicalPaddedBase64(value: string, expectedBytes?: number): boolean
   return true;
 }
 
-const PluginWebhookSelectedHeaderV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+export const PluginWebhookSelectedHeaderV1Schema = lazyZodSchema(() => z.readonly(z.union([z.strictObject({
   name: z.enum(['x-github-event', 'sentry-hook-resource']),
   value: WEBHOOK_EVENT_SCHEMA,
-})));
+}), z.strictObject({
+  name: z.literal('x-gitlab-event'),
+  value: GITLAB_WEBHOOK_EVENT_SCHEMA,
+}), z.strictObject({
+  name: z.literal('x-event-key'),
+  value: BITBUCKET_WEBHOOK_EVENT_SCHEMA,
+})])));
 
 function checkSelectedEventHeaderV1(
   selected: Readonly<{ name: string; value: string }> | undefined,
@@ -67,7 +80,7 @@ function checkSelectedEventHeaderV1(
 const PluginWebhookVerifiedContentV1Schema = lazyZodSchema(() => z.readonly(z.union([z.strictObject({
   verifier: SIGNED_WEBHOOK_VERIFIER_SCHEMA,
   providerDeliveryId: ASCII_TOKEN_128_SCHEMA,
-  eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
+  eventType: z.optional(VERIFIED_EVENT_SCHEMA),
   credentialVersionId: ASCII_TOKEN_128_SCHEMA,
 }), z.strictObject({
   verifier: z.literal('capabilityUrl_v1'),
@@ -132,7 +145,7 @@ export const PluginWebhookActionInputV1Schema = lazyZodSchema(() => z.readonly(z
   }),
   verified: z.strictObject({
     verifier: z.union([SIGNED_WEBHOOK_VERIFIER_SCHEMA, z.literal('capabilityUrl_v1')]),
-    eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
+    eventType: z.optional(VERIFIED_EVENT_SCHEMA),
   }),
 }).check(z.superRefine((value, context) => {
   if (!isCanonicalPaddedBase64(value.request.rawBodyBase64, value.request.rawBodyBytes)) {

@@ -31,6 +31,8 @@ vi.mock("./accountChange", () => ({
 import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import {
     createPluginWebhookEndpointStoreV1,
+    ensurePluginWebhookEndpointV1,
+    readPluginWebhookEndpointV1,
     formatPluginWebhookEndpointPublicUrlV1,
 } from "./endpointStore";
 
@@ -156,6 +158,36 @@ describe("plugin webhook endpoint store", () => {
             verifierKind: "github_hmac_sha256_v1",
             routingKind: "accountEndpoint",
         });
+    });
+
+    it('requires authenticated provider confirmation for capability handlers and retains it when rejoining', async () => {
+        // The transaction double models the persistent-database boundary only.
+        type EndpointTx = NonNullable<Parameters<typeof ensurePluginWebhookEndpointV1>[0]['tx']>;
+        const handler = { pluginId: contribution.pluginId, localId: contribution.localId,
+            handlerActionLocalId: 'receive', verifierKind: 'capabilityUrl_v1', routingKind: 'accountEndpoint' } as const;
+        const params = { accountId: 'account-1', contribution: handler,
+            target: { materialization: target, machineInstallationId: 'install-1', pluginVersion: '1.0.0' },
+            publicBaseUrl: 'https://server.example.test',
+            input: { webhookContribution: contribution, targetMaterialization: target, sourceInstanceId: 'source-1',
+                setup: { kind: 'capabilityUrlV1', checkId: 'source-1' }, idempotencyKey: 'ensure-capability-handler' },
+        } as const;
+        mocks.endpointFindFirst.mockResolvedValue(null);
+        const created = await ensurePluginWebhookEndpointV1({ ...params, tx: transaction(null) as unknown as EndpointTx });
+        expect(created).toMatchObject({ readiness: 'providerConfirmationRequired' });
+        expect(created).not.toHaveProperty('oneTimeGeneratedSecret');
+        for (const [confirmed, readiness] of [[null, 'providerConfirmationRequired'], [new Date(), 'ready']] as const) {
+            const tx = transaction(endpointRow({ setupKind: 'capabilityUrlV1', providerConfirmedAt: confirmed,
+                route: { opaqueRouteId: 'opaque', enabled: true, revokedAt: null, verifierKind: 'capabilityUrl_v1' } }));
+            await expect(ensurePluginWebhookEndpointV1({ ...params, tx: tx as unknown as EndpointTx })).resolves.toMatchObject({ readiness });
+            mocks.endpointFindFirst.mockResolvedValue(endpointRow({ setupKind: 'capabilityUrlV1', providerConfirmedAt: confirmed }));
+            await expect(readPluginWebhookEndpointV1({ accountId: params.accountId, webhookEndpointId: endpointId,
+                publicBaseUrl: params.publicBaseUrl, resolveTarget: async () => params.target,
+            })).resolves.toMatchObject({ readiness });
+        }
+        mocks.endpointFindFirst.mockResolvedValue(null);
+        await expect(ensurePluginWebhookEndpointV1({ ...params,
+            contribution: { ...handler, handlerActionLocalId: null }, tx: transaction(null) as unknown as EndpointTx,
+        })).resolves.toMatchObject({ readiness: 'ready' });
     });
 
     it("atomically creates an Account route and discloses its generated secret once", async () => {

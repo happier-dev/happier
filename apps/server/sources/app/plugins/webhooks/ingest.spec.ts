@@ -12,6 +12,54 @@ const BODY = Uint8Array.from(Buffer.from('{"installation":{"id":123}}', "utf8"))
 const signature = (body = BODY) => `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
 
 describe("plugin webhook durable ingress owner", () => {
+    it('authenticates Bitbucket raw bytes and keeps the colon event key without retaining signatures', async () => {
+        const deps: PluginWebhookIngestDependenciesV1 = { ...accountEndpointDependencies(),
+            findRoute: async () => ({ routeId: 'route-1', verifierKind: 'bitbucket_hmac_sha256_v1', routingKind: 'accountEndpoint', policyVersion: 1 }),
+        };
+        const headers = { 'x-hub-signature': signature(), 'x-request-uuid': 'delivery-bitbucket',
+            'x-event-key': 'pullrequest:created', 'content-type': 'application/json' };
+        await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: BODY, headers, dependencies: deps }))
+            .resolves.toMatchObject({ kind: 'accepted' });
+        const stored = vi.mocked(deps.admitDelivery).mock.calls[0]![0].stored;
+        const envelope = JSON.parse(new TextDecoder().decode(stored.canonicalEnvelopeBytes));
+        expect(envelope.v.headers).toEqual([{ name: 'x-event-key', value: 'pullrequest:created' }]);
+        expect(envelope.v.verified).toMatchObject({ verifier: 'bitbucket_hmac_sha256_v1', providerDeliveryId: 'delivery-bitbucket', eventType: 'pullrequest:created' });
+        expect(new TextDecoder().decode(stored.canonicalEnvelopeBytes)).not.toContain('secret');
+        for (const invalid of [undefined, ['signature'], 'sha256=wrong']) {
+            await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: BODY,
+                headers: { ...headers, 'x-hub-signature': invalid }, dependencies: deps }))
+                .resolves.toEqual({ kind: 'rejected', statusCode: 401, code: 'unauthorized' });
+        }
+        await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: new TextEncoder().encode('{}'), headers, dependencies: deps }))
+            .resolves.toEqual({ kind: 'rejected', statusCode: 401, code: 'unauthorized' });
+        expect(deps.admitDelivery).toHaveBeenCalledTimes(1);
+    });
+    it("authenticates GitLab tokens and retains only the documented event and delivery identity", async () => {
+        const base = accountEndpointDependencies();
+        const deps: PluginWebhookIngestDependenciesV1 = { ...base,
+            findRoute: async () => ({ routeId: 'route-1', verifierKind: 'gitlab_token_v1', routingKind: 'accountEndpoint', policyVersion: 1 }),
+        };
+        const headers = { 'x-gitlab-token': 'secret', 'x-gitlab-webhook-uuid': 'delivery-gitlab',
+            'x-gitlab-event-uuid': 'different-shared-event', 'x-gitlab-event': 'Push Hook', 'content-type': 'application/json' };
+        await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: BODY, headers, dependencies: deps }))
+            .resolves.toMatchObject({ kind: 'accepted' });
+        const stored = vi.mocked(deps.admitDelivery).mock.calls[0]![0].stored;
+        const envelope = JSON.parse(new TextDecoder().decode(stored.canonicalEnvelopeBytes));
+        expect(envelope.v.headers).toEqual([{ name: 'x-gitlab-event', value: 'Push Hook' }]);
+        expect(envelope.v.verified).toMatchObject({ verifier: 'gitlab_token_v1', providerDeliveryId: 'delivery-gitlab', eventType: 'Push Hook' });
+        expect(new TextDecoder().decode(stored.canonicalEnvelopeBytes)).not.toContain('secret');
+        for (const invalid of [undefined, ['secret'], ['secret', 'secret'], 'wrong']) {
+            await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: BODY,
+                headers: { ...headers, 'x-gitlab-token': invalid }, dependencies: deps }))
+                .resolves.toEqual({ kind: 'rejected', statusCode: 401, code: 'unauthorized' });
+        }
+        for (const invalid of [undefined, ['delivery-gitlab'], 'invalid delivery']) {
+            await expect(ingestPluginWebhookV1({ opaqueRouteId: 'opaque-1', rawBody: BODY,
+                headers: { ...headers, 'x-gitlab-webhook-uuid': invalid }, dependencies: deps }))
+                .resolves.toEqual({ kind: 'rejected', statusCode: 401, code: 'unauthorized' });
+        }
+        expect(deps.admitDelivery).toHaveBeenCalledTimes(1);
+    });
     function dependencies(): PluginWebhookIngestDependenciesV1 {
         return {
             findRoute: vi.fn(async () => ({

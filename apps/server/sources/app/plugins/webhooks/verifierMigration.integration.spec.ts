@@ -3,10 +3,11 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { PGlite } from '@electric-sql/pglite';
 import { expect, it } from 'vitest';
 
-const migrationName = '20261110114500_webhook_capability_handler_delivery';
-const kinds = ['github_hmac_sha256_v1', 'sentry_hmac_sha256_v1', 'capabilityUrl_v1'];
-const migration = async (provider: 'sqlite' | 'postgres' | 'mysql') => readFile(new URL(
-    `../../../../prisma/${provider === 'postgres' ? '' : `${provider}/`}migrations/${migrationName}/migration.sql`, import.meta.url), 'utf8');
+const migrationName = '20261118225000_webhook_bitbucket_hmac_verifier';
+const previousMigrationName = '20261112180000_webhook_gitlab_token_verifier';
+const kinds = ['github_hmac_sha256_v1', 'sentry_hmac_sha256_v1', 'capabilityUrl_v1', 'gitlab_token_v1', 'bitbucket_hmac_sha256_v1'];
+const migration = async (provider: 'sqlite' | 'postgres' | 'mysql', name = migrationName) => readFile(new URL(
+    `../../../../prisma/${provider === 'postgres' ? '' : `${provider}/`}migrations/${name}/migration.sql`, import.meta.url), 'utf8');
 
 it('preserves every retained SQLite delivery column, route, index and foreign key while widening verifier admission', async () => {
     const db = new DatabaseSync(':memory:');
@@ -47,6 +48,12 @@ it('preserves every retained SQLite delivery column, route, index and foreign ke
             columns: db.prepare(`PRAGMA table_info("${table}")`).all(),
             indexes: db.prepare(`PRAGMA index_list("${table}")`).all().map(row => row.name).sort(),
             keys: db.prepare(`PRAGMA foreign_key_list("${table}")`).all() }));
+        db.exec(await migration('sqlite', '20261110114500_webhook_capability_handler_delivery'));
+        db.exec(await migration('sqlite', previousMigrationName));
+        // Before the forward migration, retained GitHub/GitLab data remains valid while Bitbucket is refused.
+        for (const table of ['PluginWebhookRoute', 'PluginWebhookDelivery']) {
+            expect(() => db.prepare(`UPDATE "${table}" SET "verifierKind"=?`).run('bitbucket_hmac_sha256_v1')).toThrow();
+        }
         db.exec(await migration('sqlite'));
         for (const [index, table] of tables.entries()) {
             expect(db.prepare(`SELECT * FROM "${table}"`).all()).toEqual(before[index]!.rows);
@@ -83,6 +90,11 @@ it('widens PostgreSQL checks without rewriting retained payloads and keeps the M
         await db.exec(`INSERT INTO "PluginWebhookEndpointOperation" ("id","accountId","endpointId","operationKind","idempotencyKey","expectedRevision","resultKind","resultRevision")
             VALUES ('retained','account','endpoint','revoke','request',1,'revoked',2);`);
         const retainedOperation = (await db.query('SELECT * FROM "PluginWebhookEndpointOperation"')).rows;
+        await db.exec(await migration('postgres', '20261110114500_webhook_capability_handler_delivery'));
+        await db.exec(await migration('postgres', previousMigrationName));
+        for (const table of ['PluginWebhookRoute', 'PluginWebhookDelivery']) {
+            await expect(db.exec(`UPDATE "${table}" SET "verifierKind"='bitbucket_hmac_sha256_v1'`)).rejects.toThrow();
+        }
         await db.exec(await migration('postgres'));
         expect((await db.query('SELECT * FROM "PluginWebhookEndpointOperation"')).rows).toEqual(retainedOperation);
         await db.exec(`UPDATE "PluginWebhookEndpointOperation" SET "operationKind"='rotateUrl',"resultKind"='rotated'`);
@@ -97,8 +109,9 @@ it('widens PostgreSQL checks without rewriting retained payloads and keeps the M
         const mysql = await migration('mysql');
         expect([...mysql.matchAll(/CHECK \(`verifierKind` IN \(([^)]+)\)\)/gu)].map(match => match[1]!.match(/'([^']+)'/gu)?.map(value => value.slice(1, -1))))
             .toEqual([kinds, kinds]);
-        expect(mysql).toContain("`operationKind` IN ('revoke', 'retarget', 'rotateUrl')");
-        expect(mysql).toContain("`resultKind` IN ('revoked', 'alreadyRevoked', 'retargeted', 'alreadyRetargeted', 'rotated')");
-        expect(mysql).toContain("`operationKind` = 'rotateUrl'");
+        const capabilityMysql = await migration('mysql', '20261110114500_webhook_capability_handler_delivery');
+        expect(capabilityMysql).toContain("`operationKind` IN ('revoke', 'retarget', 'rotateUrl')");
+        expect(capabilityMysql).toContain("`resultKind` IN ('revoked', 'alreadyRevoked', 'retargeted', 'alreadyRetargeted', 'rotated')");
+        expect(capabilityMysql).toContain("`operationKind` = 'rotateUrl'");
     } finally { await db.close(); }
 });

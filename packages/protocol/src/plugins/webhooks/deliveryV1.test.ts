@@ -32,6 +32,28 @@ const validContent = {
 } as const;
 
 describe('PluginWebhookDeliveryContentV1Schema', () => {
+  it('retains Bitbucket colon event keys only with its selected verified header', () => {
+    const content = { ...validContent, headers: [{ name: 'x-event-key', value: 'pullrequest:created' }],
+      verified: { ...validContent.verified, verifier: 'bitbucket_hmac_sha256_v1', eventType: 'pullrequest:created' } };
+    expect(PluginWebhookDeliveryContentV1Schema.parse(content)).toEqual(content);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...content,
+      headers: [{ name: 'x-hub-signature', value: 'secret' }] }).success).toBe(false);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...validContent,
+      headers: [{ name: 'x-github-event', value: 'pullrequest:created' }],
+      verified: { ...validContent.verified, eventType: 'pullrequest:created' } }).success).toBe(false);
+  });
+  it('retains GitLab event names with spaces while rejecting token retention and unrelated header relaxation', () => {
+    const content = { ...validContent, headers: [{ name: 'x-gitlab-event', value: 'Push Hook' }],
+      verified: { ...validContent.verified, verifier: 'gitlab_token_v1', eventType: 'Push Hook' } };
+    expect(PluginWebhookDeliveryContentV1Schema.parse(content)).toEqual(content);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...content,
+      headers: [{ name: 'x-gitlab-token', value: 'secret' }] }).success).toBe(false);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...validContent,
+      headers: [{ name: 'x-github-event', value: 'Push Hook' }],
+      verified: { ...validContent.verified, eventType: 'Push Hook' } }).success).toBe(false);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...content,
+      headers: [{ name: 'x-gitlab-event', value: 'Push Hook\n' }] }).success).toBe(false);
+  });
   it('carries capability-authenticated handler content without a fabricated signing credential', () => {
     const content = { ...validContent, headers: [], verified: {
       verifier: 'capabilityUrl_v1', providerDeliveryId: 'sha256:body-digest',
@@ -189,6 +211,20 @@ describe('Sentry-verified webhook content and Action input', () => {
   it('accepts the Sentry resource header as the verified event type', () => {
     expect(PluginWebhookDeliveryContentV1Schema.parse(sentryContent)).toEqual(sentryContent);
     expect(PluginWebhookActionInputV1Schema.parse(sentryActionInput)).toEqual(sentryActionInput);
+  });
+
+  it('accepts GitLab spaced Action events but refuses them under other verifiers or without the matching header', () => {
+    const input = { ...sentryActionInput,
+      request: { ...sentryActionInput.request, headers: [{ name: 'x-gitlab-event', value: 'Push Hook' }] },
+      verified: { verifier: 'gitlab_token_v1', eventType: 'Push Hook' } };
+    expect(PluginWebhookActionInputV1Schema.parse(input)).toEqual(input);
+    for (const verifier of ['github_hmac_sha256_v1', 'sentry_hmac_sha256_v1']) {
+      for (const headers of [[], [{ name: 'x-gitlab-event', value: 'Push Hook' }],
+        [{ name: verifier === 'github_hmac_sha256_v1' ? 'x-github-event' : 'sentry-hook-resource', value: 'Push Hook' }]]) {
+        expect(PluginWebhookActionInputV1Schema.safeParse({ ...input,
+          request: { ...input.request, headers }, verified: { verifier, eventType: 'Push Hook' } }).success).toBe(false);
+      }
+    }
   });
 
   it('refuses a selected header that belongs to another verifier', () => {

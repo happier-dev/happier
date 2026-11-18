@@ -82,6 +82,7 @@ const ENSURE_REJOIN_SELECT_V1 = {
     enabled: true,
     revokedAt: true,
     providerConfirmedAt: true,
+    handlerActionId: true,
     setupKind: true,
     ensureRequestFingerprint: true,
     route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
@@ -94,6 +95,7 @@ function projectEnsureRejoin(row: Readonly<{
     enabled: boolean;
     revokedAt: Date | null;
     providerConfirmedAt: Date | null;
+    handlerActionId: string | null;
     setupKind?: string | null;
     ensureRequestFingerprint: string | null;
     route: Readonly<{ opaqueRouteId: string; enabled: boolean; revokedAt: Date | null }>;
@@ -117,7 +119,7 @@ function projectEnsureRejoin(row: Readonly<{
             providerConfirmedAt: row.providerConfirmedAt,
             // A rejoin never repeats the creating response's one-time secret.
             oneTimeCredentialDisclosureLost: row.routingKind === "accountEndpoint" && row.setupKind !== "capabilityUrlV1",
-            receiptOnly: row.setupKind === "capabilityUrlV1",
+            receiptOnly: row.handlerActionId === null,
         }),
     });
 }
@@ -214,6 +216,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                 checkId: params.input.setup.checkId, checkIdDigest: createPluginWebhookCheckIdDigestV1(params.input.setup.checkId),
                 setupKind: "capabilityUrlV1" },
             select: { id: true, revision: true, enabled: true, revokedAt: true, releasedAt: true,
+                providerConfirmedAt: true, handlerActionId: true,
                 targetMachineId: true, targetMachineInstallationId: true, targetMaterializationId: true, targetPluginVersion: true,
                 route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true, verifierKind: true } } },
         });
@@ -239,8 +242,8 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                 publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, existingHeartbeat.route.opaqueRouteId),
                 readiness: projectPluginWebhookEndpointReadinessV1({ endpointEnabled: existingHeartbeat.enabled,
                     endpointRevokedAt: existingHeartbeat.revokedAt, routeEnabled: existingHeartbeat.route.enabled,
-                    routeRevokedAt: existingHeartbeat.route.revokedAt, targetStatus: "current", providerConfirmedAt: null,
-                    oneTimeCredentialDisclosureLost: false, receiptOnly: true }) };
+                    routeRevokedAt: existingHeartbeat.route.revokedAt, targetStatus: "current", providerConfirmedAt: existingHeartbeat.providerConfirmedAt,
+                    oneTimeCredentialDisclosureLost: false, receiptOnly: existingHeartbeat.handlerActionId === null }) };
         }
     }
     const requestFingerprint = ensureFingerprint(params);
@@ -355,7 +358,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                     providerConfirmedAt: endpoint.providerConfirmedAt,
                     // The creating response is the one that discloses the secret.
                     oneTimeCredentialDisclosureLost: false,
-                    receiptOnly: params.input.setup.kind === "capabilityUrlV1",
+                    receiptOnly: params.contribution.handlerActionLocalId === null,
                 }),
                 ...(credential ? { oneTimeGeneratedSecret: credential.secret } : {}),
             });
@@ -401,6 +404,7 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
             enabled: true,
             revokedAt: true,
             providerConfirmedAt: true,
+            handlerActionId: true,
             createdAt: true,
             targetMachineId: true,
             targetMachineInstallationId: true,
@@ -454,7 +458,7 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
             targetStatus,
             providerConfirmedAt: endpoint.providerConfirmedAt,
             oneTimeCredentialDisclosureLost: false,
-            receiptOnly: endpoint.setupKind === "capabilityUrlV1",
+            receiptOnly: endpoint.handlerActionId === null,
         }),
         publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, endpoint.route.opaqueRouteId),
         createdAt: endpoint.createdAt.getTime(),

@@ -5,22 +5,20 @@ import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-/**
- * Verifier kinds the host webhook ingress owner implements. Sentry and GitLab
- * webhooks bind only to an Account endpoint.
- */
+/** Signed verifier vocabulary shared by declaration and authenticated delivery. */
+export const PluginWebhookSignedVerifierKindV1Schema = lazyZodSchema(() => z.enum([
+  'github_hmac_sha256_v1', 'sentry_hmac_sha256_v1', 'gitlab_token_v1', 'bitbucket_hmac_sha256_v1',
+]));
+
+/** Only GitHub additionally supports provider-installation routing. */
 export const PluginWebhookVerifierV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
+    kind: PluginWebhookSignedVerifierKindV1Schema,
+    routing: z.literal('accountEndpoint'),
+  }),
+  z.strictObject({
     kind: z.literal('github_hmac_sha256_v1'),
-    routing: z.enum(['accountEndpoint', 'providerInstallation']),
-  }),
-  z.strictObject({
-    kind: z.literal('sentry_hmac_sha256_v1'),
-    routing: z.literal('accountEndpoint'),
-  }),
-  z.strictObject({
-    kind: z.literal('gitlab_token_v1'),
-    routing: z.literal('accountEndpoint'),
+    routing: z.literal('providerInstallation'),
   }),
   z.strictObject({
     kind: z.literal('capabilityUrl_v1'),

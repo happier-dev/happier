@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
-export type PluginWebhookSignedVerifierKindV1 = "github_hmac_sha256_v1" | "sentry_hmac_sha256_v1";
+export type PluginWebhookSignedVerifierKindV1 = Exclude<PluginWebhookVerifierV1['kind'], 'capabilityUrl_v1'>;
 
 export type PluginWebhookStreamingSignatureVerifierV1 = Readonly<{
     update(chunk: Uint8Array): void;
@@ -16,7 +17,7 @@ export type PluginWebhookSignedVerifierV1 = Readonly<{
     kind: PluginWebhookSignedVerifierKindV1;
     signatureHeader: string;
     deliveryIdHeader: string;
-    eventHeader: "x-github-event" | "sentry-hook-resource";
+    eventHeader: "x-github-event" | "sentry-hook-resource" | "x-gitlab-event" | "x-event-key";
     createVerifier(secret: string): PluginWebhookStreamingSignatureVerifierV1;
 }>;
 
@@ -47,10 +48,28 @@ export function createHmacSha256HexSignatureVerifierV1(
     };
 }
 
-const GITHUB_SHA256_SIGNATURE_PATTERN = /^sha256=([0-9a-f]{64})$/u;
+const PREFIXED_SHA256_SIGNATURE_PATTERN = /^sha256=([0-9a-f]{64})$/u;
 // Sentry-Hook-Signature is the bare lowercase hex digest keyed by the
 // integration Client Secret (docs.sentry.io integration-platform webhooks).
 const SENTRY_SHA256_SIGNATURE_PATTERN = /^([0-9a-f]{64})$/u;
+
+/** GitLab sends the secret token verbatim; fixed-size digests avoid a length-dependent comparison. */
+function createGitlabTokenVerifierV1(secret: string): PluginWebhookStreamingSignatureVerifierV1 {
+    const expected = createHash('sha256').update(secret, 'utf8').digest();
+    let finalized = false;
+    return {
+        update() {
+            if (finalized) throw new Error('Webhook signature verifier has already been finalized');
+        },
+        verify(header) {
+            if (finalized) return false;
+            finalized = true;
+            const valid = typeof header === 'string' && header.length > 0 && !/[\r\n\0]/u.test(header);
+            const supplied = createHash('sha256').update(valid ? header : '', 'utf8').digest();
+            return timingSafeEqual(expected, supplied) && valid && secret.length > 0;
+        },
+    };
+}
 
 const SIGNED_VERIFIERS_V1: Readonly<Record<PluginWebhookSignedVerifierKindV1, PluginWebhookSignedVerifierV1>> = {
     github_hmac_sha256_v1: {
@@ -58,7 +77,7 @@ const SIGNED_VERIFIERS_V1: Readonly<Record<PluginWebhookSignedVerifierKindV1, Pl
         signatureHeader: "x-hub-signature-256",
         deliveryIdHeader: "x-github-delivery",
         eventHeader: "x-github-event",
-        createVerifier: (secret) => createHmacSha256HexSignatureVerifierV1(secret, GITHUB_SHA256_SIGNATURE_PATTERN),
+        createVerifier: (secret) => createHmacSha256HexSignatureVerifierV1(secret, PREFIXED_SHA256_SIGNATURE_PATTERN),
     },
     sentry_hmac_sha256_v1: {
         kind: "sentry_hmac_sha256_v1",
@@ -66,6 +85,20 @@ const SIGNED_VERIFIERS_V1: Readonly<Record<PluginWebhookSignedVerifierKindV1, Pl
         deliveryIdHeader: "request-id",
         eventHeader: "sentry-hook-resource",
         createVerifier: (secret) => createHmacSha256HexSignatureVerifierV1(secret, SENTRY_SHA256_SIGNATURE_PATTERN),
+    },
+    gitlab_token_v1: {
+        kind: 'gitlab_token_v1',
+        signatureHeader: 'x-gitlab-token',
+        deliveryIdHeader: 'x-gitlab-webhook-uuid',
+        eventHeader: 'x-gitlab-event',
+        createVerifier: createGitlabTokenVerifierV1,
+    },
+    bitbucket_hmac_sha256_v1: {
+        kind: 'bitbucket_hmac_sha256_v1',
+        signatureHeader: 'x-hub-signature',
+        deliveryIdHeader: 'x-request-uuid',
+        eventHeader: 'x-event-key',
+        createVerifier: (secret) => createHmacSha256HexSignatureVerifierV1(secret, PREFIXED_SHA256_SIGNATURE_PATTERN),
     },
 };
 

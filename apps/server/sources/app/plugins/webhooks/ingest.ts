@@ -1,6 +1,6 @@
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { randomUUID } from 'node:crypto';
-import { PluginWebhookDeliveryContentV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import { PluginWebhookDeliveryContentV1Schema, PluginWebhookSelectedHeaderV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 
 import { db } from "@/storage/db";
 
@@ -25,7 +25,6 @@ import { requiresProviderInstallationIdV1 } from "./routingKind";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
 
 const PROVIDER_DELIVERY_ID_PATTERN_V1 = /^[A-Za-z0-9._:-]{1,128}$/u;
-const PROVIDER_EVENT_PATTERN_V1 = /^[A-Za-z0-9._-]{1,128}$/u;
 const CONTENT_TYPE_PATTERN_V1 = /^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/u;
 
 type AccountEnvelopeRowV1 = Readonly<{
@@ -257,13 +256,16 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
         const afterAccount = unavailableIfAborted();
         if (afterAccount) return afterAccount;
         if (!account) return { kind: "rejected", statusCode: 503, code: "unavailable" };
-        const eventHeader = signed ? readSingleHeader(params.headers, signed.eventHeader) : null;
-        const eventType = eventHeader && PROVIDER_EVENT_PATTERN_V1.test(eventHeader) ? eventHeader : undefined;
+        const eventHeader = signed ? PluginWebhookSelectedHeaderV1Schema.safeParse({
+            name: signed.eventHeader, value: readSingleHeader(params.headers, signed.eventHeader),
+        }) : null;
+        const selectedEventHeader = eventHeader?.success ? eventHeader.data : undefined;
+        const eventType = selectedEventHeader?.value;
         const content = PluginWebhookDeliveryContentV1Schema.parse({
             v: 1,
             receivedAtMs: now.getTime(),
             contentType: normalizeContentType(readSingleHeader(params.headers, "content-type")),
-            headers: eventType && signed ? [{ name: signed.eventHeader, value: eventType }] : [],
+            headers: selectedEventHeader ? [selectedEventHeader] : [],
             rawBodyBytes: params.rawBody.byteLength,
             rawBodyBase64: encodeBase64(params.rawBody, "base64"),
             verified: {
