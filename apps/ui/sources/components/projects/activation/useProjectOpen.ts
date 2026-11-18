@@ -7,8 +7,6 @@ import { useOpenProject } from '../useOpenProject';
 import { createProjectOpenController, type ProjectOpenController } from './projectOpenController';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { getSessionDraftSnapshot, subscribeSessionDraft, writeProjectOpenDraft, flushSessionDraftLocally, flushProjectOpenDraftForAdmission,
     captureSessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -50,23 +48,7 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
                     if (isCurrent()) onSelectedRef.current(result);
                     return;
                 }
-                let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
-                try {
-                    account = await captureLazyActionAccountContext(result.workspace.serverId);
-                    if (!isCurrent() || account.accountId !== options.scope.accountId) return;
-                    const rows = createUiProjectAccountRowsClient(account);
-                    await rows.read();
-                    if (!isCurrent()) return;
-                    // Opening a Project here is the person adding it, so the Projects list shows it (owner 11-08).
-                    // The list is not the open: a failed write leaves the Project unlisted and still focuses it.
-                    await rows.mutateOrganization({ serverId: account.serverId,
-                        projectKey: result.facts?.projectKey ?? result.workspace.workspaceId,
-                        mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(() => undefined);
-                    if (!isCurrent()) return;
-                } catch {
-                    if (isCurrent()) setFocusUnavailable(true);
-                    return;
-                } finally { account?.dispose(); }
+                // The accepting host Open already listed the Project for its requester (owner 11-08).
                 if (!isCurrent()) return;
                 const attachedDashboard = attachedDashboardRef.current;
                 const focused = await openExistingRef.current(result.workspace.workspaceId, {

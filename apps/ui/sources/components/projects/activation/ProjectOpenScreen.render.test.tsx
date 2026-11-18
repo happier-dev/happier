@@ -186,7 +186,7 @@ describe('Project Open rendered choices', () => {
         else expect(url.searchParams.has('dashboardArtifactId')).toBe(false);
     });
 
-    it.each(['focus', 'select'] as const)('accepts a folder with %s completion, preserving the default Projects-list behavior', async completion => {
+    it.each(['focus', 'select'] as const)('accepts a folder with %s completion, leaving the Projects-list write to the host Open', async completion => {
         const draftId = completion === 'focus' ? '00000000-0000-4000-8000-000000000085' : '00000000-0000-4000-8000-000000000086';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const home = createHomeGovernanceHarness();
@@ -228,10 +228,9 @@ describe('Project Open rendered choices', () => {
             expect(written).toEqual([]);
             return;
         }
-        await vi.waitFor(() => expect(written).not.toEqual([]));
-        // No Session or recency marks a folder the person added: its organization row says it is shown.
-        expect(written).toEqual([{ key: { kind: 'project-organization', serverId: 'srv_project_open_add', projectKey: checkout.projectKey },
-            expectedRevision: 'absent', value: { hidden: false } }]);
+        await vi.waitFor(() => expect(routerSpies.navigation).not.toEqual([]));
+        // The accepting host Open records the listing for every caller; this client adds no second writer.
+        expect(written).toEqual([]);
     });
 
     it('settles the own-Source chooser from its exact draft while Account draft hydration is held', async () => {
