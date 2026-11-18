@@ -11,6 +11,7 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 import { readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { ConnectedAccountSourceReconnectRequiredError, readDeclaredConnectedAccountActionSelection } from '@happier-dev/cli-common/connectedAccounts';
@@ -149,8 +150,6 @@ export type RegistryConnectedAccountActionFormRevalidationResult = Readonly<{
   code: string;
   message: string;
 }>;
-
-export const SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID = 'authentication';
 
 function identityKey(identity: PluginContributionIdentityV1): string {
   return JSON.stringify([identity.pluginId, identity.localId]);

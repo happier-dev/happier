@@ -465,6 +465,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
         // How each new machine gets the session's folder; an archived preset makes none.
         ...(!archived ? { projectFiles: <MachinePresetProjectFilesSection testID="machine-preset.project-files" value={desiredProjectFiles}
+            serverId={props.serverId} machineId={desiredController?.machineId ?? null}
             {...(canManage && !approval.approvalPending ? { onChange: (projectFiles: SessionProjectFilesV1) => editContent({ projectFiles }) } : {})} /> } : {}),
         // Offered wherever its provider can keep an image ready, and kept for a preset that already prepares.
         ...(!archived && (provisioner?.descriptor.preparation || visiblePreset.preparation?.enabled || visiblePreset.prepared)

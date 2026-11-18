@@ -20,6 +20,12 @@ import {
 import { t } from '@/text';
 
 import { ManagedFieldRow } from './MachinePresetDetail';
+import { selectPresetGitHostingProvider, withPresetGitAccount } from './presetGitAccount';
+import { SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
+import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
+import { useFirstConnection } from '@/components/projects/deployments/useFirstConnection';
+import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 
 /** One default policy object, so an unset preset's rows keep their identity across renders. */
 const DEFAULT_CONTENT_POLICY = createDefaultWorkspaceContentPolicyV1();
@@ -31,6 +37,9 @@ const DEFAULT_CONTENT_POLICY = createDefaultWorkspaceContentPolicyV1();
 export function MachinePresetProjectFilesSection(
   props: Readonly<{
     value: SessionProjectFilesV1 | undefined;
+    serverId: string;
+    /** The managing Machine, whose SCM hosting providers name the Git account a clone uses. */
+    machineId: string | null;
     /** Absent for a viewer who cannot manage the preset: the rows stay legible, their controls dimmed. */
     onChange?: (next: SessionProjectFilesV1) => void;
     testID: string;
@@ -120,6 +129,8 @@ export function MachinePresetProjectFilesSection(
               mode="info"
               showChevron={false}
             />
+            <PresetGitAccountRow serverId={props.serverId} machineId={props.machineId} value={value}
+              onChange={onChange} testID={`${props.testID}.git-account`} />
           </>
         ) : (
           <>
@@ -138,5 +149,55 @@ export function MachinePresetProjectFilesSection(
         )}
       </ItemGroup>
     </>
+  );
+}
+
+/**
+ * The Git account a clone uses (lab F4): the managing Machine's Git host's Connected services account, chosen with
+ * the shared connected-account chooser. With none connected the row says why it is needed and opens the shared
+ * Connect flow; the new account becomes this clone's. Happier keeps the credential; the agent never receives it.
+ */
+function PresetGitAccountRow(props: Readonly<{
+  serverId: string;
+  machineId: string | null;
+  value: Extract<SessionProjectFilesV1, { kind: 'git_clone' }>;
+  onChange?: (next: SessionProjectFilesV1) => void;
+  testID: string;
+}>) {
+  const { value, onChange } = props;
+  const catalog = useDaemonScmContributionCatalog({ machineId: props.machineId, serverId: props.serverId });
+  const provider = selectPresetGitHostingProvider(catalog.hostingProviders, value.gitAccount);
+  const firstConnection = useFirstConnection(null, provider?.authService ?? null,
+    account => onChange?.(withPresetGitAccount(value, account)));
+  if (!provider) return null;
+  if (firstConnection.missing && !value.gitAccount) {
+    return (
+      <Item
+        testID={props.testID}
+        title={provider.title}
+        subtitle={t('machineDetailPage.projectFiles.gitAccountNeeded')}
+        subtitleLines={0}
+        mode="info"
+        showChevron={false}
+        rightElement={onChange ? (
+          <SectionActionButton testID={`${props.testID}.connect`}
+            title={t('machineDetailPage.projectFiles.connectGit', { service: provider.title })}
+            onPress={() => { void firstConnection.connect(); }} />
+        ) : undefined}
+      />
+    );
+  }
+  return (
+    <ConnectedAccountPurposeTargetChooser
+      testID={props.testID}
+      localizedTextPluginId={provider.pluginId ?? provider.authService.pluginId}
+      declaration={{ purpose: SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID, service: provider.authService, required: true }}
+      title={provider.title}
+      description={t('machineDetailPage.projectFiles.gitAccountCustody')}
+      value={value.gitAccount ? { kind: 'account', account: value.gitAccount } : null}
+      accountsOnly
+      disabled={!onChange}
+      onChange={next => onChange?.(withPresetGitAccount(value, next?.kind === 'account' ? next.account : null))}
+    />
   );
 }

@@ -58,3 +58,9 @@ export const ScmHostingProviderContributionSchema = lazyZodSchema(() => z.strict
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
 export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderContributionSchema>;
+
+/**
+ * The one connected-account purpose an SCM hosting provider's `authService` serves: Happier clones, pushes and reads
+ * the forge with it. The provider's qualified identity is the purpose consumer.
+ */
+export const SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID = 'authentication';
