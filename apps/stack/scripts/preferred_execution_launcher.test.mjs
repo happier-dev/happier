@@ -3581,7 +3581,19 @@ test('memory-aware Darwin probe measures absolute headroom through the native di
   await executable(join(binDir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
   await executable(join(binDir, 'sysctl'), '#!/bin/sh\ncase "$*" in *hw.memsize*) printf "28991029248\\n" ;; *) printf "{ 0.1 0.1 0.1 }\\n" ;; esac\n');
-  await executable(join(binDir, 'memory_pressure'), '#!/bin/sh\nif [ "$FIXTURE_REMOTE_TARGET" = starved ]; then ratio=18; else ratio=90; fi\nprintf "System-wide memory free percentage: %s%%\\n" "$ratio"\n');
+  // memorystatus counts compressible anonymous memory as free: on 2026-11-17 it
+  // still reported ~50% while a 96 GiB process had exhausted mac-host. Both
+  // hosts report 90% there; only vm_stat's reclaimable pages tell them apart.
+  await executable(join(binDir, 'memory_pressure'), '#!/bin/sh\nprintf "System-wide memory free percentage: 90%%\\n"\n');
+  await executable(join(binDir, 'vm_stat'), [
+    '#!/bin/sh',
+    'if [ "$FIXTURE_REMOTE_TARGET" = starved ]; then free=100000; cached=100000; else free=1500000; cached=200000; fi',
+    'printf "Mach Virtual Memory Statistics: (page size of 16384 bytes)\\n"',
+    'printf "Pages free:                               %s.\\n" "$free"',
+    'printf "Pages purgeable:                              0.\\n"',
+    'printf "File-backed pages:                        %s.\\n" "$cached"',
+    'printf "Anonymous pages:                          1500000.\\n"', '',
+  ].join('\n'));
   // Mock the remote login-shell boundary while executing its real probe body.
   await executable(join(binDir, 'bash'), '#!/bin/sh\n[ "$1" = -lc ] && shift\nexec /bin/sh -c "$1"\n');
   await executable(join(binDir, 'ssh'), [
@@ -3602,7 +3614,8 @@ test('memory-aware Darwin probe measures absolute headroom through the native di
   const telemetry = (await readFile(join(stackDir, 'dev-target-command-load-native', 'starved.telemetry'), 'utf8')).trim().split(' ');
   assert.equal(telemetry[15], 'darwin');
   assert.equal(Number(telemetry[7]), 28311552);
-  assert.ok(Number(telemetry[6]) > 0 && Number(telemetry[6]) < 6291456);
+  // (free + file-backed + purgeable) pages x 16 KiB.
+  assert.equal(Number(telemetry[6]), 3200000);
 });
 
 test('memory-aware placement admits validation at the measured floor', async (t) => {

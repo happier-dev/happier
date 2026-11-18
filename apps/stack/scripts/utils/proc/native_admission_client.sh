@@ -67,8 +67,10 @@ read_host_memory_kib() {
   host_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {if(total>0) print available,total}' /proc/meminfo 2>/dev/null || true)
   if [ -z "$host_memory" ]; then
     host_memory_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
-    host_memory_free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
-    host_memory=$(awk -v bytes="${host_memory_total_bytes:-0}" -v ratio="${host_memory_free:-0}" 'BEGIN {if(bytes>0) printf "%.0f %.0f",(bytes/1024)*ratio,bytes/1024}')
+    # Darwin's MemAvailable: free, purgeable and file-backed pages. memorystatus
+    # (memory_pressure) counts compressible anonymous memory as free, so it kept
+    # reporting ~50% free while mac-host ran out of memory on 2026-11-17.
+    host_memory=$(vm_stat 2>/dev/null | awk -v bytes="${host_memory_total_bytes:-0}" '/page size of/ {for(i=1;i<NF;i++) if($i=="of") page=$(i+1)} /^Pages free:/ {f=$3} /^Pages purgeable:/ {p=$3} /^File-backed pages:/ {c=$3} END {if(bytes>0) {total=bytes/1024; available=(f+p+c)*page/1024; if(available>total) available=total; printf "%.0f %.0f",available,total}}')
   fi
   printf '%s\n' "$host_memory"
 }
