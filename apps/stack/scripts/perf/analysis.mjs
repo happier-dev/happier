@@ -93,7 +93,7 @@ export function summarizeNetwork(input, { startMs = -Infinity, endMs = Infinity 
 
 const sumBytes = (left, right) => Number.isFinite(left) && left >= 0 && Number.isFinite(right) && right >= 0 ? left + right : null;
 const socketFamilies = new Set(['update', 'ephemeral', 'rpc-call', 'rpc-request', 'rpc-response', 'rpc-register', 'rpc-registered', 'rpc-error', 'session-alive', 'machine-alive']);
-const socketTypes = new Set(['new-message', 'message-updated', 'transcript-stream-segment', 'transcript-stream-segment-delta', 'session-personal-event', 'new-session', 'update-session', 'delete-session', 'update-machine', 'new-machine', 'delete-machine', 'update-account', 'pending-changed', 'session-organization-changed', 'activity', 'usage', 'machine-activity', 'session-runtime', 'session-list-changed']);
+const socketTypes = new Set(['new-message', 'message-updated', 'transcript-stream-segment', 'transcript-stream-segment-delta', 'session-personal-event', 'new-session', 'update-session', 'delete-session', 'update-machine', 'new-machine', 'delete-machine', 'update-account', 'pending-changed', 'session-organization-changed', 'activity', 'usage', 'machine-activity', 'session-runtime', 'session-list-changed', 'account-change']);
 
 // Socket.IO protocol v5 inside an Engine.IO message. Inspect only the JSON
 // header; never retain args or reconstruct binary attachments as content.

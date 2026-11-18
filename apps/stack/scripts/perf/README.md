@@ -476,3 +476,65 @@ per-run means. Timing p50/p95 use nearest rank and require at least five complet
 export timing-mode runs with both instruments observed OFF on each side;
 otherwise they are unavailable. Legacy unspecified-mode bundles never qualify. Inspect captured host
 load and gaps before treating any comparison as a performance result.
+
+## Request census (per-screen and per-flow request budgets)
+
+`request-census.mjs` is a lighter live check for repeated-request bugs. It
+attaches to a QA browser you already started with `dev-targets browser start`
+(through `cdp.mjs`), drives one fixed sequence and counts, per flow, server
+requests by route (`METHOD /path` with ids as `:id`), socket events by
+`direction event/type` (this directory's `socketFrameClassification`, plus the
+change kinds of `account-change` wakes), and full snapshot reads (route classes
+`session-read-batch`, `session-list`, `organization-full` from
+`networkRouteClass`). No headers, bodies, query values or text are saved.
+It also installs this directory's PERF probe (`browser-probe.js`, counts mode)
+on every document, so each flow records React `commits` and `renders` (budgeted
+totals), long-task `blockedMs` and the most-rendered components; `--attribution`
+adds the probe's update roots. The probe counts from the next document load, so
+in-app flows need a load flow (`cold`/`revisit`) after attaching.
+
+Flows: `cold` (cache disabled), `revisit` (reload), `idle60` (Home, 60 s), the
+screens `settings`, `notifications`, `store` (`/plugins`), `projects`, `inbox`,
+`newSession`, `session`, `home` (in-app return), then on the Session `turn`
+(one short turn), `stop` (Stop mid-turn) and `sendAfterStop`. A screen window
+ends after 3 s without a new server request (`--quiet-ms`, `--max-ms`); a document load waits for the app shell up to `--boot-ms` (default 10 min: a cold dev bundle on a loaded host takes minutes). Turn
+flows need `--session=<id>` of an idle Session whose Agent can answer.
+
+```sh
+node apps/stack/scripts/perf/request-census.mjs --cdp=http://127.0.0.1:PORT --page-id=PAGE \
+  --ui=QA_UI_ORIGIN --server=QA_SERVER_ORIGIN --session=SESSION_ID \
+  --out=run.json --budgets=apps/stack/scripts/perf/census/budgets.json
+```
+
+Exit 1 when any flow total, route or socket key is above its budget (a key
+without a budget has budget 0) or a budgeted flow did not run. Budgets are the
+accepted measured counts on the bed recorded in `census/budgets.json`; they are
+workload-dependent, so compare only on an equivalent bed (fresh Account, one
+Muse Machine, one Session). Lower a budget with
+`--write-budgets=census/budgets.json --runs=a.json,b.json` after a confirmed
+decrease; raising one is a reviewed decision, not a refresh. `--input=run.json`
+re-checks a saved run. Like the journeys above, this is a development QA
+check, not a CI gate.
+
+### Bytes on the wire (P03-NET-BYTES)
+
+Every flow also records what crossed the network, without keeping any body:
+request bodies up; per route the response wire bytes (headers plus compressed
+body, CDP `encodedDataLength`) and decoded bytes; CORS preflights (count and
+bytes; a cross-origin UI preflights every distinct authorized URL); static
+assets (count, cache hits, wire and decoded bytes); Socket.IO frames and bytes
+per direction and per `event/type`; responses whose body equals an earlier one
+for the same route in the flow (a SHA-256 prefix is compared and discarded);
+and, for received text frames of 1 KiB or more, what permessage-deflate would
+send per message and with a shared context (the server does not negotiate it
+today, so frame length is the wire size). A second table prints these.
+
+Further flows: `search` (`/search?q=message`), `scrollBack` (20 wheel steps up
+in the open transcript), `switch` (to `--session-2` and back), `idleVisible`
+and `idleHidden` (Home for `--idle-ms`, default 5 min; hidden = another tab in
+front). `--throttle=3gslow|3g|4g` applies WebPageTest connectivity profiles
+through Chrome network emulation (HTTP and WebSocket); `readyMs` is the time to
+the flow's readiness element (app shell, or the Session composer).
+`--shapes` adds per-route and per-socket-type byte weights of each JSON field
+path (names and sizes only, id-like map keys folded to `:id`) to find fields
+that are sent but never read.

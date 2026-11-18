@@ -152,6 +152,7 @@ test('frame classification projects fixed vocabulary across namespaces, ACKs, bi
   assert.deepEqual(analysis.socketFrameClassification('42/ns,1["update",{"body":{"t":"private","delivery":"private"}}]', 1),
     { kind: 'event', event: 'update', type: 'unknown', delivery: 'unspecified' });
   assert.equal(analysis.socketFrameClassification('451-/ns,1["update",{"body":{"t":"message-updated","delivery":"hint"}}]', 1).type, 'message-updated');
+  assert.equal(analysis.socketFrameClassification('42["update",{"body":{"t":"account-change","changeKinds":["session"]}}]', 1).type, 'account-change');
   assert.equal(analysis.socketFrameClassification('43/ns,12["private"]', 1).kind, 'ack');
   assert.equal(analysis.socketFrameClassification('42[broken', 1).event, 'unknown');
   assert.equal(analysis.socketFrameClassification('private', 2).event, 'binary');
