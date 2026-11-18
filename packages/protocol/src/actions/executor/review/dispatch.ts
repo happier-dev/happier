@@ -20,12 +20,13 @@ import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } fr
 import { resolveReviewNarratorPolicy } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
-import { type ActionId } from '../../actionIds.js';
+import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 import { dispatchReviewRoundAction } from './rounds.js';
+import { dispatchReviewSettlementAction } from './settlement.js';
 
 export function reviewScopeForInput(input: unknown): 'paths' | undefined {
   const record = readRecord(input);
@@ -67,6 +68,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
   workflowSessionScope: WorkflowSessionScopeV1 | null;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, ctx, parsed, data, executeHostChild, workflowSessionScope } = inv;
+  if (actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1) return await dispatchReviewSettlementAction({ deps, ctx, data: parsed.data });
   const roundAction = await dispatchReviewRoundAction({ actionId, deps, ctx, data: parsed.data, executeHostChild });
   if (roundAction) return roundAction;
 

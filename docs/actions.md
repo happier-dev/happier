@@ -497,6 +497,22 @@ marks over retained evidence keep their existing local Home, Session-access and
 saved-scope checks. Live capture, generation, commit-plan application and live
 content-key marks need the daemon's installed backend owner. Machine-wide saved
 inventory still requires an explicit Machine target.
+
+In unreleased 0.3 source, `review.start` accepts an ordered `reviewers` roster.
+Engine entries carry their own model, Role, Profile, credentials and options;
+repeating an engine creates distinct selections. Session and model entries use
+the shared executable-participant contracts, and person entries carry the
+canonical principal and required/optional request. Authored `steps` keep their own
+roster and instructions; `then` selects `report` or one `fix` pass. Native single
+reviewers retain execution-run completion. Mixed and staged starts compose
+ordinary Workflow blocks and return Workflow completion. Each authored stage
+runs once; the optional fix sends one request to the selected Session. The final
+`review.get` reads persisted coverage, finding counts and human verdicts. Execution
+can finish while a requested person's verdict is still pending. The Review record
+owns these facts; callers do not infer them from the number of runs.
+Existing saved and accepted Workflow definitions retain their authored loops
+and effects, with historical engine-list inputs decoded at the Review owner.
+
 In unreleased 0.3, `review.apply` also accepts a Review id and a destination
 Session. Its existing executor reads the Review's canonical finding pages,
 selects accepted findings through the shared acceptance owner, and sends one

@@ -564,6 +564,27 @@ envelope and detached-target object remain closed; the context is opaque JSON
 data and grants no identity, authority or routing meaning. No migration, wire
 epoch, capability gate or earlier-development adapter is added.
 
+## Review rosters and completion (unreleased 0.3)
+
+Current Review start writers emit ordered `reviewers` selections rather than
+`engineIds`. The canonical Review input owner translates the observed retained
+engine-list shape into engine selections, preserving its engine options and
+launch settings before normal validation. Draft hydration and runtime readers
+consume that same translator. Existing accepted Workflow graphs retain their
+original structure and semantics; their historical leaf inputs reach this owner.
+This reader does not preserve the retired shape as a second live start contract.
+
+Native starts retain `execution_runs`, with their existing terminal outcomes and
+optional round binding. The canonical Action completion owner also supports
+`workflow_runs` through the existing pushed Workflow observation transport.
+New Review compositions use one-pass Workflow blocks and the canonical
+`review.get` aggregate. Saved historical graphs retain their authored repeat/fix
+semantics; the new starter does not rewrite them. Native launch requests retain the
+nonsecret original Review output selection separately from reviewer turn input;
+null means findings only and an absent field means an older unknown selection.
+Matching development Protocol, CLI, daemon, UI and generated SDK readers reload
+together. These additions introduce no wire epoch or released mixed-version promise.
+
 ## Failure cause carriers (unreleased 0.3)
 
 Execution-run Action completion observations and review, plan and narration terminal

@@ -5331,6 +5331,21 @@ development Protocol and CLI readers reload together; older readers cannot
 establish this scope. No Hunt entity, scheduler or host-side per-file fan-out
 is added.
 
+`review.start` uses the Protocol-owned ordered `reviewers` union. The CLI's engine
+shorthand emits engine selections, while `--input-json` accepts the complete mixed
+roster. Per-selection launch settings stay with that entry, including two entries
+for the same engine. Session and model entries retain the executable-participant
+owner's exact identity and launch contracts. Person requests create no Run.
+Historical retained inputs carrying `engineIds` are translated by
+`decodeLegacyReviewStartInput` before canonical validation; current callers emit
+`reviewers`. Accepted historical Workflow definitions retain their authored graph.
+Mixed and staged requests compose ordinary Workflow blocks for one authored pass.
+Coverage settlement uses the admitted reviewer receipts, and the final
+`review.get` reads the canonical finding counts and requested-person verdicts.
+Failed, partial or missing reviewer output cannot become complete-empty coverage.
+An explicit `then: fix` sends one fix request without starting another review;
+New round is a separate admission.
+
 The start composer's “Report to this session” choice uses the existing optional boolean `notifyParentOnCompletion`. Review/Plan/Delegate Action starts and the rowless first-Send start preserve explicit `true` and `false`; malformed values are refused rather than silently dropped. When omitted, `resolveExecutionRunNotifyParentDefaultV1` defaults bounded work to On and long-lived conversations to the existing Account preference (Off unless enabled). The runtime uses that one resolved value for state and the daemon marker. `review.start` requests `retentionPolicy: 'resumable'`, but continuation still depends on the Agent's retained resume support.
 
 `review.follow_up` admits a successful review only when the runtime lifecycle owner proves that its exact retained provider session can resume. It never substitutes a fresh reviewer. Running or retiring reviews return `execution_run_busy`; cancelled, failed or timed-out reviews return `review_follow_up_ended`; ephemeral reviews return `review_follow_up_not_resumable`; missing or mismatched resume handles return `review_follow_up_resume_unavailable`. The card's retention pre-check is advisory; runtime admission remains authoritative. `execution.run.cancel_turn` uses the existing `execution.run.cancelTurn.v1` RPC and cancellation owner, addressing an exact Run occurrence and turn without stopping the Run.
