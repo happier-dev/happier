@@ -28,6 +28,7 @@ import {
     MachineAddFailureNotice,
     MachineAddPaneHeader,
     MachineAddPageLeadProvider,
+    useMachineAddPaneHeaderDrawn,
     type MachineAddPageLead,
     MachineAddStepList,
     MachineArrivedCard,
@@ -282,6 +283,7 @@ function MachineAddPane(props: Readonly<{
 }>) {
     const { flow, pathId, testID, onPage } = props;
     const router = useRouter();
+    const headerDrawn = useMachineAddPaneHeaderDrawn();
     const path = flow.paths.find((candidate) => candidate.id === pathId) ?? null;
     const { startWatching } = flow;
     const runsCommand = path?.runs === 'command';
@@ -588,9 +590,12 @@ function MachineAddPane(props: Readonly<{
             // The pairing panel's step and scan sections own the page edge, between the lead and the terminal fallback.
             return (
                 <>
-                <PaneSection onPage={onPage}>
-                    <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('addFlows.pathAnotherLead')} />
-                </PaneSection>
+                {/* On a pushed page the header hands its lead to the page header and draws nothing: no empty section. */}
+                {headerDrawn ? (
+                    <PaneSection onPage={onPage}>
+                        <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('addFlows.pathAnotherLead')} />
+                    </PaneSection>
+                ) : <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('addFlows.pathAnotherLead')} />}
                 <HomePairingPanel
                     purpose="computer"
                     layout="section"

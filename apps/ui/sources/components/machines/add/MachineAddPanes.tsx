@@ -31,6 +31,11 @@ const MachineAddPageLeadContext = React.createContext<MachineAddPageLead | null>
 /** Inside a pushed way's page the pane hands its lead to the page header instead of drawing its own. */
 export const MachineAddPageLeadProvider = MachineAddPageLeadContext.Provider;
 
+/** Whether the pane header draws itself (false on a pushed way's page, where the page header shows its lead). */
+export function useMachineAddPaneHeaderDrawn(): boolean {
+    return React.useContext(MachineAddPageLeadContext) === null;
+}
+
 /** The pane's title and one-paragraph lead (what this way does, in the person's words). */
 export function MachineAddPaneHeader(props: Readonly<{ title: string; lead: string; testID?: string }>) {
     const styles = stylesheet;
