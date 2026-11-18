@@ -414,7 +414,7 @@ async function runLive(options) {
       if (await waitFor(cdp, visible('session-composer-input'), 180000) === null) throw new Error('composer did not render');
       await rec.quiet(quietMs, maxMs);
     };
-    if (['turn', 'stop', 'sendAfterStop'].some(flow => selected.includes(flow))) await onSession().catch(() => {});
+    if (['turn', 'stream', 'stop', 'sendAfterStop'].some(flow => selected.includes(flow))) await onSession().catch(() => {});
     await measure('turn', async () => { await send(cdp, SHORT_PROMPT); return turnEnd(180000); });
     // Streaming: a known number of text deltas, the time to the first streamed text and the bytes per delta.
     await measure('stream', async () => {
