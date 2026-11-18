@@ -2,9 +2,9 @@
  * The request an exception occurrence happened in (P7 J2): its waterfall and the logs it wrote.
  *
  * Both come from the existing capture trace read by the occurrence's `traceId`, admitted once per
- * request for the Environment's telemetry. Trace summaries carry no log bodies (the capture list
- * contract), so a log line reads its body through the existing capture detail read only when the
- * person opens it.
+ * request for the Environment's telemetry. Trace summaries carry each log's bounded, redacted body
+ * prefix (marked when cut), so the lines read at rest; a cut line reads its whole body through the
+ * existing capture detail read only when the person opens it.
  */
 
 import * as React from 'react';
@@ -13,12 +13,14 @@ import {
   Item,
   ItemGroup,
   LoadingState,
+  Stack,
+  Text,
   useExecutePluginAction,
   usePluginTheme,
   usePluginTranslation,
   type PluginActionExecution,
 } from '@happier-dev/plugin-ui';
-import { IntervalTimeline } from '@happier-dev/plugin-ui/components';
+import { HAPPIER_PAGE_METRICS, HappierPressable, IntervalTimeline } from '@happier-dev/plugin-ui/components';
 import { DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureQueryGetResultV1Schema, DatabaseCaptureTraceGetResultV1Schema, type DatabaseCaptureSourceV1, type DatabaseCaptureSummaryV1, type DatabaseCaptureTraceGetResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
@@ -47,6 +49,12 @@ type BodyState =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; body: string | null }>
   | Readonly<{ kind: 'unavailable' }>;
+
+/** The log card keeps the sheet's row insets; its lines stack at the code line height, as the lab's log block. */
+const LOG_LINES_INSET = Object.freeze({
+  paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+  paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
+});
 
 function failureCode(execution: PluginActionExecution<unknown>): string {
   return execution.status === 'error' || execution.status === 'outcomeUnknown'
@@ -289,43 +297,54 @@ function RequestLogs({
         logs.length === 1 ? '1 line' : '{count} lines',
       ).replace('{count}', String(logs.length))}
     >
-      {logs.map((log) => {
-        const body = bodies[log.id];
-        const severity = severityWord(log.severityNumber);
-        const subtitle =
-          body === undefined
-            ? undefined
-            : body.kind === 'loading'
-              ? text(
-                  'plugins.telemetry.exceptions.readingLog',
-                  'Reading this line…',
-                )
-              : body.kind === 'unavailable'
-                ? text(
-                    'plugins.telemetry.exceptions.logUnavailable',
-                    'The collector didn’t return this line.',
-                  )
-                : (body.body ??
-                  text(
-                    'plugins.telemetry.exceptions.logEmpty',
-                    'This line has no message.',
-                  ));
-        return (
-          <Item
-            key={log.id}
-            title={`${clockOf(locale, log.at)}  ${severity}`}
-            {...(subtitle === undefined ? {} : { subtitle })}
-            {...(log.serviceName ? { detail: log.serviceName } : {})}
-            tone={
-              severity === 'error' || severity === 'fatal'
-                ? 'danger'
-                : undefined
-            }
-            accessibilityRole="button"
-            onPress={() => open(log.id)}
-          />
-        );
-      })}
+      {/* The request's log as it was written: one mono line each, time · level · the start of its message,
+          on one card with no rules between lines (lab p7Issues occurrence). A cut line ends in "…" and opens
+          its whole message through the detail read; a whole line has nothing more to open. */}
+      <Stack gap="xsmall" testID="telemetry.exception.logs" style={LOG_LINES_INSET}>
+        {logs.map((log) => {
+          const body = bodies[log.id];
+          const severity = severityWord(log.severityNumber);
+          const failing = severity === 'error' || severity === 'fatal';
+          const prefix = log.bodyPrefix ?? null;
+          const truncated = log.bodyPrefixTruncated === true;
+          const clock = clockOf(locale, log.at);
+          const line = (
+            <Text variant="code" numberOfLines={1} tone={failing ? 'danger' : 'neutral'}>
+              <Text variant="code" tone="secondary" value={`${clock}  `} />
+              <Text variant="code" tone={failing ? 'danger' : 'secondary'} value={severity} />
+              {prefix === null ? null : <Text variant="code" tone={failing ? 'danger' : 'neutral'} value={`  ${prefix}${truncated ? '…' : ''}`} />}
+            </Text>
+          );
+          const opened =
+            body === undefined
+              ? null
+              : body.kind === 'loading'
+                ? text('plugins.telemetry.exceptions.readingLog', 'Reading this line…')
+                : body.kind === 'unavailable'
+                  ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
+                  : (body.body ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
+          return (
+            <Stack key={log.id} gap="none" testID={`telemetry.exception.log.${log.id}`}>
+              {truncated ? (
+                <HappierPressable
+                  testID={`telemetry.exception.log.${log.id}.open`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${clock} ${severity} ${prefix ?? ''}…`}
+                  expanded={body !== undefined}
+                  onPress={() => open(log.id)}
+                >
+                  {line}
+                </HappierPressable>
+              ) : (
+                line
+              )}
+              {opened === null ? null : (
+                <Text variant="code" selectable tone={body?.kind === 'ready' ? (failing ? 'danger' : 'neutral') : 'secondary'} value={opened} />
+              )}
+            </Stack>
+          );
+        })}
+      </Stack>
     </ItemGroup>
   );
 }

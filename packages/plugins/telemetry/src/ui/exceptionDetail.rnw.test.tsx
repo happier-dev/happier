@@ -200,8 +200,10 @@ const TRACE = {
     span('root', 1_000, 412, { spanId: 'span-root', spanKind: 2, endpointMethod: 'POST', endpointRoute: '/checkout', httpStatusCode: 500, outcome: 'error' }),
     span('stripe', 1_040, 318, { spanId: 'span-stripe', parentSpanId: 'span-root', shape: 'stripe.paymentIntents.create' }),
     span('receipt', 1_360, 58, { spanId: 'span-receipt', parentSpanId: 'span-root', shape: 'buildReceipt', outcome: 'error' }),
-    { id: 'log-1', worktree: 'env', kind: 'log', source: 'otlp', at: 1_004, traceId: 'trace-7f2c', spanId: 'span-root', severityNumber: 9 },
-    { id: 'log-2', worktree: 'env', kind: 'log', source: 'otlp', at: 1_400, traceId: 'trace-7f2c', spanId: 'span-receipt', severityNumber: 17 },
+    { id: 'log-1', worktree: 'env', kind: 'log', source: 'otlp', at: 1_004, traceId: 'trace-7f2c', spanId: 'span-root', severityNumber: 9,
+      bodyPrefix: 'checkout start cart=c_8812', bodyPrefixTruncated: false },
+    { id: 'log-2', worktree: 'env', kind: 'log', source: 'otlp', at: 1_400, traceId: 'trace-7f2c', spanId: 'span-receipt', severityNumber: 17,
+      bodyPrefix: 'TypeError: Cannot read properties of undefined', bodyPrefixTruncated: true },
   ],
   repeatedQueries: [],
   slowChildSpans: [],
@@ -327,8 +329,14 @@ describe('the Happier exception detail', () => {
     // The span that threw carries its tag where the waterfall row is read.
     expect((await page.getAllByRole('button')).some((target) => target.name?.includes('threw'))).toBe(true);
     await expect(page.getByText('Logs from this request')).resolves.toBeDefined();
+    // At rest each line reads its message from the list's prefix, with no detail read; a cut line says so.
+    await expect(page.getByText('  checkout start cart=c_8812')).resolves.toBeDefined();
+    await expect(page.getByText('  TypeError: Cannot read properties of undefined…')).resolves.toBeDefined();
     expect(calls.some((call) => call.localId === 'capture/query/get')).toBe(false);
-    const errorLine = (await page.getAllByRole('button')).find((target) => target.name?.includes('error'));
+    // Only the cut line opens; a whole line has nothing more to read.
+    const buttons = await page.getAllByRole('button');
+    expect(buttons.some((target) => target.name?.includes('checkout start'))).toBe(false);
+    const errorLine = buttons.find((target) => target.name?.includes('error'));
     expect(errorLine).toBeDefined();
     await act(async () => {
       await page.press(errorLine!);
