@@ -483,6 +483,8 @@ export function checkNavCoverage({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) {
 const AGENT_PAGE_ALIASES = new Map([
   ['auggie', 'augment'],   // the page is named for Augment, the vendor
   ['ohMyPi', 'oh-my-pi'],  // kebab-case, matching the project's own name
+  ['slices', 'slice-review'],
+  ['panels', 'panel-review'],
 ]);
 
 export function checkAgentPageCoverage({
