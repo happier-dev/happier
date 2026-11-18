@@ -3,6 +3,9 @@ import * as React from 'react';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { selectMachineCollectionMembership } from '@/components/settings/machines/collection/machineCollectionModel';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { selectMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { useMachineListForServerSelection } from '@/sync/store/hooks';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 
@@ -16,28 +19,38 @@ import {
   type FleetUpdatesSummary,
 } from './machineFleetUpdates';
 
-/** One Home's Machines as the facts the fleet updates show; the same array while none of them changed. */
+const identity = (machines: readonly Machine[]) => machines;
+
+/**
+ * One Home's Machines as the facts the fleet updates show: the Machines collection's members (an ended creation stays
+ * in Archive, a sandbox belongs to its host), the same array while none of them changed. Until the managed inventory
+ * first answers, the visible enrolled list stands in.
+ */
 function useFleetMachines(serverId: string): readonly FleetMachine[] {
-  const select = React.useMemo(() => {
-    let previous: readonly FleetMachine[] | null = null;
-    return (machines: readonly Machine[]) => {
-      // The one Machine name owner: a settled name, told apart from its namesakes ("NLDW6-3-11-20 · 2e0f").
-      const names = resolveMachineDisplayNames(machines);
-      previous = retainKeyedRows(
-        previous,
-        machines.map((machine) => ({
-          machineId: machine.id,
-          name: names.get(machine.id) ?? machine.id,
-          online: isMachineOnline(machine),
-          installationId: machine.installationId ?? null,
-          platform: machine.metadata?.platform ?? null,
-        })),
-        (row) => row.machineId,
-      );
-      return previous;
-    };
-  }, []);
-  return useMachineListForServerSelection(serverId, select);
+  const visible = useMachineListForServerSelection(serverId, identity);
+  const managedServerIds = React.useMemo(() => [serverId], [serverId]);
+  const managed = useManagedMachineInventory(managedServerIds, undefined, undefined, true);
+  const managedMachines = managed.firstAnswerPending ? null : managed.machinesByServerId[serverId];
+  const previous = React.useRef<readonly FleetMachine[] | null>(null);
+  return React.useMemo(() => {
+    const members = managedMachines === null
+      ? visible
+      : selectMachineFleet(selectMachineCollectionMembership(visible, managedMachines).currentEnrolled);
+    // The one Machine name owner: a settled name, told apart from its namesakes ("NLDW6-3-11-20 · 2e0f").
+    const names = resolveMachineDisplayNames(members);
+    previous.current = retainKeyedRows(
+      previous.current,
+      members.map((machine) => ({
+        machineId: machine.id,
+        name: names.get(machine.id) ?? machine.id,
+        online: isMachineOnline(machine),
+        installationId: machine.installationId ?? null,
+        platform: machine.metadata?.platform ?? null,
+      })),
+      (row) => row.machineId,
+    );
+    return previous.current;
+  }, [managedMachines, visible]);
 }
 
 /**
