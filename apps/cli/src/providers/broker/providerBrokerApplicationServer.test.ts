@@ -9,6 +9,8 @@ import { createPrivateProviderBrokerStreamLifetime } from './daemonProviderBroke
 import {
   createProviderBrokerRouteGrantSigningInputV1,
   encodeProviderBrokerAuthorityV1,
+  ProviderConnectionIdSchema,
+  ProviderConnectionSecurityFingerprintV1Schema,
   type ProviderBrokerRouteGrantPayloadV1,
   type SignedProviderBrokerRouteGrantV1,
 } from '@happier-dev/protocol';
@@ -130,8 +132,8 @@ describe('Provider broker target application integration', () => {
       const target = await server.createActionStreamTarget({ kind: 'action_operation', authority: {
         payload: { v: 3, grantId: 'action-grant', aud: 'happier-provider-broker-action-v3',
           issuedAt: 100, expiresAt: 200, teamId: payload.teamId, resourceId: payload.resourceId,
-          source: { v: 1, kind: 'provider_connection', connectionId: 'pc_source',
-            connectionSecurityFingerprint: 'connection-security:v1:source', credentialSlotId: 'apiKey' },
+          source: { v: 1, kind: 'provider_connection', connectionId: ProviderConnectionIdSchema.parse('pc_source'),
+            connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v1:source'), credentialSlotId: 'apiKey' },
           consumer: { kind: 'action_operation', operationId: 'operation', actionId: 'example.cloud/actions/options',
             pluginVersion: '1.0.0', purpose: { consumer: { pluginId: 'example.cloud', localId: 'options' }, purpose: 'cloud-api' } },
           inputDigest: computeActionInputApprovalDigestV1('example.cloud/actions/options', actionInput),

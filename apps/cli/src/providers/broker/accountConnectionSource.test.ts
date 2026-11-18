@@ -3,14 +3,14 @@ import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnection
   ProviderContributionV1Schema, ProviderSettingsV1Schema, splitProviderSettingsV1,
   createProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol';
 import { readProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
-import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeBindingFingerprintV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAccountConnectionBrokerSourceOpen } from './accountConnectionSource';
-import { createBrokerProviderRegistry } from './providerBroker.testkit';
+import { createBrokerProviderRegistry, readProviderBrokerResponseBody } from './providerBroker.testkit';
 import { projectProviderBrokerApplication } from './applicationProjection';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -27,7 +27,9 @@ describe('personal hub source admission', () => {
           ...(changedFact === 'providerHeaderCollision' ? { sourceEnvelopeTransport: undefined } : {}) } }),
     }]));
     const registry = { providersByContributionKey };
-    const gatewayPurpose = [...providersByContributionKey.values()][0]!.definition.managedRuntime!.connectedAccounts[0];
+    const gateway = [...providersByContributionKey.values()][0]!;
+    const gatewayPurpose = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: gateway.identity,
+      managedRuntime: gateway.definition.managedRuntime! }).connectedAccounts[0];
     const connectionId = ProviderConnectionIdSchema.parse('personal-source');
     const initial = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{ v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
@@ -174,7 +176,7 @@ describe('personal hub source admission', () => {
           else {
             const raw = await response;
             expect(raw.status).toBe(503);
-            expect(await new Response(raw.body).text()).toBe('gateway refusal');
+            expect(new TextDecoder().decode(await readProviderBrokerResponseBody(raw.body))).toBe('gateway refusal');
           }
         } finally { await opened.cleanup(); }
       } else if (changedFact === 'homeLiveness') {

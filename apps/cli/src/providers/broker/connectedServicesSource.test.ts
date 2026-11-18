@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
+import { PrivateLabelReadV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -32,7 +33,7 @@ function resource(overrides: Partial<TeamCredentialResourceSummaryV1> = {}): Tea
     teamId: 'team-1',
     custodianAccountId: 'custodian-1',
     sourceOwnerDisplayName: null,
-    displayName: 'Shared Codex',
+    displayName: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'Shared Codex' }, recipientEnvelope: null }),
     enabled: true,
     revision: 7,
     deliveryPolicy: { preferredAllowedModes: ['brokered'] },
