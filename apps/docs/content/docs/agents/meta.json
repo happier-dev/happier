@@ -29,6 +29,8 @@
     "muse",
     "coderabbit",
     "deepsec",
+    "slice-review",
+    "panel-review",
     "custom-acp",
     "acp-backends",
     "provider-integrations",

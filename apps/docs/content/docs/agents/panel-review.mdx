@@ -1,0 +1,44 @@
+---
+title: Panel review (development preview)
+description: Run finite native panel reviews and preserve structured verdict evidence.
+---
+
+Panel review runs a single native reviewer or a configured panel and returns
+ordinary Happier findings with native verdict and member attribution.
+
+## Availability
+
+This optional plugin is available in unreleased 0.3 development source as
+`happier.review.panels`. Enable the bundled plugin on the reviewing Machine,
+then explicitly install its native dependency through the plugin's setup flow.
+See [plugin packaging and installation](/plugins/packaging). Its managed
+dependency uses the vendor's published release archive and Happier's platform
+and checksum handling. Enabling the plugin starts no daemon or review.
+
+## Run a review
+
+Select **Panel review** for a supported change review. Choose the native agent,
+model and reasoning options; panel mode consumes the repository's native panel
+configuration. The selected backend needs working model access on that Machine.
+Real provider authentication remains release validation.
+
+Each run starts its own native daemon with an isolated data directory beneath
+the plugin's durable storage. The plugin submits one review, reads that selected
+job's structured result, and stops the daemon when the run finishes. It does not
+use the person's normal native daemon or data directory.
+
+## Findings and Stop
+
+Native pass, fail and unable-to-review verdicts are evidence separate from a
+person's Happier decision. Substantive findings from a failed panel member remain
+available. A missing or unsupported structured document is an error, never an
+empty successful review.
+
+Stop cancels the selected native job before stopping its daemon. There is no
+always-on service, install-time daemon, hook installation or ambient review
+import. Start a new Happier round to review again.
+
+## Related
+
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Plugin packaging](/plugins/packaging)

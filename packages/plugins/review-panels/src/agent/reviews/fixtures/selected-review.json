@@ -1,0 +1,58 @@
+{
+  "job_id": 3,
+  "structured_output": {
+    "summary": "Deterministic process-boundary review.",
+    "verdict": "fail",
+    "findings": [
+      {
+        "end_line": 1,
+        "sources": [
+          1
+        ],
+        "location": "index.js:1",
+        "kind": "defect",
+        "file": "index.js",
+        "start_line": 1,
+        "confidence": 0.9,
+        "problem": "The fixture returns the wrong value.",
+        "fix": "Return the selected value.",
+        "severity": "high",
+        "topic": "design"
+      }
+    ],
+    "source_labels": [
+      "codex (exhaustive)",
+      "codex (exhaustive)"
+    ],
+    "schema_version": 3
+  },
+  "panel": {
+    "name": "fixture",
+    "synthesis_job_id": 3,
+    "members": [
+      {
+        "job_id": 1,
+        "name": "first",
+        "agent": "codex",
+        "review_type": "exhaustive",
+        "status": "done",
+        "verdict": "F",
+        "non_voting": false
+      },
+      {
+        "job_id": 2,
+        "name": "second",
+        "agent": "codex",
+        "review_type": "exhaustive",
+        "status": "done",
+        "verdict": "F",
+        "non_voting": false
+      }
+    ]
+  },
+  "job": {
+    "id": 3,
+    "status": "done",
+    "verdict": "F"
+  }
+}

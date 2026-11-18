@@ -1,0 +1,46 @@
+---
+title: Slice review (development preview)
+description: Run repository Hunts with native slice evidence and retained engine state.
+---
+
+Slice review examines a repository in native slices and returns ordinary Happier
+findings with reproduction steps, evidence and suggested regression tests.
+
+## Availability
+
+This optional plugin is available in unreleased 0.3 development source as
+`happier.review.slices`. Enable the bundled plugin on the Machine that will run
+the review, then explicitly install its native dependency through the plugin's
+setup flow. See [plugin packaging and installation](/plugins/packaging). The
+managed dependency uses Happier's JavaScript runtime; a system Node installation
+is not required. Enabling the plugin does not start a review or install its
+native dependency.
+
+## Run a Hunt
+
+Choose a repository Hunt and select **Slice review** as the reviewer. Configure
+the native provider and model for that Machine, then start the review. The model
+backend must already have working access in the selected launch environment.
+Real provider login remains release validation; the development process probes
+use a deterministic model boundary.
+
+The reviewer maps the repository and passes an explicit list of active slices
+to the native engine. You can supply selected slice IDs through the engine
+options. The native engine owns scheduling. Change-only or captured comparison
+reviews are unsupported by this reviewer.
+
+## Findings and Stop
+
+Each finding retains its full native record, including slice identity,
+categorical confidence, reproduction and test-gap evidence. Native confidence
+is not converted to a numeric estimate. A failed review can still return useful
+findings and is shown as failed or incomplete.
+
+Stop cancels the local run. Native state remains in the plugin's durable data
+directory outside the repository, so another run can reuse it. Happier owns
+finding decisions; the plugin does not invoke native fixes or open pull requests.
+
+## Related
+
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Plugin packaging](/plugins/packaging)
