@@ -98,7 +98,7 @@ it('stages exact source without credential files and returns only container-prep
   expect(request.args).toContain('--name');
   expect(request.env).toBeUndefined();
   expect(request.deploymentEnv).toBeUndefined();
-  expect(h.spawn.mock.calls[0][1]).toEqual({ signal });
+  expect(h.spawn.mock.calls[0][1]).toEqual({ signal, outputDelivery: 'invocation' });
   expect(h.dispose).toHaveBeenCalledOnce();
 });
 
