@@ -57,27 +57,6 @@ pub(crate) fn build_pet_overlay_window_spec(always_on_top: bool) -> DesktopPetOv
     }
 }
 
-pub(crate) fn build_pet_overlay_window_navigation_url(
-    current_url: &tauri::Url,
-) -> Result<tauri::Url, String> {
-    let preserved_query_pairs: Vec<(String, String)> = current_url
-        .query_pairs()
-        .filter(|(key, _)| key != "desktopPetOverlayWindow")
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
-        .collect();
-    let mut next = current_url.clone();
-    next.set_path("/desktop/pet-overlay");
-    next.set_query(None);
-    {
-        let mut query = next.query_pairs_mut();
-        query.append_pair("desktopPetOverlayWindow", "1");
-        for (key, value) in preserved_query_pairs {
-            query.append_pair(&key, &value);
-        }
-    }
-    Ok(next)
-}
-
 pub(crate) fn resolve_pet_overlay_ignore_cursor_events(input_locked: bool) -> bool {
     input_locked
 }
@@ -349,21 +328,6 @@ mod tests {
         assert!(
             production_source.contains("set_visible_on_all_workspaces(true)"),
             "reused pet overlay windows should re-assert all-Spaces visibility",
-        );
-    }
-
-    #[test]
-    fn pet_overlay_navigation_url_preserves_existing_query_and_targets_overlay_route() {
-        let current_url =
-            tauri::Url::parse("http://localhost:8081/sessions?serverId=srv-1").expect("valid URL");
-
-        let target_url = build_pet_overlay_window_navigation_url(&current_url)
-            .expect("navigation URL should build");
-
-        assert_eq!(target_url.path(), "/desktop/pet-overlay");
-        assert_eq!(
-            target_url.query(),
-            Some("desktopPetOverlayWindow=1&serverId=srv-1"),
         );
     }
 

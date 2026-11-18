@@ -477,27 +477,6 @@ fn show_macos_overlay_window_without_activation<R: Runtime>(
     window.show().map_err(|error| error.to_string())
 }
 
-pub(crate) fn build_overlay_window_navigation_url(
-    current_url: &tauri::Url,
-) -> Result<tauri::Url, String> {
-    let preserved_query_pairs: Vec<(String, String)> = current_url
-        .query_pairs()
-        .filter(|(key, _)| key != "desktopOverlayWindow")
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
-        .collect();
-    let mut next = current_url.clone();
-    next.set_path("/desktop/activity-overlay");
-    next.set_query(None);
-    {
-        let mut query = next.query_pairs_mut();
-        query.append_pair("desktopOverlayWindow", "1");
-        for (key, value) in preserved_query_pairs {
-            query.append_pair(&key, &value);
-        }
-    }
-    Ok(next)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

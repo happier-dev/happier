@@ -541,7 +541,6 @@ mod tests {
     use super::*;
     use super::monitor_resolution::{logical_rect_from_physical_bounds, resolve_monitor_logical_scale_factor};
     use super::placement::DesktopActivityOverlayMonitorSource;
-    use super::window_lifecycle::build_overlay_window_navigation_url;
     use serde_json::{json, Value};
     use std::{env, fs, path::PathBuf};
     #[test]
@@ -814,47 +813,6 @@ mod tests {
             assert!(capabilities.contains(&json!("notch-presentation")),
                 "{config_name} should include the notch presentation capability");
         }
-    }
-
-    #[test]
-    fn builds_the_overlay_window_navigation_url_with_the_overlay_route_and_marker() {
-        let current_url = tauri::Url::parse("http://localhost:8081/").expect("valid url");
-        let next_url =
-            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
-
-        assert_eq!(
-            next_url.as_str(),
-            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1"
-        );
-    }
-
-    #[test]
-    fn builds_the_overlay_window_navigation_url_preserving_existing_server_scope() {
-        let current_url =
-            tauri::Url::parse("http://localhost:8081/?server=http%3A%2F%2F127.0.0.1%3A3009")
-                .expect("valid url");
-        let next_url =
-            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
-
-        assert_eq!(
-            next_url.as_str(),
-            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1&server=http%3A%2F%2F127.0.0.1%3A3009"
-        );
-    }
-
-    #[test]
-    fn builds_the_overlay_window_navigation_url_normalizing_existing_overlay_marker() {
-        let current_url = tauri::Url::parse(
-            "http://localhost:8081/settings?desktopOverlayWindow=0&server=http%3A%2F%2F127.0.0.1%3A3009",
-        )
-        .expect("valid url");
-        let next_url =
-            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
-
-        assert_eq!(
-            next_url.as_str(),
-            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1&server=http%3A%2F%2F127.0.0.1%3A3009"
-        );
     }
 
     #[test]
