@@ -63,6 +63,10 @@ describe('provider quota daily summary', () => {
     const late = { ...sample(day + 50, 10, day + 1000), observedAtMs: day + 900 };
     const merged = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [late], previous: summary });
     expect(merged).toMatchObject({ lastSnapshot: last, observedAtRange: { startAtMs: day + 200, endAtMs: day + 901 } });
+    const backfill = { ...late, observedAtMs: day + 500 };
+    const rewritten = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [backfill],
+      previous: summary, completeDayHistory: true });
+    expect(rewritten.observedAtRange).toEqual(summary.observedAtRange);
     const { observedAtRange: _bounds, ...legacy } = merged;
     const unproven = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [late], previous: legacy });
     expect(unproven.observedAtRange).toBeUndefined();

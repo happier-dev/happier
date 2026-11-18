@@ -156,11 +156,10 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
       reset.usedBeforeReset = window.lastSnapshot.meters[0]?.used ?? reset.usedBeforeReset;
     }
   }
-  let observedAtRange: ProviderAccountUsageDaySummaryV1['observedAtRange'];
+  let observedAtRange = previous?.observedAtRange;
   if (!previous || previous.observedAtRange || input.completeDayHistory) {
-    if (previous && !input.completeDayHistory) observedAtRange = previous.observedAtRange && { ...previous.observedAtRange };
-    // A complete legacy rebuild includes the retained endpoints after detail
-    // retention. It proves today's available basis, never deleted observations.
+    // Retain witnessed bounds even after their detail has been pruned.
+    // A complete legacy rebuild can also use the retained endpoint snapshots.
     const basis = input.completeDayHistory && previous
       ? [previous.lastSnapshot, ...previous.windows.map(window => window.lastSnapshot), ...snapshots] : snapshots;
     for (const snapshot of basis) {
