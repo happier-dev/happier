@@ -12,6 +12,8 @@ import { terminateProcessTreeByPid } from '../../../scripts/testing/process/proc
 import {
   buildVitestShardRunArgs,
   classifyVitestShardTermination,
+  filterVitestFilesBySelection,
+  partitionVitestFilesIntoShards,
   resolveVitestConfigPath,
   resolveVitestPassthroughArgs,
   resolveVitestPositionalFilters,
@@ -57,6 +59,59 @@ test('eight real unit invocations cover each file once and respect the canonical
     await writeFile(join(root, `case-${index}.test.mjs`), 'import {test, expect} from "vitest"; test("worker binding", () => expect(process.env.VITEST_MAX_FORKS).toBe("2"));');
   }
   run(1, { VITEST_MAX_FORKS: '9' });
+});
+
+test('shards balance by measured file seconds, and unmeasured files weigh the median measured file', () => {
+  const weights = new Map([['a.test.ts', 10], ['b.test.ts', 1], ['c.test.ts', 1], ['d.test.ts', 8]]);
+  const shards = partitionVitestFilesIntoShards(['a.test.ts', 'b.test.ts', 'c.test.ts', 'd.test.ts'], 2, weights);
+  const seconds = shards.map(files => files.reduce((sum, file) => sum + weights.get(file), 0));
+  assert.deepEqual(seconds, [10, 10], 'round-robin by path would give 11 and 9');
+  assert.equal(shards.flat().length, 4);
+  // Without timings every file weighs the same, which keeps the count-balanced split.
+  assert.deepEqual(partitionVitestFilesIntoShards(['d', 'c', 'b', 'a'], 2).map(files => files.length), [2, 2]);
+});
+
+test('parts record each file\'s measured seconds, and recorded seconds rebalance the next split', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ci03-ui-durations-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await symlink(join(realRepo, 'node_modules'), join(root, 'node_modules'), 'dir');
+  const config = join(root, 'vitest.config.mjs');
+  await writeFile(config, 'export default { test: { include: ["**/*.test.mjs"], maxWorkers: 1, minWorkers: 1 } };');
+  const sleeps = { 'a.test.mjs': 1500, 'b.test.mjs': 0, 'c.test.mjs': 0, 'd.test.mjs': 500 };
+  for (const [name, ms] of Object.entries(sleeps)) {
+    await writeFile(join(root, name), `import {test} from "vitest"; test("t", async () => { await new Promise(r => setTimeout(r, ${ms})); });`);
+  }
+  const run = (part, env) => {
+    const output = join(root, `report-${part}-${Object.keys(env).join('-')}.json`);
+    const result = spawnSync(process.execPath, [runnerPath, '--config', config, '--reporter=json', `--outputFile=${output}`], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, HAPPIER_UI_VITEST_PART: String(part), HAPPIER_UI_VITEST_PARTS: '2',
+        HAPPIER_UI_VITEST_SHARDS: '2', HAPPIER_VITEST_MAX_WORKERS: '1', VITEST_MAX_FORKS: '1', VITEST_MIN_FORKS: '1', ...env },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return JSON.parse(spawnSync('cat', [output], { encoding: 'utf8' }).stdout).testResults.map(row => row.name.split('/').at(-1)).sort();
+  };
+  const records = join(root, 'durations.jsonl');
+  for (const part of [1, 2]) run(part, { HAPPIER_UI_VITEST_DURATIONS_OUTPUT: records });
+  const recorded = (await readFile(records, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(recorded.map(row => row.file).sort(), Object.keys(sleeps).sort());
+  for (const row of recorded) assert.ok(row.seconds >= sleeps[row.file] / 1000, `${row.file} recorded ${row.seconds}s`);
+  const weightsFile = join(root, 'weights.json');
+  const merged = spawnSync(process.execPath, [join(scriptsDir, 'vitestUnitDurations.mjs'), '--output', weightsFile, records], { encoding: 'utf8' });
+  assert.equal(merged.status, 0, merged.stderr);
+  const parts = [1, 2].map(part => run(part, { HAPPIER_UI_VITEST_DURATIONS_FILE: weightsFile }));
+  assert.deepEqual(parts.sort((x, y) => x.length - y.length), [['a.test.mjs'], ['b.test.mjs', 'c.test.mjs', 'd.test.mjs']]);
+});
+
+test('a Gate affected-unit plan narrows the collected files, and a whole-package or absent entry keeps them all', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ci03-ui-selection-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const collected = [join(packageRoot, 'sources/a.test.ts'), join(packageRoot, 'sources/b.test.ts')];
+  const plan = async (units) => { const file = join(root, `${Math.random()}.json`); await writeFile(file, JSON.stringify({ units })); return file; };
+  assert.deepEqual(filterVitestFilesBySelection(collected, await plan({ 'apps/ui': { full: false, files: ['apps/ui/sources/b.test.ts'] } })), [collected[1]]);
+  assert.deepEqual(filterVitestFilesBySelection(collected, await plan({ 'apps/ui': { full: true, reason: 'setup' } })), collected);
+  assert.deepEqual(filterVitestFilesBySelection(collected, await plan({ 'apps/cli': { full: false, files: [] } })), collected);
+  assert.deepEqual(filterVitestFilesBySelection(collected, undefined), collected);
 });
 
 test('loaded resource owners finish cleanup within the containing hook and the real worker exits', async (t) => {

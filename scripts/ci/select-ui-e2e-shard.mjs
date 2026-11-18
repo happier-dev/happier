@@ -5,6 +5,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { partitionByWeight } from '../testing/weightedPartition.mjs';
+
 const DEFAULT_SPEC_WEIGHT_SECONDS = 120;
 // The CI matrix size of the full UI E2E run (tests.yml ui-e2e).
 export const UI_E2E_FULL_SHARD_TOTAL = 18;
@@ -46,31 +48,12 @@ export function partitionUiE2eSpecs({
   if (!Number.isInteger(shardTotal) || shardTotal < 1) {
     throw new Error('UI E2E shard total must be a positive integer');
   }
-  const uniqueSpecs = [...new Set(specs)].sort();
+  const uniqueSpecs = [...new Set(specs)];
   if (uniqueSpecs.length < shardTotal) {
     throw new Error(`UI E2E has ${uniqueSpecs.length} specs for ${shardTotal} shards`);
   }
-
-  const ranked = uniqueSpecs
-    .map((spec) => ({ spec, weight: weights.get(spec) ?? defaultWeight }))
-    .sort((left, right) => right.weight - left.weight || left.spec.localeCompare(right.spec));
-  const partitions = Array.from({ length: shardTotal }, () => ({ specs: [], weight: 0 }));
-
-  for (const entry of ranked) {
-    let target = 0;
-    for (let index = 1; index < partitions.length; index += 1) {
-      const candidate = partitions[index];
-      const selected = partitions[target];
-      if (candidate.weight < selected.weight
-        || (candidate.weight === selected.weight && candidate.specs.length < selected.specs.length)) {
-        target = index;
-      }
-    }
-    partitions[target].specs.push(entry.spec);
-    partitions[target].weight += entry.weight;
-  }
-
-  return partitions.map((partition) => partition.specs.sort());
+  return partitionByWeight({ items: uniqueSpecs, partitionCount: shardTotal,
+    weightOf: (spec) => weights.get(spec) ?? defaultWeight });
 }
 
 /**

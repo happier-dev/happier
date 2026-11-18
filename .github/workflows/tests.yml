@@ -292,10 +292,11 @@ jobs:
       actions: read
     outputs:
       packages: ${{ steps.select.outputs.packages }}
+      base_sha: ${{ steps.baseline.outputs.base_sha }}
       metadata_only: ${{ steps.select.outputs.metadata_only }}
       metadata_base_sha: ${{ steps.select.outputs.metadata_base_sha }}
       metadata_base_run_id: ${{ steps.select.outputs.metadata_base_run_id }}
-      unit_matrix: ${{ steps.select.outputs.unit_matrix }}
+      unit_matrix: ${{ steps.unit-plan.outputs.unit_matrix || steps.select.outputs.unit_matrix }}
       server_db_contract: ${{ steps.select.outputs.server_db_contract }}
       node_version: ${{ steps.toolchain.outputs.node_version }}
       # Unit gates read package source; only compiler and artifact gates consume built dists.
@@ -311,15 +312,23 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+      - name: Resolve the selection baseline
+        id: baseline
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        # The newest earlier push run that started, not github.event.before:
+        # GitHub cancels replaced pending runs, whose commits would go unselected.
+        run: node scripts/ci/resolveGateBaseSha.mjs
       - name: Select changed workspaces and their consumers
         id: select
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           base="$BASE_SHA"
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "$base" ]; then
             base="$(git hash-object -t tree /dev/null)"
           fi
           packages="$(git diff --no-renames --name-only -z "$base" HEAD | node scripts/ci/selectAffectedGatePackages.mjs)"
@@ -386,6 +395,38 @@ jobs:
         # through the workspace_build output; unit gates still run from source.
         continue-on-error: true
         run: pnpm run prepare:typecheck:workspaces
+      - name: Select the unit tests whose import graph reaches the change
+        id: unit-plan
+        # Resolution follows built workspace outputs where a suite imports them, so it runs
+        # after the build. Without a build or a baseline every package runs whole. The full
+        # nightly unit run is dev's nightly-v0-3-journeys.yml (tests-dispatch.yml). Rollback to
+        # whole-package unit runs: repository variable HAPPIER_GATE_UNIT_SELECTION=full,
+        # or the ci:full-units label on a pull request.
+        if: >-
+          ${{ steps.workspace-build.outcome == 'success' && steps.baseline.outputs.base_sha != '' && steps.select.outputs.metadata_only != 'true'
+          && steps.select.outputs.packages != '[]' && vars.HAPPIER_GATE_UNIT_SELECTION != 'full'
+          && !contains(github.event.pull_request.labels.*.name, 'ci:full-units') }}
+        env:
+          BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
+          GATE_PACKAGES: ${{ steps.select.outputs.packages }}
+        run: |
+          set -euo pipefail
+          owners="$(node --input-type=module -e '
+            const labels = new Set(JSON.parse(process.env.GATE_PACKAGES));
+            const { collectWorkspacePackageJsonPaths } = await import("./apps/stack/scripts/utils/proc/workspace_package_manifests.mjs");
+            const { resolveGatePackageForWorkspaceDirectory } = await import("./scripts/ci/selectAffectedGatePackages.mjs");
+            const { dirname, relative } = await import("node:path");
+            const dirs = (await collectWorkspacePackageJsonPaths(process.cwd())).map(path => relative(process.cwd(), dirname(path)));
+            process.stdout.write(dirs.filter(dir => labels.has(resolveGatePackageForWorkspaceDirectory(dir))).join(","));
+          ')"
+          mkdir -p .project/tmp
+          node --experimental-strip-types scripts/testing/runAffectedTests.ts --units --owners "$owners" --base "$BASE_SHA" \
+            | grep '^{' | tail -1 > .project/tmp/gate-unit-selection.json
+          node --input-type=module -e '
+            const { units } = JSON.parse((await import("node:fs")).readFileSync(".project/tmp/gate-unit-selection.json", "utf8"));
+            for (const [owner, entry] of Object.entries(units)) console.log(`${owner}: ${entry.full ? `whole package (${entry.reason})` : `${entry.files.length} of ${entry.total} files`}`);
+          '
+          node scripts/ci/selectAffectedGatePackages.mjs --unit-plan .project/tmp/gate-unit-selection.json
       - name: Save workspace package outputs for later v0.3 runs
         # Only push runs save (pull-request caches stay private to their merge
         # ref), and only on a key miss. A package compiler error still saves the
@@ -473,6 +514,9 @@ jobs:
           if [ -f apps/cli/.project/tmp/bundled-plugin-publication/failures.json ]; then
             tar --append --file "$RUNNER_TEMP/gate-prepared-workspace.tar" apps/cli/.project/tmp/bundled-plugin-publication/failures.json
           fi
+          if [ -f .project/tmp/gate-unit-selection.json ]; then
+            tar --append --file "$RUNNER_TEMP/gate-prepared-workspace.tar" .project/tmp/gate-unit-selection.json
+          fi
           ls -lh "$RUNNER_TEMP/gate-prepared-workspace.tar"
       - name: Publish this run's prepared workspace
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -480,6 +524,8 @@ jobs:
           name: gate-prepared-workspace
           path: ${{ runner.temp }}/gate-prepared-workspace.tar
           if-no-files-found: error
+          # Consumed only by this run's jobs.
+          retention-days: 1
           compression-level: 1
           overwrite: true
       - name: Upload shared preparation bundled-plugin diagnostics
@@ -613,14 +659,19 @@ jobs:
         if: ${{ !cancelled() && steps.gate-unit-install.outcome == 'success' }}
         env:
           GATE_PACKAGES: ${{ join(matrix.packages, ' ') }}
+          GATE_SELECTED: ${{ matrix.selected }}
           HAPPIER_UNIT_JSON_OUTPUT: ${{ runner.temp }}/gate-unit-${{ matrix.package }}-${{ matrix.part }}.json
+          # Per-file seconds; fold into apps/ui/vitest.unit-durations.json with apps/ui/scripts/vitestUnitDurations.mjs.
+          HAPPIER_UI_VITEST_DURATIONS_OUTPUT: ${{ runner.temp }}/gate-ui-unit-durations-${{ matrix.part }}.jsonl
           GATE_VITEST_MAX_WORKERS: ${{ steps.gate-workers.outputs.workers }}
           CLI_PREPARATION_OUTCOMES: ${{ steps.gate-unit-install.outcome }} ${{ steps.cli-native-load.outcome }}
         run: |
           set -euo pipefail
           gate_status=0
+          selection="$PWD/.project/tmp/gate-unit-selection.json"
           if [ "$GATE_PACKAGES" = 'ui' ]; then
-            # Preserve the UI wrapper's existing file-partition selection.
+            # The UI wrapper narrows its collected files to the affected-unit plan, if any.
+            [ -f "$selection" ] && export HAPPIER_UI_VITEST_SELECTION="$selection"
             HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm --filter @happier-dev/app run test:unit || gate_status=1
           else
             gate_projects=()
@@ -634,11 +685,24 @@ jobs:
                 gate_projects+=("$gate_package")
               fi
             done
+            gate_files=()
+            if [ "${GATE_SELECTED:-}" = 'true' ]; then
+              # Every grouped package has a file selection: run only those files.
+              mapfile -t gate_files < <(node -e 'for (const e of Object.values(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).units)) if (!e.full) for (const f of e.files) if (!f.startsWith("apps/ui/")) console.log("--filter=" + f)' "$selection")
+            fi
             if [ "${#gate_projects[@]}" -gt 0 ]; then
-              HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm run test:gate-unit "${gate_projects[@]}" || gate_status=1
+              HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm run test:gate-unit "${gate_projects[@]}" ${gate_files[@]+"${gate_files[@]}"} || gate_status=1
             fi
           fi
           exit "$gate_status"
+      - name: Upload measured UI unit file durations
+        if: ${{ !cancelled() && matrix.package == 'ui' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-ui-unit-durations-${{ matrix.part }}
+          path: ${{ runner.temp }}/gate-ui-unit-durations-${{ matrix.part }}.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Run affected package integration suites
         # UI integration configs are not sharded: run them once, on its first partition.
         if: ${{ !cancelled() && matrix.part == 1 && steps.gate-unit-install.outcome == 'success' }}
@@ -828,11 +892,11 @@ jobs:
       - name: Select by import graph
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ needs.gate-prepare.outputs.base_sha }}
         run: |
           set -euo pipefail
           base="$BASE_SHA"
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "$base" ]; then
             base="$(git hash-object -t tree /dev/null)"
           fi
           plan="$(node --experimental-strip-types scripts/testing/runAffectedTests.ts --journeys --plan --base "$base" | grep '^{' | tail -1)"
@@ -3257,6 +3321,9 @@ jobs:
     name: Core E2E (selected SQLite + Triage PostgreSQL)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
     env:
       AFFECTED_ONLY: ${{ !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
     steps:
@@ -3285,15 +3352,23 @@ jobs:
         with:
           args: --frozen-lockfile
 
+      - name: Resolve the selection baseline
+        id: baseline
+        if: ${{ env.AFFECTED_ONLY == 'true' }}
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/resolveGateBaseSha.mjs
+
       - name: Select core-e2e files reaching the change
         id: affected
         if: ${{ env.AFFECTED_ONLY == 'true' }}
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ steps.baseline.outputs.base_sha }}
         run: |
           set -euo pipefail
           base="$BASE_SHA"
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "$base" ]; then
             base="$(git hash-object -t tree /dev/null)"
           fi
           plan="$(node --experimental-strip-types scripts/testing/runAffectedTests.ts --journeys --plan --base "$base" | grep '^{' | tail -1)"

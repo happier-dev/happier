@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,7 +21,9 @@ import {
   classifyVitestShardTermination,
   summarizeVitestShardOutcomes,
 } from '../../../scripts/testing/vitestShardOutcomes.mjs';
+import { partitionByWeight } from '../../../scripts/testing/weightedPartition.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
+import { loadVitestUnitDurations, vitestDurationKey } from './vitestUnitDurations.mjs';
 
 export {
   classifyVitestShardTermination,
@@ -173,15 +176,30 @@ export function buildVitestShardRunArgs({ configPath, passthroughArgs, positiona
   ];
 }
 
-export function partitionVitestFilesIntoShards(files, shardCount) {
+/**
+ * Balances shards by measured file seconds (vitestUnitDurations.mjs). A file
+ * with no measurement weighs the median measured file; with no measurements at
+ * all every file weighs the same, which is round-robin over the sorted paths.
+ */
+export function partitionVitestFilesIntoShards(files, shardCount, weights = new Map()) {
   const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
-  const buckets = Array.from({ length: count }, () => []);
-  const sortedFiles = Array.from(files ?? []).filter(Boolean).sort();
+  const measured = [...weights.values()].sort((a, b) => a - b);
+  const fallback = measured.length ? measured[Math.floor(measured.length / 2)] : 1;
+  return partitionByWeight({ items: Array.from(files ?? []).filter(Boolean), partitionCount: count,
+    weightOf: (file) => weights.get(vitestDurationKey(file)) ?? fallback });
+}
 
-  for (let fileIndex = 0; fileIndex < sortedFiles.length; fileIndex += 1) {
-    buckets[fileIndex % count].push(sortedFiles[fileIndex]);
-  }
-  return buckets;
+/**
+ * The Gate's affected-unit plan (`runAffectedTests.ts --units --plan`): the UI entry's selected
+ * files, or every collected file when the plan selects the whole package or has no UI entry.
+ */
+export function filterVitestFilesBySelection(files, selectionPath) {
+  if (!selectionPath) return files;
+  const entry = JSON.parse(readFileSync(selectionPath, 'utf8')).units?.['apps/ui'];
+  if (!entry || entry.full) return files;
+  const repoRoot = path.resolve(packageRoot, '..', '..');
+  const selected = new Set(entry.files.map((file) => path.resolve(repoRoot, file)));
+  return files.filter((file) => selected.has(path.resolve(file)));
 }
 
 export function createVitestShardRunPlan({
@@ -440,7 +458,9 @@ async function main(argv) {
   // drop exactly those filters, because the resolved file list already carries them.
   const positionalFilters = await resolveVitestPositionalFilters(passthroughArgs);
 
-  const allFiles = await resolveVitestTestFiles({ vitestCommand, configPath, env: vitestEnv, passthroughArgs });
+  const allFiles = filterVitestFilesBySelection(
+    await resolveVitestTestFiles({ vitestCommand, configPath, env: vitestEnv, passthroughArgs }),
+    process.env.HAPPIER_UI_VITEST_SELECTION);
   if (!shouldVitestShardRunProceedWithoutFiles({ fileCount: allFiles.length, passthroughArgs })) {
     // `vitest run` itself exits non-zero when a filter matches nothing. Sharding must not be
     // more permissive than the tool it wraps: a mistyped path filter that silently exits 0 is
@@ -452,13 +472,18 @@ async function main(argv) {
   }
   const shardCount = resolveVitestShardCountForFileCount(process.env, allFiles.length);
   const shardRange = resolveVitestShardRange(process.env, shardCount);
-  const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
+  const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount, loadVitestUnitDurations());
   const plan = createVitestShardRunPlan({
     shardFiles,
     shardCount,
     startShard: shardRange.start,
     endShard: shardRange.end,
   });
+
+  // Parts record measured per-file seconds for the committed shard weights.
+  const shardPassthroughArgs = process.env.HAPPIER_UI_VITEST_DURATIONS_OUTPUT ? [...passthroughArgs,
+    ...(options.reporter === undefined ? ['--reporter=default'] : []),
+    `--reporter=${path.join(scriptsDir, 'vitestFileDurationReporter.mjs')}`] : passthroughArgs;
 
   const activePartitions = Math.max(1, Math.min(shardConcurrency, plan.length));
   // eslint-disable-next-line no-console
@@ -477,7 +502,7 @@ async function main(argv) {
           vitestCommand,
           configPath,
           env: vitestEnv,
-          passthroughArgs,
+          passthroughArgs: shardPassthroughArgs,
           positionalFilters,
           files: entry.files,
           timeoutMs: shardTimeoutMs,
@@ -491,7 +516,7 @@ async function main(argv) {
       vitestCommand,
       configPath,
       env: vitestEnv,
-      passthroughArgs,
+      passthroughArgs: shardPassthroughArgs,
       positionalFilters,
       files: entry.files,
       timeoutMs: shardTimeoutMs,

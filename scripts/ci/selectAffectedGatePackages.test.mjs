@@ -69,7 +69,7 @@ test('gate selection includes changed workspace consumers, including peer consum
   const automaticJobs = include.length + 1; // preparation owns compiler/artifacts; host units also own the selected DB contract
   assert.ok(automaticJobs <= 10, `the automatic v0.3 gate must use at most 10 jobs, received ${automaticJobs}`);
   assert.deepEqual(include.filter((row) => row.package !== 'ui'), [
-    { package: 'group', packages: ['cli', 'plugins', 'protocol', 'server', 'stack'], part: 1, parts: 1 },
+    { package: 'group', packages: ['cli', 'plugins', 'protocol', 'server', 'stack'], part: 1, parts: 1, selected: false },
   ]);
   assert.deepEqual([...new Set(include.flatMap((row) => row.packages))].sort(), selectedPackages,
     'partitioning must retain every selected package suite');
@@ -87,4 +87,24 @@ test('gate selection includes changed workspace consumers, including peer consum
   });
   assert.deepEqual(covered, Array.from({ length: 402 }, (_, index) => index + 1),
     'the published matrix must execute every canonical UI shard exactly once');
+});
+
+test('the affected-unit plan drops packages no test reaches, narrows the grouped run, and sizes UI parts by measured share', async () => {
+  const { planGateUnitMatrix } = await import('./selectAffectedGatePackages.mjs');
+  const directories = { cli: ['apps/cli'], server: ['apps/server'], stack: ['apps/stack'], ui: ['apps/ui'] };
+  const plan = (packages, units, uiWeights = new Map()) => planGateUnitMatrix({ packages, units, directories, uiWeights });
+  // Server reached nothing; CLI has files; stack has no graph owner, so it stays whole.
+  assert.deepEqual(plan(['cli', 'server', 'stack'], {
+    'apps/cli': { full: false, files: ['apps/cli/src/a.test.ts'], total: 10 },
+    'apps/server': { full: false, files: [], total: 10 },
+  }).include, [{ package: 'group', packages: ['cli', 'stack'], part: 1, parts: 1, selected: false }]);
+  assert.deepEqual(plan(['cli'], { 'apps/cli': { full: false, files: ['apps/cli/src/a.test.ts'], total: 10 } }).include,
+    [{ package: 'group', packages: ['cli'], part: 1, parts: 1, selected: true }]);
+  // Two of 16 UI files, one of them measured as half the suite's time, need half of the eight parts.
+  const all = Array.from({ length: 16 }, (_, index) => `apps/ui/sources/f${index}.test.ts`);
+  const weights = new Map(all.map((file, index) => [file.slice('apps/ui/'.length), index === 0 ? 15 : 1]));
+  const ui = plan(['ui'], { 'apps/ui': { full: false, files: all.slice(0, 2), total: 16 } }, weights).include;
+  assert.deepEqual(ui.map(entry => `${entry.part}/${entry.parts}`), ['1/2', '2/2']);
+  assert.equal(plan(['ui'], { 'apps/ui': { full: true, reason: 'setup' } }).include.length, 8);
+  assert.equal(plan(['ui'], {}).include.length, 8);
 });

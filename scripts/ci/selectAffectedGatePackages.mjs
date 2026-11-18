@@ -66,7 +66,71 @@ export async function selectAffectedGatePackages({ rootDir = process.cwd(), chan
   return [...selected].sort();
 }
 
+const UI_GATE_PARTS = 8;
+
+/**
+ * The gate-unit matrix. Without an affected-unit plan every selected package runs whole: one
+ * grouped host job plus eight disjoint UI ranges (they reduce per-job retention and share
+ * preparation). With a plan (`runAffectedTests.ts --units`), a package whose every graph owner
+ * reached no test drops out, the grouped job narrows to the selected files when none of its
+ * packages needs a whole run, and UI keeps the selection's measured share of the eight parts.
+ * @param {{ packages: string[]; units: Record<string, { full: boolean; files?: string[]; total?: number }>;
+ *   directories: Record<string, string[]>; uiWeights: Map<string, number> }} input
+ */
+export function planGateUnitMatrix({ packages, units, directories, uiWeights }) {
+  const status = (gatePackage) => {
+    const entries = (directories[gatePackage] ?? []).map((directory) => units[directory]);
+    if (entries.length === 0 || entries.some((entry) => !entry || entry.full)) return 'full';
+    return entries.some((entry) => entry.files.length > 0) ? 'files' : 'none';
+  };
+  const grouped = packages.filter((name) => name !== 'ui' && status(name) !== 'none');
+  const include = grouped.length ? [{ package: 'group', packages: grouped, part: 1, parts: 1,
+    selected: grouped.every((name) => status(name) === 'files') }] : [];
+  let uiParts = 0;
+  if (packages.includes('ui')) {
+    const ui = status('ui');
+    if (ui === 'full') uiParts = UI_GATE_PARTS;
+    else if (ui === 'files') {
+      const { files, total } = units['apps/ui'];
+      const measured = [...uiWeights.values()].sort((a, b) => a - b);
+      const median = measured.length ? measured[Math.floor(measured.length / 2)] : 1;
+      const weightOf = (file) => uiWeights.get(file.replace(/^apps\/ui\//u, '')) ?? median;
+      const selected = files.reduce((sum, file) => sum + weightOf(file), 0);
+      const selectedKeys = new Set(files.map((file) => file.replace(/^apps\/ui\//u, '')));
+      const knownOther = [...uiWeights].filter(([file]) => !selectedKeys.has(file));
+      const other = knownOther.reduce((sum, [, value]) => sum + value, 0)
+        + Math.max(0, total - files.length - knownOther.length) * median;
+      uiParts = Math.min(files.length, UI_GATE_PARTS,
+        Math.max(1, Math.ceil(UI_GATE_PARTS * selected / (selected + other))));
+    }
+  }
+  for (let index = 0; index < uiParts; index += 1) include.push({ package: 'ui', packages: ['ui'], part: index + 1, parts: uiParts });
+  return { include };
+}
+
+async function gateDirectories(rootDir) {
+  const directories = {};
+  for (const path of await collectWorkspacePackageJsonPaths(rootDir)) {
+    const directory = relative(rootDir, dirname(path)).replaceAll('\\', '/');
+    const gatePackage = resolveGatePackageForWorkspaceDirectory(directory);
+    if (gatePackage) (directories[gatePackage] ??= []).push(directory);
+  }
+  return directories;
+}
+
 async function main() {
+  const planIndex = process.argv.indexOf('--unit-plan');
+  if (planIndex >= 0) {
+    // After installation: narrow the matrix with the affected-unit plan written by the Gate.
+    const { loadVitestUnitDurations } = await import('../../apps/ui/scripts/vitestUnitDurations.mjs');
+    const planPath = process.argv[planIndex + 1];
+    const units = planPath ? JSON.parse(await readFile(planPath, 'utf8')).units : {};
+    const unitMatrix = planGateUnitMatrix({ packages: JSON.parse(process.env.GATE_PACKAGES ?? '[]'), units,
+      directories: await gateDirectories(process.cwd()), uiWeights: loadVitestUnitDurations() });
+    if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `unit_matrix=${JSON.stringify(unitMatrix)}\n`);
+    process.stdout.write(`${JSON.stringify(unitMatrix)}\n`);
+    return;
+  }
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const changedPaths = input.split('\0').filter(Boolean);
@@ -80,15 +144,7 @@ async function main() {
   const packages = metadata.metadataOnly ? [] : await selectAffectedGatePackages({ changedPaths });
   if (process.env.GITHUB_OUTPUT) {
     const serverDbContract = changedPaths.some((path) => path.startsWith('apps/server/prisma/'));
-    // Eight disjoint UI ranges reduce per-job retention and share preparation.
-    // Host suites retain their existing grouped runner and terminal verdict.
-    const groupedPackages = packages.filter((packageName) => packageName !== 'ui');
-    const unitMatrix = { include: [
-      ...(groupedPackages.length ? [{ package: 'group', packages: groupedPackages, part: 1, parts: 1 }] : []),
-      ...(packages.includes('ui') ? Array.from({ length: 8 }, (_, index) => ({
-        package: 'ui', packages: ['ui'], part: index + 1, parts: 8,
-      })) : []),
-    ] };
+    const unitMatrix = planGateUnitMatrix({ packages, units: {}, directories: {}, uiWeights: new Map() });
     await appendFile(process.env.GITHUB_OUTPUT,
       `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\nmetadata_only=${metadata.metadataOnly}\nmetadata_base_sha=${metadata.baseSha}\nmetadata_base_run_id=${metadata.baseRunId}\n`);
   }

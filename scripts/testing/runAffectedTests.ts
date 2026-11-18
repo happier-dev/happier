@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { STUB_PROVIDER_PRESET_IDS, resolveProviderRunPreset } from '../../packages/tests/src/testkit/providers/presets/presets.mjs';
@@ -15,7 +16,7 @@ import { resolveRootUnitCommandOwners, runRootTests } from './runRootTests.ts';
  * (the import graph of every test file), run through each suite's existing runner.
  *
  * Journey tests (packages/tests: contracts, core-layer, core-e2e fast and slow, ui-e2e, agents) and the
- * owner unit tests in the changed files' folders are selected. The import graph stops at a
+ * owner unit tests whose import graph reaches a changed file (selectGraphUnitTests) are selected. The import graph stops at a
  * process boundary: code a test reaches only through a spawned server, daemon or browser is not
  * selected here except for the documented stub subprocess bridges below; the nightly full run covers the rest.
  */
@@ -62,7 +63,7 @@ export function planAffectedTestCommands(selection: Readonly<{
   return commands;
 }
 
-const OPTIONS_WITH_VALUES = new Set(['--commit', '--base']);
+const OPTIONS_WITH_VALUES = new Set(['--commit', '--base', '--owners']);
 
 function readOption(args: readonly string[], name: string): string | null {
   const index = args.indexOf(name);
@@ -130,9 +131,112 @@ async function selectRelated(params: Readonly<{
   }
 }
 
-export async function selectAffectedTests(rootDir: string, changedFiles: readonly string[], options: Readonly<{ journeysOnly?: boolean }> = {}) {
+const CODE_FILE = /\.(?:[cm]?[jt]sx?)$/u;
+
+/**
+ * Owner unit tests whose import graph reaches a change. The graph is the real one: every test
+ * file's imports (static, dynamic and require, read by the TypeScript preprocessor) resolved by
+ * the suite's own Vite resolver, aliases and stub plugins included, followed across workspaces
+ * and stopping at node_modules. Only resolution runs, no transform, so the whole UI suite fits
+ * where a related-mode walk ran out of heap. Inputs the graph cannot place widen to the whole
+ * package: the config, the setup closure every test loads, a removed module, an unread asset.
+ */
+export async function selectGraphUnitTests(params: Readonly<{
+  rootDir: string; workspaceDir: string; config: string; changedFiles: readonly string[];
+  /** Every workspace directory: a changed workspace whose built output this suite imports widens it. */
+  workspaceDirectories?: readonly string[];
+}>): Promise<{ full: true; reason: string } | { full: false; files: string[]; total: number }> {
+  const started = Date.now();
+  const { default: ts } = await import('typescript');
+  const { createVitest } = await import('vitest/node');
+  const root = resolve(params.rootDir, params.workspaceDir);
+  const configPath = resolve(root, params.config);
+  const ownerPrefix = `${params.workspaceDir}/`;
+  // Changes in other workspaces reach this suite through the same resolved graph (workspace
+  // packages resolve to their sources); only this owner's own non-code inputs widen it.
+  const allChanged = params.changedFiles.map(file => file.replaceAll('\\', '/'));
+  const own = allChanged.filter(file => file.startsWith(ownerPrefix));
+  const changed = allChanged.filter(file => file.startsWith(ownerPrefix) || CODE_FILE.test(file));
+  if (changed.length === 0) return { full: false, files: [], total: 0 };
+  const toRepo = (file: string) => relative(params.rootDir, file).split(sep).join('/');
+  for (const file of own) {
+    const path = resolve(params.rootDir, file);
+    if (path === configPath || /(?:^|\/)(?:package\.json|tsconfig[^/]*\.json)$/u.test(file)) return { full: true, reason: `${file} configures the suite` };
+  }
+  // A removed module's importers cannot be found from the module itself.
+  const removed = changed.find(file => !existsSync(resolve(params.rootDir, file)));
+  if (removed) return { full: true, reason: `${removed} was removed` };
+  const vitest = await createVitest('test', { root, config: configPath, watch: false, run: true, cliExclude: ['**/._*'] });
+  try {
+    const specifications = await vitest.globTestSpecifications();
+    const importers = new Map<string, Set<string>>();
+    const visited = new Set<string>();
+    const walk = async (project: (typeof specifications)[number]['project'], entries: readonly string[]) => {
+      const queue = entries.filter(entry => !visited.has(entry));
+      for (const entry of queue) visited.add(entry);
+      while (queue.length) {
+        const importer = queue.pop()!;
+        if (!CODE_FILE.test(importer)) continue;
+        const { importedFiles } = ts.preProcessFile(await readFile(importer, 'utf8'), true, true);
+        for (const { fileName } of importedFiles) {
+          const resolved = await project.vite.pluginContainer.resolveId(fileName, importer, { ssr: true }).catch(() => null);
+          const id = resolved?.id?.split('?')[0];
+          if (!id || !isAbsolute(id) || id.includes(`${sep}node_modules${sep}`) || !existsSync(id)) continue;
+          const set = importers.get(id) ?? new Set<string>();
+          set.add(importer);
+          importers.set(id, set);
+          if (!visited.has(id)) { visited.add(id); queue.push(id); }
+        }
+      }
+    };
+    const setupFiles = new Set<string>();
+    for (const project of vitest.projects) {
+      const setup = project.config.setupFiles.map(file => resolve(project.config.root, file));
+      const before = new Set(visited);
+      await walk(project, setup);
+      for (const file of visited) if (!before.has(file)) setupFiles.add(file);
+    }
+    for (const project of vitest.projects) {
+      await walk(project, specifications.filter(spec => spec.project === project).map(spec => spec.moduleId));
+    }
+    // A suite that imports another workspace's built output cannot see that workspace's source edits.
+    const visitedRepo = [...visited].map(toRepo);
+    for (const file of changed.filter(path => !path.startsWith(ownerPrefix))) {
+      const workspace = resolveOwningWorkspaceDirectory(file, params.workspaceDirectories ?? []);
+      if (workspace && visitedRepo.some(path => path.startsWith(`${workspace}/`) && path.includes('/dist/'))) {
+        return { full: true, reason: `${file} reaches this suite through ${workspace}'s built output` };
+      }
+    }
+    const setupHit = changed.find(file => setupFiles.has(resolve(params.rootDir, file)));
+    if (setupHit) return { full: true, reason: `${setupHit} is loaded by every test (setup closure: ${setupFiles.size} of ${visited.size} modules)` };
+    const unplaced = own.find(file => !visited.has(resolve(params.rootDir, file)) && !CODE_FILE.test(file) && !/\.md$/iu.test(file));
+    if (unplaced) return { full: true, reason: `${unplaced} is not in the import graph` };
+    const tests = new Set(specifications.map(spec => spec.moduleId));
+    const reached = new Set<string>();
+    const queue = changed.map(file => resolve(params.rootDir, file));
+    while (queue.length) {
+      const file = queue.pop()!;
+      if (reached.has(file)) continue;
+      reached.add(file);
+      for (const importer of importers.get(file) ?? []) queue.push(importer);
+    }
+    const files = [...reached].filter(file => tests.has(file)).map(toRepo).sort();
+    process.stderr.write(`[affected] ${params.workspaceDir}: ${files.length} of ${tests.size} unit test file(s) reach the change through ${visited.size} modules (${Math.round((Date.now() - started) / 1000)}s)\n`);
+    return { full: false, files, total: tests.size };
+  } finally {
+    await vitest.close();
+  }
+}
+
+export async function selectAffectedTests(rootDir: string, changedFiles: readonly string[], options: Readonly<{
+  journeysOnly?: boolean;
+  unitsOnly?: boolean;
+  /** Unit owners to select for (CI: every Gate package); default: the changed files' owners. */
+  unitOwners?: readonly string[];
+}> = {}) {
   const related = changedFiles.map(file => resolve(rootDir, file)).filter(existsSync);
-  const allJourneys = related.length === 0 ? [] : await selectRelated({ rootDir, workspaceDir: TESTS_DIR, config: 'vitest.core.config.ts', related, include: [
+  // The Gate's unit plan runs beside journey-select, which walks the journeys itself.
+  const allJourneys = related.length === 0 || options.unitsOnly ? [] : await selectRelated({ rootDir, workspaceDir: TESTS_DIR, config: 'vitest.core.config.ts', related, include: [
     'suites/contracts/**/*.test.ts', 'suites/core-layer/**/*.test.ts', 'suites/core-e2e/**/*.test.ts',
     'suites/runtime-unification/**/*.test.ts', 'src/testkit/**/*.{test,spec}.ts', 'suites/ui-e2e/**/*.spec.ts', 'suites/agents/**/*.test.ts',
   ] });
@@ -172,32 +276,54 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
     agentFiles.add(`${AGENT_PREFIX}acpStubProvider.lifecycle.test.ts`);
   }
   const providerSelection = { agentFiles: [...agentFiles].sort(), providerMatrix };
-  if (options.journeysOnly) return { journeyFiles, unitFiles: [], ...providerSelection };
+  if (options.journeysOnly) return { journeyFiles, unitFiles: [], fullUnitOwners: [], unitTotals: {}, ...providerSelection };
   const manifests = await discoverWorkspaceManifests(rootDir);
   const unitOwners = new Set(resolveRootUnitCommandOwners(manifests).map(({ owner }) => owner).filter(Boolean));
-  const owners = new Set(changedFiles
-    .map(file => resolveOwningWorkspaceDirectory(file, manifests.map(manifest => manifest.workspaceDirectory)))
+  const owners = new Set((options.unitOwners ?? changedFiles
+    .map(file => resolveOwningWorkspaceDirectory(file, manifests.map(manifest => manifest.workspaceDirectory))))
     .filter((owner): owner is string => owner !== null && owner !== TESTS_DIR && unitOwners.has(owner)));
   const unitFiles: string[] = [];
+  const fullUnitOwners: { owner: string; reason: string }[] = [];
+  const unitTotals: Record<string, number> = {};
   for (const owner of [...owners].sort()) {
     const config = VITEST_CONFIG_NAMES.find(name => existsSync(resolve(rootDir, owner, name)));
     if (!config) continue;
-    // Owner tests sit beside their owner: walk only the changed files' own folders. A whole
-    // UI or CLI package graph walk (thousands of test files) ran out of a 4 GiB heap.
-    const filters = [...new Set(changedFiles
-      .filter(file => file.startsWith(`${owner}/`))
-      .map(file => `${dirname(resolve(rootDir, file))}${sep}`))];
-    unitFiles.push(...await selectRelated({ rootDir, workspaceDir: owner, config, related, filters }));
+    const selection = await selectGraphUnitTests({ rootDir, workspaceDir: owner, config, changedFiles,
+      workspaceDirectories: manifests.map(manifest => manifest.workspaceDirectory) });
+    if (selection.full) fullUnitOwners.push({ owner, reason: selection.reason });
+    else {
+      unitFiles.push(...selection.files);
+      unitTotals[owner] = selection.total;
+    }
   }
-  return { journeyFiles, unitFiles, ...providerSelection };
+  return { journeyFiles, unitFiles, fullUnitOwners, unitTotals, ...providerSelection };
 }
 
 export async function runAffectedTests(args: readonly string[], rootDir = process.cwd()): Promise<void> {
   const changedFiles = readChangedFiles(rootDir, args);
   if (changedFiles.length === 0 && !args.includes('--base')) {
-    throw new Error('Usage: pnpm test:affected -- <changed file>... | --commit <sha> | --base <ref> [--journeys] [--list | --plan]');
+    throw new Error('Usage: pnpm test:affected -- <changed file>... | --commit <sha> | --base <ref> [--journeys | --units] [--list | --plan]');
+  }
+  if (args.includes('--units')) {
+    // CI unit gate: one JSON line, per unit owner either its selected files or the whole package.
+    const requested = readOption(args, '--owners');
+    const selection = await selectAffectedTests(rootDir, changedFiles,
+      { unitsOnly: true, ...(requested ? { unitOwners: requested.split(',').filter(Boolean) } : {}) });
+    const owners: Record<string, { full: true; reason: string } | { full: false; files: string[]; total: number }> = {};
+    for (const { owner, reason } of selection.fullUnitOwners) owners[owner] = { full: true, reason };
+    for (const [owner, total] of Object.entries(selection.unitTotals)) owners[owner] = { full: false, files: [], total };
+    const directories = (await discoverWorkspaceManifests(rootDir)).map(manifest => manifest.workspaceDirectory);
+    for (const file of selection.unitFiles) {
+      const entry = owners[resolveOwningWorkspaceDirectory(file, directories)!];
+      if (entry && !entry.full) entry.files.push(file);
+    }
+    process.stdout.write(`${JSON.stringify({ units: owners })}\n`);
+    return;
   }
   const selection = await selectAffectedTests(rootDir, changedFiles, { journeysOnly: args.includes('--journeys') });
+  for (const { owner, reason } of selection.fullUnitOwners) {
+    process.stdout.write(`[affected] ${owner}: whole package needed (${reason}); run its test:unit\n`);
+  }
   if (args.includes('--plan')) {
     // CI: one JSON line for the journey jobs; UI specs come pre-sharded by the UI shard owner.
     const { listUiE2eSpecs, planSelectedUiE2eShards } = await import('../ci/select-ui-e2e-shard.mjs');

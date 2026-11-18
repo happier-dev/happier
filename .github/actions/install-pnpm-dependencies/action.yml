@@ -70,7 +70,8 @@ runs:
         read -r -a install_args <<< "$PNPM_INSTALL_ARGS"
         pnpm install "${install_args[@]}" --prod=false --prefer-offline "${platform_args[@]}"
     - name: Save pnpm store
-      if: ${{ inputs.prepared-artifact == '' && inputs.cache-dependencies == 'true' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+      # Pull-request caches are visible only to their merge ref and evict trunk entries.
+      if: ${{ inputs.prepared-artifact == '' && inputs.cache-dependencies == 'true' && steps.dependency-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request' }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ steps.pnpm-store.outputs.path }}

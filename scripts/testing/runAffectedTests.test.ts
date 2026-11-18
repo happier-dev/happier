@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, cp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { planAffectedTestCommands, selectAffectedTests } from './runAffectedTests.ts';
+import { planAffectedTestCommands, selectAffectedTests, selectGraphUnitTests } from './runAffectedTests.ts';
 
 test('selected journey tests run under the runner that owns their suite', () => {
   const commands = planAffectedTestCommands({
@@ -81,4 +81,39 @@ test('provider journey commands use selected scenarios and stub-only presets', (
     assert.equal(command.env?.HAPPIER_E2E_PROVIDER_CURSOR_ACP_STUB, '0');
   }
   assert.equal(commands[1].env?.HAPPIER_E2E_PROVIDER_SCENARIOS, 'acp_stub_usage_update');
+});
+
+test('unit selection follows the real import graph out of the changed folder, and unknown inputs widen to the package', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'affected-unit-graph-'));
+  try {
+    const put = async (path: string, content: string) => {
+      await mkdir(join(root, path, '..'), { recursive: true });
+      await writeFile(join(root, path), content);
+    };
+    // The alias is Vite configuration, not TypeScript: only the real resolver sees this edge.
+    await put('app/vitest.config.mjs', `export default { resolve: { alias: [{ find: /^@\\//, replacement: ${JSON.stringify(join(root, 'app/src') + '/')} }] },
+      test: { include: ['src/**/*.test.ts'], setupFiles: ['./src/setup.ts'] } };`);
+    await put('app/src/setup.ts', "import './testkit/env';");
+    await put('app/src/testkit/env.ts', 'export const env = 1;');
+    await put('app/src/lib/value.ts', 'export const value = 1;');
+    await put('app/src/lib/value.test.ts', "import { value } from './value'; void value;");
+    await put('app/src/feature/widget.ts', "import { value } from '@/lib/value'; import { shared } from '../../../shared/src/index'; export const widget = value + shared;");
+    await put('shared/src/index.ts', 'export const shared = 1;');
+    await put('app/src/feature/widget.test.ts', "import { widget } from './widget'; void widget;");
+    await put('app/src/feature/lazy.test.ts', "export const load = () => import('../feature/widget');");
+    await put('app/src/other/unrelated.test.ts', 'export const unrelated = 1;');
+    await put('app/src/assets/strings.json', '{}');
+    const select = (changedFiles: string[]) => selectGraphUnitTests({ rootDir: root, workspaceDir: 'app', config: 'vitest.config.mjs', changedFiles });
+    assert.deepEqual(await select(['app/src/lib/value.ts']), { full: false, total: 4, files: [
+      'app/src/feature/lazy.test.ts', 'app/src/feature/widget.test.ts', 'app/src/lib/value.test.ts'] });
+    assert.deepEqual(await select(['shared/src/index.ts', 'shared/README.md']), { full: false, total: 4, files: [
+      'app/src/feature/lazy.test.ts', 'app/src/feature/widget.test.ts'] });
+    assert.deepEqual(await select(['app/src/other/unrelated.test.ts']), { full: false, total: 4, files: ['app/src/other/unrelated.test.ts'] });
+    // Every test loads the setup closure; configuration, removed modules and unread assets are unknown inputs.
+    for (const changed of ['app/src/testkit/env.ts', 'app/vitest.config.mjs', 'app/src/lib/removed.ts', 'app/src/assets/strings.json']) {
+      assert.equal((await select([changed])).full, true, changed);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
