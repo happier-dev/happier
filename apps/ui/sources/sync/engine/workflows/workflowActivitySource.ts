@@ -13,6 +13,7 @@ import { isBeyondWorkflowRunListSpan, workflowRunStoreKey } from '@/sync/store/d
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
 import { workflowActivityRunEventKey, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
 const sources = new WeakMap<ServerAccountScopeLifetime, WorkflowActivitySource>();
@@ -35,9 +36,20 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
     let detach: (() => void)[] = [];
 
     const readPage = async (input: WorkflowActivityListRequestV1 = {}): Promise<WorkflowRunListResultV1> => {
+        const signal = controller?.signal;
         const result = await callWorkflowAction({ actionId: 'workflow.activity.list', input,
             parseResult: WorkflowActionOutputSchemasV1['workflow.activity.list'].parse,
-            accountLifetime: lifetime, signal: controller?.signal });
+            accountLifetime: lifetime, signal });
+        // Membership never opens accepted display content. Hydrate its exact Runs and
+        // Workflow causes through the existing Account row owner, including off-page sources.
+        const runIds = result.retained.runs.flatMap(run => {
+            const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
+            return cause?.kind === 'trigger' && cause.triggerKind === 'runLifecycle'
+                && cause.evidence.source.kind === 'workflow_run'
+                ? [run.id, cause.evidence.source.runId] : [run.id];
+        });
+        await refreshWorkflowRunsByIds(runIds, { accountLifetime: lifetime, signal,
+            fence: { isCurrent: () => lifetime.isCurrent() && !signal?.aborted } });
         return result.retained;
     };
     const publish = (batch: WorkflowActivityLiveFact[]) => {

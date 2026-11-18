@@ -4,7 +4,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev
 import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
-import { resourceContentMatchesMode } from '@/app/machines/machineAccess';
+import { resourceContentMatchesMode, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import type { Tx } from '@/storage/inTx';
 
 /** Only a Home-verified signed binding may reach these retained-admission readers. */
@@ -52,14 +52,19 @@ export async function readAdmittedExternalActionMachineInTx(
         account: { select: { encryptionMode: true } },
     }) }).then(decodeMachineStoredContent);
     const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
+    const role = machine ? await resolveEffectiveMachineRoleInTx(reader, {
+        machineId,
+        actorAccountId: binding.accountId,
+    }) : null;
     if (!machine?.installationId || installationId !== undefined && machine.installationId !== installationId
         || classifyMachineAvailabilityState(machine) !== 'available'
         || !mode || mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)
+        || !role
         || machineId === binding.machineId && machine.accountId !== binding.custodianAccountId
         || retained && (retained.machineId !== machineId || retained.installationId !== installationId
             || retained.actorAccountId !== binding.accountId || retained.custodianAccountId !== machine.accountId
             || retained.encryptionMode !== mode.mode)) return null;
     return { kind: 'admitted', actorAccountId: binding.accountId, custodianAccountId: machine.accountId,
         machineId, installationId: machine.installationId, encryptionMode: mode.mode,
-        role: retained?.role ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
+        role: retained?.role ?? role };
 }

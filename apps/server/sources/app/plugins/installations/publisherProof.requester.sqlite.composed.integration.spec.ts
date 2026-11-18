@@ -5,7 +5,7 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { auth } from '@/app/auth/auth';
-import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -132,6 +132,15 @@ describe('admitted requester Event publisher', () => {
                 .toMatchObject({ accountId: requester.id, reporterMachineId: machineId,
                     reporterMachineInstallationId: installationId, reporterMaterializationId: materializationId });
             expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: custodian.id } })).toBe(0);
+            const removed = await inTx(tx => removeMachineAccessGrantInTx(tx, {
+                actorAccountId: custodian.id, machineId,
+                principal: { kind: 'account', accountId: requester.id },
+            }));
+            expect(removed.kind).toBe('removed');
+            expect(await resolveMachineAdmission({ actorAccountId: requester.id, machineId, requiredRole: 'use' }))
+                .toMatchObject({ kind: 'denied' });
+            await expect(verify()).rejects.toBeInstanceOf(PluginInstallationPublisherProofError);
+            expect((await read()).statusCode).toBe(401);
         } finally { await app.close(); }
     });
 });

@@ -4512,6 +4512,7 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
         || binding.custodianAccountId !== input.custodianAccountId
         || binding.machineId !== input.machineId || binding.installationId !== input.installationId
         || input.requestId !== undefined && binding.requestId !== input.requestId) return null;
+    if (!await readAdmittedExternalActionMachineInTx(db, binding, input.machineId, input.installationId)) return null;
     return binding.accountId;
 }
 

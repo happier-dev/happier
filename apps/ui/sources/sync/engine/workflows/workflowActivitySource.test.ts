@@ -25,6 +25,77 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
+it('opens cold Event Run names in one lean batch, including the exact Workflow cause outside the membership page', async () => {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-names.test' });
+    const sourceRun = createWorkflowRunSummaryFixture({ id: 'source-workflow', ownerAccountId: 'event-names-account' });
+    const evidence = [
+        { v: 1, kind: 'runLifecycle', occurredAt: Date.now(), source: { kind: 'workflow_run', runId: sourceRun.id },
+            condition: 'terminal', sourceRevision: 2 },
+        { v: 1, kind: 'runLifecycle', occurredAt: Date.now(), source: { kind: 'execution_run', machineId: 'source-machine', runId: 'run-native' },
+            condition: 'needs_attention', sourceRevision: 3 },
+    ] as const;
+    const children = evidence.map((fact, index) => {
+        const triggerId = `source-trigger-${index}`;
+        const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'runLifecycle', triggerId,
+            triggerRevision: 1, occurredAt: fact.occurredAt, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: fact }),
+            evidence: { source: fact.source, condition: fact.condition, sourceRevision: fact.sourceRevision } });
+        return createWorkflowRunSummaryFixture({ id: `child-${index}`, ownerAccountId: 'event-names-account',
+            origin: { kind: 'automation', automationId: `automation-${index}`, cause } });
+    });
+    const namedRuns = [...children, sourceRun];
+    const titleByRunId = new Map(namedRuns.map((run, index) => [run.id, `Accepted work ${index}`]));
+    const leanReads: Record<string, unknown>[] = [];
+    let membershipReads = 0;
+    boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'event-names-account',
+        fixtureResponse: async (actionId, input) => {
+            // The real activity Action delegates to the existing public membership list owner.
+            if (actionId !== 'workflow.run.list') throw new Error(`Unexpected full-body Event read: ${actionId}`);
+            if (input.projection === 'membership') {
+                membershipReads += 1;
+                return { ok: true, result: { runs: children, metadataByRunId: {}, projection: 'membership' } };
+            }
+            leanReads.push(input);
+            return { ok: true, result: { runs: namedRuns,
+                metadataByRunId: Object.fromEntries(namedRuns.map(run => [run.id,
+                    { kind: 'available', value: { title: titleByRunId.get(run.id)! } }])) } };
+        } });
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer(boundary.credentials);
+    boundary.prime();
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
+    const scope = getActiveServerAccountScope()!;
+    expect(storage.getState().workflowRunsById[workflowRunStoreKey(sourceRun.id, scope)]).toBeUndefined();
+    const { getWorkflowActivitySource } = await import('./workflowActivitySource');
+    const source = getWorkflowActivitySource()!;
+    const pages: WorkflowRunListResultV1[] = [];
+    const errors: unknown[] = [];
+    const release = source.acquire({ onLive() {}, onRetained: page => pages.push(page), onError: error => errors.push(error) });
+    const secondRelease = source.acquire({ onLive() {}, onRetained() {}, onError: error => errors.push(error) });
+    releases.push(release, secondRelease);
+    await vi.waitFor(() => expect(pages).toHaveLength(1), { timeout: 10_000 });
+    expect(pages[0]?.runs.map(run => run.id).sort()).toEqual(children.map(run => run.id).sort());
+    await vi.waitFor(() => {
+        expect(errors).toEqual([]);
+        expect(namedRuns.map(run => {
+            const metadata = storage.getState().workflowRunsById[workflowRunStoreKey(run.id, scope)]?.metadata;
+            return metadata?.kind === 'available' ? metadata.value.title : metadata;
+        })).toEqual(namedRuns.map(run => titleByRunId.get(run.id)));
+    }, { timeout: 10_000 });
+    expect(membershipReads).toBe(1);
+    expect(leanReads).toHaveLength(1);
+    expect(leanReads[0]?.runIds).toEqual(expect.arrayContaining(namedRuns.map(run => run.id)));
+    expect(leanReads[0]?.runIds).toHaveLength(namedRuns.length);
+    expect(leanReads[0]?.runIds).not.toContain('run-native');
+    release(); secondRelease();
+    await source.retry(); await source.loadMore();
+    expect(leanReads).toHaveLength(1);
+});
+
 it('shares acquisition across hosts, publishes only changed facts and releases the final demand', async () => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-cost.test' });
@@ -36,6 +107,12 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-account',
         fixtureResponse: async (id, input) => {
             if (id !== 'workflow.run.list') throw new Error(`Unexpected activity HTTP read: ${id}`);
+            if (input.projection !== 'membership') {
+                const requestedRunIds = input.runIds;
+                if (!Array.isArray(requestedRunIds) || requestedRunIds.length === 0) throw new Error('Expected an exact lean name read');
+                return { ok: true, result: { runs: [baselineRun, continuationRun, middleRun]
+                    .filter(run => requestedRunIds.includes(run.id)), metadataByRunId: {} } };
+            }
             reads += 1;
             return { ok: true, result: input.cursor === 'new-middle-runs'
                 ? { runs: [middleRun], metadataByRunId: {}, projection: 'membership', nextCursor: 'older-runs' }
