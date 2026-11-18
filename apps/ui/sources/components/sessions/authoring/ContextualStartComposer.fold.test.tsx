@@ -162,4 +162,25 @@ describe('ContextualStartComposerBody Who list (lab flows `ask`)', () => {
     ]);
     await short.unmount();
   });
+
+  it('narrows to one kind from its filter chip, whole, and All brings the mixed list back (lab dpRev)', async () => {
+    // The chips sit beneath the Who search, which the host supplies.
+    const searchable = { ...source({ models: 3, sessions: 6, bots: 2 }), search: { value: '', onChange: () => undefined } };
+    const screen = await renderScreen(<Composer source={searchable} />);
+    await screen.pressByTestIdAsync('contextual-start-who-filter:bot');
+    expect(shownIds(screen)).toEqual(['bot:0', 'bot:1']);
+    await screen.pressByTestIdAsync('contextual-start-who-filter:session');
+    expect(shownIds(screen)).toEqual(options('session', 6).map((option) => option.id));
+    await screen.pressByTestIdAsync('contextual-start-who-filter:all');
+    expect(shownIds(screen)).toContain('who:show-all');
+    await screen.unmount();
+  });
+
+  it('searches every row instead of the folded picks', async () => {
+    const searched = { ...source({ models: 3, sessions: 6, bots: 2 }), search: { value: 'session 5', onChange: () => undefined } };
+    const screen = await renderScreen(<Composer source={searched} />);
+    expect(shownIds(screen)).toContain('session:5');
+    expect(shownIds(screen)).not.toContain('who:show-all');
+    await screen.unmount();
+  });
 });

@@ -7,7 +7,8 @@ import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/wo
 import { useExecutableParticipantSections, executableParticipantOptionId } from '@/components/discussions/useExecutableParticipantSections';
 import { useDiscussionWorkflowProject } from '@/components/discussions/useDiscussionWorkflowProject';
 import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
-import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListFilter, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
+import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -86,7 +87,8 @@ export function useContextualStartParticipantSource(input: ContextualStartCompos
 }
 
 export type ContextualStartAdmissibleSet = Readonly<{
-    who: readonly ('newAgent' | 'session' | 'bot' | 'person')[];
+    /** `engine`: review engines a Reviews start offers beside agents (Reviews lab start-who). */
+    who: readonly ('newAgent' | 'session' | 'bot' | 'person' | 'engine')[];
     machine: 'select' | 'fixed';
     folder: 'select' | 'fixed';
 }>;
@@ -136,7 +138,21 @@ export type ContextualStartComposerModel = ReturnType<typeof useContextualStartC
  * The folded Who list (lab flows `ask`): about four mixed top picks, so the question and what they can
  * read stay in reach without scrolling. Presentation only; the owner's ranking decides which ones.
  */
-const WHO_PREVIEW = { total: 4, newAgent: 2, session: 1, bot: 1 } as const;
+const WHO_PREVIEW = { total: 4, newAgent: 2, session: 1, bot: 1, engine: 1 } as const;
+
+/**
+ * The Who list's filter chips (lab dpRev: All · Sessions · Bots · People, plus Engines where a Reviews start
+ * offers them). New agents have no chip of their own: they are made with Add an agent, not found.
+ */
+type WhoFilter = 'all' | 'session' | 'bot' | 'person' | 'engine';
+const WHO_FILTER_KINDS = ['session', 'bot', 'person', 'engine'] as const;
+const WHO_FILTER_LABEL_KEYS = {
+    all: 'session.collaboration.discussion.controls.whoFilterAll',
+    session: 'session.collaboration.discussion.controls.whoFilterSessions',
+    bot: 'session.collaboration.discussion.controls.whoFilterBots',
+    person: 'session.collaboration.discussion.controls.whoFilterPeople',
+    engine: 'session.collaboration.discussion.controls.whoFilterEngines',
+} as const;
 
 type ModelSelection = Extract<ExecutableParticipantSelectionV1, { kind: 'model' }>;
 
@@ -166,6 +182,8 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     const accessoryAnchorRef = React.useRef<View | null>(null);
     const closeAccessory = React.useCallback(() => setAccessoryOpen(false), []);
     const [expanded, setExpanded] = React.useState(false);
+    const [whoFilter, setWhoFilter] = React.useState<WhoFilter>('all');
+    const whoQuery = source.search?.value ?? '';
     const [whoEditing, setWhoEditing] = React.useState(() => source.selectedIds.size === 0);
     // Whether the open recipe adds an agent or changes a chosen one. Presentation only: the recipe
     // and its value stay with the participant owner.
@@ -213,6 +231,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             id: 'who:add-agent', testID: 'contextual-start-add-agent',
             icon: <Icon name="plus" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
             label: t('session.collaboration.discussion.secondOpinion.addAgent'),
+            subtitle: t('session.collaboration.discussion.controls.addAgentLine'),
             disabled: busy || openRecipe !== null, onSelect: startAdd,
         } : null;
         const addSection: SelectionListSectionDescriptor[] = addRow ? [{ kind: 'static', id: 'who:add', options: [addRow] }] : [];
@@ -233,8 +252,18 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             ? section.options.filter(option => !isState(option)).map(option => ({ option, category: categoryOf.get(section.id) ?? 'session' }))
             : []);
         const peopleChosen = (participants?.input.people?.chosen.length ?? 0) > 0;
+        // A kind's chip narrows the list to that kind, whole: people, or one kind of agent row.
+        if (whoFilter !== 'all') {
+            const sections = whoFilter === 'person' ? peopleSections : agentSections
+                .filter(section => categoryOf.get(section.id) === whoFilter)
+                .map(section => section.kind === 'static'
+                    ? { ...section, title: undefined, rightAccessory: undefined, count: undefined, options: section.options.map(decorate) }
+                    : section);
+            return { step: { ...model.rootStep, sections }, selectedIds, added };
+        }
         // A short list shows whole, people after it; only a longer one folds (people then wait inside Show all).
-        const foldable = candidates.length > WHO_PREVIEW.total;
+        // A search reaches every row, so it never searches only the folded picks.
+        const foldable = candidates.length > WHO_PREVIEW.total && whoQuery.trim() === '';
         if (expanded || !foldable) {
             // Each row names its kind in its line, so the agent groups read as one list.
             const sections = agentSections.map(section => section.kind === 'static'
@@ -264,6 +293,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
         take('newAgent', WHO_PREVIEW.newAgent);
         take('session', WHO_PREVIEW.session);
         take('bot', WHO_PREVIEW.bot);
+        take('engine', WHO_PREVIEW.engine);
         // A kind with nothing to offer leaves its place to the next candidates in the owner's order.
         for (const { option } of candidates) {
             if (top.length >= WHO_PREVIEW.total) break;
@@ -283,7 +313,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
         // People live inside Show all; ones already chosen stay in sight.
         return { step: { ...model.rootStep, inputPlaceholder: peopleChosen ? model.rootStep.inputPlaceholder : undefined,
             sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, added };
-    }, [addAgent, addedLabels, addedMachines, addedSelections, busy, details, detailId, editModel, expanded, onChoose, onReplace, participants?.input.people?.chosen, model.rootStep, model.selectedIds, openRecipe, source.sections, startAdd, theme.colors.text.secondary]);
+    }, [addAgent, addedLabels, addedMachines, addedSelections, busy, details, detailId, editModel, expanded, onChoose, onReplace, participants?.input.people?.chosen, model.rootStep, model.selectedIds, openRecipe, source.sections, startAdd, theme.colors.text.secondary, whoFilter, whoQuery]);
     const chosenStep = React.useMemo<SelectionListStep>(() => ({
         ...display.step, inputPlaceholder: undefined,
         sections: display.step.sections.flatMap(section => {
@@ -294,6 +324,20 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     }), [display.step, display.selectedIds]);
     const hasChosen = chosenStep.sections.length > 0 || display.added.length > 0;
     const choosingWho = whoEditing || !hasChosen;
+    // Lab dpRev: the Who list always offers its search and, when it mixes kinds, one chip per kind beneath it.
+    const whoKinds = React.useMemo(() => {
+        const present = new Set(source.sections.filter(entry => model.admissible.who.includes(entry.category)
+            && (entry.section.kind !== 'static' || entry.section.options.length > 0)).map(entry => entry.category));
+        return WHO_FILTER_KINDS.filter(kind => present.has(kind));
+    }, [model.admissible.who, source.sections]);
+    const choosingStep = React.useMemo<SelectionListStep>(() => source.search ? { ...display.step,
+        inputPlaceholder: t(whoKinds.includes('engine') ? 'session.collaboration.discussion.controls.whoSearchWithEngines'
+            : 'session.collaboration.discussion.controls.whoSearch') } : display.step, [display.step, source.search, whoKinds]);
+    const whoFilters = React.useMemo<readonly SelectionListFilter[]>(() => whoKinds.length < 2 ? []
+        : (['all', ...whoKinds] as const).map(kind => ({ id: `who:${kind}`, testID: `contextual-start-who-filter:${kind}`,
+            label: t(WHO_FILTER_LABEL_KEYS[kind]), selected: whoFilter === kind, disabled: busy,
+            onToggle: () => setWhoFilter(current => kind === 'all' || current === kind ? 'all' : kind) })),
+    [busy, whoFilter, whoKinds]);
     const changing = openRecipe === 'change';
     // The recipe closes itself when it resolves; the mode follows it.
     React.useEffect(() => { if (editor === null) setRecipe(null); }, [editor]);
@@ -314,7 +358,9 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
                     disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
             </View>
             <View style={styles.hang}>
-                <SelectionList testID="contextual-start-who" rootStep={choosingWho ? display.step : chosenStep}
+                    inputAccessoryRow={choosingWho && whoFilters.length > 0
+                        ? <SelectionListFilterChips filters={whoFilters} placement="row" testID="contextual-start-who-filters" /> : undefined}
+                <SelectionList testID="contextual-start-who" rootStep={choosingWho ? choosingStep : chosenStep}
                     inputValue={choosingWho ? source.search?.value : undefined}
                     onChangeInputValue={choosingWho ? source.search?.onChange : undefined}
                     selection={{ kind: 'multiple', selectedIds: display.selectedIds }}
