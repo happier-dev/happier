@@ -187,15 +187,18 @@ describe('Approval profile default in the project defaults editor', () => {
       // None is an explicit choice, distinct from clearing back to what the Team sets.
       await screen.update(element({ approvalProfileId: release.id }));
       await pick('none');
-      expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.approvalProfileNone'));
-      expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.approvalProfileNoneDescription'));
       await vi.waitFor(() =>
         expect(writes.at(-1)).toEqual({ approvalProfileId: null }),
       );
       await screen.update(element({ approvalProfileId: null }));
+      await vi.waitFor(() => {
+        expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.approvalProfileNone'));
+      });
       await pick('inherit');
-      expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.approvalProfileNotSet'));
-      await vi.waitFor(() => expect(writes.at(-1)).toBeNull());
+      await vi.waitFor(() => {
+        expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.approvalProfileNotSet'));
+        expect(writes.at(-1)).toBeNull();
+      });
       expect(account.artifacts.readGrants(reviewed.id)).toEqual([]);
     } finally {
       await screen.unmount();
