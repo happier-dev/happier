@@ -3,6 +3,11 @@ import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-de
 import type { HealthChecksService, HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1, HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
 import { plugin } from './manifest.js';
 
+it('publishes the saved health check operand for the setup Action catalog', () => {
+    const action = plugin.manifest.contributes.actions?.find(row => row.id === 'health/setup');
+    expect(action?.approvalScope).toBe('healthCheck');
+});
+
 it('chooses saved health transitions without configuring another probe', async () => {
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
     try {

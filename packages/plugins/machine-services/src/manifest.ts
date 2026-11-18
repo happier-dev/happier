@@ -56,7 +56,8 @@ export const plugin = definePlugin({
             ]) }, { policy: 'closed' }),
         }, 'health/setup': {
         title: 'Configure saved health checks', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
-        surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'safe', readOnly: { op: 'eq', path: 'mode', value: 'preview' },
+        surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'safe', approvalScope: 'healthCheck',
+        readOnly: { op: 'eq', path: 'mode', value: 'preview' },
         inputSchema: defineProtocolUnion([HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema]),
         inputHints: { fields: [
             { path: 'v', title: 'Version', widget: 'number', defaultValue: 1,
@@ -90,6 +91,7 @@ export const plugin = definePlugin({
         },
     }, 'health/heartbeat/manage': {
         title: 'Manage heartbeat address', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
+        approvalScope: 'healthCheck',
         description: 'Inspect status, rotate or revoke one saved heartbeat. Ask the person to reveal and copy its replacement address in saved-check setup; addresses are never returned here.',
         surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'writesRemote',
         readOnly: { op: 'eq', path: 'operation', value: 'status' },

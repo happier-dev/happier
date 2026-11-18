@@ -8,7 +8,8 @@ import { ApprovalRequestDecideInputSchema } from '../actions/specs/approvals.js'
 import { ActionAutomationConsentV1Schema } from './approvalAutomaticChecks.js';
 import { createActionAutomationInvocationV1 } from '../actions/executor/actionSettlement.js';
 import type { ActionAutomationPortV1, ActionAutomationSelectionV1 } from '../actions/executor/actionAutomationAdmission.js';
-import { answerApprovalAutomaticConsentV1, createApprovalAutomaticChecksV1, restoreApprovalAutomaticContextV1 } from '../actions/executor/automaticApprovalContinuation.js';
+import { answerApprovalAutomaticConsentV1, createApprovalAutomaticChecksV1, createApprovalAutomaticContinuationV1,
+  restoreApprovalAutomaticContextV1 } from '../actions/executor/automaticApprovalContinuation.js';
 
 const selected = [{ automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'actor',
   workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait', onFailure: 'ask' }];
@@ -172,5 +173,28 @@ describe('automatic check approval invariants (PROGRAM D2/C3/D14)', () => {
       .toMatchObject({ automaticChecks: { runs: [], results: [], notices: skipped.notices } });
     expect(ApprovalRequestV2Schema.safeParse({ ...request, status: 'approved',
       automaticChecks: { ...skipped, notices: [] } }).success).toBe(false);
+  });
+
+  it('refuses admission when a selected wait check has neither a Run nor an explicit skip', async () => {
+    const original = ApprovalRequestV2Schema.parse({ ...request,
+      automaticChecks: createApprovalAutomaticChecksV1({ status: 'ready', subjects: [], before: selected, after: [] }, false),
+    });
+    const continuation = createApprovalAutomaticContinuationV1<ApprovalRequestV2, ApprovalRequestV2>({
+      actionAutomations: {
+        select: async () => { throw new Error('admission must use the retained selection'); },
+        start: async () => ({ runs: [], notices: [] }),
+      },
+      parse: input => ApprovalRequestV2Schema.parse(input),
+      invocation: () => ({ actionId: original.actionId, input: original.actionArgs }),
+      write: async () => null,
+      refusal: (current, updatedAtMs, checks, failure) => ApprovalRequestV2Schema.parse({ ...current,
+        status: 'failed', updatedAtMs, automaticChecks: checks,
+        execution: projectApprovalExecutionFailureV2({ request: current, executedAtMs: updatedAtMs,
+          effectAttempted: false, failure }),
+      }),
+      readFailure: () => null,
+    });
+    await expect(continuation.admit('approval', original, { surface: 'cli', actionRequestId: 'request' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
   });
 });
