@@ -103,6 +103,38 @@ describe('Review metadata demand', () => {
             expect.objectContaining({ roundOrdinal: 1, runId: 'prior-run', reviewerId: 'engine-b' }),
             expect.objectContaining({ roundOrdinal: 2, runId: 'second-round-run', reviewerId: 'engine-a' }),
         ]));
+        const measures: Readonly<{ inventory: number; rows: number; bytes: number }>[] = [];
+        let inventory = 0;
+        for (const size of [1000, 10000]) {
+            while (inventory < size) {
+                const ids = Array.from({ length: Math.min(500, size - inventory) }, () => randomUUID());
+                await db.artifact.createMany({ data: ids.map(id => ({ id, accountId: owner.id,
+                    header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() })) });
+                await db.reviewMetadata.createMany({ data: ids.map(artifactId => ({ artifactId,
+                    workflowId: `unrelated-${workflowId}`, subjectKind: 'repository', sourceKind: 'workflow',
+                    state: 'completed', currentRoundOrdinal: 1, startedAt: new Date(0) })) });
+                inventory += ids.length;
+            }
+            const reads: Readonly<{ rows: number; bytes: number }>[] = [];
+            const measured = await inTx(async tx => {
+                const raw = tx.$queryRaw;
+                // Observe the genuine database boundary, preserving the real grouping and authorization query.
+                tx.$queryRaw = new Proxy(raw, { apply: async (target, thisArg, args) => {
+                    const rows: unknown = await Reflect.apply(target, thisArg, args);
+                    if (Array.isArray(rows)) reads.push({ rows: rows.length,
+                        bytes: Buffer.byteLength(JSON.stringify(rows, (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value)) });
+                    return rows;
+                } });
+                try { return await readReviewHistoryInTx(tx, { actorAccountId: owner.id, workflowId, reviewId: current }); }
+                finally { tx.$queryRaw = raw; }
+            });
+            expect(measured).toEqual(history);
+            // One current and three predecessor appearances; older runs remain grouped counts.
+            expect(reads.map(read => read.rows)).toEqual([4]);
+            measures.push({ inventory, ...reads[0]! });
+            console.info(`[review-workflow-history] provider=${process.env.HAPPIER_DB_PROVIDER ?? 'sqlite'} unrelatedReviews=${inventory} queries=${reads.length} rows=${reads[0]!.rows} bytes=${reads[0]!.bytes}`);
+        }
+        expect(measures[1]!.bytes).toBe(measures[0]!.bytes);
         const firstHistory = await inTx(tx => readReviewHistoryInTx(tx, { actorAccountId: owner.id, workflowId, reviewId: earlier }));
         expect(firstHistory).toMatchObject({ previousReviewId: null, items: [{ priorReviewCount: 0, priorRunCount: 0, newSincePrevious: null }] });
         const page = await inTx(tx => listReviewsInTx(tx, { actorAccountId: owner.id, workflowId, needsDecision: true, limit: 1 }));
