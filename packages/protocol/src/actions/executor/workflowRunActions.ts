@@ -3150,9 +3150,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         // the server can publish the ordinary terminal projection; expose it
         // to the approval continuation as a failed check. Other interrupted
         // Runs remain unavailable and therefore retain the refusal path.
-        const automaticCheckFailedChild = automaticRun?.state === 'interrupted' && hasFailedAutomaticCheckChild(automaticRun);
         const automaticCheckTerminal = automaticCheck !== undefined
-          && ((typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)) || automaticCheckFailedChild);
+          && (run.state === 'interrupted' || typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state));
         // A passive observer does not settle when a condition or terminal state
         // is seen. Keep the same feed until its cancellation/authored deadline.
         if (!onSnapshot && (combined !== undefined && run.state === 'interrupted'
