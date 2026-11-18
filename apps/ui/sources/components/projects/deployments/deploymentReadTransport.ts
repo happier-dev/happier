@@ -24,7 +24,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
-import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
+import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
     deploymentDataTargetOperands, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -265,6 +265,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ...(coverage === undefined ? {} : { coverage }) } };
         }),
         observeEnvironmentHealth: environmentHealthObserver(lifetime),
+        observeEnvironmentCollectionHealth: environmentCollectionHealthObserver(lifetime),
         observeDomainHealth: domainHealthObserver(lifetime, (scope, environmentId, options) =>
             scoped(scope, options, () => readEnvironmentMetadata(scope, environmentId, options))),
         readActivity: (scope, options) => scoped(scope, options, async () => {
