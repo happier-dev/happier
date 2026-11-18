@@ -45,6 +45,9 @@ import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from
 import { captureWorkflowDefinitionV1 } from './workflowDefinitionCapture.js';
 import { WorkflowDefinitionCaptureResultV1Schema } from '../../workflows/workflowDiscussionCaptureV1.js';
 import { DiscussionOpenedMessageV1Schema } from '../../discussions/actions.js';
+import { createInMemoryReviewRecordPortV1 } from '../../reviews/reviewArtifactV1.testkit.js';
+import type { ReviewRoundBindingV1 } from '../../reviews/reviewArtifactV1.js';
+import { readReviewStartActionResultV1 } from '../specs/executionRunCompletion.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 it('admits a private Project files default only with the exact host-issued Workflow continuation', async () => {
@@ -217,6 +220,48 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each(['refused', 'unresolved', 'accepted'] as const)('settles a composed Review only when its Workflow admission is definitely %s', async outcome => {
+    const records = createInMemoryReviewRecordPortV1();
+    let binding: ReviewRoundBindingV1 | undefined;
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        if (operation.operation === 'admit') {
+          if (outcome === 'unresolved') throw new Error('lost_admission_reply');
+          return { kind: 'created', run: { ...runSnapshot().run, id: operation.runId } };
+        }
+        throw new Error('unexpected_storage_operation');
+      } }),
+      prepareWorkspace: async () => outcome === 'refused' ? { ok: false, code: 'workspace_unavailable' }
+        : { ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } },
+      resolveMaterializationContext: async () => ({
+        roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' },
+          availableAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
+        effects: { resolveTargetAvailability: async () => true,
+          readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+      }),
+    });
+    const executor = createActionExecutor({
+      reviewRecords: () => ({ ...records, start: async input => {
+        binding = await records.start(input);
+        return binding;
+      } }),
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+    });
+    const selection = { reviewers: [{ kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' },
+      { kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' }], instructions: 'Review independently.', scope: 'repository' as const };
+    const result = await executor.execute('review.start', selection, { surface: 'ui', defaultSessionId: 'origin-1',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } });
+    expect(result).toMatchObject(outcome === 'accepted' ? { ok: true }
+      : { ok: false, errorCode: outcome === 'refused' ? 'target_unavailable' : 'workflow_outcome_unresolved' });
+    expect(binding).toBeDefined();
+    const record = await records.read(binding!.reviewId);
+    expect(record?.rounds[0]?.state).toBe(outcome === 'refused' ? 'failed' : 'running');
+    if (outcome === 'accepted') expect(readReviewStartActionResultV1(result, selection)).toMatchObject({
+      kind: 'workflow', workflow: { runId: expect.any(String) }, reviewRound: binding,
+    });
+  });
+
   it.each(['saved', 'catalog'] as const)('reviews %s cloud Workflow effects without preparing or admitting a controller workspace', async sourceKind => {
     const cloudDefinition = validateWorkflowDefinition({ version: 1, defaults: definition.defaults,
       blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run',

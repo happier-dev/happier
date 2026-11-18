@@ -355,6 +355,7 @@ export function isActionOutcomeUnknownErrorCodeV1(code: unknown): boolean {
   return code === 'outcome_unknown' || code === 'outcome_uncertain' || code === UNEXPECTED_ACTION_FAILURE_CODES_V1[1]
     || code === 'approval_execution_outcome_unknown'
     || code === RPC_ERROR_CODES.OUTCOME_UNKNOWN
+    || code === 'workflow_outcome_unresolved'
     // The Project row transport/receipt owner has already classified settlement.
     || code === 'project_account_row_outcome_unknown' || code === 'project_account_row_acknowledgement_invalid';
 }

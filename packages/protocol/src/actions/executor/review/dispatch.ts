@@ -24,7 +24,7 @@ import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
-import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 import { dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
 import { ScmComparisonSourceSchema } from '../../../scm/comparison.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
@@ -316,8 +316,16 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
           const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, undefined, comparisonCapture?.input);
-          return executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
+          const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
             source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
+          if (!started.ok) {
+            if (!isActionOutcomeUnknownErrorCodeV1(started.errorCode)) {
+              await records.settle({ ...reviewRound, outcome: ctx.signal?.aborted ? 'cancelled' : 'failed',
+                finishedAt: Date.now(), runs: [], ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
+            }
+            return started;
+          }
+          return { ok: true, result: { ...readRecord(started.result), reviewRound } };
         }
         if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const engineSelections = reviewInput.reviewers.flatMap((selection, index) => selection.kind === 'engine'

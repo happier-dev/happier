@@ -53,11 +53,17 @@ describe('Action completion owner', () => {
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
-    for (const value of [{ run, admission: 'created' }, { ok: true, result: { run, admission: 'created' } }]) {
-      expect(readReviewStartActionResultV1(value, selection)).toEqual({ kind: 'workflow',
-        workflow: { runId: run.id, origin: run.origin } });
+    const reviewRound = { reviewId: 'review', roundOrdinal: 1 };
+    for (const metadata of [{}, { reviewRound }]) {
+      for (const value of [{ run, admission: 'created', ...metadata }, { ok: true, result: { run, admission: 'created', ...metadata } }]) {
+        expect(readReviewStartActionResultV1(value, selection)).toEqual({ kind: 'workflow',
+          workflow: { runId: run.id, origin: run.origin }, ...metadata });
+      }
     }
-    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: { run, admission: 'created' } });
+    for (const invalid of [{ reviewRound: { reviewId: 'review', roundOrdinal: 0 } }, { unrelatedMetadata: true }]) {
+      expect(readReviewStartActionResultV1({ run, admission: 'created', ...invalid }, selection)).toEqual({ kind: 'outcome_unknown' });
+    }
+    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: { run, admission: 'created', reviewRound } });
     expect(prepared).toMatchObject({ kind: 'awaiting', state: { awaitedWorkflows: [{ key: 'review', runId: run.id }] } });
     if (prepared.kind !== 'awaiting') throw new Error('Expected retained Review Workflow');
     const result = { review: { state: 'completed', counts: { total: 51, needsDecision: 1 } },

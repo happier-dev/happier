@@ -12,6 +12,7 @@ import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1 } from '../../rev
 import { reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
 import { parseWorkflowRunStartActionResultReferenceV1, type WorkflowRunActionResultReferenceV1 } from '../../workflows/actionsV1.js';
 import { ActionExecuteResultSchema } from '../actionExecutionResult.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
@@ -53,8 +54,23 @@ export type ReviewStartActionResultV1 =
   | Readonly<{ kind: 'native'; runs: readonly Readonly<{ key: string; runId: string }>[];
     failed: readonly Readonly<{ key: string; errorCode: string; runCreation: 'noRunCreated' }>[];
     reviewRound?: ReviewRoundBindingV1; reviewedFingerprint?: string | null }>
-  | Readonly<{ kind: 'workflow'; workflow: WorkflowRunActionResultReferenceV1 }>
+  | Readonly<{ kind: 'workflow'; workflow: WorkflowRunActionResultReferenceV1; reviewRound?: ReviewRoundBindingV1 }>
   | Readonly<{ kind: 'outcome_unknown' }>;
+
+/** Review adds its round binding to the ordinary Workflow admission receipt. */
+export function readReviewWorkflowStartActionResultV1(value: unknown): Readonly<{
+  workflow: WorkflowRunActionResultReferenceV1;
+  reviewRound?: ReviewRoundBindingV1;
+}> | null {
+  const envelope = ActionExecuteResultSchema.safeParse(value);
+  const output = envelope.success ? envelope.data.ok ? envelope.data.result : undefined : value;
+  const { reviewRound, ...start } = readRecord(output);
+  const workflow = parseWorkflowRunStartActionResultReferenceV1(start);
+  if (!workflow) return null;
+  if (reviewRound === undefined) return { workflow };
+  const binding = ReviewRoundBindingV1Schema.safeParse(reviewRound);
+  return binding.success ? { workflow, reviewRound: binding.data } : null;
+}
 
 /** Reads current authoring receipts against their exact selected reviewer identities.
  * Unknown effects are never proof that a start can be retried. Workflow admission
@@ -63,8 +79,8 @@ export type ReviewStartActionResultV1 =
 export function readReviewStartActionResultV1(value: unknown,
   selection: Pick<ReviewStartInput, 'reviewers' | 'steps'>): ReviewStartActionResultV1 {
   try {
-    const workflow = parseWorkflowRunStartActionResultReferenceV1(value);
-    if (workflow) return { kind: 'workflow', workflow };
+    const workflow = readReviewWorkflowStartActionResultV1(value);
+    if (workflow) return { kind: 'workflow', ...workflow };
     const envelope = ActionExecuteResultSchema.safeParse(value);
     const output = envelope.success ? envelope.data.ok ? envelope.data.result : undefined : value;
     const retained = readFanoutOutput(output, 'review');
@@ -230,8 +246,8 @@ export const reviewStartCompletion: ActionCompletionDeclaration = {
   executionRuns: reviewStartExecutionRunCompletion,
   terminalOutputSchema: StrictJsonValueSchema,
   launched: output => {
-    const started = parseWorkflowRunStartActionResultReferenceV1(output);
-    return { workflows: started ? [{ key: 'review', runId: started.runId }] : [] };
+    const started = readReviewWorkflowStartActionResultV1(output);
+    return { workflows: started ? [{ key: 'review', runId: started.workflow.runId }] : [] };
   },
   terminal: (_output, workflows) => workflows[0]?.workflow.result,
 };
