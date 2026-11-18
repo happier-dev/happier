@@ -18,25 +18,7 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import type { ApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useWorkflowRun } from '@/sync/domains/state/storage';
-import { refreshWorkflowRunsByIds } from '@/sync/engine/workflows/refreshWorkflowRun';
-import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
-
-/** The running check's step progress, from its Run read on the approval's Home (demanded while the card shows it). */
-function useCheckingRunProgress(runId: string | null, serverId: string | null): string | null {
-  const { binding } = useServerCredentialAccountScopeBinding(runId ? serverId : '');
-  const scope = binding?.scope ?? null;
-  const run = useWorkflowRun(runId, { enabled: scope !== null, scope });
-  const loaded = run !== null;
-  React.useEffect(() => {
-    if (!runId || !binding || loaded) return;
-    const controller = new AbortController();
-    void refreshWorkflowRunsByIds([runId], { accountLifetime: binding, fence: binding, signal: controller.signal }).catch(() => {});
-    return () => controller.abort();
-  }, [runId, binding, loaded]);
-  return run?.summary?.state === 'running' ? describeWorkflowRunProgress(run.summary.stepProgress) : null;
-}
+import { useApprovalAutomaticCheckDetails } from './useApprovalAutomaticCheckDetails';
 
 /**
  * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
@@ -211,7 +193,9 @@ export const ApprovalAutomaticChecks = React.memo(
     );
     const checkingRun = checks.phase === 'checking'
       ? (checks.selected.find((row) => runOf(row) !== null) ?? checks.selected[0] ?? null) : null;
-    const checkingProgress = useCheckingRunProgress(checkingRun ? runOf(checkingRun) : null, props.serverId);
+    const { progress: checkingProgress } = useApprovalAutomaticCheckDetails({
+      runId: checkingRun ? runOf(checkingRun) : null, serverId: props.serverId,
+    });
     const openRun = (runId: string | null) =>
       runId && props.onOpenRoute ? (
         <TextLinkButton
