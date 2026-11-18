@@ -131,10 +131,21 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
-/** Semantic composition/handoff have their own typed ports, never storage HTTP transports. */
-export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.environments.moveToRepository' | 'deployments.backups.restore' | typeof DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 | DeploymentBackupActionIdV1>;
+/** Composed Actions with dedicated ports instead of the common deployment transport. */
+const DEPLOYMENT_SPECIALIZED_ACTION_IDS_V1 = [
+  DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+  ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,
+] as const;
+export type DeploymentTransportActionIdV1 = Exclude<
+  DeploymentActionIdV1, typeof DEPLOYMENT_SPECIALIZED_ACTION_IDS_V1[number]
+>;
 const ids: ReadonlySet<string> = new Set(DEPLOYMENT_ACTION_IDS_V1);
+const specializedIds: ReadonlySet<string> = new Set(DEPLOYMENT_SPECIALIZED_ACTION_IDS_V1);
 export function isDeploymentActionIdV1(value: string): value is DeploymentActionIdV1 { return ids.has(value); }
+export function isDeploymentTransportActionIdV1(value: string): value is DeploymentTransportActionIdV1 {
+  return isDeploymentActionIdV1(value) && !specializedIds.has(value);
+}
 
 export function isDeploymentTargetLinkActionIdV1(value: string): value is 'deployments.targets.link' {
   return value === 'deployments.targets.link';
@@ -271,13 +282,6 @@ export function isDeploymentAccountMachineTransportActionIdV1(value: string): va
   return value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentTargetLinkActionIdV1(value)
     || value === 'deployments.health.current' || isDeploymentDomainChildActionIdV1(value) || isDeploymentDomainDnsActionIdV1(value);
-}
-
-/** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
-export function isDeploymentMachineTransportActionIdV1(value: string): boolean {
-  return isDeploymentChildRootActionIdV1(value) || isDeploymentReadActionIdV1(value)
-    || isDeploymentAccountMachineTransportActionIdV1(value) || value === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
-    || value === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
 }
 
 export function isDeploymentNativeReadActionIdV1(value: string): value is

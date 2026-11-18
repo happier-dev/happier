@@ -23,7 +23,8 @@ import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpB
 import { cacheMcpToolList } from '@/mcp/server/cacheMcpToolList';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
-import { isControllerDeploymentAction } from '@/session/actions/createCliActionDeps';
+import { DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentEnvironmentPlacementActionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -237,7 +238,10 @@ export function createExternalMcpServer(params: Readonly<{
                 invocation, authority: invocation.authority, ...(context?.signal ? { signal: context.signal } : {}) });
               if (selected) return await selected();
             }
-            if (isControllerDeploymentAction(actionId, input)) {
+            if (isDeploymentTransportActionIdV1(actionId) && isDeploymentEnvironmentPlacementActionV1(actionId, input,
+              resolveActionExecutionPlacementForInput(getActionSpec(actionId), input, context?.actionCaller, 'mcp'),
+              { canPrepareAccountBindings: true }) && !isDeploymentReadActionIdV1(actionId)
+              && (actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || getActionSpec(actionId).safetyForInput?.(input) !== 'safe')) {
               const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
               if (!deps.deploymentAction) return { ok: false as const, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' };

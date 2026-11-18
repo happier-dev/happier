@@ -446,7 +446,8 @@ import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/pr
 import { resolveSpawnConnectedServicesSelectionInContext, listSpawnConnectedServicesInContext } from './agentInventoryActionDeps';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, isDeploymentActionFailure, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
@@ -1178,16 +1179,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       requestedMachineId = selected.machineId;
     }
     const environmentControllerAction = readAdmittedActionId(args.actionId, args.input);
-    // Environment settings the host Action prepares on the Environment's controller (backup policy, telemetry).
-    if (environmentControllerAction === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
-      || environmentControllerAction === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
-      || environmentControllerAction === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(environmentControllerAction)
-      || isDeploymentAccountMachineTransportActionIdV1(environmentControllerAction)
-        && environmentControllerAction !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && !requestedMachineId) {
+    if (isDeploymentActionIdV1(environmentControllerAction) && isDeploymentEnvironmentPlacementActionV1(
+      environmentControllerAction, pluginInput, resolveActionExecutionPlacementForInput(getActionSpec(environmentControllerAction),
+        pluginInput, args.context.actionCaller, args.context.surface ?? 'ui'))) {
       const input = DeploymentActionInputSchemasV1[environmentControllerAction].safeParse(pluginInput);
       if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-      const selected = await deploymentActionDeps.readEnvironmentController(input.data, args.context);
+      const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(environmentControllerAction, input.data, {
+        readEnvironmentController: address => deploymentActionDeps.readEnvironmentController(address, args.context),
+      });
       if (!selected.ok) return selected;
       requestedMachineId = selected.machineId;
     }

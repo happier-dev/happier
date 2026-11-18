@@ -1,6 +1,5 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { isRecord } from '@happier-dev/protocol/common/records';
-import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentGetResultV1Schema, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -9,11 +8,6 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 
 const actionFailure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
-
-export function hasDeploymentPlacementOperand(actionId: string, input: unknown): boolean {
-  return isDeploymentActionIdV1(actionId) && isRecord(input) && (typeof input.environmentId === 'string'
-    || typeof input.controllerMachineId === 'string');
-}
 
 export function resolveRequesterDeploymentMachine(params: Readonly<{
   actionId: string;

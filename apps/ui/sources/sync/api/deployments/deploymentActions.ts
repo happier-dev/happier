@@ -1,12 +1,12 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { admitPresentUserConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
@@ -287,8 +287,9 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
                 }
             }
         }
-        if (getActionSpec(actionId).executionPlacement !== 'machine'
-            && !isDeploymentMachineTransportActionIdV1(actionId)) {
+        const placement = resolveActionExecutionPlacementForInput(getActionSpec(actionId), input, context.actionCaller, context.surface ?? 'ui');
+        if (actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && actionId !== DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1
+            && !isDeploymentEnvironmentPlacementActionV1(actionId, input, placement)) {
             return storage(actionId, input, context);
         }
         const selectedReadInput = isDeploymentReadActionIdV1(actionId)

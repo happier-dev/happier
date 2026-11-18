@@ -18,10 +18,10 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
-import { hasDeploymentPlacementOperand, resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readApiTokenDeploymentController } from '@/deployments/readApiTokenDeploymentController';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
@@ -110,7 +110,7 @@ import type {
 } from './createCliActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliTeamCredentialUsageExportAction } from './teamCredentialUsageExportAction';
-import { isControllerDeploymentAction, isControllerDeploymentMutationAction } from './createCliActionDeps';
+import { isControllerDeploymentMutationAction } from './createCliActionDeps';
 import { consumeDeferredCliApprovalResult, isUnpreservableOriginalCliApproval, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
 import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
 import { executeOriginalAccountCliApprovalRequest } from './approvals/originalAccountRequest';
@@ -1989,12 +1989,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // An external client's Machine-placed Action keeps its signed original
       // carrier; UI-only ingress declarations narrow Session delivery below.
       const environmentPlacement = originalCliCaller
-        && (executionPlacement === 'machine' || isControllerDeploymentAction(actionId, admittedInput))
-        && hasDeploymentPlacementOperand(actionId, admittedInput)
-        // These actions retain their existing workspace, template or read receiver.
-        && actionId !== DEPLOYMENT_PREPARE_ACTION_ID_V1
-        && actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-        && actionId !== DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+        && (actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || spec.safetyForInput?.(admittedInput) !== 'safe')
+        && isDeploymentEnvironmentPlacementActionV1(actionId, admittedInput, executionPlacement, { canPrepareAccountBindings: true })
+        // Native reads keep their existing read receiver and transport.
         && !isDeploymentReadActionIdV1(actionId);
       let selectedOriginalMachine = (environmentPlacement || requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)

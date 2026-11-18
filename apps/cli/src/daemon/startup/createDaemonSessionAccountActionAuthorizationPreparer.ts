@@ -13,9 +13,8 @@ import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import { hasDeploymentPlacementOperand, resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
-import { isDeploymentMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { isRecord } from '@happier-dev/protocol/common/records';
+import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
+import { isDeploymentEnvironmentPlacementActionV1, readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ExternalActionActionIdV1Schema, type ExternalActionExecutionAuthorizationV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
@@ -112,25 +111,18 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
             ),
           }
         : credentials.encryption;
-    // The app's rule (deploymentActions.ts): a machine-placed or controller-transport
-    // deployment Action runs on the Environment's recorded controller, or on the
-    // Machine its input names (a read's receiver). The requester's own Environment
-    // read selects it; Home's mint and the receiver still decide admission.
-    // An input that places itself on the Account (detached teardown) keeps that mode.
     const actionSpec = getActionSpec(operation.actionId);
     const executionPlacement = resolveActionExecutionPlacementForInput(actionSpec, operation.input, sessionActionOrigin.caller, operation.surface ?? 'agent');
     let deploymentMachineId: string | undefined;
-    if (!targetMachineId && isDeploymentMachineTransportActionIdV1(operation.actionId)
-      && hasDeploymentPlacementOperand(operation.actionId, operation.input)
-      && !(actionSpec.executionPlacementForInput && executionPlacement === 'account')) {
-      if (isRecord(operation.input) && typeof operation.input.machineId === 'string') deploymentMachineId = operation.input.machineId;
-      else {
-        const controller = await resolveRequesterDeploymentMachine({ actionId: operation.actionId, input: operation.input,
+    if (!targetMachineId && isDeploymentEnvironmentPlacementActionV1(operation.actionId, operation.input, executionPlacement)) {
+      deploymentMachineId = readDeploymentExecutionMachineOperandV1(operation.actionId, operation.input);
+      if (!deploymentMachineId) {
+        const selected = await resolveRequesterDeploymentMachine({ actionId: operation.actionId, input: operation.input,
           credentials, serverApiUrl: serverHttpBaseUrl, serverId: params.serverId,
           context: { surface: operation.surface ?? 'agent', serverId: params.serverId, serverIdentityId: origin.serverIdentityId,
             actionCaller: sessionActionOrigin.caller, ...(authority.signal ? { signal: authority.signal } : {}) } });
-        if (!controller.ok) return controller;
-        deploymentMachineId = controller.machineId;
+        if (!selected.ok) return selected;
+        deploymentMachineId = selected.machineId;
       }
     }
     let selectedMachineId = operation.actionId === 'session.board.item.upsert'

@@ -1,14 +1,16 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentTransportActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
-import { createCliActionDeps, isControllerDeploymentAction, type ControllerDeploymentActionId } from './createCliActionDeps';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { isDeploymentEnvironmentPlacementActionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { createCliActionDeps } from './createCliActionDeps';
 
 /** Selects the installed deployment dispatch path for original Actions. */
 export function readControllerDeploymentDispatch(
   params: Pick<Parameters<typeof createCliActionDeps>[0], 'credentials' | 'deploymentAction' | 'deploymentTemplateInstantiate' | 'deploymentMoveToRepository'>
     & Readonly<{ machineId?: string }>,
   actionId: string, input: unknown, context: ActionExecutorContext,
-): Readonly<{ actionId: ControllerDeploymentActionId | 'deployments.templates.instantiate' | 'deployments.environments.moveToRepository' | 'deployments.environments.create'; caller: 'host' | 'workflow' }> | null {
+): Readonly<{ actionId: DeploymentTransportActionIdV1 | typeof DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1; caller: 'host' | 'workflow' }> | null {
   const authored = actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
     ? DeploymentEnvironmentCreateIntentInputV1Schema.safeParse(input) : null;
   const previewCreate = authored?.success === true && authored.data.preview !== undefined;
@@ -18,7 +20,11 @@ export function readControllerDeploymentDispatch(
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && previewCreate)
-    || isControllerDeploymentAction(actionId, input) ? actionId : null;
+    || isDeploymentTransportActionIdV1(actionId) && !isDeploymentReadActionIdV1(actionId)
+      && isDeploymentEnvironmentPlacementActionV1(actionId, input,
+        resolveActionExecutionPlacementForInput(getActionSpec(actionId), input, context.actionCaller, context.surface ?? 'cli'),
+        { canPrepareAccountBindings: true })
+    ? actionId : null;
   if (!dispatchActionId) return null;
   if ((actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 ? params.deploymentTemplateInstantiate
     : actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 ? params.deploymentMoveToRepository : params.deploymentAction)

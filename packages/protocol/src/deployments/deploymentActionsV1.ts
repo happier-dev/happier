@@ -1,7 +1,15 @@
 import { DeploymentEnvironmentTelemetrySetInputV1Schema, DeploymentEnvironmentTelemetrySetSuccessV1Schema,
   DeploymentTelemetryTokenHashV1Schema } from './deploymentTelemetryV1.js';
 export * from './deploymentTelemetryV1.js';
-import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentReadActionIdV1 } from './deploymentActionIdsV1.js';
+import {
+  DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1,
+  DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_RESTART_ACTION_ID_V1,
+  DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
+  isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1,
+  isDeploymentBackupActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentReadActionIdV1, type DeploymentActionIdV1,
+} from './deploymentActionIdsV1.js';
+import type { ActionExecutionPlacement } from '../actions/actionSpecs.js';
 import { DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsResultV1Schema } from './deploymentDomainDnsV1.js';
 import { DeploymentDomainTunnelDispositionV1Schema } from './deploymentDomainProviderResultV1.js';
 export * from './deploymentDomainDnsV1.js';
@@ -902,6 +910,47 @@ export async function resolveDeploymentPreviewExecutionMachineIdV1(
   return { ok: true, machineId: selected.machineId, ...(environment ? { environment } : {}) };
 }
 
+/** Service data-role changes need the installed controller's native binding preparation. */
+export function isDeploymentDataRoleBindingWriteV1(input: unknown): boolean {
+  const parsed = DeploymentActionInputSchemasV1[DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1].safeParse(input);
+  return parsed.success && 'set' in parsed.data
+    && parsed.data.set.some(binding => binding.purpose === 'dataRole' && 'service' in binding);
+}
+
+/** Identifies existing Environment Actions that use installed deployment placement. */
+export function isDeploymentEnvironmentPlacementActionV1(
+  actionId: string, input: unknown, placement: ActionExecutionPlacement,
+  options?: Readonly<{ canPrepareAccountBindings?: boolean }>,
+): actionId is DeploymentActionIdV1 {
+  if (!isDeploymentActionIdV1(actionId) || !input || typeof input !== 'object'
+    || !('environmentId' in input) || typeof input.environmentId !== 'string') return false;
+  if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) return placement === 'machine';
+  if (actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && options?.canPrepareAccountBindings) {
+    return isDeploymentDataRoleBindingWriteV1(input);
+  }
+  // Create and workspace-based roots have their own selectors.
+  if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || actionId === DEPLOYMENT_PREPARE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) return false;
+  return placement === 'machine' || isDeploymentChildRootActionIdV1(actionId) || isDeploymentAccountMachineTransportActionIdV1(actionId)
+    || isDeploymentReadActionIdV1(actionId);
+}
+
+/** A schema-admitted receiver operand. A linked resource's Machine is not the Action receiver. */
+export function readDeploymentExecutionMachineOperandV1(actionId: string, input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+    && 'controllerMachineId' in input && typeof input.controllerMachineId === 'string') {
+    return input.controllerMachineId;
+  }
+  if ((actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || actionId === DEPLOYMENT_RESTART_ACTION_ID_V1
+    || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || isDeploymentBackupActionIdV1(actionId)
+    || isDeploymentReadActionIdV1(actionId)) && 'machineId' in input && typeof input.machineId === 'string') {
+    return input.machineId;
+  }
+  return undefined;
+}
+
 /** Places a validated Action operand. Home still authorizes the selected receiver. */
 export async function resolveDeploymentEnvironmentExecutionMachineIdV1(
   actionId: string,
@@ -916,11 +965,9 @@ export async function resolveDeploymentEnvironmentExecutionMachineIdV1(
   if (options.explicitMachineId) return { ok: true, machineId: options.explicitMachineId };
   if (!input || typeof input !== 'object') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
   if (options.knownControllerMachineId) return { ok: true, machineId: options.knownControllerMachineId };
-  if ('controllerMachineId' in input && typeof input.controllerMachineId === 'string') {
-    return { ok: true, machineId: input.controllerMachineId };
-  }
-  if (actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && 'machineId' in input && typeof input.machineId === 'string') {
-    return { ok: true, machineId: input.machineId };
+  const authoredMachineId = readDeploymentExecutionMachineOperandV1(actionId, input);
+  if (authoredMachineId && !isDeploymentReadActionIdV1(actionId)) {
+    return { ok: true, machineId: authoredMachineId };
   }
   if (!('serverId' in input) || typeof input.serverId !== 'string'
     || !('environmentId' in input) || typeof input.environmentId !== 'string') {
@@ -929,9 +976,7 @@ export async function resolveDeploymentEnvironmentExecutionMachineIdV1(
   const controller = await options.readEnvironmentController({ serverId: input.serverId, environmentId: input.environmentId });
   if (!controller.ok) return controller;
   // Selected native reads may be served by a member of the Environment.
-  return isDeploymentReadActionIdV1(actionId) && 'machineId' in input && typeof input.machineId === 'string'
-    ? { ok: true, machineId: input.machineId }
-    : controller;
+  return authoredMachineId ? { ok: true, machineId: authoredMachineId } : controller;
 }
 
 export type DeploymentReceiptListInputV1 = z.infer<typeof DeploymentReceiptListInputV1Schema>;

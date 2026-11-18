@@ -8,7 +8,8 @@ import { readActionSessionTargetField } from '@happier-dev/protocol/actions/exec
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '@happier-dev/protocol/plugins/settingsAdministration';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isManagedAccountNativeControlInvocationV1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { StoredCredentials } from '@/persistence';
@@ -121,10 +122,9 @@ export function readMachineSelectorIds(actionId: ActionId, input: Readonly<Recor
     controllerMachineId,
     // Key preparation executes on the explicitly selected trusted key holder.
     // Its qualified machineId addresses the managed Resource, not that holder.
-    // Template roots execute on their Environment controller; machineId names
-    // the runtime resource admitted through the normal own-server path.
-    actionId === 'machines.access.prepareKeys' || actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-      ? null : readNonEmptyString(input.machineId),
+    actionId === 'machines.access.prepareKeys' || actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? null
+      : isDeploymentActionIdV1(actionId) ? readNonEmptyString(readDeploymentExecutionMachineOperandV1(actionId, input))
+      : readNonEmptyString(input.machineId),
     nestedField ? readNonEmptyString(asRecord(input[nestedField])?.machineId) : null,
     settingsTarget?.kind === 'daemon' ? settingsTarget.machineId : null,
     readLocalServiceControlActionRequest(actionId, input)?.target.machineId ?? null,

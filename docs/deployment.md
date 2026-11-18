@@ -609,12 +609,14 @@ external, anonymous and unrelated volumes supply no deletion choice. The existin
 teardown Action consumes the retained explicit choices after copying and app
 deployment; ordinary restricted deploys supply no automatic cleanup authority.
 
-In 0.3 development, the app and credentialed CLI use the shared Environment
-placement resolver before dispatch. An unplaced Action that needs an
-Environment's controller uses the controller returned by one Environment read
-with the requester's credential. The CLI preserves an explicit execution Machine
-for Home admission. An Action that already carries its controller can be
-placed without an Environment read.
+In 0.3 development, the app, credentialed CLI, Session Agent, MCP, and Workflow
+dispatchers use the shared Environment placement resolver. An unplaced Action
+that needs an Environment's controller uses the controller returned by one
+Environment read with the requester's credential. The CLI preserves an explicit
+execution Machine for Home admission. An Action that already carries its
+controller can be placed without an Environment read. Restart addresses the
+captured service Machine directly. A Target Link runs on its Environment
+controller and retains the linked resource's Machine in the Action input.
 
 Teardown mint and Domain Remove child admission keep the Environment's recorded
 controller Machine authoritative. A request on another Machine returns

@@ -10,7 +10,7 @@ import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentUpdateInpu
   DeploymentReceiptResultV1Schema, DeploymentActionInputSchemasV1, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
   DeploymentAccountChangeHintV1Schema, buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1,
   readDeploymentActionOperationRequestIdV1, readDeploymentEnvironmentOperationRequestIdV1 } from './deploymentActionsV1.js';
-import { resolveDeploymentEnvironmentExecutionMachineIdV1 } from './deploymentActionsV1.js';
+import { isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from './deploymentActionsV1.js';
 import { bindHomeDomainHttpRequestV1 } from '../actions/homeDomainHttpBinding.js';
 import { getActionSpec, listActionSpecsForSurface, resolveActionPermissionChangingV1,
   resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
@@ -22,7 +22,7 @@ import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateSt
 import { DeploymentChildRpcV1Schema, doesDeploymentChildInputMatchRootV1, readDeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
 import { buildDeploymentPromoteInputV1 } from './promoteInput.js';
 import { projectDeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
-import { deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { DeploymentChildRoutingV1Schema, projectDeploymentChildRoutingV1 } from './deploymentChildRoutingV1.js';
 import { DeploymentBindingsPreparedInputV1Schema } from './deploymentActionsV1.js';
@@ -80,6 +80,42 @@ describe('Environment controller placement', () => {
     } });
     expect(selected).toEqual({ ok: true, machineId: 'controller' });
     expect(reads).toBe(0);
+  });
+
+  it('uses the exact service receiver already carried by a Restart', async () => {
+    const actionId = 'deployments.restart';
+    const input = DeploymentActionInputSchemasV1[actionId].parse({
+      serverId: 'home', environmentId: 'environment', deploymentId: 'deployment',
+      targetLinkId: 'link', machineId: 'member', installationId: 'installation',
+      service: { kind: 'deployment', machineId: 'member', environmentId: 'environment',
+        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
+      expectedGeneration: 'generation',
+    });
+    let reads = 0;
+    const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, input, {
+      readEnvironmentController: async () => {
+        reads += 1;
+        return { ok: true, machineId: 'controller' };
+      },
+    });
+    expect(selected).toEqual({ ok: true, machineId: 'member' });
+    expect(reads).toBe(0);
+  });
+
+  it('keeps ordinary variable preparation local when available and sends native data-role writes to the controller', () => {
+    const actionId = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+    const patch = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, remove: [] };
+    const variable = DeploymentActionInputSchemasV1[actionId].parse({ ...patch, set: [{
+      purpose: 'variable', name: 'PORT', phase: 'runtime', source: { kind: 'value', value: '3000' },
+    }] });
+    const dataRole = DeploymentActionInputSchemasV1[actionId].parse({ ...patch, set: [{
+      purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+      source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('read-role'), resourceRevision: 1 },
+    }] });
+    const local = { canPrepareAccountBindings: true };
+    expect(isDeploymentEnvironmentPlacementActionV1(actionId, variable, 'account', local)).toBe(false);
+    expect(isDeploymentEnvironmentPlacementActionV1(actionId, dataRole, 'account', local)).toBe(true);
+    expect(isDeploymentEnvironmentPlacementActionV1(actionId, variable, 'account')).toBe(true);
   });
 });
 

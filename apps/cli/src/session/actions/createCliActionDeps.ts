@@ -31,7 +31,7 @@ import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/session
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
@@ -136,13 +136,8 @@ import { createCliDeploymentActionDeps } from '@/deployments/createCliDeployment
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
 import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
-  DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_RESTART_ACTION_ID_V1,
-  isDeploymentDomainChildActionIdV1, isDeploymentDomainDnsActionIdV1,
-  type DeploymentDomainChildActionIdV1, type DeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -294,30 +289,12 @@ export type ControllerDeploymentMutationActionId =
 
 export function isControllerDeploymentMutationAction(actionId: string, input: unknown): actionId is ControllerDeploymentMutationActionId {
   if (actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
-    const parsed = DeploymentActionInputSchemasV1[DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1].safeParse(input);
-    return parsed.success && 'set' in parsed.data
-      && parsed.data.set.some(binding => binding.purpose === 'dataRole' && 'service' in binding);
+    return isDeploymentDataRoleBindingWriteV1(input);
   }
   return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
       && getActionSpec(DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1).safetyForInput?.(input) !== 'safe';
-}
-
-export type ControllerDeploymentActionId = ControllerDeploymentMutationActionId
-  | DeploymentDomainChildActionIdV1 | DeploymentDomainDnsActionIdV1 | typeof DEPLOYMENT_RESTART_ACTION_ID_V1
-  | typeof DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
-  | typeof DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 | typeof DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
-
-/** Original roots with no authored Machine operand that need installed deployment dispatch. */
-export function isControllerDeploymentAction(actionId: string, input: unknown): actionId is ControllerDeploymentActionId {
-  if (actionId === 'deployments.teardown') {
-    return getActionSpec(actionId).executionPlacementForInput?.(input) === 'machine';
-  }
-  return isControllerDeploymentMutationAction(actionId, input)
-    || isDeploymentDomainChildActionIdV1(actionId) || isDeploymentDomainDnsActionIdV1(actionId)
-    || actionId === DEPLOYMENT_RESTART_ACTION_ID_V1 || actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
-    || actionId === DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
 }
 
 export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>> & Readonly<{
@@ -1390,10 +1367,14 @@ export function createCliActionDeps(params: CliActionDepsParams,
         const output = DeploymentActionOutputSchemasV1[actionId].safeParse(execution.result);
         return output.success ? output.data : executionRunActionFailure('invalid_action_output');
       }
-      const nativeRead = isDeploymentReadActionIdV1(actionId);
-      const linkPreparation = actionId === 'deployments.targets.link';
-      if (!isControllerDeploymentAction(actionId, input) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
-      if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
+      const spec = getActionSpec(actionId);
+      if (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 && spec.safetyForInput?.(input) === 'safe') {
+        return deploymentStorage(actionId, input, context);
+      }
+      const placement = resolveActionExecutionPlacementForInput(spec, input, context.actionCaller, context.surface ?? 'cli');
+      if (!isDeploymentEnvironmentPlacementActionV1(actionId, input, placement, { canPrepareAccountBindings: true })) {
+        return deploymentStorage(actionId, input, context);
+      }
       let opened: ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse> | undefined;
       const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, input, {
         // An installed Workflow root carries its Run workspace here. The
