@@ -719,8 +719,9 @@ describe('AgentInput (action menu popover props)', () => {
         const { AgentInput } = await import('./AgentInput');
         inputSetTextAndSelection.mockClear();
         inputFocus.mockClear();
+        const { CommandMenu } = await import('@/components/ui/commandMenu');
         const onChangeText = vi.fn();
-        const suggest = vi.fn(async () => []);
+        const suggest = vi.fn(async () => [{ kind: 'file' as const, key: 'file:src/a.ts', text: '@src/a.ts', label: 'src/a.ts' }]);
         let requestControl: ((intent: 'insertMention') => void) | null = null;
         const screen = await renderScreen(<AgentInput value="Fix it" placeholder="Type" onChangeText={onChangeText}
             autocompleteKinds={['file']} autocompleteSuggestions={suggest}
@@ -730,8 +731,15 @@ describe('AgentInput (action menu popover props)', () => {
         await act(async () => { screen.findByType('MultiTextInput').props.onFocus?.(); });
         expect(inputFocus).toHaveBeenCalled();
         await vi.waitFor(() => expect(suggest).toHaveBeenCalledWith('@', expect.anything(), expect.anything()));
+        // The list is shown (live 20:5xZ: it resolved suggestions but never opened, since no word was typed).
+        await vi.waitFor(() => expect(screen.findByType(CommandMenu).props.open).toBe(true));
         expect(inputSetTextAndSelection).not.toHaveBeenCalled();
         expect(onChangeText).not.toHaveBeenCalled();
+        // A chosen value lands at the caret, after the existing text.
+        const menu = screen.findByType(CommandMenu).props;
+        await act(async () => menu.onSelect(menu.items[0], 0));
+        const [text] = inputSetTextAndSelection.mock.calls.at(-1) ?? [];
+        expect(text).toMatch(/^Fix it.*src\/a\.ts/u);
     });
 
     it('opens a visible extra-chip content popover for the initiating chip intent a picture hands over', async () => {

@@ -1917,8 +1917,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return initialActiveWord;
     });
     const [hasAutocompleteTextInteraction, setHasAutocompleteTextInteraction] = React.useState(false);
-    // Insert opened the '@' list at the caret without writing a trigger; any edit, close or blur ends it.
-    const [caretInsertOpen, setCaretInsertOpen] = React.useState(false);
+    // Insert opened the '@' list at this caret offset without writing a trigger; any edit, close or blur ends it.
+    const [caretInsertAt, setCaretInsertAt] = React.useState<number | null>(null);
     const inputScopeKeyRef = React.useRef<string | null>(props.sessionId ?? null);
     // Selection restore is an OPEN-time resumption: applied at most once per generation,
     // and voided as soon as the user edits (see composerSelectionRestore).
@@ -2007,7 +2007,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (newState.text !== previousText && !isProgrammaticHistoryApply) {
             setHasAutocompleteTextInteraction(true);
         }
-        if (newState.text !== previousText) setCaretInsertOpen(false);
+        if (newState.text !== previousText) setCaretInsertAt(null);
         inputStateRef.current = newState;
         updateActiveWordState(newState);
         const nextStatus = resolveLiveInputTextStatus(newState.text);
@@ -2314,7 +2314,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         stopTyping();
         composerKeyboardLayoutForFocus?.setComposerInputFocused?.(false);
         setIsInputFocused(false);
-        setCaretInsertOpen(false);
+        setCaretInsertAt(null);
         props.onComposerFocusChange?.(false);
     }, [composerKeyboardLayoutForFocus, props.onComposerFocusChange, stopTyping]);
 
@@ -2354,8 +2354,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const typedActiveWord = activeWordState?.activeWord ?? null;
     // A typed word leads; otherwise Insert's caret list reads as a bare '@'.
-    const activeWord = typedActiveWord ?? (caretInsertOpen ? '@' : null);
-    const activeSuggestionQuery = isInputFocused && (hasAutocompleteTextInteraction || caretInsertOpen) && !props.disabled ? activeWord : null;
+    const activeWord = typedActiveWord ?? (caretInsertAt !== null ? '@' : null);
+    const activeSuggestionQuery = isInputFocused && (hasAutocompleteTextInteraction || caretInsertAt !== null) && !props.disabled ? activeWord : null;
     const autocompleteSuggestions = resolveActiveSuggestionsHandler(props.autocompleteSuggestions, activeSuggestionQuery);
     // Selection follows candidate identity, not an index (INV-6) — the hook owns that.
     const resolveSuggestions = React.useCallback<ActiveSuggestionsHandler>(async (query, signal, publish) => {
@@ -2636,10 +2636,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         selectionPending,
         selectionForKind,
         activeWord,
+        // Insert's list has no typed word: its trigger is the empty range at the caret it opened at.
         activeWordRange: activeWordState
             ? { start: activeWordState.offset, end: activeWordState.endOffset }
-            : null,
-        inputTextLength: activeWordState ? liveTextStatusRef.current.length : 0,
+            : caretInsertAt !== null ? { start: caretInsertAt, end: caretInsertAt } : null,
+        inputTextLength: activeWordState || caretInsertAt !== null ? liveTextStatusRef.current.length : 0,
         moveUp,
         moveDown,
         handleSuggestionSelect,
@@ -2651,7 +2652,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
     // Closing the list also ends Insert's caret list, which has no typed word for the menu to dismiss.
     const commandMenuOnClose = useEventCallback(() => {
-        setCaretInsertOpen(false);
+        setCaretInsertAt(null);
         closeTypedCommandMenu();
     });
     // Lab P1: the reference picker keeps one height as results narrow and says how it is driven, on a
@@ -3832,7 +3833,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Insert (a visible entry to the '@' list): opens the list at the caret and writes nothing until a value
     // is chosen, so opening it never changes a draft (WF-ACCEPT-1118B D12). The choice lands at the caret.
     const openCaretInsert = useEventCallback(() => {
-        setCaretInsertOpen(true);
+        const { selection } = inputStateRef.current;
+        setCaretInsertAt(Math.min(selection.start, selection.end));
         inputRef.current?.focus();
     });
     const requestComposerControl = useEventCallback((intent: AgentInputControlIntent) => {
