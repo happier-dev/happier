@@ -18,12 +18,14 @@ pid_file=$2
 execution_id=$3
 initiating_execution_id=$execution_id
 shift 3
-if [ "$mode" = run ] && [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ]; then
-  # hstack-exec sends the command's final operand (its remote script) on stdin
-  # ahead of the lifetime pipe: the byte count on one line, then the bytes.
-  # Quoted into the SSH command it would exceed the per-argument exec limit
-  # (Linux MAX_ARG_STRLEN, 128 KiB). Read exactly that count so the lifeline
-  # stays unread; macOS bash 3.2 lacks read -N and reads byte by byte instead.
+if [ "$mode" = run ] && { [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ] || [ -n "${HAPPIER_REMOTE_EXEC_SCRIPT_FILE-}" ]; }; then
+  # hstack-exec sends the command's final operand (its remote script) as a
+  # frame: the byte count on one line, then the bytes. Quoted into the SSH
+  # command it would exceed the per-argument exec limit (Linux MAX_ARG_STRLEN,
+  # 128 KiB). It arrives on stdin ahead of the lifetime pipe, or for a --tty
+  # command (whose stdin is a terminal) in a file this custody consumes. Read
+  # exactly that count so the lifeline stays unread; macOS bash 3.2 lacks
+  # read -N and reads byte by byte instead.
   # The controller sends the frame as soon as SSH starts, so its arrival is
   # bounded by the SSH liveness window the controller passes (keepalive
   # interval x count); a controller that never sends it fails here, named,
@@ -40,19 +42,26 @@ if [ "$mode" = run ] && [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ]; then
     fi
     exit 255
   }
-  IFS= read -r -t "$remote_script_wait" remote_script_bytes || remote_script_missing $? '[preferred-execution] remote script frame is malformed'
+  if [ -n "${HAPPIER_REMOTE_EXEC_SCRIPT_FILE-}" ]; then
+    exec 6< "$HAPPIER_REMOTE_EXEC_SCRIPT_FILE" || exit 255
+    rm -f -- "$HAPPIER_REMOTE_EXEC_SCRIPT_FILE"
+  else
+    exec 6<&0
+  fi
+  IFS= read -r -t "$remote_script_wait" remote_script_bytes <&6 || remote_script_missing $? '[preferred-execution] remote script frame is malformed'
   case "$remote_script_bytes" in
     ''|*[!0-9]*) printf '%s\n' '[preferred-execution] remote script frame is malformed' >&2; exit 255 ;;
   esac
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
-    LC_ALL=C IFS= read -r -t "$remote_script_wait" -N "$remote_script_bytes" remote_script
+    LC_ALL=C IFS= read -r -t "$remote_script_wait" -N "$remote_script_bytes" remote_script <&6
   else
-    LC_ALL=C IFS= read -r -t "$remote_script_wait" -d '' -n "$remote_script_bytes" remote_script
+    LC_ALL=C IFS= read -r -t "$remote_script_wait" -d '' -n "$remote_script_bytes" remote_script <&6
   fi || remote_script_missing $? '[preferred-execution] remote script ended before its declared length'
+  exec 6<&-
   set -- "$@" "$remote_script"
   unset remote_script remote_script_bytes
 fi
-unset HAPPIER_REMOTE_EXEC_SCRIPT_STDIN HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS
+unset HAPPIER_REMOTE_EXEC_SCRIPT_STDIN HAPPIER_REMOTE_EXEC_SCRIPT_FILE HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS
 
 exec_worker_payload() {
   # All Linux worker payloads share scheduling, including unclassified commands

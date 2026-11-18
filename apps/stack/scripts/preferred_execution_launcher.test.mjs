@@ -74,23 +74,35 @@ const executionNeutralEnv = Object.fromEntries(
   ].includes(key)),
 );
 
-// hstack-exec sends a payload's remote script on SSH stdin ahead of the
-// lifetime pipe. Most SSH fakes observe or replay the remote command from argv,
-// so restore the argv form for them: read the frame, quote the script back
-// onto custody's final operand and re-execute. Custody's own stdin framing and
+// hstack-exec sends a payload's remote script as a frame: on SSH stdin ahead
+// of the lifetime pipe, or for --tty in a file uploaded first. Most SSH fakes
+// observe or replay the remote command from argv, so restore the argv form for
+// them: perform the upload, read the frame, quote the script back onto
+// custody's final operand and re-execute. Custody's own stdin framing and
 // the argv limit it avoids are covered with rawTransport fakes.
-const sshScriptFrameDecoder = `case "$*" in
-  *HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1*)
+const sshScriptFrameDecoder = `hstack_frame_last=; for hstack_frame_argument do hstack_frame_last=$hstack_frame_argument; done
+case "$hstack_frame_last" in
+  "umask 077 && mkdir -p -- "*" && cat > "*) exec /bin/sh -c "$hstack_frame_last" ;;
+esac
+case "$hstack_frame_last" in
+  *HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1*|*HAPPIER_REMOTE_EXEC_SCRIPT_FILE=*)
+    case "$hstack_frame_last" in
+      *HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1*) hstack_frame_marker='HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 ' ;;
+      *) hstack_frame_file=$(printf '%s' "$hstack_frame_last" | sed -n "s/.*HAPPIER_REMOTE_EXEC_SCRIPT_FILE='\\([^']*\\)' .*/\\1/p")
+         hstack_frame_marker="HAPPIER_REMOTE_EXEC_SCRIPT_FILE='$hstack_frame_file' "
+         exec 7<&0 < "$hstack_frame_file"; rm -f -- "$hstack_frame_file" ;;
+    esac
     IFS= read -r hstack_frame_bytes || exit 255
     hstack_frame_script=$(dd bs=1 count="$hstack_frame_bytes" 2>/dev/null; printf x)
+    [ -z "\${hstack_frame_file-}" ] || exec <&7 7<&-
     hstack_frame_script=$(printf '%s' "\${hstack_frame_script%x}" | sed "s/'/'\\"'\\"'/g"; printf x)
     hstack_frame_count=$#; hstack_frame_index=0
     for hstack_frame_argument do
       hstack_frame_index=$((hstack_frame_index + 1))
-      if [ "$hstack_frame_index" -eq "$hstack_frame_count" ]; then hstack_frame_last=$hstack_frame_argument; else set -- "$@" "$hstack_frame_argument"; fi
+      [ "$hstack_frame_index" -eq "$hstack_frame_count" ] || set -- "$@" "$hstack_frame_argument"
     done
     shift "$hstack_frame_count"
-    exec "$0" "$@" "\${hstack_frame_last%%HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 *}\${hstack_frame_last#*HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 } '\${hstack_frame_script%x}'" ;;
+    exec "$0" "$@" "\${hstack_frame_last%%"$hstack_frame_marker"*}\${hstack_frame_last#*"$hstack_frame_marker"} '\${hstack_frame_script%x}'" ;;
 esac
 `;
 
@@ -5165,7 +5177,7 @@ test('native payload requires no SSH control directory when XDG_RUNTIME_DIR is r
   await assert.rejects(readFile(masterPath), { code: 'ENOENT' });
 });
 
-test('native payload delivers a remote script whose shell quoting exceeds the per-argument exec limit', async (t) => {
+for (const tty of [false, true]) test(`native ${tty ? '--tty ' : ''}payload delivers a remote script whose shell quoting exceeds the per-argument exec limit`, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-large-script-'));
   const binDir = join(root, 'bin');
   const stackDir = join(root, 'stack');
@@ -5221,7 +5233,7 @@ test('native payload delivers a remote script whose shell quoting exceeds the pe
   // Each quoting level rewrites every single quote as five bytes, so a script
   // well below the limit exceeds it once nested inside one SSH argument.
   const words = Array.from({ length: 400 }, (_, index) => `file-'${index}'-${"'".repeat(40)}.test.ts`);
-  const result = spawnSync('/bin/sh', [launcher, '--target=linux', '--', 'probe-command', ...words], {
+  const result = spawnSync('/bin/sh', [launcher, '--target=linux', ...(tty ? ['--tty'] : []), '--', 'probe-command', ...words], {
     cwd: repoRoot,
     env: {
       ...executionNeutralEnv,

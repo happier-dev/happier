@@ -2395,16 +2395,19 @@ fi
 remote_script="$remote_script command_status=\$?; set +e; exit \"\$command_status\""
 remote_custody="$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh"
 remote_command="bash $(quote_remote "$remote_custody") run $(quote_remote "$pid_file") $(quote_remote "$execution_id") bash -lc"
+# Custody reads the script as a frame (its byte count on one line, then the
+# bytes), never from this SSH argument: quoted into it, every single quote
+# grows fivefold per nesting level, past the per-argument exec limit. The
+# frame travels on stdin ahead of the lifetime pipe (see its writer after
+# dispatch). A pseudo-terminal's line discipline would echo and edit input,
+# so a --tty command's frame is uploaded first to a file custody consumes.
+remote_script_bytes=$(($(printf '%s' "$remote_script" | wc -c)))
+remote_script_file="${pid_file%.pid}.script"
+remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS=$((payload_ssh_server_alive_interval * payload_ssh_server_alive_count_max)) $remote_command"
 if [ "$explicit_tty" = 1 ]; then
-  # A pseudo-terminal's line discipline would echo and edit a script sent as
-  # its input, so interactive commands keep the script in the SSH argument.
-  remote_command="$remote_command $(quote_remote "$remote_script")"
+  remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_FILE=$(quote_remote "$remote_script_file") $remote_command"
 else
-  # Custody reads the script from stdin ahead of the lifetime pipe (see its
-  # writer after dispatch). Quoted into this one argument, every single quote grows
-  # fivefold per nesting level, past the per-argument exec limit.
-  remote_script_bytes=$(($(printf '%s' "$remote_script" | wc -c)))
-  remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS=$((payload_ssh_server_alive_interval * payload_ssh_server_alive_count_max)) HAPPIER_REMOTE_EXEC_LIFELINE=1 $remote_command"
+  remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 HAPPIER_REMOTE_EXEC_LIFELINE=1 $remote_command"
 fi
 if [ "$control_stdin" = 1 ]; then
   remote_command="HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1 HAPPIER_RUNTIME_BUILD_WORKER_NAME=$(quote_remote "$selected_name") $remote_command"
@@ -2579,6 +2582,17 @@ for orphan_reservation in "$cache_dir/$selected_name.active."*; do
     printf '[preferred-execution] remote cancellation unconfirmed for %s; retaining reservation %s\n' "$orphan_id" "$orphan_reservation" >&2
   fi
 done
+upload_tty_remote_script() {
+  tty_script_command="umask 077 && mkdir -p -- $(quote_remote "${pid_file%/*}") && cat > $(quote_remote "$remote_script_file")"
+  if [ -n "$ssh_config" ]; then
+    printf '%s\n%s' "$remote_script_bytes" "$remote_script" | ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$tty_script_command" 8>&- 9>&-
+  else
+    printf '%s\n%s' "$remote_script_bytes" "$remote_script" | ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$tty_script_command" 8>&- 9>&-
+  fi
+}
+if [ "$explicit_tty" = 1 ] && ! upload_tty_remote_script; then
+  handle_selected_command_connection_failure "$@"
+fi
 reservation_remote_pending=1
 if [ "$_selected_available" = busy ]; then
   printf '[preferred-execution] workers busy; queued on %s for memory, waiting (Ctrl-C cancels)\n' "$selected_name" >&2
