@@ -56,6 +56,8 @@ it.each([neonPlugin, supabasePlugin])('offers first-connection recovery with no 
     // The existing platform-link flow uses EmptyState's primary action to open the canonical Connect sheet.
     expect(screen.findAllByType(EmptyState).some(node => typeof node.props.primaryAction?.onPress === 'function')).toBe(true);
     expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
+    // Connect is the sheet's one action until the provider is connected.
+    expect(screen.findAllByType(RoundButton).some(node => node.props.testID === 'managed-data.run')).toBe(false);
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
 
@@ -111,7 +113,10 @@ it.each([neonPlugin, supabasePlugin])('dispatches real $manifest.id project and 
     await act(async () => provider()!.props.onChange(providerKey));
     expect(provider()!.props.value).toBe(providerKey);
     // The person chooses what to do in their own words; creation reads its options as its own review step.
-    expect(operation()!.props.options.map((option: { id: string }) => option.id)).not.toContain('projects.provisionOptions');
+    const ids = operation()!.props.options.map((option: { id: string }) => option.id);
+    expect(ids).not.toContain('projects.provisionOptions');
+    // Creating leads and finding what is there comes last, whatever order the provider declared.
+    expect(ids.indexOf('projects.provision')).toBeLessThan(ids.indexOf('projects.list'));
     await act(async () => operation()!.props.onChange('projects.list'));
     await act(async () => screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'management-token' } }));
     expect(run()!.props.disabled).toBe(false);

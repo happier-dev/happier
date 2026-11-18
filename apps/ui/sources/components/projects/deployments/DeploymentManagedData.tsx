@@ -179,7 +179,8 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
     {canLink ? <RoundButton testID="managed-data.link" title={t('projects.deployments.managedData.link')}
       loading={busy} disabled={busy} onPress={() => { void link(); }} />
-      : operation ? <RoundButton testID="managed-data.run" title={reviewing ? t('projects.deployments.managedData.reviewCreate') : operation.title}
+      // Until the provider is connected, Connect is the sheet's one action.
+      : operation && !needsConnect ? <RoundButton testID="managed-data.run" title={reviewing ? t('projects.deployments.managedData.reviewCreate') : operation.title}
         loading={busy} disabled={busy || !draft || missing || Boolean(blockedCreate)}
         onPress={() => { void run(); }} /> : null}
   </ModalCardFooterActions>;
@@ -189,7 +190,9 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   // Choices are what the person does, in their words: create, link, or find what is there. Reading creation
   // options is creation's own review step, never a choice beside it.
   const choices = operations.filter(entry => entry.role !== 'projects.provisionOptions' || !operations.some(other => other.role === 'projects.provision'))
-    .map(entry => ({ id: entry.role, label: managedDataOperationLabel(entry) }));
+    .map(entry => ({ id: entry.role, label: managedDataOperationLabel(entry) }))
+    // Creating leads, linking follows, finding what is there comes last, whatever order the provider declared.
+    .sort((a, b) => personOperationRank(a.id) - personOperationRank(b.id));
   return <ListPresentationProvider value="page" pageInsets="contained"><View testID="managed-data" style={deploymentSheetStyles.body}>
     {state.status === 'loading' ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
       : state.status === 'failed' ? <SurfaceStateCard size="line" kind="error" title={t('common.unavailable')} diagnosticCode={state.code}
@@ -244,6 +247,12 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
     {error ? <SurfaceStateCard testID="managed-data.failed" size="line" kind="error" title={t('common.unavailable')} diagnosticCode={error} /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
+}
+
+const PERSON_OPERATION_ORDER: readonly string[] = ['projects.provision', 'projects.link', 'projects.list'];
+function personOperationRank(role: string): number {
+  const rank = PERSON_OPERATION_ORDER.indexOf(role);
+  return rank === -1 ? PERSON_OPERATION_ORDER.length : rank;
 }
 
 /** A provider operation in the person's words; roles without a host word keep the provider's own title. */
