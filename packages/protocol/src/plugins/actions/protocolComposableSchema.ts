@@ -52,12 +52,14 @@ const ACCEPTED_PLUGIN_JSON_SCHEMA_DIALECTS = new Set([
 ]);
 
 /**
- * Protocol's two JSON Schema keyword extensions. They are declared here because
+ * Protocol's JSON Schema keyword extensions. They are declared here because
  * this module builds the projections that carry them; the AJV compiler imports
  * the same constants rather than re-spelling the keyword names.
  */
 export const HAPPIER_MAX_UTF8_BYTES_KEYWORD = 'x-happier-max-utf8-bytes' as const;
 export const HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD = 'x-happier-max-serialized-utf8-bytes' as const;
+export const HAPPIER_LENGTH_MULTIPLE_OF_KEYWORD = 'x-happier-length-multiple-of' as const;
+export const HAPPIER_VALUE_CONSTRAINTS_KEYWORD = 'x-happier-value-constraints' as const;
 
 /**
  * The callable validation contract exposed by Protocol. AJV remains an

@@ -5,7 +5,8 @@ import formatsImport, { type FormatName, type FormatsPlugin } from 'ajv-formats'
 
 import { containsEquivalentPluginJsonValue, hasUniquePluginJsonValues, pluginJsonValuesEqual, scalarPluginJsonValueKey } from '../contributions/jsonSchemaValues.js';
 import { assertStrictPluginJsonValue, measurePluginJsonUtf8Bytes, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../contributions/strictJsonValue.js';
-import { HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, HAPPIER_MAX_UTF8_BYTES_KEYWORD, type PluginJsonSchemaValidator } from './protocolComposableSchema.js';
+import { HAPPIER_LENGTH_MULTIPLE_OF_KEYWORD, HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, HAPPIER_MAX_UTF8_BYTES_KEYWORD, HAPPIER_VALUE_CONSTRAINTS_KEYWORD, type PluginJsonSchemaValidator } from './protocolComposableSchema.js';
+import { isProtocolValueConstraints, satisfiesProtocolValueConstraints } from './protocolValueConstraints.js';
 import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
 
 const SUPPORTED_PLUGIN_JSON_SCHEMA_FORMATS = Object.freeze([
@@ -110,6 +111,30 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
     validate: (enabled: boolean, value: unknown) => (
       enabled !== true || (Array.isArray(value) && hasUniquePluginJsonValues(value))
     ),
+    errors: false,
+  });
+  ajv.addKeyword({
+    keyword: HAPPIER_LENGTH_MULTIPLE_OF_KEYWORD,
+    type: 'string',
+    schemaType: 'number',
+    compile: (multiple: unknown) => {
+      const lengthMultiple = readByteLimitKeywordValue(HAPPIER_LENGTH_MULTIPLE_OF_KEYWORD, multiple);
+      return (value: unknown) => {
+        if (typeof value !== 'string') return false;
+        let length = 0;
+        for (const _character of value) length += 1;
+        return length % lengthMultiple === 0;
+      };
+    },
+    errors: false,
+  });
+  ajv.addKeyword({
+    keyword: HAPPIER_VALUE_CONSTRAINTS_KEYWORD,
+    schemaType: 'array',
+    compile: (constraints: unknown) => {
+      if (!isProtocolValueConstraints(constraints)) throw new Error('Invalid declarative protocol value constraints');
+      return (value: unknown) => satisfiesProtocolValueConstraints(value, constraints);
+    },
     errors: false,
   });
   ajv.addKeyword({
