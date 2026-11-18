@@ -155,7 +155,7 @@ function createActionCatalogActionSpecs() {
     id: 'action.spec.get', executionPlacement: 'account', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Get action spec',
     sideEffectClass: 'read',
-    description: 'Get a Happier action spec, hints, examples and invoking Session context. Agent, MCP and CLI results reference named schemaSections: retrieve any section with the same id and schemaPath. Nothing is truncated. Section-local # references resolve against the original inputSchema or outputSchema root. Outputs are included by default; set includeOutputSchema:false for input-only discovery. UI/API keep full schemas. Session Board actions fill omitted sessionId from the invoking Session; widget Actions require a qualified surface: use invocationContext.widgetSurface for this Session Board, changing only owner to {kind:"home"} for Home. Never guess serverId/accountId.',
+    description: 'Get a Happier action spec, hints, examples and invoking Session context. Agent, MCP and CLI results reference named schemaSections: retrieve a section only with the same id and a returned schemaPath of /inputSchema/definitions/<name> or /outputSchema/definitions/<name>; omit schemaPath for the root schema. Never invent JSON Pointer paths or metadata/property leaves. Nothing is truncated. Section-local # references resolve against the original inputSchema or outputSchema root. Outputs are included by default; set includeOutputSchema:false for input-only discovery. UI/API keep full schemas. Session Board actions fill omitted sessionId from the invoking Session; widget Actions require a qualified surface: use invocationContext.widgetSurface for this Session Board, changing only owner to {kind:"home"} for Home. Never guess serverId/accountId.',
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
@@ -176,7 +176,7 @@ function createActionCatalogActionSpecs() {
       fields: [
         { path: 'id', title: 'Action id', description: 'The exact Happier action id.', widget: 'text', required: true },
         { path: 'includeOutputSchema', title: 'Include output schema', description: 'Include the complete output schema. Defaults to true; set false for input-only discovery.', widget: 'boolean' },
-        { path: 'schemaPath', title: 'Schema section', description: 'Read a schemaSections path from the same Action. JSON Pointer into the original inputSchema/outputSchema; named definitions are complete and local references keep their original root.', widget: 'text' },
+        { path: 'schemaPath', title: 'Schema section', description: 'Use only a returned schemaSections path: /inputSchema/definitions/<name> or /outputSchema/definitions/<name>. Omit schemaPath for the root schema; never invent JSON Pointer paths or metadata/property leaves. Named definitions are complete and local references keep their original root.', widget: 'text' },
       ],
     },
     cli: {

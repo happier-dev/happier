@@ -123,6 +123,9 @@ describe('voiceAgentPrompt', () => {
     const prompt = buildVoiceClientToolAgentPrompt(input);
     expect(prompt).toContain('action_execute');
     expect(prompt).toContain('actionId');
+    expect(prompt).toContain('schemaPath is only a returned schemaSections path');
+    expect(prompt).toContain('never invent JSON Pointer paths or metadata/property leaves');
+    expect(getActionSpec('action.spec.get').description).toContain('returned schemaPath of /inputSchema/definitions/<name>');
     expect(prompt).not.toContain('Call with sendSessionMessage');
     expect(buildVoiceClientToolAgentPrompt({ ...input, availableToolNames: ['readCurrentUiContext'] }))
       .not.toContain('action_execute');

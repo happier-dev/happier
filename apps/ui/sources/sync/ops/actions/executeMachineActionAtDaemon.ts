@@ -13,6 +13,11 @@ export const readUiAdmittedActionId = (actionId: string, input: unknown) =>
 
 /** The originating UI delegates these declarations to the receiving Machine. */
 export function isUiMachineOwnedAdmissionAction(actionId: string, input: unknown): boolean {
+    // Approval creation is account-owned. Its nested target is dispatched only
+    // after the person decides; routing the request itself to the daemon loses
+    // the account executor's machine-access capability and reports a false
+    // target_unavailable even when the daemon is online.
+    if (actionId === 'approval.request.create') return false;
     if (isWorkspaceSyncRelationshipWriteActionId(actionId)) return true;
     const parsed = ActionIdSchema.safeParse(readUiAdmittedActionId(actionId, input));
     if (!parsed.success) return false;

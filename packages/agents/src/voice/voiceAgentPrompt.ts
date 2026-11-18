@@ -302,6 +302,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
               : '- The catalog below is the complete set of tools available for this conversation.',
             ...(admittedNames?.has('action_execute') ? [
               '- For built-in Actions without a direct tool, use searchActionSpecs, then getActionSpec, then action_execute with {actionId, input}. Use the discovered input schema; never guess Action ids.',
+              '- schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves.',
               '- action_execute returns {ok:true,result} or {ok:false,errorCode,error}. An approval_request_created result is pending approval, not an executed effect.',
               '- Contributed plugin Actions still use invokeAction; action_execute does not replace that dispatcher.',
             ] : []),
@@ -387,9 +388,10 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             '- These Actions run through the Happier Voice host. Use this function for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
             `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
-            '- For a discovered built-in Action, put its bindings.voiceClientToolName in t and its input in args. Read getActionSpec for the input schema when needed. invokeAction is only for contributed plugin Actions; do not invent a plugin identity for a built-in Action.',
+            '- For a discovered built-in Action, put its bindings.voiceClientToolName in t and its input in args. Read getActionSpec for the input schema when needed. schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves. invokeAction is only for contributed plugin Actions; do not invent a plugin identity for a built-in Action.',
             ] : [
               '- Use this Session\'s existing Happier Action tools. Discover Actions with action_spec_search, read their schemas with action_spec_get, then use action_execute with {actionId, input}. Follow the runtime\'s injected tool instructions when it delivers these tools through a native extension or shell bridge.',
+              '- schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves.',
               '- These tools return the canonical Action result directly. Report success only after a successful result; approval_request_created is pending approval, not an executed effect. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
               '- Always include sessionId internally when the Action accepts it. Preserve the exact identifiers returned by discovery and results.',
             ]),
