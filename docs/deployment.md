@@ -54,6 +54,26 @@ and the person's ordinary destination review. An Open refusal or uncertain
 outcome stops the sequence. Stored definitions and provider Git integration do
 not require this checkout step. Deploy itself never opens a checkout internally.
 
+## Declared platform plans (0.3 development)
+
+The optional `deploymentTargets[].plans` contribution carries provider-authored
+plan facts: `id`, `title`, an optional structured `price: { amount, currency,
+unit }`, `facts: { label, value }[]`, optional `included: string[]`, and
+`source: { url, checkedAt }`. `checkedAt` is an ISO calendar date. `price` uses
+the shared `ProviderAmountV1` shape (`packages/protocol/src/common/providerAmountV1.ts`),
+which Machine provider prices also use. The schema refuses a `Price` text fact, so
+a plan states its price only through `price`.
+The contribution schema owns this closed shape; the normalized target consumes
+the same schema. Omission leaves existing targets unchanged. These are dated
+public facts, not a quote, live pricing feed or price calculator. Render only
+declared facts and retain their source and checked date. The shared cost presenter
+(`formatDeclaredPlanPrice`) is the only formatter of `price`. The plugin owning the
+target owns updates to its facts.
+
+Matching Protocol, SDK, deployment-protocol and bundled declarations reload
+together under the unpublished 0.3 direct cut; earlier strict development readers
+reject `plans`. No released wire epoch, authority, migration or adapter changes.
+
 ## Describe your app auto mode (0.3 development)
 
 Auto mode has one catalog owner and one validation owner shared by the Deploy an
@@ -73,7 +93,8 @@ input continues to compose the full catalog.
 
 The dialog uses a read-only `task` run on the first eligible Machine whose Agent
 can run the `deploy_suggestion` task. Its input contains the person's description,
-the catalog snapshot, and, when variable metadata is supplied, names with secret flags rather than secret values.
+the catalog snapshot, and, when variable metadata is supplied, names with secret
+flags rather than secret values.
 The run can return typed questions in the existing transient question shape. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
@@ -85,18 +106,25 @@ pairs, then returns the validated recommendations, dropped reasons, and any
 questions. Cards are rendered from that checked result and the catalog facts.
 No model-written price is displayed.
 
-Target plugins declare dated plan facts and a public source URL. The shared cost
-presenter prints those facts and the checked date. When a connected Vercel or
-Cloudflare account exposes a provider plan through its existing `quota()` read,
-the UI matches that name to a declared plan by id or title and adds a `Your plan`
-line. An absent or unmapped plan leaves the declared facts visible without that
-line.
+Target plugins declare dated plans with a public source URL. The catalog copies
+each target's declared `plans` unchanged, and the setup cards, Where it runs and
+Review render them through one plans component: the shared cost presenter prints
+each structured price and the checked date, and the other facts print as
+declared. Review alone adds a `Your plan` line, because the connected account is
+chosen after Where it runs. When the selected Vercel or Cloudflare account exposes
+a provider plan through its existing `quota()` read, the UI matches that name to a
+declared plan by id or title, or by title named with the platform's product
+(Cloudflare reports `Workers Paid`, which never matches the Pages plan). An absent
+or unmapped plan leaves the declared facts visible without that line. The plugin
+plan-id mappings are exact and are confirmed against live responses only at the
+release check for account plan lines.
 
 `Use this setup` routes through `applyDeploySuggestion`. A starter or scratch
 recommendation uses the existing forge compatibility read, defaults to GitHub
 when it is an offered choice, and creates the repository, Source, and Project
-through `projects.starters.create`. That Action receives the person's description
-byte-for-byte followed by `renderDeployPlanBriefV1`, then the existing
+through `projects.starters.create`. That Action receives the description the
+person reviewed in the dialog, byte-for-byte, followed by `renderDeployPlanBriefV1`,
+then the existing
 `sessionHandoff` opens the build Session. The Session runs the project's own
 scripts, creates a preview Environment, deploys the preview, and checks health.
 Review shows the observed preview URL and health. Production remains the
@@ -106,7 +134,9 @@ the existing Where it runs flow without a build Session.
 
 The built-in `happier:deploy` skill points to `references/create-app.md` on
 demand. That reference uses the same catalog, native Session questions, check
-Action, cards, starter/scratch creation, and build → preview → health loop. The
+Action (which takes the person's words unchanged as its optional `description`;
+Use this setup opens the dialog with them, or with an empty description the
+person fills in when the call carried none), cards, starter/scratch creation, and build → preview → health loop. The
 flow budgets and deciding evidence for F1–F8 live in
 `.agents/skills/happier-performance/references/flow-budgets.md` under the
 `journey-deploy.F1` through `journey-deploy.F8` rows.

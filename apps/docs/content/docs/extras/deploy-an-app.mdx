@@ -44,11 +44,12 @@ includes a catalog app and the existing repository, Docker image, and Compose
 paths. Those paths continue through Details and Review without opening a build
 Session.
 
-Plan and price lines come from the selected target's declared provider facts.
-Each fact is shown with the provider page and the date it was checked. When a
-connected Vercel or Cloudflare account reports a plan that matches one of those
-declared plans, the card and Review can show **Your plan**. If the account is not
-connected or the provider's plan cannot be mapped, the dated declared facts stay
+Setup cards, **Where it runs**, and Review show each platform's declared plans:
+the plan's price, its other facts, and the provider page and date they were
+checked. When a connected Vercel or Cloudflare account reports a plan that matches
+one of those declared plans, Review shows **Your plan**. Cards never show your
+plan, because the account is chosen after Where it runs. If the account is not
+connected or the provider's plan cannot be matched, the dated declared facts stay
 visible without a personal plan line. These are reference facts for choosing a
 setup, not a live quote.
 
