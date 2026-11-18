@@ -7,9 +7,19 @@
 // inline evaluates only its English copy on the boot path (P03-BOOT-CUT). Getters, not removal:
 // composing modules read `other.ca.word` at load, and a getter keeps every such read correct.
 // A map whose `en` entry is plain text (language names, for example) is English copy and stays.
+// A getter still ships its copy's bytes in the boot bundle: a module whose other-locale copy lives in
+// translations/features/<locale>.ts keeps those bytes out entirely (measured, P03-FIX-UI-DUPES F1).
 // Guarded by sources/text/i18n.webDelivery.test.ts.
-const OTHER_LOCALES = new Set(['ca', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant',
-  'zhHans', 'zhHant', 'zh_Hans', 'zh_Hant']);
+//
+// The locale keys come from the canonical language table (sources/text/_all.ts, which the locale
+// producer reads too), in every spelling a locale map uses for a code: `zh-Hans`, `zhHans`, `zh_Hans`.
+const { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE } = require('../sources/text/_all.ts');
+
+const OTHER_LOCALES = new Set(SUPPORTED_LANGUAGE_CODES.filter((code) => code !== DEFAULT_LANGUAGE).flatMap((code) => [
+  code,
+  code.replace(/-(\w)/g, (_, letter) => letter.toUpperCase()),
+  code.replace(/-/g, '_'),
+]));
 
 function keyOf(property, t) {
   if (!t.isObjectProperty(property) || property.computed) return null;
@@ -40,6 +50,9 @@ module.exports = function englishBootCopy({ types: t }) {
     },
   };
 };
+
+/** Every key under which a locale map holds another locale's copy. */
+module.exports.otherLocaleKeys = OTHER_LOCALES;
 
 /** The translation modules Metro bundles at the English root (either path separator). */
 module.exports.appliesTo = (filename) => /[\\/]sources[\\/]text[\\/]translations[\\/][^\\/]+\.ts$/.test(filename);

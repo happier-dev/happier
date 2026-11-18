@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import ts from 'typescript';
 import { expect, it } from 'vitest';
+import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES } from './_all';
 
 it('loads selected web copy before activation and keeps explicit voice demand independent', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-i18n-web-'));
@@ -77,7 +79,8 @@ it('loads selected web copy before activation and keeps explicit voice demand in
         visit(Object.entries(result.metafile.outputs).find(([, output]) => output === entry)![0]);
         console.info(JSON.stringify({ entry: 'web translation lookup', entryBytes: entry!.bytes,
             staticModules: staticInputs.size, emittedChunks: Object.keys(result.metafile.outputs).length }));
-        expect([...staticInputs].filter(input => /translations\/features\/(?:[^/]*\.)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.ts$/.test(input))).toEqual([]);
+        const otherLocaleFeature = new RegExp(`translations/features/(?:[^/]*\\.)?(?:${SUPPORTED_LANGUAGE_CODES.filter(code => code !== DEFAULT_LANGUAGE).join('|')})\\.ts$`);
+        expect([...staticInputs].filter(input => otherLocaleFeature.test(input))).toEqual([]);
         expect([...staticInputs].filter(input => /bundledPluginTranslations\.generated\.ts$/.test(input))).toEqual([]);
         expect([...staticInputs].filter(input => /bundledPluginTranslations\/(?!en\.generated\.ts)/.test(input))).toEqual([]);
     } finally {
@@ -89,7 +92,8 @@ it('loads selected web copy before activation and keeps explicit voice demand in
 // producer's bundles, which read the untransformed sources. The Babel override in babel.config.js
 // turns the other-locale entries of each translation module's locale maps into getters in the
 // Metro graph, so a module written with every locale inline evaluates only its English copy at boot.
-const otherLocales = new Set(['ca', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant', 'zhHans', 'zhHant', 'zh_Hans', 'zh_Hant']);
+// The locale keys are the transform's own, derived from the canonical language table (_all.ts).
+const otherLocales: ReadonlySet<string> = createRequire(import.meta.url)('../../scripts/englishBootCopy.cjs').otherLocaleKeys;
 
 function holdsOtherLocaleMap(file: string, source: string): boolean {
     const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
