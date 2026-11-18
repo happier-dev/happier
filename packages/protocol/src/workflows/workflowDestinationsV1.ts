@@ -56,6 +56,13 @@ function collectWorkflowLeafPositionsV1(definition: WorkflowDefinitionV1): Array
   return leaves;
 }
 
+function actionInputNames(leaf: WorkflowLeafV1): Set<string> {
+  if (leaf.kind !== 'action') return new Set<string>();
+  const references = Object.values(leaf.input).flatMap(binding => binding.kind === 'list' ? binding.items
+    : binding.kind === 'object' ? Object.values(binding.fields) : binding.kind === 'text' ? binding.input : [binding]);
+  return new Set(references.flatMap(reference => reference.kind === 'input' ? [reference.name] : []));
+}
+
 /** The materializer's existing per-leaf Session availability relation. */
 export function readWorkflowLeafTargetSessionIdsV1(selection: Pick<WorkflowStepExecutionSelection, 'conversation'>,
   originSessionId?: string): string[] {
@@ -123,8 +130,14 @@ export function deriveWorkflowDestinationsV1(input: Readonly<{
     const positions = new Map<string, ReturnType<typeof collectWorkflowLeafPositionsV1>>();
     positions.set('$root', collectWorkflowLeafPositionsV1(input.definition));
     for (const [key, definition] of Object.entries(input.children ?? {})) positions.set(key, collectWorkflowLeafPositionsV1(definition));
-    for (const leaf of input.materializedLeaves.flatMap(listWorkflowAcceptedLeafSelectionsV1)) visit(leaf.sourceKey, leaf.blockId, leaf.selection,
-      positions.get(leaf.sourceKey)?.find(position => position.leaf.id === leaf.blockId));
+    for (const leaf of input.materializedLeaves.flatMap(listWorkflowAcceptedLeafSelectionsV1)) {
+      const position = positions.get(leaf.sourceKey)?.find(position => position.leaf.id === leaf.blockId);
+      const names = position ? actionInputNames(position.leaf) : new Set<string>();
+      const actionTargets = leaf.sessionAuthorityBindings?.filter(binding => names.has(binding.inputName))
+        .flatMap(binding => binding.targets.map(target => target.address.sessionId));
+      visit(leaf.sourceKey, leaf.blockId, leaf.selection, position,
+        actionTargets?.length ? { sessionIds: [...new Set(actionTargets)], usesOriginSession: false } : undefined);
+    }
   } else {
     const pending = [{ sourceKey: '$root', definition: input.definition, inputs: input.inputs ?? {} }];
     const visited = new Set<string>();
@@ -133,17 +146,31 @@ export function deriveWorkflowDestinationsV1(input: Readonly<{
       const frameKey = JSON.stringify([frame.sourceKey, frame.inputs]);
       if (visited.has(frameKey)) continue;
       visited.add(frameKey);
+      const sessionInput = (name: string) => {
+        const field = frame.definition.inputs.find(field => field.name === name);
+        const supplied = Object.hasOwn(frame.inputs, name);
+        const address = ActionSessionAddressV1Schema.safeParse(supplied ? frame.inputs[name] : field?.default);
+        const fromOrigin = !supplied && field?.defaultFrom === 'origin_session';
+        return { sessionIds: address.success ? [address.data.sessionId] : fromOrigin && input.originSessionId ? [input.originSessionId] : [],
+          usesOriginSession: fromOrigin };
+      };
       for (const position of collectWorkflowLeafPositionsV1(frame.definition)) {
         const leaf = position.leaf;
         const conversation = leaf.execution?.conversation ?? frame.definition.defaults.conversation;
         let boundInput: Parameters<typeof visit>[4];
-        if (conversation?.kind === 'input') {
-          const field = frame.definition.inputs.find(field => field.name === conversation.name);
-          const supplied = Object.hasOwn(frame.inputs, conversation.name);
-          const address = ActionSessionAddressV1Schema.safeParse(supplied ? frame.inputs[conversation.name] : field?.default);
-          const fromOrigin = !supplied && field?.defaultFrom === 'origin_session';
-          boundInput = { sessionIds: address.success ? [address.data.sessionId] : fromOrigin && input.originSessionId ? [input.originSessionId] : [],
-            usesOriginSession: fromOrigin };
+        if (conversation?.kind === 'input') boundInput = sessionInput(conversation.name);
+        if (leaf.kind === 'action') {
+          const names = actionInputNames(leaf);
+          const sessionIds: string[] = [];
+          let usesOriginSession = false;
+          const fields = frame.definition.inputs.filter(field => names.has(field.name) && field.inputType
+            && 'hostType' in field.inputType && field.inputType.hostType === 'session');
+          for (const field of fields) {
+            const target = sessionInput(field.name);
+            sessionIds.push(...target.sessionIds);
+            usesOriginSession ||= target.usesOriginSession;
+          }
+          if (fields.length) boundInput = { sessionIds: [...new Set(sessionIds)], usesOriginSession };
         }
         visit(frame.sourceKey, leaf.id, { conversation }, position, boundInput);
         if (leaf.kind !== 'workflow') continue;

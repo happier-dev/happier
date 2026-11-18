@@ -3,16 +3,24 @@ import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 import { deriveWorkflowDestinationsV1 } from './workflowDestinationsV1.js';
 import { listWorkflowBlockOrdinalsV1 } from './workflowStepLabel.js';
 import type { WorkflowStep, WorkflowDefinitionV1 } from './workflowV1.js';
-import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 
 describe('workflow destination presentation', () => {
-  it('projects a review Session context default and an explicit target without falling back from malformed input', () => {
-    const definition = REVIEW_AND_CONVERGE_WORKFLOW_V1;
+  it('projects typed Action Session inputs and frozen targets without falling back from malformed input', () => {
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [
+      { name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' },
+      { name: 'unrelatedSession', valueType: 'json', required: false, inputType: { hostType: 'session' } },
+    ], blocks: [{ kind: 'action', id: 'comments', actionId: 'reviews.comments.list',
+      input: { sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] } } }] });
     expect(deriveWorkflowDestinationsV1({ definition, originSessionId: 'origin' }).targetSessionIds).toEqual(['origin']);
     expect(deriveWorkflowDestinationsV1({ definition, originSessionId: 'origin',
       inputs: { reviewSession: { serverId: 'home', sessionId: 'review-target' } } }).targetSessionIds).toEqual(['review-target']);
     expect(deriveWorkflowDestinationsV1({ definition, originSessionId: 'origin', inputs: { reviewSession: null } }).targetSessionIds).toEqual([]);
     expect(deriveWorkflowDestinationsV1({ definition }).targetSessionIds).toEqual([]);
+    expect(deriveWorkflowDestinationsV1({ definition, materializedLeaves: [{ sourceKey: '$root', blockId: 'comments',
+      kind: 'action', selection: {}, authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' },
+      sessionAuthorityBindings: [{ inputName: 'reviewSession', targets: [{ address: { serverId: 'home', sessionId: 'frozen' }, machineId: 'machine' }] },
+        { inputName: 'unrelatedSession', targets: [{ address: { serverId: 'home', sessionId: 'unrelated' }, machineId: 'machine' }] }],
+    }] }).targetSessionIds).toEqual(['frozen']);
   });
   it('carries canonical visible ordinals across containers without changing the Session relation', () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
