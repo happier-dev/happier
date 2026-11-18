@@ -79,7 +79,7 @@ describe('opened accepted provider history', () => {
     const incompatible = { ...history, entries: [{ ...history.entries[1]!, snapshot: denominatorChanged }, ...history.entries.slice(2)] };
     expect(projectProviderAccountUsageQuotaReadV1({ ...input, recentHistory: incompatible }).pace[0]!.value)
       .toEqual({ status: 'unavailable', reason: 'denominator_changed' });
-    const changedReset = { ...first, meters: [{ ...first.meters[0]!, resetsAt: 2100 }] };
+    const changedReset = { ...first, meters: [{ ...first.meters[0]!, resetsAt: 3000 }] };
     expect(projectProviderAccountUsageQuotaReadV1({ ...input, recentHistory: { ...history,
       entries: [{ ...history.entries[1]!, snapshot: changedReset }, ...history.entries.slice(2)] } }).pace[0]!.value)
       .toEqual({ status: 'unavailable', reason: 'reset_changed' });

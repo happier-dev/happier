@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
-import { resolveProviderAccountUsagePaceWindow, hasProviderAccountUsageWitnessedReset } from './deriveProviderAccountUsagePace.js';
+import { resolveProviderAccountUsagePaceWindow, hasProviderAccountUsageWitnessedReset, providerAccountUsagePaceWindowIdentityKey } from './deriveProviderAccountUsagePace.js';
 import { PackedProviderAccountUsageDaySummaryV1Schema, packProviderAccountUsageDaySummaryV1,
   unpackProviderAccountUsageDaySummaryV1, PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING } from './providerAccountUsageDaySummaryEncoding.js';
 
@@ -60,7 +60,7 @@ export const ProviderAccountUsageDaySummaryWriteV1Schema = lazyZodSchema(() => z
   recordId: ProviderAccountUsageRecordIdSchema, dayStartAtMs: Day, payload: StoredProviderAccountUsageDaySummaryV1Schema,
 }));
 
-/** Quota counters describe distinct windows; never sum observations or merge reset windows. */
+/** Quota counters describe distinct canonical windows; same-second reset jitter shares one identity. */
 export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
   recordId: string; dayStartAtMs: number; snapshots: readonly ProviderAccountUsageSnapshotV1[];
   previous?: ProviderAccountUsageDaySummaryV1; precedingSnapshot?: ProviderAccountUsageSnapshotV1;
@@ -76,7 +76,11 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
   const lastSnapshot = candidates.reduce<ProviderAccountUsageSnapshotV1 | undefined>((last, next) => !last || next.fetchedAtMs >= last.fetchedAtMs ? next : last, undefined);
   if (!lastSnapshot) throw new Error('provider_account_usage_summary_empty');
   const windows = new Map<string, ProviderAccountUsageDaySummaryV1['windows'][number]>();
-  const key = (meterId: string, start: number | null, reset: number | null) => JSON.stringify([meterId, start, reset]);
+  const key = (meterId: string, start: number | null, reset: number | null) => {
+    if (start === null || reset === null) return JSON.stringify([meterId, start, reset]);
+    return providerAccountUsagePaceWindowIdentityKey({ recordId: input.recordId, meterId, windowStartAtMs: start, resetAtMs: reset,
+      windowDurationMs: reset - start });
+  };
   for (const window of previous?.windows ?? []) windows.set(key(window.meterId, window.windowStartAtMs, window.resetAtMs), { ...window, resets: window.resets.map(reset => ({ ...reset })) });
   // Retained last samples allow a late detail row to advance a previous peak
   // after the original detail was removed, without fabricating observations.
@@ -86,7 +90,7 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
   const lastByMeter = new Map<string, ProviderAccountUsageSnapshotV1>();
   for (const snapshot of observations) for (const meter of snapshot.meters) {
     const window = resolveProviderAccountUsagePaceWindow(snapshot, meter.meterId);
-    const id = key(meter.meterId, window?.windowStartAtMs ?? null, window?.resetAtMs ?? null);
+    const id = window ? providerAccountUsagePaceWindowIdentityKey(window) : key(meter.meterId, null, null);
     const before = lastByMeter.get(meter.meterId);
     const reset = before && window && hasProviderAccountUsageWitnessedReset({ previous: before, current: snapshot, meterId: meter.meterId, nowMs: snapshot.observedAtMs })
       ? resolveProviderAccountUsagePaceWindow(before, meter.meterId) : null;

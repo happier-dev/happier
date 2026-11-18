@@ -27,8 +27,11 @@ describe('provider quota daily summary', () => {
     });
     const summaries = deriveProviderAccountUsageDayQuotaHistoryV1({ recordId, snapshots });
     expect(summaries).toHaveLength(13);
-    expect(summaries.reduce((count, summary) => count + summary.windows.length, 0)).toBe(4211);
-    expect(new Set(summaries.flatMap(summary => summary.windows.map(window => window.resetAtMs))).size).toBe(2486);
+    const identityKeys = summaries.flatMap(summary => summary.windows.map(window => JSON.stringify([window.meterId,
+      Math.round((window.resetAtMs ?? 0) / 1000), window.resetAtMs === null || window.windowStartAtMs === null ? null
+        : window.resetAtMs - window.windowStartAtMs])));
+    expect(new Set(identityKeys)).toHaveLength(6);
+    expect(summaries.flatMap(summary => summary.windows).some(window => (window.resetAtMs ?? 0) % 1000 !== 0)).toBe(true);
     const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
     // Budget from distinct facts, independent of encoding: each distinct meter,
     // each exact clock pair/diagnostic, each window's scalar facts, daily context.
@@ -43,7 +46,10 @@ describe('provider quota daily summary', () => {
     contents.forEach((content, index) => expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: summaries[index]!.dayStartAtMs,
       accountMode: 'e2ee', material, content })).toEqual(summaries[index]));
     const encodedBytes = contents.reduce((bytes, content) => bytes + size(content), 0);
-    console.info(JSON.stringify({ fixture: 'claude-reset-revisions', days: summaries.length, windows: 4211, distinctClocks: 2486,
+    const materializedWindows = summaries.reduce((count, summary) => count + summary.windows.length, 0);
+    const distinctWindowIdentities = new Set(identityKeys).size;
+    console.info(JSON.stringify({ fixture: 'claude-reset-revisions', days: summaries.length, rawObservations: 4211,
+      materializedWindows, distinctWindowIdentities, distinctClocks: 2486,
       decodedBytes: size(summaries), encodedBytes, distinctFactBudget: budget }));
     expect(encodedBytes).toBeLessThanOrEqual(Math.ceil(budget * 4 / 3) + summaries.length * 128);
   });

@@ -1392,8 +1392,11 @@ inside the existing plain/encrypted summary envelope. Window tuples reference
 distinct snapshots, whose meter definitions/readings reuse the existing quota
 projection codec. Diagnostics are interned separately because that projection
 normally omits them. Opening restores the complete original summary, including
-every exact reset clock, snapshot, diagnostic and reset witness. Clock revisions
-remain separate windows; this encoding introduces no rounding or history cap.
+every exact reset clock, snapshot, diagnostic and reset witness. Reset clocks that
+round to the same second share the canonical window identity used by pace and
+summary grouping, while raw reset timestamps remain exact in the stored history,
+Details operands and representative snapshots. Material second-level changes
+remain separate; this encoding introduces no rounding or history cap.
 Readers also open retained full-body summaries. The outer `encoding` hint lets
 normal maintenance select an old encoding once with `requireCompact:true`.
 For a selected day without pending observations, the server marks `rewriteOnly`;

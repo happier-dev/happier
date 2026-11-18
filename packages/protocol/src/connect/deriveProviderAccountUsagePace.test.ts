@@ -217,3 +217,41 @@ describe('earlier comparable window curves', () => {
     expect(deriveProviderAccountUsageEarlierWindowCurves({ current, meterId: 'weekly' })).toEqual({ status: 'unavailable', reason: 'not_loaded' });
   });
 });
+
+describe('second-level reset window identity', () => {
+  it('does not report reset_changed for same-second reset jitter, but does for a real reset', () => {
+    const previous = snapshot(1100);
+    previous.meters[0]!.resetsAt = 2000;
+    previous.meters[0]!.used = 20;
+    const jitter = snapshot(1500);
+    jitter.meters[0]!.resetsAt = 2400;
+    jitter.meters[0]!.used = 30;
+    const jitterPace = deriveProviderAccountUsagePace({ snapshot: jitter, meterId: 'weekly', nowMs: 1500, history: [previous] });
+    expect(jitterPace).not.toEqual({ status: 'unavailable', reason: 'reset_changed' });
+    expect(jitterPace).toMatchObject({ status: 'available', window: { resetAtMs: 2400 } });
+
+    const resetWindowPrevious = snapshot(2100);
+    resetWindowPrevious.meters[0]!.resetsAt = 2000;
+    resetWindowPrevious.meters[0]!.used = 20;
+    const realReset = snapshot(2200);
+    realReset.meters[0]!.resetsAt = 3000;
+    realReset.meters[0]!.used = 30;
+    expect(deriveProviderAccountUsagePace({ snapshot: realReset, meterId: 'weekly', nowMs: 2500, history: [resetWindowPrevious] })).toEqual({ status: 'unavailable', reason: 'reset_changed' });
+  });
+
+  it('uses the same identity for unused capacity and earlier curves', () => {
+    const previous = snapshot(1100);
+    previous.meters[0]!.resetsAt = 2000;
+    previous.meters[0]!.used = 20;
+    const jitter = snapshot(1200);
+    jitter.meters[0]!.resetsAt = 2400;
+    jitter.meters[0]!.used = 30;
+    const unused = deriveProviderAccountUsageUnusedCapacity({ history: [previous, jitter], nowMs: 2500 });
+    expect(unused.windows).toHaveLength(1);
+    const current = snapshot(3200);
+    current.meters[0]!.resetsAt = 4000;
+    const curves = deriveProviderAccountUsageEarlierWindowCurves({ current, meterId: 'weekly', history: [previous, jitter] });
+    expect(curves.status).toBe('available');
+    if (curves.status === 'available') expect(curves.curves).toHaveLength(1);
+  });
+});

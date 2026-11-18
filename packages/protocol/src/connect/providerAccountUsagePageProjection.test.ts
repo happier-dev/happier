@@ -53,12 +53,12 @@ describe('B page projection', () => {
     expect(changedPage.history.entries[0]!.snapshot.meters[0]!.details).not.toBe(entries[0]!.snapshot.meters[0]!.details);
   });
   it.each([8, 128])('normalizes each admitted comparison operand once per quota projection with %i observations', observationCount => {
-    const duration = observationCount;
+    const duration = observationCount * 1000;
     const perWindow = observationCount / 2;
     const values = Array.from({ length: observationCount }, (_, index) => {
       const cycle = Math.floor(index / perWindow);
       const offset = index % perWindow + 1;
-      const value = sample(cycle * duration + offset * 2, offset * 50 / perWindow, (cycle + 1) * duration);
+      const value = sample(cycle * duration + offset * 2 * 1000, offset * 50 / perWindow, (cycle + 1) * duration);
       value.meters[0]!.windowDurationMs = duration;
       return value;
     });

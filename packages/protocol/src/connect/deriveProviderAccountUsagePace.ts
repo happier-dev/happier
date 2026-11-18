@@ -81,6 +81,26 @@ export function resolveProviderAccountUsagePaceWindow(snapshot: ProviderAccountU
     windowStartAtMs: window.windowStartAtMs, windowDurationMs: window.windowDurationMs } : null;
 }
 
+/**
+ * Canonical quota-window identity. Providers commonly vary reset clocks by
+ * milliseconds while referring to the same second-level window. Keep the
+ * exact window returned above for Details, but use this identity for grouping
+ * and comparability everywhere else.
+ */
+export function deriveProviderAccountUsagePaceWindowIdentity(window: ProviderAccountUsagePaceWindowV1): ProviderAccountUsagePaceWindowV1 {
+  const resetAtMs = Math.round(window.resetAtMs / 1000) * 1000;
+  return { ...window, resetAtMs, windowStartAtMs: resetAtMs - window.windowDurationMs };
+}
+
+export function providerAccountUsagePaceWindowIdentityKey(window: ProviderAccountUsagePaceWindowV1): string {
+  const identity = deriveProviderAccountUsagePaceWindowIdentity(window);
+  return JSON.stringify([identity.recordId, identity.meterId, identity.windowStartAtMs, identity.resetAtMs, identity.windowDurationMs]);
+}
+
+export function sameProviderAccountUsagePaceWindow(left: ProviderAccountUsagePaceWindowV1, right: ProviderAccountUsagePaceWindowV1): boolean {
+  return providerAccountUsagePaceWindowIdentityKey(left) === providerAccountUsagePaceWindowIdentityKey(right);
+}
+
 export type ProviderAccountUsageRecentHistoryRangesV1 =
   | Readonly<{ status: 'available'; ranges: Readonly<{ startAtMs: number; endAtMs: number }>[] }>
   | Readonly<{ status: 'unavailable'; reason: 'unknown_window' | 'unproven_clock_bounds' }>;
@@ -196,13 +216,15 @@ export function readProviderAccountUsageWindowComparabilityReason(input: Readonl
   if (previousFacts.periodStartAtMs !== currentFacts.periodStartAtMs || previousFacts.periodEndAtMs !== currentFacts.periodEndAtMs) {
     const beforeWindow = resolveProviderAccountUsagePaceWindow(previous, meterId, operands);
     const afterWindow = currentWindow;
-    const alignedRollover = beforeWindow && afterWindow
-      && beforeWindow.windowDurationMs === afterWindow.windowDurationMs
-      && beforeWindow.resetAtMs === afterWindow.windowStartAtMs
-      && previousPeriod?.currentPeriodStartAtMs === beforeWindow.windowStartAtMs
-      && previousPeriod?.currentPeriodEndAtMs === beforeWindow.resetAtMs
-      && currentPeriod?.currentPeriodStartAtMs === afterWindow.windowStartAtMs
-      && currentPeriod?.currentPeriodEndAtMs === afterWindow.resetAtMs;
+    const beforeIdentity = beforeWindow && deriveProviderAccountUsagePaceWindowIdentity(beforeWindow);
+    const afterIdentity = afterWindow && deriveProviderAccountUsagePaceWindowIdentity(afterWindow);
+    const alignedRollover = beforeIdentity && afterIdentity
+      && beforeIdentity.windowDurationMs === afterIdentity.windowDurationMs
+      && beforeIdentity.resetAtMs === afterIdentity.windowStartAtMs
+      && previousPeriod?.currentPeriodStartAtMs === beforeIdentity.windowStartAtMs
+      && previousPeriod?.currentPeriodEndAtMs === beforeIdentity.resetAtMs
+      && currentPeriod?.currentPeriodStartAtMs === afterIdentity.windowStartAtMs
+      && currentPeriod?.currentPeriodEndAtMs === afterIdentity.resetAtMs;
     if (!alignedRollover) return 'entitlement_changed';
   }
   if (operands.readDenominator(before) !== operands.readDenominator(after)) return 'denominator_changed';
@@ -243,8 +265,10 @@ export function hasProviderAccountUsageWitnessedReset(input: Readonly<{ previous
     || !isConnectedServiceQuotaObservationFresh({ observedAtMs: current.observedAtMs, nowMs, maxAgeMs: current.staleAfterMs })) return false;
   const beforeWindow = resolveProviderAccountUsagePaceWindow(previous, meterId, operands);
   const afterWindow = resolveProviderAccountUsagePaceWindow(current, meterId, operands);
-  if (!beforeWindow || !afterWindow || afterWindow.windowStartAtMs !== beforeWindow.resetAtMs
-    || afterWindow.windowDurationMs !== beforeWindow.windowDurationMs) return false;
+  const beforeIdentity = beforeWindow && deriveProviderAccountUsagePaceWindowIdentity(beforeWindow);
+  const afterIdentity = afterWindow && deriveProviderAccountUsagePaceWindowIdentity(afterWindow);
+  if (!beforeIdentity || !afterIdentity || afterIdentity.windowStartAtMs !== beforeIdentity.resetAtMs
+    || afterIdentity.windowDurationMs !== beforeIdentity.windowDurationMs) return false;
   const before = deriveProviderAccountUsagePace({ snapshot: previous, meterId, nowMs: previous.observedAtMs }, operands);
   const after = deriveProviderAccountUsagePace({ snapshot: current, meterId, nowMs }, operands);
   return (before.status === 'available' || before.reason === 'zero_elapsed'
@@ -277,11 +301,13 @@ function deriveWitnessedPace(input: Readonly<{ snapshot: ProviderAccountUsageSna
     const previousWindow = resolveProviderAccountUsagePaceWindow(previous, meterId, operands);
     // A completed cycle can have its final observation at the next cycle's
     // exact start. It is not a sample of the current actual window.
-    if (previousWindow && previousWindow.resetAtMs <= window.windowStartAtMs && previous.observedAtMs <= previousWindow.resetAtMs) continue;
+    const windowIdentity = deriveProviderAccountUsagePaceWindowIdentity(window);
+    const previousIdentity = previousWindow && deriveProviderAccountUsagePaceWindowIdentity(previousWindow);
+    if (previousIdentity && previousIdentity.resetAtMs <= windowIdentity.windowStartAtMs && previous.observedAtMs <= previousIdentity.resetAtMs) continue;
     const incompatible = readProviderAccountUsageWindowComparabilityReason({ previous, current: snapshot, meterId }, operands);
     if (incompatible) return unavailable(incompatible);
     if (!previousWindow) return unavailable('unknown_window');
-    if (previousWindow.resetAtMs !== window.resetAtMs || previousWindow.windowDurationMs !== window.windowDurationMs) return unavailable('reset_changed');
+    if (!previousWindow || !sameProviderAccountUsagePaceWindow(previousWindow, window)) return unavailable('reset_changed');
     if (hasInconsistentCounters(previousMeter)) return unavailable('inconsistent_counters');
     const previousFraction = fraction(previousMeter);
     if (previousFraction == null) continue;
@@ -307,7 +333,7 @@ export function deriveProviderAccountUsageUnusedCapacity(input: Readonly<{ histo
   for (const snapshot of input.history ?? []) for (const meter of snapshot.meters) {
     const window = resolveProviderAccountUsagePaceWindow(snapshot, meter.meterId, operands);
     if (!window || window.resetAtMs > input.nowMs) continue;
-    const key = JSON.stringify(window);
+    const key = providerAccountUsagePaceWindowIdentityKey(window);
     const group = groups.get(key) ?? { window, samples: [] };
     group.samples.push(snapshot); groups.set(key, group);
   }
@@ -354,8 +380,8 @@ export function deriveProviderAccountUsageEarlierWindowCurves(input: Readonly<{ 
   for (const snapshot of input.history) {
     if (snapshot.recordId !== input.current.recordId || !snapshot.meters.some(meter => meter.meterId === input.meterId)) continue;
     const window = resolveProviderAccountUsagePaceWindow(snapshot, input.meterId, operands);
-    if (!window || window.resetAtMs > currentWindow.windowStartAtMs) continue;
-    const key = JSON.stringify(window);
+    if (!window || deriveProviderAccountUsagePaceWindowIdentity(window).resetAtMs > deriveProviderAccountUsagePaceWindowIdentity(currentWindow).windowStartAtMs) continue;
+    const key = providerAccountUsagePaceWindowIdentityKey(window);
     const group = groups.get(key) ?? { window, samples: [] };
     group.samples.push(snapshot); groups.set(key, group);
   }
