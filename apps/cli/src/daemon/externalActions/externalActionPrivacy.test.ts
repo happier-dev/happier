@@ -1,3 +1,10 @@
+import {
+  decodeExternalActionHttpBodyV1,
+  EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
+} from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import type { MachinePoolErrorV1, MachinePoolUpdateInputV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import fastify from 'fastify';
 import axios from 'axios';
@@ -770,36 +777,60 @@ describe('private external Action origins with the real CLI executor', () => {
   it.each(['http', 'rpc'] as const)('protects Pool conflicts through %s and the bound Account HTTP adapter', async (origin) => {
     const home = fastify();
     const ingress = fastify();
-    const restore = installAxiosFastifyAdapter({ app: home, origin: 'http://pool-home.test' });
+    const serverHttpBaseUrl = 'http://pool-home.test';
+    const accountToken = `fixture.${Buffer.from(JSON.stringify({ sub: principal.accountId })).toString('base64url')}.signature`;
+    const restore = installAxiosFastifyAdapter({ app: home, origin: serverHttpBaseUrl });
     const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
     const sentinel = 'PRIVATE_POOL_CONFLICT_SENTINEL';
-    const current = { pool: { id: poolId, name: sentinel, description: null, revision: 2,
-      createdAt: 1, updatedAt: 2, members: [] },
-      availability: { state: 'known', connectedCount: 0, enabledCount: 0 } };
+    const nameBinding = { entity: 'machine_pool', field: 'name', id: poolId } as const;
+    const update = {
+      poolId, expectedRevision: 1, members: [],
+      name: sealPrivateLabelV1({ mode: 'plain', binding: nameBinding, value: 'Requested private name' }),
+    } satisfies MachinePoolUpdateInputV1;
+    const conflict = {
+      code: 'pool_changed',
+      current: {
+        pool: {
+          id: poolId,
+          name: { kind: 'available', label: projectPrivateLabelForRecipientV1({
+            stored: sealPrivateLabelV1({ mode: 'plain', binding: nameBinding, value: sentinel }),
+            recipientAccountId: principal.accountId,
+          }) },
+          description: null, revision: 2, createdAt: 1, updatedAt: 2, members: [],
+        },
+        availability: { state: 'known', connectedCount: 0, enabledCount: 0 },
+      },
+    } satisfies MachinePoolErrorV1;
     let domainRequests = 0;
     // Home HTTP is the system boundary; the transport codec, Action policy and family adapter are real.
+    home.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async (request) => {
+      expect(request.headers.authorization).toBe(`Bearer ${accountToken}`);
+      return { v: 1, rows: [] };
+    });
     home.post('/v1/machines/pools/update', async (request, reply) => {
       domainRequests += 1;
       expect(request.headers.authorization).toBeUndefined();
-      expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe('pool-authorization');
-      expect(typeof request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]).toBe('string');
-      expect(request.body).toEqual({ poolId, expectedRevision: 1, name: 'Requested private name', members: [] });
-      return reply.code(409).send({ code: 'pool_changed', current });
+      expect(request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1]).toBe('v1');
+      const frame = decodeExternalActionHttpBodyV1(request.body);
+      expect(frame?.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe('pool-authorization');
+      expect(typeof frame?.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]).toBe('string');
+      expect(frame?.body).toEqual(update);
+      return reply.code(409).send(conflict);
     });
     const host = { ...owner(), executor: createCliActionExecutorHarness({
-      token: 'alice-runtime-token', sessionId: '', mode: 'plain', ctx: null,
+      token: accountToken, serverHttpBaseUrl, sessionId: '', mode: 'plain', ctx: null,
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {} }) },
     }, createAccountServerActionDeps({
-      token: 'alice-runtime-token',
+      token: accountToken,
       serverId: binding.serverIdentityId,
-      serverHttpBaseUrl: 'http://pool-home.test',
+      serverHttpBaseUrl,
       serverIdentityId: binding.serverIdentityId,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
       externalActionMachineInstallationId: 'machine-installation-1',
     })).executor };
     const poolBinding = { ...binding, actionId: 'machines.pools.update', requestId: 'pool-conflict' };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: poolBinding, material, randomBytes: (length) => new Uint8Array(length).fill(4),
-      input: { poolId, expectedRevision: 1, name: 'Requested private name', members: [] } });
+      input: update });
     const poolAuthorization = executionAuthorization(poolBinding.actionId, request, 'pool-authorization');
     try {
       const envelope = await runWithServerHttpBaseUrl('http://unrelated-home.test', async () => {
@@ -826,6 +857,7 @@ describe('private external Action origins with the real CLI executor', () => {
         expect(rejected).toEqual({
           kind: 'invalid_request',
           errorCode: 'target_not_local',
+          phase: 'target_requester_context',
           requestId: 'pool-conflict',
         });
         expect(domainRequests).toBe(0);
@@ -839,7 +871,7 @@ describe('private external Action origins with the real CLI executor', () => {
       expect(JSON.stringify(envelope)).not.toContain(sentinel);
       expect(JSON.stringify(envelope)).not.toContain('pool_changed');
       expect(openExternalActionResponseV2({ envelope, binding: poolBinding, request, material })).toMatchObject({
-        ok: false, errorCode: 'pool_changed', details: { code: 'pool_changed', current },
+        ok: false, errorCode: 'pool_changed', details: conflict,
       });
       expect(domainRequests).toBe(1);
     } finally { restore(); await ingress.close(); await home.close(); }
