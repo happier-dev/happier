@@ -108,16 +108,6 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
         throw new Error([`Commit refused: the packet adds ${boundary.findings.length} extension import-boundary violation(s):`,
           ...boundary.findings.map(finding => `  ${finding}`)].join('\n'));
       }
-      // Blocking typecheck delta of the packages/* and packages/plugins/* workspaces the packet touches, from its own
-      // tree against its parent (P03-GATE-TC 2026-11-18), the same function the commit wrapper's gate runs. Touched apps
-      // are checked by the rolling HEAD typecheck kicked below.
-      const { commitGateTypecheck, commitPackageTypecheckRefuses, formatCommitPackageTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
-      const typecheck = await commitGateTypecheck({ repo: cwd, base: head, tree });
-      if (commitPackageTypecheckRefuses(typecheck)) {
-        throw new Error(['Commit refused: the packet adds type errors to a package it touches (errors already at its parent are not counted):',
-          ...formatCommitPackageTypecheck(typecheck).map(line => `  ${line}`)].join('\n'));
-      }
-      if (!typecheck.skipped) console.error(formatCommitPackageTypecheck(typecheck).join('\n'));
       // Entry loads of the packet's own tree (owner ruling 2026-11-18), shared with the commit wrapper's gate. Report
       // mode (default) records the verdict after the commit lands; HAPPIER_COMMIT_TREE_GATE=block refuses here.
       const treeEntryLoads = await import('../workspaces/commitTreeEntryLoads.mjs');
