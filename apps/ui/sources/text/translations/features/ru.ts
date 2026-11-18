@@ -3509,7 +3509,7 @@ const artifactsBrowserTranslations = { ru: {
             changed: 'Изменено',
             openConversation: 'Открыть обсуждение',
             replied: ({ name, time }) => `${name} ответил(а) · ${time}`,
-            changedReason: ({ n }) => `Этот фрагмент изменился после комментария. Цитата из версии ${n}.`,
+            changedReason: 'Этот фрагмент изменился после комментария.',
             openRevision: ({ n }) => `Открыть версию ${n}`,
             reattach: 'Привязать к новому тексту',
             reattaching: 'Выберите текст, к которому это относится теперь.',

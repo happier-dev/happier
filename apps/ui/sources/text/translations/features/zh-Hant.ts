@@ -3409,7 +3409,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             changed: '已變更',
             openConversation: '開啟對話',
             replied: ({ name, time }) => `${name}已回覆 · ${time}`,
-            changedReason: ({ n }) => `此段落在評論後已變更。引文來自版本 ${n}。`,
+            changedReason: '此段落在評論後已變更。',
             openRevision: ({ n }) => `開啟版本 ${n}`,
             reattach: '關聯到新文字',
             reattaching: '選取它現在所指的文字。',

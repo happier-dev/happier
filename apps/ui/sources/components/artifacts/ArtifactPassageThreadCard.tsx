@@ -270,9 +270,7 @@ export function ArtifactPassageThreadCard(
             color={theme.colors.text.secondary}
           />
           <Text variant="meta" style={styles.noticeText}>
-            {t('artifacts.browser.passage.changedReason', {
-              n: thread.quoteRevision.bodyVersion,
-            })}
+            {t('artifacts.browser.passage.changedReason')}
           </Text>
           </View>
           {props.attaching ? (

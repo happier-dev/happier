@@ -3408,7 +3408,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             changed: '已更改',
             openConversation: '打开对话',
             replied: ({ name, time }) => `${name}已回复 · ${time}`,
-            changedReason: ({ n }) => `此段落在评论后已更改。引文来自版本 ${n}。`,
+            changedReason: '此段落在评论后已更改。',
             openRevision: ({ n }) => `打开版本 ${n}`,
             reattach: '关联到新文本',
             reattaching: '选择它现在所指的文本。',

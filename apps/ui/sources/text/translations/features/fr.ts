@@ -3523,7 +3523,7 @@ const artifactsBrowserTranslations = { fr: {
             changed: 'Modifié',
             openConversation: 'Ouvrir la conversation',
             replied: ({ name, time }) => `${name} a répondu · ${time}`,
-            changedReason: ({ n }) => `Ce passage a changé après le commentaire. La citation provient de la version ${n}.`,
+            changedReason: 'Ce passage a changé après le commentaire.',
             openRevision: ({ n }) => `Ouvrir la version ${n}`,
             reattach: 'Rattacher au nouveau texte',
             reattaching: 'Sélectionnez le texte auquel il se rapporte maintenant.',

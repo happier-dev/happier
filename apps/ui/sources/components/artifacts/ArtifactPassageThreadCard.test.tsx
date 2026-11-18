@@ -153,11 +153,14 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
 
   it('opens the version of the displayed accepted quote after newer edits detach it', async () => {
     const view = await mount({ thread: {
-      ...thread({ state: 'detached' }),
+      ...thread({ state: 'detached' }, laterPassage),
       quote: laterPassage.quote,
       quoteRevision: laterPassage.revision,
     } });
-    expect(view.screen.getTextContent()).toContain(laterPassage.quote);
+    const text = view.screen.getTextContent();
+    expect(text).toContain(laterPassage.quote);
+    expect(text).toContain(firstPassage.quote);
+    expect(text).not.toContain(`artifacts.browser.passage.changedReason(n=${laterPassage.revision.bodyVersion})`);
     await view.screen.pressByTestIdAsync(`${id}.compare`);
     expect(view.onOpenHistory).toHaveBeenCalledWith(laterPassage.revision.bodyVersion);
   });

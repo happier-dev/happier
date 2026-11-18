@@ -3505,7 +3505,7 @@ const artifactsBrowserTranslations = { ca: {
             changed: 'Ha canviat',
             openConversation: 'Obre la conversa',
             replied: ({ name, time }) => `${name} ha respost · ${time}`,
-            changedReason: ({ n }) => `Aquest passatge ha canviat després del comentari. La cita és de la versió ${n}.`,
+            changedReason: 'Aquest passatge ha canviat després del comentari.',
             openRevision: ({ n }) => `Obre la versió ${n}`,
             reattach: 'Adjunta al text nou',
             reattaching: 'Selecciona el text al qual pertany ara.',

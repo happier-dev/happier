@@ -157,7 +157,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         changed: string;
         openConversation: string;
         replied: (params: Readonly<{ name: string; time: string }>) => string;
-        changedReason: (params: Readonly<{ n: number }>) => string;
+        changedReason: string;
         openRevision: (params: Readonly<{ n: number }>) => string;
         reattach: string;
         reattaching: string;
@@ -366,7 +366,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             changed: 'Changed',
             openConversation: 'Open conversation',
             replied: ({ name, time }) => `${name} replied · ${time}`,
-            changedReason: ({ n }) => `This passage changed after the comment. The quote is from version ${n}.`,
+            changedReason: 'This passage changed after the comment.',
             openRevision: ({ n }) => `Open version ${n}`,
             reattach: 'Attach to new text',
             reattaching: 'Select the text it belongs to now.',

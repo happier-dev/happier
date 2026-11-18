@@ -3463,7 +3463,7 @@ const artifactsBrowserTranslations = { ja: {
             changed: '変更あり',
             openConversation: '会話を開く',
             replied: ({ name, time }) => `${name}が返信 · ${time}`,
-            changedReason: ({ n }) => `この箇所はコメント後に変更されました。引用はバージョン ${n} のものです。`,
+            changedReason: 'この箇所はコメント後に変更されました。',
             openRevision: ({ n }) => `バージョン ${n} を開く`,
             reattach: '新しい文章に付け替える',
             reattaching: '今の対象の文章を選択してください。',
