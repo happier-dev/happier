@@ -107,7 +107,8 @@ export function formatWorkflowConversationLabel(params: Readonly<{
 export function formatWorkflowWorkspaceLabel(draft: WorkflowEditorDraft, workspace: WorkflowWorkspaceSelection | undefined): string {
     const value = workspace ?? { kind: 'inherit' as const };
     switch (value.kind) {
-        case 'inherit': return t('workflows.workspace.inherit');
+        // One name for the step's inherited Workspace, the checkout picker's own row (WF-REDESIGN-1116).
+        case 'inherit': return t('workflows.workspace.sameAsWorkflow');
         case 'project_checkout': return t('workflows.workspace.projectCheckout');
         case 'from_step': return t('workflows.workspace.fromStep', { block: blockLabelOf(draft, value.producer.blockId) });
         case 'new_worktree':

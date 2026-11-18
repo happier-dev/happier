@@ -205,6 +205,8 @@ export function WorkflowMoreSettings(
             disabled={readOnly}
             fields={MORE_SESSION_FIELDS}
             values={values}
+            // The engine these fields wait on is "Who runs it" or a step's header chip, never this list.
+            engineChipBeside
             onChangeField={changeField}
             {...(props.authoringFacts === undefined
               ? {}

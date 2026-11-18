@@ -845,7 +845,8 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 // A row of field selects, like a form, holds only the decisions this subject has (see below).
                 if (presentation === 'selects') return control.kind === 'unavailable' && (control.reason === 'not_supported_on_target'
                     || control.reason === 'agent_has_no_options' || control.reason === 'owned_by_host'
-                    || (control.reason === 'requires_agent_target' && engineField !== undefined)) ? null : inRow(field, rendered);
+                    // The engine in this row or beside it (a step card header's chip) asks for the Agent once.
+                    || (control.reason === 'requires_agent_target' && (engineField !== undefined || props.engineChipBeside === true))) ? null : inRow(field, rendered);
                 // A settings form holds only the decisions this step has: a field the Agent or the target can
                 // never offer (a Windows-only field on Linux, an Agent with no such options) is left out rather
                 // than listed as "Unavailable". Fields that wait on something or say what to do stay.

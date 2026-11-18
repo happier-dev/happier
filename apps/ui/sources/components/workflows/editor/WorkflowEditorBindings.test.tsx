@@ -501,6 +501,22 @@ describe('How and where it runs sentence (QA-WAVE-1115)', () => {
     };
     const summary = (screen: Awaited<ReturnType<typeof renderCard>>) => String(screen.findByTestId('sentence-how-where-summary')?.props.children);
 
+    it('keeps the inherited Session settings when every step chooses its own engine (WF-REDESIGN-1116)', async () => {
+        // An engine override drops only the engine, model and effort: permissions, approvals and the
+        // connected service still come from the workflow, so "Who runs it" stays, without the engine.
+        const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'own-engine', name: 'Workflow', definition });
+        const { WorkflowHowAndWhereCard } = await import('./WorkflowHowAndWhereCard');
+        const { createWorkflowEditorReadable } = await import('./workflowEditorDraftStore');
+        const screen = await renderScreen(<WorkflowHowAndWhereCard draftStore={createWorkflowEditorReadable(base)}
+            onChange={() => {}} documentEditable showsWorkflowAgent={false} hasSteps accountLifetime={null} whereRef={React.createRef()}
+            projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
+            executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined}
+            authoringFacts={{ agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude' }] }}
+            expanded onExpandedChange={() => {}} testIDPrefix="sentence" />);
+        expect(screen.findByTestId('sentence-how-where-who')).not.toBeNull();
+        expect(screen.findByTestId('sentence-header-engine-agentTarget')).toBeNull();
+    });
+
     it('leaves the Agent out until the workflow chooses one, and when no step uses it', async () => {
         expect(summary(await renderCard({}, true))).toBe('workflows.page.sections.howWhereNoMachineSession|agent=none');
         expect(summary(await renderCard({ agentTarget: claude }, false))).toBe('workflows.page.sections.howWhereNoMachineSession|agent=none');
@@ -519,6 +535,53 @@ describe('workflow and step settings (round 1116b)', () => {
         return { ...base, defaults: { ...base.defaults, agentTarget: claude },
             blocks: base.blocks.map((block) => block.kind === 'step' ? { ...block, execution: stepExecution } : block) };
     };
+
+    it('shows an Agent step’s Session as chips at its foot: inherited quiet, changed marked (WF-REDESIGN-1116)', async () => {
+        const { WorkflowStepOptionChips } = await import('./WorkflowStepCardChips');
+        const { resolveEffectiveWorkflowStepExecution } = await import('@/sync/domains/workflows/workflowAuthoring');
+        const render = async (stepExecution: Record<string, unknown>) => {
+            const draft = draftWith(stepExecution);
+            const step = draft.blocks.find((block) => block.kind === 'step');
+            if (step?.kind !== 'step') throw new Error('fixture has no step');
+            return renderScreen(<WorkflowStepOptionChips editable step={step} effective={resolveEffectiveWorkflowStepExecution(draft, step)}
+                changes={[]} onOpenOptions={() => {}} authoringFacts={facts()} inheritedWorkspaceLabel="Same as the workflow"
+                blockLabel="Analyze" testIDPrefix="foot" />);
+        };
+        // A step that changes nothing still shows who runs it and where it works.
+        const plain = await render({});
+        expect(plain.findHostByTestId('foot-session-approvalProfileId')).not.toBeNull();
+        expect(plain.findHostByTestId('foot-session-approvalProfileId')?.props.accessibilityHint).not.toBe('workflows.page.changedForStep');
+        expect(plain.findHostByTestId('foot-workspace')).not.toBeNull();
+        // A changed field is the marked chip.
+        const changed = await render({ permissionMode: 'plan' });
+        expect(changed.findHostByTestId('foot-session-permissionMode')?.props.accessibilityHint).toBe('workflows.page.changedForStep');
+    });
+
+    it('keeps an Agent step’s Session chips on its card at rest, read-only (WF-REDESIGN-1116)', async () => {
+        const { WorkflowBlockSummary } = await import('./WorkflowBlockSummary');
+        const draft = draftWith({});
+        const step = draft.blocks.find((block) => block.kind === 'step');
+        if (step?.kind !== 'step') throw new Error('fixture has no step');
+        const selected = vi.fn();
+        const screen = await renderScreen(<WorkflowBlockSummary block={step} summary="Analyze it" draft={draft} authoringFacts={facts()}
+            ordinal={1} visibleOrdinal="1" total={1} actions={[]} issue={null} onSelect={selected} inLane={false} testIDPrefix="rest" />);
+        expect(screen.findHostByTestId(`rest-step-${step.id}-session-approvalProfileId`)).not.toBeNull();
+        expect(screen.findHostByTestId(`rest-step-${step.id}-workspace`)).not.toBeNull();
+        // "…" at rest opens the step: its options live with the open card.
+        await screen.pressByTestIdAsync(`rest-step-${step.id}-customize`);
+        expect(selected).toHaveBeenCalledWith(step.id);
+    });
+
+    it('leaves Agent-owned fields out of More settings while no workflow engine answers them (WF-REDESIGN-1116)', async () => {
+        const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'no-engine', name: 'Workflow', definition });
+        const screen = await renderScreen(<WorkflowMoreSettings draftStore={createWorkflowEditorReadable(base)} onChange={() => {}}
+            documentEditable authoringFacts={facts()} testIDPrefix="scope" />);
+        await screen.pressByTestIdAsync('scope-more-settings-toggle');
+        // The engine is "Who runs it" or each step's header: rows waiting on it would only say "Unavailable".
+        const unavailable = screen.root.findAll((node) => typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('scope-more-settings-session-') && node.props.testID.endsWith('-unavailable'));
+        expect(unavailable.map((node) => node.props.testID)).toEqual([]);
+    });
 
     it('lists every Session field a step inherits in More settings, the tool policy included', async () => {
         const screen = await renderScreen(<WorkflowMoreSettings draftStore={createWorkflowEditorReadable(draftWith())} onChange={() => {}}

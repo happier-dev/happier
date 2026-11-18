@@ -51,6 +51,12 @@ import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 
+/**
+ * "Who runs it" when every step chooses its own engine: what steps still inherit that no engine decides.
+ * The connected service and permissions belong to an Agent, so without the workflow's engine they say nothing.
+ */
+const SESSION_FIELDS_WITHOUT_ENGINE: typeof SESSION_COMPOSER_CHIP_FIELDS = Object.freeze(['approvalProfileId']);
+
 const styles = StyleSheet.create((theme) => ({
   /** One meaning per group (lab round 1116: Where it runs, Who runs it, Each step, Workflow inputs), a hairline between them. */
   group: {
@@ -96,6 +102,8 @@ export function WorkflowHowAndWhereCard(
     onChange: (next: WorkflowEditorDraft) => void;
     documentEditable: boolean;
     showsWorkflowAgent: boolean;
+    /** Any step inherits the workflow's Session settings, so "Who runs it" shows them even when no step uses its engine. */
+    hasSteps?: boolean;
     accountLifetime: ServerAccountScopeLifetime | null | undefined;
     whereRef: React.RefObject<WorkflowProjectTargetControlHandle | null>;
     projectTarget: WorkflowAuthoringTarget | null | undefined;
@@ -275,7 +283,7 @@ export function WorkflowHowAndWhereCard(
           />
           </View>
         </View>
-        {!props.showsWorkflowAgent ? null : (
+        {!props.showsWorkflowAgent && props.hasSteps !== true ? null : (
           <View style={[styles.group, styles.groupRule]} testID={`${id}-who`}>
             <Text style={styles.groupTitle}>
               {t('workflows.page.sections.groupWho')}
@@ -283,7 +291,7 @@ export function WorkflowHowAndWhereCard(
             <SessionAuthoringControls
               presentation="selects"
               disabled={readOnly}
-              fields={SESSION_COMPOSER_CHIP_FIELDS}
+              fields={props.showsWorkflowAgent ? SESSION_COMPOSER_CHIP_FIELDS : SESSION_FIELDS_WITHOUT_ENGINE}
               values={values}
               engine={readWorkflowEngineChoiceV1(defaults)}
               workflowRoles={roles}

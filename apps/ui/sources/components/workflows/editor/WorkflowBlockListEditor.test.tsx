@@ -1995,13 +1995,14 @@ describe('document anatomy (DESIGN-4)', () => {
         const harness = await loadHarness();
         const draft = buildDraft(harness, [step('first', 'Find the cause'), step('second', 'Fix it')] as never);
         const screen = await renderList(harness, { draft, editingBlockId: 'first' });
-        // The resting step is a card, like an Action's: header, prompt body, foot with its kind.
+        // The resting step is the open card's anatomy (owner 2026-11-17, WF-REDESIGN-1116): its engine chip in the
+        // header, its prompt, and its Session chips at the foot, read-only until the step opens.
         const card = screen.findByTestId('workflow-editor-step-second-card');
         expect(card).not.toBeNull();
-        expect(screen.findByTestId('workflow-editor-step-second-card-title')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-step-second-engine-agentTarget')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-step-second-workspace')).not.toBeNull();
         expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-text').length).toBeGreaterThan(0);
-        // A step that inherits everything says what kind it is and nothing more (no "Workflow defaults").
-        expect(card?.findAll((node) => node.props?.children === 'workflows.editor.addStep').length).toBeGreaterThan(0);
+        // No "Workflow defaults" words: the chips say it.
         expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-meta')).toHaveLength(0);
         // The prompt reads two lines at rest; the rest is one press away.
         expect(screen.findHostByTestId('workflow-editor-step-second-summary-text')?.props.numberOfLines).toBe(2);

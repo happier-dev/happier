@@ -39,7 +39,8 @@ import { WorkflowInsertButton } from './workflowInsertChip';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowIssueText } from './workflowIssueText';
-import { listWorkflowStepSessionChanges, WorkflowStepEngineChip, WorkflowStepOptionChips } from './WorkflowStepCardChips';
+import { WorkflowStepEngineChip, WorkflowStepOptionChips } from './WorkflowStepCardChips';
+import { formatWorkflowWorkspaceLabel } from './WorkflowContinuityControls';
 import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -339,7 +340,6 @@ export function WorkflowStepEditor(props: Readonly<{
                             />
                         ),
                     } : {})}
-                    {...(optionsSummary.changed || listWorkflowStepSessionChanges(step).length > 0 ? {} : { note: t('workflows.editor.addStep') })}
                     // A reader keeps "…" too: the step's options stay readable (04 §4.11).
                     footAccessory={(
                             <WorkflowStepOptionChips
@@ -350,6 +350,7 @@ export function WorkflowStepEditor(props: Readonly<{
                                 onChangeExecutionField={props.onChangeExecutionField}
                                 onOpenOptions={openOptions}
                                 authoringFacts={props.authoringFacts}
+                                inheritedWorkspaceLabel={formatWorkflowWorkspaceLabel(props.draft, undefined)}
                                 blockLabel={displayName}
                                 testIDPrefix={`${testIDPrefix}-step-${step.id}`}
                             />

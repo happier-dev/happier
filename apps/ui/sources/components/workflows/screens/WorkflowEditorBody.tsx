@@ -932,7 +932,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pendingPromptFocusId.current = blockId;
     }, []);
 
-    const { blockIds, showsWorkflowAgent } = useWorkflowEditorSelector(draftStore, readWorkflowBlockShape, sameRetainedValue);
+    const { blockIds, showsWorkflowAgent, hasSteps } = useWorkflowEditorSelector(draftStore, readWorkflowBlockShape, sameRetainedValue);
     /**
      * Custody of every step's live prompt document, held here rather than in the
      * recursive list that re-parents the rows. Moving a block between parents is
@@ -1542,7 +1542,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
 
     // How and where it runs: the Steps view's card, and the Sentence view's Workflow options card.
     const howAndWhereCardProps = {
-        draftStore, onChange, documentEditable, showsWorkflowAgent,
+        draftStore, onChange, documentEditable, showsWorkflowAgent, hasSteps,
         accountLifetime: props.accountLifetime, whereRef, projectTarget: props.projectTarget, machineName: props.machineName,
         projectMachines: props.projectMachines, onChangeProjectTarget: props.onChangeProjectTarget,
         executionTarget: props.executionTarget, runAsTargets: props.runAsTargets, onChangeExecutionTarget: props.onChangeExecutionTarget,

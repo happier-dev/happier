@@ -26,6 +26,8 @@ import {
 } from './WorkflowStepSessionDropZone';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
+import { WorkflowStepEngineChip, WorkflowStepOptionChips } from './WorkflowStepCardChips';
+import { formatWorkflowWorkspaceLabel } from './WorkflowContinuityControls';
 
 /**
  * The least height a summary row holds (px), also before its words mount: its heading, one prompt
@@ -128,6 +130,8 @@ export function WorkflowBlockSummary(
           // and its kind with its options, as an Action's card reads.
           <WorkflowStepSummaryCard step={block} draft={props.draft} summary={props.summary}
             {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
+            resting={props.resting === true}
+            onActivate={activate}
             testID={rowPrefix} />
         ) : (
           <Text
@@ -187,16 +191,54 @@ function WorkflowStepSummaryCard(props: Readonly<{
   draft: WorkflowEditorDraft;
   summary: string;
   authoringFacts?: SessionAuthoringControlFacts;
+  /** Not reached yet (PERF-WF3B): its "…" rests until a pointer or the keyboard reaches the row. */
+  resting: boolean;
+  onActivate: () => void;
   testID: string;
 }>): React.ReactElement {
   const { step, draft } = props;
+  const effective = resolveEffectiveWorkflowStepExecution(draft, step);
   const engine = useSessionAuthoringEngineSummary({
-    values: resolveEffectiveWorkflowStepExecution(draft, step),
+    values: effective,
     engine: step.execution?.participant ?? readWorkflowEngineChoiceV1(draft.defaults, step.execution),
     workflowRoles: draft.roles,
     ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
   });
   const options = useWorkflowStepOptionsSummary(draft, step);
+  const latestActivate = React.useRef(props.onActivate);
+  latestActivate.current = props.onActivate;
+  const openStep = React.useCallback(() => latestActivate.current(), []);
+  // The open card's own chips, read-only (owner 11-17, WF-REDESIGN-1116), so a step at rest still shows who runs
+  // it and where it works, with the open card's geometry; any press opens the step, where they edit. Its "…" is the
+  // row control PERF-WF3B rests until the row is reached; it sits at the chips' height, so reaching shifts nothing.
+  if (step.execution?.participant === undefined) return (
+    <WorkflowKindCard
+      testID={`${props.testID}-card`}
+      title={engine}
+      titleControl={(
+        <WorkflowStepEngineChip draft={draft} step={step} effective={effective}
+          engine={readWorkflowEngineChoiceV1(draft.defaults, step.execution)} editable={false}
+          {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
+          testIDPrefix={`${props.testID}-engine`} />
+      )}
+      footAccessory={(
+        <WorkflowStepOptionChips editable={false} step={step} effective={effective} changes={options.changes}
+          onOpenOptions={openStep}
+          optionsResting={props.resting}
+          {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
+          inheritedWorkspaceLabel={formatWorkflowWorkspaceLabel(draft, undefined)}
+          blockLabel={workflowBlockReferenceLabel(step)} testIDPrefix={props.testID} />
+      )}
+    >
+      <Text
+        testID={`${props.testID}-summary-text`}
+        numberOfLines={STEP_CARD_PROMPT_LINES}
+        style={workflowEditorStyles.summaryPrompt}
+      >
+        {props.summary}
+      </Text>
+    </WorkflowKindCard>
+  );
   return (
     <WorkflowKindCard
       testID={`${props.testID}-card`}

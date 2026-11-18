@@ -1460,10 +1460,10 @@ describe('workflow editor body', () => {
         // Wide: Step options is the anchored popover beside the step, not a modal.
         expect(screen.visibleModals()).toEqual([]);
         expect(screen.findByTestId('workflow-editor-inspector-options')).not.toBeNull();
-        // One settings page per scope (owner 2026-11-15): the shared engine controls sit in Step options
-        // under "Agent and where it runs", with every other Session field below them.
-        expect(screen.findByTestId('workflow-editor-inspector-agent-fields')).not.toBeNull();
-        expect(screen.findByTestId('workflow-editor-inspector-session-fields')).not.toBeNull();
+        // Step options (WF-REDESIGN-1116): who runs the step as the shared Session controls (its engine is the
+        // card header's chip), then where it runs and works.
+        expect(screen.findByTestId('workflow-editor-inspector-session-chips')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-inspector-workspace-row')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-inspector-done');
         expect(screen.findByTestId('workflow-editor-inspector-options')).toBeNull();
     });

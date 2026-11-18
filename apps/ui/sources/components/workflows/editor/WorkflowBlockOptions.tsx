@@ -120,7 +120,7 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     subjectTitle: {
-        ...Typography.variant('heading'),
+        ...Typography.variant('heading', 'semiBold'),
         color: theme.colors.text.primary,
     },
     subjectLocation: {
@@ -560,16 +560,17 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const detachedUnavailable = props.runAsTargets?.find((target) => target.kind === 'detached_run' && !target.available);
     const insideEvaluator = isLoopEvaluator(draft.blocks, step.id);
 
-    // Round 1116b step options A ("…" open): the step's Session as chips (grey from the workflow, bordered
-    // when changed here, each chip's picker leading with "Use workflow's"), where it runs and works, then
-    // this step's own choices. Its engine is the card header's chip, so it is not repeated here.
+    // The step's options (round 1116b, recomposed by the design owner 11-18): who runs it as labelled field
+    // selects on the one label track (the same owner and pickers as the How card; changed rows are marked and
+    // lead with "Use workflow's"), then where it runs and works, then when it runs, then this step's own choices.
+    // The engine is the card header's chip, so it is not repeated here.
     const changedSessionFields = new Set(listWorkflowStepSessionChanges(step));
     return (
         <>
-            <ItemGroup title={t('workflows.page.sections.sessionTitle')}>
+            <ItemGroup title={t('workflows.page.sections.groupWho')}>
                 <SectionContentRow testID={`${testIDPrefix}-session-chips`}>
                     <SessionAuthoringControls
-                        presentation="chips"
+                        presentation="selects"
                         fields={WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE}
                         values={effectiveExecution}
                         overriddenFields={changedSessionFields}
@@ -578,10 +579,14 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         resetOverride={{ label: t('workflows.page.useWorkflowsValue'),
                             onResetField: (field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined)) }}
                         onChangeField={(field, value) => onChange(setWorkflowStepExecutionField(draft, step.id, field, value))}
+                        renderFieldRow={(field, title, control) => renderWorkflowCardFieldRow(field, title, control)}
                         {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
                         testIDPrefix={`${testIDPrefix}-control`}
                     />
                 </SectionContentRow>
+            </ItemGroup>
+
+            <ItemGroup title={t('workflows.page.sections.whereTitle')}>
                 <SegmentedChoiceItem<WorkflowLeafExecutionTargetV1['kind']>
                     testIDPrefix={`${testIDPrefix}-runs-in`}
                     title={t('workflows.page.inspector.runsIn')}
@@ -606,10 +611,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         },
                     ]}
                 />
-            </ItemGroup>
-
-            {/* Workspace is the sessions' checkout picker at step scope (round 1116b change a), on the label track. */}
-            <ItemGroup title={t('workflows.workspace.title')}>
+                {/* Workspace is the sessions' checkout picker at step scope (round 1116b change a), on the label track. */}
                 <SectionContentRow testID={`${testIDPrefix}-workspace-row`}>
                     {renderWorkflowCardFieldRow('workspace', t('workflows.workspace.title'), (
                         <WorkflowStepWorkspaceField
@@ -622,9 +624,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         />
                     ))}
                 </SectionContentRow>
-            </ItemGroup>
-
-            <ItemGroup title={t('workflows.page.sections.conversationTitle')}>
                 {/* The controls are page rows with their own inset: a content row around them indents a second grid. */}
                 <View testID={`${testIDPrefix}-continuity-row`}>
                     <WorkflowContinuityControls

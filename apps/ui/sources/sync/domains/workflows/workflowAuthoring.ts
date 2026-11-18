@@ -59,12 +59,14 @@ export function workflowDefaultsChooseAgent(defaults: WorkflowDefinitionV1['defa
 export function readWorkflowBlockShape(definition: Pick<WorkflowDefinitionV1, 'blocks' | 'defaults'>): Readonly<{
   blockIds: readonly string[];
   showsWorkflowAgent: boolean;
+  /** Steps inherit the workflow's Session settings (permissions, approvals, service) even with their own engine. */
+  hasSteps: boolean;
 }> {
   const blocks = walkWorkflowBlocks(definition.blocks);
   const steps = blocks.filter((block) => block.kind === 'step');
   const defaultSet = workflowDefaultsChooseAgent(definition.defaults);
   const inherits = steps.some((step) => !workflowSelectionChoosesEngineV1(step.execution));
-  return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits) };
+  return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits), hasSteps: steps.length > 0 };
 }
 
 export function validateWorkflowEditorDraft(

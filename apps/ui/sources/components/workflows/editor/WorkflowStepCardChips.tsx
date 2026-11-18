@@ -12,6 +12,7 @@ import type {
   SessionAuthoringControlFacts,
   SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { SESSION_COMPOSER_CHIP_FIELDS } from '@/components/sessions/new/SessionServerStartDraftComposerBody';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { listWorkflowStepOverriddenFields } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -32,7 +33,15 @@ const ENGINE_CHANGED: ReadonlySet<SessionAuthoringFieldId> = new Set([
   'agentTarget',
 ]);
 
-/** The Session fields a step sets itself, other than its engine: each is a bordered chip at its card's foot. */
+/**
+ * Who runs the step besides its engine (the composer's chips: service, permissions, approvals): always at the
+ * card's foot, quiet while inherited and marked once the step changes them (owner 11-17, WF-REDESIGN-1116).
+ */
+const FOOT_SESSION_FIELDS: readonly SessionAuthoringFieldId[] = Object.freeze(
+  SESSION_COMPOSER_CHIP_FIELDS.filter((field) => !(WORKFLOW_ENGINE_FIELD_IDS as readonly string[]).includes(field)),
+);
+
+/** The Session fields a step sets itself, other than its engine: each is a marked chip at its card's foot. */
 export function listWorkflowStepSessionChanges(
   step: WorkflowStep,
 ): readonly SessionAuthoringFieldId[] {
@@ -124,11 +133,21 @@ export function WorkflowStepOptionChips(
     ) => void;
     onOpenOptions: (anchorRef: React.RefObject<View | null>) => void;
     authoringFacts?: SessionAuthoringControlFacts;
+    /** The workflow's Workspace as the step inherits it; the chip opens the step's options, where the picker lives. */
+    inheritedWorkspaceLabel?: string;
+    /** A row nobody has reached yet (PERF-WF3B): "…" is not mounted until then. */
+    optionsResting?: boolean;
     blockLabel: string;
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
-  const sessionFields = listWorkflowStepSessionChanges(props.step);
+  const changedFields = React.useMemo(() => listWorkflowStepSessionChanges(props.step), [props.step]);
+  const changedSet = React.useMemo(() => new Set(changedFields), [changedFields]);
+  const sessionFields = React.useMemo(
+    () => [...FOOT_SESSION_FIELDS, ...changedFields.filter((field) => !FOOT_SESSION_FIELDS.includes(field))],
+    [changedFields],
+  );
+  const workspaceChanged = props.changes.some((change) => change.id === 'workspace');
   const latest = React.useRef(props.onChangeExecutionField);
   latest.current = props.onChangeExecutionField;
   const onChangeField = React.useCallback(
@@ -150,7 +169,7 @@ export function WorkflowStepOptionChips(
             fields={sessionFields}
             values={props.effective}
             onChangeField={onChangeField}
-            overriddenFields="all"
+            overriddenFields={changedSet}
             engineChipBeside
             disabled={!props.editable}
             overriddenAccessibilityHint={t('workflows.page.changedForStep')}
@@ -158,7 +177,15 @@ export function WorkflowStepOptionChips(
             {...(props.authoringFacts === undefined
               ? {}
               : { facts: props.authoringFacts })}
-            testIDPrefix={`${props.testIDPrefix}-changed`}
+            testIDPrefix={`${props.testIDPrefix}-session`}
+          />
+        )}
+        {workspaceChanged || props.inheritedWorkspaceLabel === undefined ? null : (
+          <WorkflowStepOptionChangeChip
+            change={{ id: 'workspace', title: t('workflows.workspace.title'), value: props.inheritedWorkspaceLabel }}
+            inherited
+            onOpen={props.onOpenOptions}
+            testID={`${props.testIDPrefix}-workspace`}
           />
         )}
         {props.changes.map((change) => (
@@ -170,11 +197,13 @@ export function WorkflowStepOptionChips(
           />
         ))}
       </View>
-      <WorkflowStepOptionsMore
-        onOpen={props.onOpenOptions}
-        blockLabel={props.blockLabel}
-        testID={`${props.testIDPrefix}-customize`}
-      />
+      {props.optionsResting === true ? null : (
+        <WorkflowStepOptionsMore
+          onOpen={props.onOpenOptions}
+          blockLabel={props.blockLabel}
+          testID={`${props.testIDPrefix}-customize`}
+        />
+      )}
     </View>
   );
 }
@@ -182,6 +211,8 @@ export function WorkflowStepOptionChips(
 function WorkflowStepOptionChangeChip(
   props: Readonly<{
     change: WorkflowStepOptionChange;
+    /** From the workflow: the quiet chip, not marked as the step's own change. */
+    inherited?: boolean;
     onOpen: (anchorRef: React.RefObject<View | null>) => void;
     testID: string;
   }>,
@@ -197,7 +228,7 @@ function WorkflowStepOptionChangeChip(
           // "Conversation: Fresh"; an option with no value of its own reads as its name.
           valueLabel: props.change.value ?? props.change.title,
           showLabel: props.change.value !== undefined,
-          accessibilityHint: t('workflows.page.changedForStep'),
+          ...(props.inherited === true ? { muted: true } : { accessibilityHint: t('workflows.page.changedForStep') }),
           open: false,
           onOpenChange: (next) => {
             if (next) props.onOpen(anchorRef);

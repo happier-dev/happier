@@ -657,6 +657,19 @@ describe('SessionAuthoringControls', () => {
     await selects.screen.unmount();
   });
 
+  it('draws no field select for an Agent-owned field while its engine sits beside the selects (a step card header)', async () => {
+    const { screen } = await renderControls({
+      presentation: 'selects',
+      fields: ['permissionMode', 'approvalProfileId'],
+      values: {},
+      engineChipBeside: true,
+    });
+    // The engine chip beside asks for the Agent once; its fields add only "Unavailable".
+    expect(screen.findByTestId('session-authoring-control-permissionMode')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-permissionMode-unavailable')).toBeNull();
+    await screen.unmount();
+  });
+
   it('says once that the Agent comes first instead of listing each Agent-owned field as unavailable', async () => {
     const { screen } = await renderControls({
       presentation: 'fields',
