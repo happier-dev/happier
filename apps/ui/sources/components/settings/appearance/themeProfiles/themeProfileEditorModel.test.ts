@@ -16,14 +16,37 @@ describe('theme profile contrast warnings', () => {
         expect(draft.seeds.accent.fix).not.toBeNull();
     });
 
-    it('keeps the default palette quiet', () => {
+    it('warns when an editable link colour is unreadable on the page', () => {
+        const profile: ThemeProfileV1 = {
+            schemaVersion: 1, id: 'link-warning', name: 'Link warning', createdAt: '', updatedAt: '',
+            base: { light: 'light', dark: 'dark' },
+            overrides: { light: { 'text.link': '#eeeeee', 'background.canvas': '#ffffff' }, dark: {} },
+        };
+
+        expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('text.link')!)).toContain('background.canvas');
+    });
+
+    it('keeps real Default palette failures visible at their role thresholds', () => {
         const profile: ThemeProfileV1 = {
             schemaVersion: 1, id: 'default', name: 'Default', createdAt: '', updatedAt: '',
             base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
         };
+        const expectedLight = {
+            'text.link': ['background.canvas', 'surface.base'],
+            'text.destructive': ['background.canvas', 'surface.base'],
+            'state.success.foreground': ['state.success.background'],
+            'state.warning.foreground': ['state.warning.background'],
+            'state.danger.foreground': ['state.danger.background'],
+            'state.neutral.foreground': ['state.neutral.background'],
+        } as const;
 
-        const draft = resolveThemeProfileEditorDraft(profile, 'light');
-        expect(Object.values(draft.tokens).flatMap(token => token.contrast.warnings)).toEqual([]);
+        for (const mode of ['light', 'dark'] as const) {
+            const draft = resolveThemeProfileEditorDraft(profile, mode);
+            const warnings = Object.fromEntries(Object.entries(draft.tokens)
+                .filter(([, token]) => token.contrast.warnings.length > 0)
+                .map(([tokenId, token]) => [tokenId, token.contrast.warnings]));
+            expect(warnings).toEqual(mode === 'light' ? expectedLight : {});
+        }
     });
 
     it('resolves each changed draft mode once for all token values and contrast pairs', () => {

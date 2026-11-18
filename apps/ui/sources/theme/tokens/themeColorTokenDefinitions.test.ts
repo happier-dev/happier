@@ -256,7 +256,11 @@ describe('editable theme color token definitions', () => {
                 { tokenId: 'surface.base', minRatio: 4.5 },
             ]),
         );
-        expect(getEditableThemeColorTokenDefinition('state.danger.foreground')?.contrastPairs).toBeUndefined();
+        for (const variant of ['success', 'warning', 'danger', 'info', 'neutral', 'active'] as const) {
+            expect(getEditableThemeColorTokenDefinition(`state.${variant}.foreground`)?.contrastPairs).toEqual([
+                { tokenId: `state.${variant}.background`, minRatio: 3 },
+            ]);
+        }
         expect(getEditableThemeColorTokenDefinition('overlay.foreground')?.contrastPairs).toEqual([
             { tokenId: 'overlay.scrim', minRatio: 3 },
         ]);
