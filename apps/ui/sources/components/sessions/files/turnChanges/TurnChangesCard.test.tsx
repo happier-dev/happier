@@ -157,6 +157,15 @@ describe('TurnChangesCard (WT9 variant R)', () => {
         expect(screen.findAllByTestId('tc-open-files').length).toBeGreaterThan(0);
     });
 
+    it('offers Bring back only for a copied Session, beside its other actions (lab F3)', async () => {
+        const onBringBack = vi.fn();
+        const copied = await renderScreen(<TurnChangesCard testID="tc" files={FOUR} onOpenFile={vi.fn()} onOpenInFiles={vi.fn()} onBringBack={onBringBack} />);
+        await copied.pressByTestIdAsync('tc-bring-back');
+        expect(onBringBack).toHaveBeenCalledTimes(1);
+        const direct = await renderScreen(<TurnChangesCard testID="tc" files={FOUR} onOpenFile={vi.fn()} onOpenInFiles={vi.fn()} />);
+        expect(direct.findAllByTestId('tc-bring-back')).toHaveLength(0);
+    });
+
     it('labels a lockfile with the shared evidence class, other files with none', async () => {
         const screen = await renderScreen(<TurnChangesCard testID="tc" files={[...FOUR, file('yarn.lock', 0, 0)]} onOpenFile={vi.fn()} initiallyOpen />);
         const rows = screen.findAllByType('ScmChangeRow' as never);

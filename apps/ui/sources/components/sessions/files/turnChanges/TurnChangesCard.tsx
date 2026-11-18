@@ -47,6 +47,8 @@ export type TurnChangesCardProps = Readonly<{
     onOpenInFiles?: (() => void) | null;
     /** Opens this turn's walkthrough. Absent while no walkthrough destination exists. */
     onWalkThrough?: (() => void) | null;
+    /** A copied Session: reviews the sandbox's changes to bring back to the folder (lab F3). Absent otherwise. */
+    onBringBack?: (() => void) | null;
     /** Starts open (a surface that is itself about this turn); the transcript card starts collapsed. */
     initiallyOpen?: boolean;
     testID?: string;
@@ -72,7 +74,7 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
     const isBodyBlock = (id: string) => id === 'tool-turn-changes-count' || id.startsWith('tool-turn-changes-file-');
     const revealBody = Boolean(find.blocks?.some((block) => isBodyBlock(block.id) && block.sourceRanges.length > 0)
         || (find.reveal && isBodyBlock(find.reveal.blockId)));
-    const hasActions = Boolean(props.onWalkThrough || props.onOpenInFiles);
+    const hasActions = Boolean(props.onBringBack || props.onWalkThrough || props.onOpenInFiles);
 
     const header = (state: Readonly<{ expanded: boolean; headerProps: Readonly<{ onPress: () => void }> }>) => (
         <View testID={`${testID}-header`} style={styles.header}>
@@ -94,6 +96,15 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
             </Pressable>
             {hasActions ? (
                 <View testID={`${testID}-actions`} style={styles.actions}>
+                    {props.onBringBack ? (
+                        <RoundButton
+                            testID={`${testID}-bring-back`}
+                            size="small"
+                            display="secondary"
+                            title={t('machineDetailPage.projectFiles.bringBack')}
+                            onPress={props.onBringBack}
+                        />
+                    ) : null}
                     {props.onWalkThrough ? (
                         <RoundButton
                             testID={`${testID}-walk`}

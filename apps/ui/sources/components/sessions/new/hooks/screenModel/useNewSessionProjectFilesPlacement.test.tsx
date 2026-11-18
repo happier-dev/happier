@@ -6,7 +6,7 @@ import { ManagedCreationSelectionV1Schema } from '@happier-dev/protocol/machines
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 describe('Project files authoring in the current placement', () => {
-    it('exposes only the chosen method fields and preserves Included when restoring a draft', async () => {
+    it('keeps the chosen method and its Included policy when restoring a draft', async () => {
         const policy = { v: 1 as const, selection: 'all_files' as const,
             extraIgnorePatterns: ['private/**'], extraIncludePatterns: ['build/result.txt'] };
         const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
@@ -15,24 +15,18 @@ describe('Project files authoring in the current placement', () => {
             managedMachineSelection: { selection: ManagedCreationSelectionV1Schema.parse({ kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }) },
             hydratedPlacement: { kind: 'preset', homeId: 'home', presetId: 'preset', projectFilesSource,
                 projectFiles: { kind: 'sync', mode: 'keep_both_in_sync', contentPolicy } } }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['conflict', 'included']);
-        expect(hook.getCurrent().projectFilesConflictMode).toBe('keep_both_in_sync');
         expect(hook.getCurrent().sessionPlacement).toMatchObject({ projectFilesSource,
             projectFiles: { kind: 'sync', mode: 'keep_both_in_sync', contentPolicy } });
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'copy_once', contentPolicy }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['included']);
-        expect(hook.getCurrent().projectFilesConflictMode).toBeUndefined();
+        expect(hook.getCurrent().sessionPlacement).toMatchObject({ projectFiles: { kind: 'copy_once', contentPolicy } });
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'sync', mode: 'keep_synced', contentPolicy }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['included']);
-        expect(hook.getCurrent().projectFilesConflictMode).toBeUndefined();
+        expect(hook.getCurrent().sessionPlacement).toMatchObject({ projectFiles: { kind: 'sync', mode: 'keep_synced', contentPolicy } });
         const gitAccount = { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'work' };
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'git_clone', branch: 'feature/work', gitAccount,
             source: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
                 repository: { nameWithOwner: 'owner/project' }, protocol: 'https' } }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['repository', 'branch', 'gitAccount']);
         expect(hook.getCurrent().sessionPlacement).toMatchObject({ projectFiles: { gitAccount } });
         await act(async () => hook.getCurrent().onProjectFilesChange(undefined));
-        expect(hook.getCurrent().projectFilesFieldKeys).toBeUndefined();
         expect(hook.getCurrent().projectFilesOutcome).toMatchObject({ origin: 'default', source: projectFilesSource });
         await hook.unmount();
     });

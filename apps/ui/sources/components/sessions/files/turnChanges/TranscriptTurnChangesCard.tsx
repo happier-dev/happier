@@ -6,6 +6,7 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { useTranscriptFileLinks } from '@/components/sessions/transcript/useTranscriptFileLinks';
 import type { ReviewCommentAnchor } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { useMachineField, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { useSessionProjectScmRootPath } from '@/sync/store/scmHooks';
 import { captureScmComparisonForSession } from '@/sync/ops/scmDiffSummary/generate';
 import { scmComparisonSourceOf } from '@/sync/domains/scm/diffSummary/selection';
@@ -14,6 +15,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { TurnChangesCard } from './TurnChangesCard';
+import { openProjectFilesReturn } from './projectFilesReturn/ProjectFilesReturnModal';
+import { useSessionProjectFilesReturnSource } from './projectFilesReturn/useSessionProjectFilesReturnSource';
 
 export type TranscriptTurnChangesCardProps = Readonly<{
     sessionId: string;
@@ -84,8 +87,17 @@ export const TranscriptTurnChangesCard = React.memo(function TranscriptTurnChang
         });
         return () => navigate(href);
     }, [canOpen, navigate, props.serverId, props.sessionId, props.turnId]);
+    // A copied Session brings the sandbox's changes back to its recorded source folder, reviewed first.
+    const returnSource = useSessionProjectFilesReturnSource(props.sessionId, props.serverId);
+    const sourceMachineName = useServerScopedMachineLabel(returnSource?.serverId ?? null, returnSource?.machineId ?? null);
+    const sourceHomeDir = useMachineField(returnSource?.machineId ?? '', 'metadata', 'homeDir',
+        { enabled: returnSource !== null, serverId: returnSource?.serverId ?? null });
+    const bringBack = React.useMemo(() => canOpen && returnSource ? () => openProjectFilesReturn({
+        sessionId: props.sessionId, source: returnSource, machineName: sourceMachineName ?? t('common.machine'), homeDir: sourceHomeDir,
+    }) : null, [canOpen, props.sessionId, returnSource, sourceHomeDir, sourceMachineName]);
     return (
         <TurnChangesCard
+            onBringBack={bringBack}
             testID={`turn-changes-card:${props.turnId}`}
             files={props.files}
             messageId={props.messageId}

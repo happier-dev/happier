@@ -8,11 +8,6 @@ export type NewSessionProjectFilesOutcome = Readonly<{
     source?: SessionProjectFilesSourceV1;
 }> & (Readonly<{ origin: 'default' }> | Readonly<{ origin: 'override'; choice: SessionProjectFilesV1 }>);
 
-// The folder is the composer's own chip, never a Project files row (lab round 4, owner decision 5).
-export type NewSessionProjectFilesFieldKey = 'included' | 'repository' | 'branch' | 'gitAccount' | 'conflict';
-const COPY_FIELDS = ['included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
-const CLONE_FIELDS = ['repository', 'branch', 'gitAccount'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
-const TWO_WAY_FIELDS = ['conflict', 'included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
 
 /** Project files is part of the current placement, never an independent preference. */
 export function useNewSessionProjectFilesPlacement(input: Readonly<{
@@ -25,9 +20,6 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
     sessionPlacement: SessionPlacementSelectionV1 | undefined;
     projectFilesOverride: SessionProjectFilesV1 | undefined;
     projectFilesOutcome: NewSessionProjectFilesOutcome;
-    projectFilesFieldKeys: readonly NewSessionProjectFilesFieldKey[] | undefined;
-    /** The existing Editable-copy mode owns conflict review; this is not an authored policy. */
-    projectFilesConflictMode: Extract<SessionProjectFilesV1, { kind: 'sync' }>['mode'] | undefined;
     onProjectFilesChange: (value: SessionProjectFilesV1 | undefined) => void;
 }> {
     const selectedPreset = input.managedMachineSelection?.selection.kind === 'preset'
@@ -70,9 +62,5 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
         ...(projectFilesOverride === undefined ? { origin: 'default' as const }
             : { origin: 'override' as const, choice: projectFilesOverride }),
     }), [placement?.kind, projectFilesOverride, sessionPlacement?.projectFilesSource]);
-    const projectFilesConflictMode = projectFilesOverride?.kind === 'sync' && projectFilesOverride.mode === 'keep_both_in_sync'
-        ? projectFilesOverride.mode : undefined;
-    const projectFilesFieldKeys = projectFilesOverride === undefined ? undefined
-        : projectFilesOverride.kind === 'git_clone' ? CLONE_FIELDS : projectFilesConflictMode ? TWO_WAY_FIELDS : COPY_FIELDS;
-    return { sessionPlacement, projectFilesOverride, projectFilesOutcome, projectFilesFieldKeys, projectFilesConflictMode, onProjectFilesChange };
+    return { sessionPlacement, projectFilesOverride, projectFilesOutcome, onProjectFilesChange };
 }

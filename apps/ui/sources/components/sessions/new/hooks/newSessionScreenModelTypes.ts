@@ -94,8 +94,6 @@ export type NewSessionScreenModel =
             onOverrideChange?: (value: 'directly' | undefined) => void;
             projectFilesOverride?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
             projectFilesOutcome?: import('@/components/sessions/new/hooks/screenModel/useNewSessionProjectFilesPlacement').NewSessionProjectFilesOutcome;
-            projectFilesFieldKeys?: ReturnType<typeof import('@/components/sessions/new/hooks/screenModel/useNewSessionProjectFilesPlacement').useNewSessionProjectFilesPlacement>['projectFilesFieldKeys'];
-            projectFilesConflictMode?: ReturnType<typeof import('@/components/sessions/new/hooks/screenModel/useNewSessionProjectFilesPlacement').useNewSessionProjectFilesPlacement>['projectFilesConflictMode'];
             onProjectFilesChange?: (value: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1 | undefined) => void;
         }>;
     }> & (
