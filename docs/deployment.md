@@ -47,8 +47,9 @@ outside spans, then inspect the selected occurrence and its release.
 
 ## First repository deploy (0.3 development)
 
-The app's Environment Deploy gesture prepares a missing Source checkout on its
-controller through the existing `projects.open` Action before dispatching
+The app's Environment Deploy gesture joins the pending read of its exact Source
+before preparing a local checkout. When the controller has no matching checkout,
+the gesture runs the existing `projects.open` Action before dispatching
 `deployments.deploy`. It uses Open's destination suggestion and input builders
 and the person's ordinary destination review. An Open refusal or uncertain
 outcome stops the sequence. Stored definitions and provider Git integration do

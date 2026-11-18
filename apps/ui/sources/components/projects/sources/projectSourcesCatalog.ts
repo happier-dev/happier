@@ -1,6 +1,6 @@
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { observeProjectSources } from './observeProjectSources';
-import { createProjectSourcesController, type ProjectSourcesCatalog, type ReadProjectSourcesCatalog } from './projectSourcesController';
+import { createProjectSourcesController, type ProjectSourcesCatalog, type ReadProjectSourcesCatalog, type ProjectSourcesState } from './projectSourcesController';
 
 type Execute = Parameters<typeof createProjectSourcesController>[1];
 type Query = {
@@ -15,7 +15,7 @@ type Query = {
 export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime, execute: Execute) {
     const queries = new Map<string, Query>();
     const sources = new Map<string, Readonly<{ controller: ReturnType<typeof createProjectSourcesController>;
-        demand(): () => void; dispose(): void }>>();
+        demand(): () => void; settle(): Promise<ProjectSourcesState['current']>; dispose(): void }>>();
     const defaultKey = JSON.stringify(['', null, null]);
     let demand = 0;
     function observe(entry: Query) {
@@ -90,10 +90,13 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
             const controller = createProjectSourcesController(lifetime.scope, execute);
             let readers = 0;
             let dirty = true;
+            let pending: Promise<void> | undefined;
             const load = () => {
-                if (!dirty || !lifetime.isCurrent()) return;
-                dirty = false;
-                void controller.select(sourceId);
+                if (dirty && lifetime.isCurrent()) {
+                    dirty = false;
+                    pending = controller.select(sourceId);
+                }
+                return pending;
             };
             const stop = observeProjectSources(controller, { detailOnly: true }, () => {
                 dirty = true;
@@ -107,6 +110,15 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
                     if (status === 'offline' || status === 'refused') dirty = true;
                     load();
                     return () => { readers -= 1; };
+                },
+                async settle() {
+                    // A push may have replaced the first read while the caller was waiting.
+                    while (lifetime.isCurrent()) {
+                        const request = load();
+                        await request;
+                        if (request === pending) return lifetime.isCurrent() ? controller.getSnapshot().current : null;
+                    }
+                    return null;
                 },
                 dispose() { stop(); controller.retireCatalog(); controller.dispose(); },
             };

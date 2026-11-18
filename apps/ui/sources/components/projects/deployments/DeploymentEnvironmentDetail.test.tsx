@@ -206,20 +206,21 @@ it.each([{ phone: false, receiptPage: false, stored: false }, { phone: true, rec
 });
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 
-async function answerDeploymentSource(detail: ReturnType<typeof environmentDetailForHome>) {
+async function answerDeploymentSource(detail: ReturnType<typeof environmentDetailForHome>, respondAfter?: Promise<void>) {
   const { ProjectSourcesReadOutputV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
   const sourceId = detail.environment.projectSourceId;
-  homes.answer(scope.serverId, `GET /v1/projects/sources/${sourceId}?serverId=${encodeURIComponent(scope.serverId)}`, {
+  homes.answer(scope.serverId, `GET /v1/projects/sources/${encodeURIComponent(sourceId)}`, {
+    respondAfter,
     body: ProjectSourcesReadOutputV1Schema.parse({ ok: true, source: { id: sourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
       repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
         repository: { nameWithOwner: 'owner/app' }, protocol: 'https' } }, canManage: true }) });
 }
 
 // These neighboring flows start with an existing checkout; only the fresh-deploy cases below need Open.
-async function answerExistingDeploymentCheckout(detail: ReturnType<typeof environmentDetailForHome>) {
+async function answerExistingDeploymentCheckout(detail: ReturnType<typeof environmentDetailForHome>, respondAfter?: Promise<void>) {
   const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
   const sourceId = detail.environment.projectSourceId;
-  await answerDeploymentSource(detail);
+  await answerDeploymentSource(detail, respondAfter);
   homes.answer(scope.serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
     workspaceRefs: [{ id: 'existing-checkout', serverId: scope.serverId, machineId: detail.environment.controllerMachineId,
       rootPath: '/workspace/app', label: null, createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId, revision: 1 } }],
@@ -2436,7 +2437,9 @@ describe('Project deployments page', () => {
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'site', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'production' as const }, ...(recorded ? { sourceMethod: recorded } : {}) },
     })) };
-    await answerExistingDeploymentCheckout(detail);
+    let releaseSource = () => {};
+    const sourceResponse = new Promise<void>(resolve => { releaseSource = resolve; });
+    await answerExistingDeploymentCheckout(detail, sourceResponse);
     await context.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
     for (const row of detail.targetLinks) await context.createArtifactDocument({ artifactId: row.targetLink.contentArtifactId,
@@ -2454,9 +2457,19 @@ describe('Project deployments page', () => {
       phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />);
     try {
       await waitForContent(screen, 'project-deployments.environment.sourceMethod');
-      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
-      await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
+      await act(async () => { screen.pressByTestId('project-deployments.environment.deploy'); });
+      if (recorded === 'upload') {
+        await vi.waitFor(() => expect(homes.requests.slice(beforeRead).some(request =>
+          request.path.split('?')[0] === `/v1/projects/sources/${detail.environment.projectSourceId}`)).toBe(true));
+        expect(screen.findByTestId('project-deployments.outcome.refused.other')).toBeNull();
+        expect(deploy).not.toHaveBeenCalled();
+        await act(async () => releaseSource());
+      }
+      await waitForHomeGovernance(() => expect(deploy, JSON.stringify({ text: screen.getTextContent(),
+        requests: homes.requests.slice(beforeRead).map(request => `${request.method} ${request.path}`) })).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
         targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: recorded ?? 'gitIntegration' }));
+      expect(homes.requests.slice(beforeRead).filter(request =>
+        request.path.split('?')[0] === `/v1/projects/sources/${detail.environment.projectSourceId}`)).toHaveLength(1);
       expect(homes.requests.slice(beforeRead).filter(request => request.path === '/v1/artifacts/read'
         && JSON.stringify(request.input).includes(detail.environment.contentArtifactId)).map(request => request.input))
         .toEqual([{ artifactIds: [detail.environment.contentArtifactId, detail.targetLinks[0]!.targetLink.contentArtifactId] }]);
@@ -2470,7 +2483,7 @@ describe('Project deployments page', () => {
         await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
           targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: 'gitIntegration' }));
       }
-    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); }
+    } finally { releaseSource(); await screen.unmount(); controller.retire(); await installed.dispose(); context.dispose(); }
   });
 
   it('deploys a linked platform target through the same Action input, and shows the target\'s typed refusal', async () => {

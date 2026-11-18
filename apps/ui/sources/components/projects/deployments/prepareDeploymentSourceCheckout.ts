@@ -16,7 +16,7 @@ import { buildProjectOpenDraft, buildProjectOpenInput, suggestProjectOpenDestina
 export async function prepareDeploymentSourceCheckout(
   lifetime: ServerAccountScopeLifetime,
   detail: DeploymentEnvironmentDetailV1,
-  source: ProjectSourceV1 | null,
+  resolveSource: () => Promise<ProjectSourceV1 | null>,
   sourceMethod?: DeploymentSourceMethodV1,
 ): Promise<void> {
   if (detail.content.definition.kind !== 'repository') return;
@@ -24,6 +24,7 @@ export async function prepareDeploymentSourceCheckout(
   if (target?.targetLink.source.kind === 'plugin' && resolveDeploymentSourceMethodV1({
     explicit: sourceMethod, recorded: target.content?.sourceMethod,
   }) === 'gitIntegration') return;
+  const source = await resolveSource();
   if (!lifetime.isCurrent()) throw new HappyError('action_account_scope_changed', false, { code: 'action_account_scope_changed' });
   const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
   try {

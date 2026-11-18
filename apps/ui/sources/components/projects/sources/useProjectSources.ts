@@ -99,5 +99,7 @@ export function useProjectSource(lifetime: ServerAccountScopeLifetime | null, so
     const current = lifetime?.isCurrent() && (state.detailStatus === 'ready' || state.detailStatus === 'loading' || state.detailStatus === 'offline')
         && state.current?.id === sourceId ? state.current : null;
     const source = React.useMemo(() => current && lifetime ? { serverId: lifetime.scope.serverId, source: current } : null, [current, lifetime]);
-    return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source }), [source, state.detailStatus, state.issue]);
+    const resolveSource = React.useCallback(() => owner?.settle() ?? Promise.resolve(null), [owner]);
+    return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source, resolveSource }),
+        [source, resolveSource, state.detailStatus, state.issue]);
 }

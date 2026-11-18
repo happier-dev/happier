@@ -550,7 +550,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const deploy: typeof props.deploy = deployAction ? async (...args) => {
       const [input] = args;
       if (props.lifetime && !('sourceIntent' in input && input.sourceIntent?.kind === 'stored')) await prepareDeploymentSourceCheckout(props.lifetime, detail,
-        projectSource.source?.source ?? null, 'sourceMethod' in input ? input.sourceMethod : sourceMethod);
+        projectSource.resolveSource, 'sourceMethod' in input ? input.sourceMethod : sourceMethod);
       return deployAction(...args);
     } : null;
     const pressDeploy = async () => {
