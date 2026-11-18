@@ -31,8 +31,6 @@ export function insertWorkflowEditorBlock(draft: WorkflowEditorDraft, params: Re
 export type WorkflowEditorViewState = Readonly<{
   /** The one selected block, shared by Steps, Flow and the inspector. */
   selectedBlockId: string | null;
-  /** Blocks whose controls or bodies the author collapsed. Collapse never discards values. */
-  collapsedBlockIds: ReadonlySet<string>;
   /**
    * Settings groups the person opened or closed themselves (04 §5.2). Absent
    * groups follow the inspector's open rule; a recorded choice lasts for the
@@ -43,7 +41,6 @@ export type WorkflowEditorViewState = Readonly<{
 
 export const EMPTY_WORKFLOW_EDITOR_VIEW_STATE: WorkflowEditorViewState = {
   selectedBlockId: null,
-  collapsedBlockIds: new Set<string>(),
   inspectorGroupDisclosure: new Map<string, boolean>(),
 };
 
@@ -110,15 +107,6 @@ export function selectWorkflowBlock(
   blockId: string | null,
 ): WorkflowEditorViewState {
   return view.selectedBlockId === blockId ? view : { ...view, selectedBlockId: blockId };
-}
-
-export function toggleWorkflowBlockCollapsed(
-  view: WorkflowEditorViewState,
-  blockId: string,
-): WorkflowEditorViewState {
-  const next = new Set(view.collapsedBlockIds);
-  if (next.has(blockId)) next.delete(blockId); else next.add(blockId);
-  return { ...view, collapsedBlockIds: next };
 }
 
 export function setWorkflowInspectorGroupExpanded(

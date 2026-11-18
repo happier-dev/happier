@@ -16,7 +16,6 @@ import {
 import type {
     WorkflowInvocationLifecycleV1,
     WorkflowRunStateV1,
-    WorkflowRunSummaryV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**
@@ -94,39 +93,6 @@ export function WorkflowLifecycleStatus(props: Readonly<{
             // A plain status beside a title can be a sentence ("Stops when ubuntu-01 reconnects"): it wraps
             // inside the room its slot gives it rather than running past the card's edge (DESIGN-17 live).
             {...(chrome === 'plain' ? { labelNumberOfLines: 2, style: PLAIN_STATUS_SHRINKS } : {})}
-            leading={(
-                <WorkflowStatusMarker
-                    marker={presentation.marker}
-                    color={theme.colors.state[presentation.variant].foreground}
-                    size={ICON_SIZE.xs}
-                    {...(props.testID === undefined ? {} : { testID: `${props.testID}-marker` })}
-                />
-            )}
-        />
-    );
-}
-
-export function WorkflowRunStateStatus(props: Readonly<{
-    state: WorkflowRunStateV1;
-    workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState'];
-    /** A composed terminal outcome label, when real child coverage warrants one. */
-    label?: string;
-    chrome?: 'pill' | 'plain';
-    testID?: string;
-    accessibilityLabel?: string;
-}>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const presentation = describeWorkflowRunState(props.state, { workflowCustodyState: props.workflowCustodyState });
-    return (
-        <StatusPill
-            {...(props.testID === undefined ? {} : { testID: props.testID })}
-            {...(props.accessibilityLabel === undefined
-                ? {}
-                : { accessibilityLabel: props.accessibilityLabel })}
-            variant={presentation.variant}
-            label={props.label ?? presentation.label}
-            labelVariant="phrase"
-            chrome={props.chrome ?? 'pill'}
             leading={(
                 <WorkflowStatusMarker
                     marker={presentation.marker}

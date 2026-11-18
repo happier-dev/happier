@@ -20591,11 +20591,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         ineligible: 'Esta execução avançou, por isso já não é possível.',
         runMovedOn: 'A execução avançou. Atualize e tente novamente.',
         custodyPending: 'O Happier ainda está à espera da confirmação da máquina.',
-        runFinished: 'Esta execução terminou.',
-        checkpointUnavailable: 'Não há nenhum ponto guardado a partir do qual retomar.',
-        recoveryEvidenceRequired: 'Abre esta execução para veres as opções de recuperação.',
         executionNotStarted: 'Ainda não começou nenhum passo.',
-        custodySettled: 'Esta execução já está fechada.',
         unavailableHere: 'Isto não está disponível agora.',
     },
 

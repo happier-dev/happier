@@ -4,7 +4,6 @@ import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 
 import {
-    hasWorkflowPermissionRequest,
     projectWorkflowInvocationRequests,
     projectWorkflowPermissionRequests,
 } from './workflowPermissionRequests';
@@ -59,7 +58,6 @@ describe('projectWorkflowInvocationRequests', () => {
         });
 
         expect(projectWorkflowPermissionRequests(progress).map((request) => request.requestId)).toEqual(['permission-1']);
-        expect(hasWorkflowPermissionRequest(progress, 'question-1')).toBe(false);
 
         const requests = projectWorkflowInvocationRequests(progress);
         expect(requests.map((request) => [request.requestId, request.kind])).toEqual([

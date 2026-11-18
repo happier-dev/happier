@@ -69,13 +69,6 @@ export function projectWorkflowPermissionRequests(
         .map(({ requestId, tool, arguments: toolArguments }) => ({ requestId, tool, arguments: toolArguments }));
 }
 
-export function hasWorkflowPermissionRequest(
-    progress: WorkflowProgressEnvelopeV1 | null | undefined,
-    requestId: string,
-): boolean {
-    return projectWorkflowPermissionRequests(progress).some((request) => request.requestId === requestId);
-}
-
 export function hasWorkflowInvocationRequest(
     progress: WorkflowProgressEnvelopeV1 | null | undefined,
     requestId: string,

@@ -1,8 +1,6 @@
-import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 
 import { isSharedWithYouWorkflowDefinition, type WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
-import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 /**
  * What the Workflows column shows from each owner's read (FIN 04 §3.3). Each function is a pure
@@ -31,16 +29,4 @@ export function splitLibraryDefinitions(
         (isSharedWithYouWorkflowDefinition(definition) ? sharedWithYou : library).push(definition);
     }
     return { library, sharedWithYou, fromPlugins: pluginWorkflows };
-}
-
-/**
- * How many settled runs the column previews under History. This is a presentation length (lab
- * `nav-N1` draws a short preview under "All runs"), not a bound on what History holds: the full list
- * is one press away.
- */
-export const HISTORY_PREVIEW_LENGTH = 5;
-
-/** The column's History preview: settled runs only, so a live run is never listed twice. */
-export function selectHistoryPreviewRuns<Run extends Pick<WorkflowRunSummaryV1, 'id' | 'state'>>(runs: readonly Run[]): readonly Run[] {
-    return runs.filter((run) => isTerminalWorkflowRunState(run.state)).slice(0, HISTORY_PREVIEW_LENGTH);
 }

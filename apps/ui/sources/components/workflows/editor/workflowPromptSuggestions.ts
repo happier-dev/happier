@@ -26,7 +26,7 @@ export function resolveWorkflowPromptReferenceStates(
 }
 
 /** Projects the issues that address a document's token records onto those tokens' chip states. */
-export function resolveWorkflowTokenReferenceStates(
+function resolveWorkflowTokenReferenceStates(
     references: readonly MentionRefV1[],
     issues: readonly WorkflowValidationIssue[],
     readReferenceIndex: (path: string) => number | null,

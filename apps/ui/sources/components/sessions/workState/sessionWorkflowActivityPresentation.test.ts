@@ -17,7 +17,6 @@ import {
     readSessionWorkflowActivityHeadlineFromMetadata,
     resolveActiveWorkflowPhasePosition,
     resolveActiveWorkflowRunHeadlines,
-    resolvePrimaryWorkflowRunHeadline,
 } from './sessionWorkflowActivityPresentation';
 import {
     resolveWorkflowMeterTone,
@@ -55,7 +54,7 @@ describe('readSessionWorkflowActivityHeadlineFromMetadata', () => {
     });
 });
 
-describe('resolveActiveWorkflowRunHeadlines / resolvePrimaryWorkflowRunHeadline', () => {
+describe('resolveActiveWorkflowRunHeadlines', () => {
     it('sorts active runs by W1 ordering (blocked before active)', () => {
         const h = headline([
             headlineRun({ runId: 'a', status: 'active', updatedAt: 5 }),
@@ -63,14 +62,12 @@ describe('resolveActiveWorkflowRunHeadlines / resolvePrimaryWorkflowRunHeadline'
         ]);
         const active = resolveActiveWorkflowRunHeadlines(h);
         expect(active.map((r) => r.runId)).toEqual(['b', 'a']);
-        expect(resolvePrimaryWorkflowRunHeadline(h)?.runId).toBe('b');
     });
 
-    it('returns null primary when there are no active runs', () => {
-        expect(resolvePrimaryWorkflowRunHeadline(null)).toBeNull();
+    it('returns no runs when there are no active runs', () => {
         expect(resolveActiveWorkflowRunHeadlines(null)).toEqual([]);
         const terminalOnly = headline([headlineRun({ runId: 'x', status: 'complete' })]);
-        expect(resolvePrimaryWorkflowRunHeadline(terminalOnly)).toBeNull();
+        expect(resolveActiveWorkflowRunHeadlines(terminalOnly)).toEqual([]);
     });
 });
 

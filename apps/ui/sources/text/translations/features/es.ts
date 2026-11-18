@@ -20541,11 +20541,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
         ineligible: 'Esta ejecución ha avanzado, así que eso ya no es posible.',
         runMovedOn: 'La ejecución avanzó. Actualiza e inténtalo de nuevo.',
         custodyPending: 'Happier sigue esperando la confirmación de la máquina.',
-        runFinished: 'Esta ejecución ha terminado.',
-        checkpointUnavailable: 'No hay ningún punto guardado desde el que reanudar.',
-        recoveryEvidenceRequired: 'Abre esta ejecución para ver sus opciones de recuperación.',
         executionNotStarted: 'Todavía no ha empezado ningún paso.',
-        custodySettled: 'Esta ejecución ya está cerrada.',
         unavailableHere: 'Esto no está disponible ahora mismo.',
     },
 

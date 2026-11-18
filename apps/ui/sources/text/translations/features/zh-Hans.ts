@@ -20479,11 +20479,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         ineligible: '该运行已经继续往下走了，所以这一步不再可行。',
         runMovedOn: '运行已继续推进。请刷新后重试。',
         custodyPending: 'Happier 仍在等待该机器确认。',
-        runFinished: '该运行已结束。',
-        checkpointUnavailable: '没有可供恢复的保存点。',
-        recoveryEvidenceRequired: '打开该运行即可查看恢复选项。',
         executionNotStarted: '还没有任何步骤开始。',
-        custodySettled: '该运行已经结清。',
         unavailableHere: '目前无法使用。',
     },
 

@@ -4,8 +4,7 @@ import {
   readPickedWorkflowDocument,
   saveWorkflowDocumentWithRuntime,
 } from './workflowDocumentFile';
-import { importWorkflowDocument } from './workflowInterchange';
-import { createWorkflowEditorDraft } from './workflowEditorDraft';
+import { parseWorkflowDocumentJsonIngressV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 
 describe('workflow document file boundary', () => {
   it('downloads on web and shares on native without changing the JSON', async () => {
@@ -56,21 +55,16 @@ describe('workflow document file boundary', () => {
     );
     expect(native).toBe('{"native":true}');
     expect(readNative).toHaveBeenCalledWith('file:///review.json');
-    const imported = importWorkflowDocument({
-      source: pickedText,
-      currentDraft: createWorkflowEditorDraft({ draftId: 'current' }),
-      draftId: 'imported',
-      context: {
-        agentTarget: {
-          kind: 'agent',
-          identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
-        },
+    const imported = parseWorkflowDocumentJsonIngressV1(pickedText, {
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
       },
     });
 
     expect(imported.ok).toBe(true);
     if (!imported.ok) return;
-    const loop = imported.definition.blocks[0];
+    const loop = imported.document.definition.blocks[0];
     expect(loop?.kind).toBe('loop');
     if (loop?.kind !== 'loop' || loop.repetition.kind !== 'items') return;
     expect(loop.repetition.items.kind).toBe('literal');

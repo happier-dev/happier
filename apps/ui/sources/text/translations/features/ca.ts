@@ -20619,11 +20619,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         ineligible: 'Aquesta execució ha avançat, així que ja no és possible.',
         runMovedOn: 'L’execució ha avançat. Actualitza i torna-ho a provar.',
         custodyPending: 'Happier encara espera la confirmació de la màquina.',
-        runFinished: 'Aquesta execució ha acabat.',
-        checkpointUnavailable: 'No hi ha cap punt desat des d’on reprendre.',
-        recoveryEvidenceRequired: 'Obre aquesta execució per veure’n les opcions de recuperació.',
         executionNotStarted: 'Encara no ha començat cap pas.',
-        custodySettled: 'Aquesta execució ja està tancada.',
         unavailableHere: 'Això no està disponible ara mateix.',
     },
 

@@ -10,7 +10,6 @@ import {
   indexWorkflowFlowRunStates,
   projectObservedWorkflowFlow,
   projectWorkflowFlow,
-  resolveWorkflowFlowAncestry,
   resolveWorkflowFlowEditTarget,
 } from './workflowFlowProjection';
 
@@ -280,17 +279,6 @@ describe('definition flow projection', () => {
     }]));
     expect(withOtherwise.nodesById.get('gate')?.childNodeIds).toEqual(['gate#then', 'gate#otherwise']);
     expect(withOtherwise.nodesById.get('b')?.parentNodeId).toBe('gate#otherwise');
-  });
-
-  it('reports ancestry so a nested node keeps its group and iteration context', () => {
-    const projection = projectWorkflowFlow(definition([{
-      kind: 'parallel',
-      id: 'checks',
-      failurePolicy: 'fail_stop',
-      branches: [{ id: 'lint', blocks: [step('run-lint')] }],
-    }]));
-    expect(resolveWorkflowFlowAncestry(projection, 'run-lint').map((node) => node.nodeId))
-      .toEqual(['checks', 'checks#lint']);
   });
 
   /**

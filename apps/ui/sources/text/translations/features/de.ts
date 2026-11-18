@@ -20099,11 +20099,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         ineligible: 'Dieser Lauf ist weitergelaufen, deshalb ist das nicht mehr möglich.',
         runMovedOn: 'Der Lauf ist weitergelaufen. Aktualisiere und versuch es noch einmal.',
         custodyPending: 'Happier wartet noch auf die Bestätigung des Rechners.',
-        runFinished: 'Dieser Lauf ist beendet.',
-        checkpointUnavailable: 'Es gibt keinen gespeicherten Punkt zum Fortsetzen.',
-        recoveryEvidenceRequired: 'Öffne diesen Lauf, um seine Wiederherstellungsoptionen zu sehen.',
         executionNotStarted: 'Es wurde noch kein Schritt gestartet.',
-        custodySettled: 'Dieser Lauf ist bereits abgeschlossen.',
         unavailableHere: 'Das ist gerade nicht verfügbar.',
     },
 

@@ -103,12 +103,6 @@ export function resolveActiveWorkflowRunHeadlines(
     );
 }
 
-export function resolvePrimaryWorkflowRunHeadline(
-    headline: SessionWorkflowActivityHeadlineV1 | null,
-): SessionWorkflowRunHeadlineV1 | null {
-    return resolveActiveWorkflowRunHeadlines(headline)[0] ?? null;
-}
-
 export function formatWorkflowAgentFraction(run: Pick<SessionWorkflowRunHeadlineV1, 'completedAgents' | 'totalAgents'>): string | null {
     if (run.totalAgents <= 0) return null;
     return `${run.completedAgents}/${run.totalAgents}`;

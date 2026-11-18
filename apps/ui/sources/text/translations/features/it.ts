@@ -20605,11 +20605,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         ineligible: 'Questa esecuzione è andata avanti, quindi non è più possibile.',
         runMovedOn: 'L’esecuzione è andata avanti. Aggiorna e riprova.',
         custodyPending: 'Happier sta ancora aspettando la conferma della macchina.',
-        runFinished: 'Questa esecuzione è terminata.',
-        checkpointUnavailable: 'Non c’è nessun punto salvato da cui riprendere.',
-        recoveryEvidenceRequired: 'Apri questa esecuzione per vedere le sue opzioni di recupero.',
         executionNotStarted: 'Nessun passaggio è ancora partito.',
-        custodySettled: 'Questa esecuzione è già chiusa.',
         unavailableHere: 'Non è disponibile in questo momento.',
     },
 

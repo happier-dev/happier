@@ -20539,11 +20539,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         ineligible: 'この実行は先に進んだため、それはもうできません。',
         runMovedOn: '実行が進みました。更新してもう一度お試しください。',
         custodyPending: 'Happier はまだマシンからの確認を待っています。',
-        runFinished: 'この実行は終了しました。',
-        checkpointUnavailable: '再開できる保存地点がありません。',
-        recoveryEvidenceRequired: 'この実行を開くと、復旧の選択肢が表示されます。',
         executionNotStarted: 'まだどのステップも始まっていません。',
-        custodySettled: 'この実行はすでに完了しています。',
         unavailableHere: '今は利用できません。',
     },
 

@@ -20633,11 +20633,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         ineligible: 'Этот запуск ушёл дальше, поэтому это уже невозможно.',
         runMovedOn: 'Запуск продвинулся дальше. Обновите и попробуйте снова.',
         custodyPending: 'Happier всё ещё ждёт подтверждения от машины.',
-        runFinished: 'Этот запуск завершён.',
-        checkpointUnavailable: 'Нет сохранённой точки, с которой можно продолжить.',
-        recoveryEvidenceRequired: 'Открой этот запуск, чтобы увидеть варианты восстановления.',
         executionNotStarted: 'Ни один шаг ещё не начался.',
-        custodySettled: 'Этот запуск уже закрыт.',
         unavailableHere: 'Сейчас это недоступно.',
     },
 

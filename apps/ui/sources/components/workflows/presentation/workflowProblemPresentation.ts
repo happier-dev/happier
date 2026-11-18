@@ -1,6 +1,5 @@
 import type {
     WorkflowOperationErrorCodeV1,
-    WorkflowRunAvailabilityV1,
     WorkflowTargetUnavailableReasonV1,
     WorkflowConversationUnavailableDetailsV1,
     WorkflowRunSummaryV1,
@@ -121,22 +120,6 @@ const WORKFLOW_PROBLEM_SHAPES = {
     pull_request_link_required: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
     present_user_required: { messageKey: 'settingsActions.reasons.presentUserRequired', repair: 'none', accessibilitySemantics: 'alert' },
 } as const satisfies Readonly<Record<WorkflowOperationErrorCodeV1, WorkflowProblemShape>>;
-
-/**
- * Why a canonical control is not available, as the Run owner reported it.
- *
- * These codes are an open string on the wire, so an unrecognized one still
- * produces a reason — the control is not available here — rather than the
- * identifier or an unexplained disabled button.
- */
-const WORKFLOW_AVAILABILITY_REASON_KEYS = {
-    run_terminal: 'workflows.problem.runFinished',
-    ineligible_state: 'workflows.problem.ineligible',
-    checkpoint_unavailable: 'workflows.problem.checkpointUnavailable',
-    private_recovery_evidence_required: 'workflows.problem.recoveryEvidenceRequired',
-    execution_not_admitted: 'workflows.problem.executionNotStarted',
-    custody_settled: 'workflows.problem.custodySettled',
-} as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
 
 const WORKFLOW_CONTENT_REASON_KEYS = {
     history_not_readable: 'workflows.readState.historyBody',
@@ -351,22 +334,6 @@ export function formatWorkflowConversationProblem(details: WorkflowConversationU
 /** Convenience for the surfaces that show one sentence rather than a state card. */
 export function formatWorkflowProblemMessage(error: unknown): string {
     return resolveWorkflowProblemPresentation(error).message;
-}
-
-/**
- * The nearby reason for a canonical control the Run owner disabled.
- *
- * `null` means the owner recorded no reason for that operation, so nothing is
- * shown — an explanation is not manufactured to fill the space.
- */
-export function resolveWorkflowOperationUnavailableReason(
-    availability: WorkflowRunAvailabilityV1,
-    operation: WorkflowRunAvailabilityV1['disabledReasons'][number]['operation'],
-): string | null {
-    const reason = availability.disabledReasons.find((candidate) => candidate.operation === operation);
-    if (reason === undefined) return null;
-    const key = (WORKFLOW_AVAILABILITY_REASON_KEYS as Readonly<Record<string, TranslationKeyNoParams>>)[reason.code];
-    return key === undefined ? t('workflows.problem.unavailableHere') : t(key);
 }
 
 /**

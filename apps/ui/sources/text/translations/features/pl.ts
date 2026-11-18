@@ -20629,11 +20629,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         ineligible: 'To uruchomienie poszło dalej, więc nie jest to już możliwe.',
         runMovedOn: 'Uruchomienie poszło dalej. Odśwież i spróbuj ponownie.',
         custodyPending: 'Happier wciąż czeka na potwierdzenie od maszyny.',
-        runFinished: 'To uruchomienie się zakończyło.',
-        checkpointUnavailable: 'Nie ma zapisanego punktu, od którego można wznowić.',
-        recoveryEvidenceRequired: 'Otwórz to uruchomienie, aby zobaczyć opcje odzyskiwania.',
         executionNotStarted: 'Żaden krok jeszcze się nie zaczął.',
-        custodySettled: 'To uruchomienie jest już zamknięte.',
         unavailableHere: 'To jest teraz niedostępne.',
     },
 

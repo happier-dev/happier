@@ -11,9 +11,9 @@ import {
   insertWorkflowActionFieldValue,
   listWorkflowActionFieldTextParts,
   readWorkflowActionFieldText,
-  resolveWorkflowActionFieldReferenceStates,
   writeWorkflowActionFieldText,
 } from './workflowActionTextField';
+import { collectWorkflowFieldIssueTexts } from './workflowIssueText';
 import { createWorkflowPromptSuggestions } from './workflowPromptSuggestions';
 
 vi.mock('@/text', async () =>
@@ -174,27 +174,21 @@ describe('Action text field seam', () => {
       suggestions.find((row) => row.label?.includes('Analysis'))
         ?.structuredInput,
     ).toMatchObject({ ref: 'workflowInput:0' });
-    const statesFor = (
+    // The field's revealed issue (the Action row's `fieldIssues`) names a value it can no longer read.
+    const urlIssueFor = (
       blocks: Parameters<typeof createWorkflowEditorDraft>[0]['blocks'],
     ) => {
       const next = createWorkflowEditorDraft({
         draftId: 'action-text-states',
         blocks,
       });
-      return resolveWorkflowActionFieldReferenceStates(
-        field,
-        'url',
-        workflowIssuesForBlock(
-          validateWorkflowEditorDraft(next),
-          action.id,
-          next,
-        ),
-      );
+      return collectWorkflowFieldIssueTexts(
+        workflowIssuesForBlock(validateWorkflowEditorDraft(next), action.id, next),
+        next,
+      ).url;
     };
-    expect(statesFor([analysis, action])).toBeUndefined();
-    expect(statesFor([action, analysis])?.get('workflowInput:0')).toBe(
-      'unavailable',
-    );
-    expect(statesFor([action])?.get('workflowInput:0')).toBe('removed');
+    expect(urlIssueFor([analysis, action])).toBeUndefined();
+    expect(urlIssueFor([action, analysis])).toEqual(expect.any(String));
+    expect(urlIssueFor([action])).toEqual(expect.any(String));
   });
 });

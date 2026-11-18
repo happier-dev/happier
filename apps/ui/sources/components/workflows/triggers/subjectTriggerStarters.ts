@@ -5,23 +5,20 @@ import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/he
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
 import type { HealthCheckDomainSetupIntentV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
-import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { TriggerSubject } from './accountTriggerRows';
 import { createDefaultWhen, readDeviceTimeZone, type TriggerWhenValue } from './sessionTriggerForm';
 import { buildSimpleScheduleCron } from './triggerSchedule';
 
 export type SubjectSentenceStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
-type SubjectEventStarter = SubjectSentenceStarter | 'healthRecovered';
 
-const STARTER_EVENT: Readonly<Partial<Record<SubjectEventStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
   healthFailed: HEALTH_CHECK_EVENT_REFS_V1.failed,
-  healthRecovered: HEALTH_CHECK_EVENT_REFS_V1.recovered,
   deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
 };
 
 /** The page supplies its subject; the existing contributed setup owns configuring the source. */
 export function subjectStarterEventSeed(
-  starter: SubjectEventStarter | null,
+  starter: SubjectSentenceStarter | null,
   params: Readonly<{
     subject?: TriggerSubject;
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
@@ -36,7 +33,7 @@ export function subjectStarterEventSeed(
     const { serverId, environmentId } = params.deploymentEnvironment;
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
   }
-  const health = starter === 'healthFailed' || starter === 'healthRecovered';
+  const health = starter === 'healthFailed';
   if (health && params.subject?.kind === 'environment') {
     const subject = { kind: 'environment' as const, environmentId: params.subject.environmentId };
     return { eventRef, ...observer, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject),
@@ -51,7 +48,7 @@ export function subjectStarterEventSeed(
 }
 
 /** Ordinary editor intent; source configuration and durable Save remain with their existing owners. */
-export function subjectStarterWhen(starter: SubjectEventStarter | null): TriggerWhenValue {
+export function subjectStarterWhen(starter: SubjectSentenceStarter | null): TriggerWhenValue {
   if (starter === 'nightly') {
     const schedule = { repeat: 'daily' as const, hour: 3, minute: 0, day: 1 };
     return { kind: 'schedule', schedule, expression: buildSimpleScheduleCron(schedule), timezone: readDeviceTimeZone() };
@@ -96,18 +93,3 @@ export const SUBJECT_TRIGGER_STARTER_GLYPH: Readonly<Record<SubjectTriggerStarte
   deploymentFailed: 'rocket-launch',
   nightly: 'moon',
 };
-
-export const SUBJECT_OPERATION_STARTERS = ['deploymentFailed', 'healthRecovered', 'restoreDrill'] as const;
-export type SubjectOperationStarter = typeof SUBJECT_OPERATION_STARTERS[number];
-
-/** Authoring only: the open Workflows editor owns the When catalog, configuration and eventual Action.
- * The drill keeps its existing disabled schedule and required isolated-destination inputs. */
-export function buildSubjectOperationStarter(starter: SubjectOperationStarter,
-    context: Parameters<typeof subjectStarterEventSeed>[1]) {
-    if (starter === 'restoreDrill') {
-        const example = getWorkflowStarterExamplesV1().find(example => example.key === 'restore-drill');
-        if (!example) throw new Error('Missing built-in restore drill');
-        return { kind: 'workflow' as const, example };
-    }
-    return { kind: 'sentence' as const, when: subjectStarterWhen(starter), eventSeed: subjectStarterEventSeed(starter, context) };
-}

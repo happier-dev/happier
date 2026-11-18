@@ -2,7 +2,6 @@ import type { z } from 'zod/mini';
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/automationEventV1';
 
 import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -207,16 +206,6 @@ export async function reviewWorkflowTriggerSet(automationId: string, options: Ca
     const set = result.sets.find((candidate) => candidate.automationId === automationId);
     if (!set || result.sets.length !== 1) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
     return set;
-}
-
-/** Open one retained Event on demand through the same Account Action owner as the editor. */
-export async function readWorkflowTriggerEventDefinition(
-    request: Readonly<{ automationId: string; triggerId: string }>, options: CallOptions = {},
-): Promise<AutomationEventTriggerDefinitionStoredPayloadV1> {
-    const result = await callTriggerAction('workflow.trigger.list', WorkflowTriggerListRequestV1Schema.parse(request),
-        value => WorkflowTriggerListResultV1Schema.parse(value), options);
-    if (!result.triggerDefinition) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
-    return result.triggerDefinition.definition;
 }
 
 export async function updateWorkflowTrigger(request: z.input<typeof WorkflowTriggerUpdateRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {

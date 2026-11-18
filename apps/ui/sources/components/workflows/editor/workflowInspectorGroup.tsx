@@ -3,8 +3,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
-import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
-
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
@@ -24,10 +22,6 @@ export function resolveWorkflowInspectorGroupExpanded(params: Readonly<{
 }>): boolean {
     if (params.attention) return true;
     return params.recorded ?? params.initialValueSet;
-}
-
-export function issuesUnder(issues: readonly WorkflowValidationIssue[], prefixes: readonly string[]): boolean {
-    return issues.some((issue) => prefixes.some((prefix) => issue.path === prefix || issue.path.startsWith(`${prefix}/`)));
 }
 
 /**

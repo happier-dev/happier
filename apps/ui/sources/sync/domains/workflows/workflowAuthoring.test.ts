@@ -10,19 +10,17 @@ import {
   listWorkflowProducerOptions,
   listWorkflowStepOverriddenFields,
   projectWorkflowRunInputFields,
-  repairWorkflowPullRequestInput,
   resolveEffectiveWorkflowStepExecution,
   resolveWorkflowExportBlockedReason,
   resolveWorkflowIssueBlockId,
   resolveWorkflowReferenceScopeFacts,
   resolveWorkflowRunBlockedReason,
   resolveWorkflowSaveBlockedReason,
-  resolveWorkflowStepFieldInheritance,
   validateWorkflowEditorDraft,
   workflowIssuesForBlock,
 } from './workflowAuthoring';
 import { createWorkflowEditorDraft, type WorkflowEditorDraft } from './workflowEditorDraft';
-import { collectWorkflowBlockIds, createWorkflowBlock, setWorkflowDefaultField, setWorkflowInputs, setWorkflowStepExecutionField, setWorkflowStepText, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { collectWorkflowBlockIds, createWorkflowBlock, setWorkflowDefaultField, setWorkflowInputs, setWorkflowStepExecutionField, setWorkflowStepText } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 const CLAUDE_AGENT_TARGET = {
   kind: 'agent' as const,
@@ -49,32 +47,6 @@ function draftWith(blocks: readonly WorkflowBlock[]): WorkflowEditorDraft {
 }
 
 describe('draft validation through the canonical validator', () => {
-  it.each([false, true])('explicitly repairs the selected nested=%s PR step without rewriting authored content', nested => {
-    const selected = step('selected', '  Keep these authored bytes\n');
-    const loop = createWorkflowBlock('loop', new Set<string>());
-    if (loop.kind !== 'loop') throw new Error('Expected loop fixture');
-    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {},
-      blocks: [nested ? { ...loop, body: [selected] } : selected, step('literal')],
-    });
-    const repaired = repairWorkflowPullRequestInput({ definition, stepId: 'selected' });
-    expect(repaired?.inputs).toEqual([{ name: 'prUpdate', valueType: 'json', required: true }]);
-    expect(walkWorkflowBlocks(repaired?.blocks ?? []).find(block => block.id === 'selected'))
-      .toMatchObject({ document: selected.document, input: [{ kind: 'input', name: 'prUpdate' }] });
-    expect(repaired?.blocks[1]).toBe(definition.blocks[1]);
-    expect(definition.inputs).toEqual([]);
-    expect(walkWorkflowBlocks(definition.blocks).find(block => block.id === 'selected')).toMatchObject({ input: [] });
-    if (!repaired) throw new Error('Expected explicit repair');
-    expect(repairWorkflowPullRequestInput({ definition: repaired, stepId: 'selected' })).toBe(repaired);
-  });
-  it('does not reinterpret incompatible declared inputs or select a different step during repair', () => {
-    const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
-      inputs: [{ name: 'prUpdate', valueType: 'string', required: true }], defaults: {}, blocks: [step('literal')],
-    });
-    expect(repairWorkflowPullRequestInput({ definition, stepId: 'literal' })).toBeNull();
-    expect(repairWorkflowPullRequestInput({ definition: { ...definition, inputs: [] }, stepId: 'missing' })).toBeNull();
-    expect(repairWorkflowPullRequestInput({ definition: { ...definition, inputs: [],
-      blocks: [step('no-input', '', { inputMode: 'none' })] }, stepId: 'no-input' })).toBeNull();
-  });
   it('keeps portable role declarations in the current draft admitted by Run now', () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [],
       defaults: { engine: { role: 'portable_builder' } }, blocks: [step('build')],
@@ -216,11 +188,10 @@ describe('draft validation through the canonical validator', () => {
 
     const reopenedStep = reopened.blocks[1] as WorkflowStep;
     expect(reopenedStep.execution?.terminal).toEqual(terminal);
-    expect(resolveWorkflowStepFieldInheritance(reopenedStep, 'terminal')).toBe('override');
     expect(reopenedStep.execution?.connectedServices).toBeNull();
-    expect(resolveWorkflowStepFieldInheritance(reopenedStep, 'connectedServices')).toBe('override');
     // Untouched by this step, so it still inherits the workflow default.
-    expect(resolveWorkflowStepFieldInheritance(reopenedStep, 'runtimeDescriptorV1')).toBe('inherited');
+    expect(listWorkflowStepOverriddenFields(reopenedStep)).toEqual(expect.arrayContaining(['terminal', 'connectedServices']));
+    expect(listWorkflowStepOverriddenFields(reopenedStep)).not.toContain('runtimeDescriptorV1');
     expect(resolveEffectiveWorkflowStepExecution(reopened, reopenedStep).runtimeDescriptorV1)
       .toEqual(runtimeDescriptorV1);
 
@@ -231,13 +202,13 @@ describe('draft validation through the canonical validator', () => {
 describe('inheritance projection', () => {
   it('distinguishes inherited, overridden and explicitly-null fields', () => {
     const base = setWorkflowDefaultField(draftWith([step('a')]), 'profileId', 'reviewer');
-    expect(resolveWorkflowStepFieldInheritance(base.blocks[0] as WorkflowStep, 'profileId')).toBe('inherited');
+    expect(listWorkflowStepOverriddenFields(base.blocks[0] as WorkflowStep)).not.toContain('profileId');
 
     const overridden = setWorkflowStepExecutionField(base, 'a', 'profileId', 'auditor');
-    expect(resolveWorkflowStepFieldInheritance(overridden.blocks[0] as WorkflowStep, 'profileId')).toBe('override');
+    expect(listWorkflowStepOverriddenFields(overridden.blocks[0] as WorkflowStep)).toContain('profileId');
 
     const explicitNull = setWorkflowStepExecutionField(base, 'a', 'profileId', null);
-    expect(resolveWorkflowStepFieldInheritance(explicitNull.blocks[0] as WorkflowStep, 'profileId')).toBe('override');
+    expect(listWorkflowStepOverriddenFields(explicitNull.blocks[0] as WorkflowStep)).toContain('profileId');
   });
 
   it('keeps an override equal to the current default explicit when the default later changes', () => {

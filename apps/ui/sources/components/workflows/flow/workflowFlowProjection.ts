@@ -490,25 +490,6 @@ export function listWorkflowFlowNotTakenNodeIds(
 }
 
 /**
- * A node's accessible ancestry, used for the "group / iteration" context a
- * screen-reader user needs and for the linear reading order in wide layouts.
- */
-export function resolveWorkflowFlowAncestry(
-  projection: WorkflowFlowProjection,
-  nodeId: string,
-): readonly WorkflowFlowNode[] {
-  const ancestry: WorkflowFlowNode[] = [];
-  let current = projection.nodesById.get(nodeId) ?? null;
-  while (current?.parentNodeId != null) {
-    const parent = projection.nodesById.get(current.parentNodeId) ?? null;
-    if (parent === null) break;
-    ancestry.unshift(parent);
-    current = parent;
-  }
-  return ancestry;
-}
-
-/**
  * Flow selection joins Steps, Activity and the inspector on the same authored
  * identity. Edit resolves every node to a real editor: a step or evaluator to
  * its prompt, a container to itself, and a branch or conditional frame — which

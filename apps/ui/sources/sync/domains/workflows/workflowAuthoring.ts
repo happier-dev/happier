@@ -25,7 +25,7 @@ import {
   createWorkflowEditorDraft,
   type WorkflowEditorDraft,
 } from './workflowEditorDraft';
-import { updateWorkflowBlock, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 /**
  * The canonical definition ↔ editor projection.
@@ -65,23 +65,6 @@ export function readWorkflowBlockShape(definition: Pick<WorkflowDefinitionV1, 'b
   const defaultSet = workflowDefaultsChooseAgent(definition.defaults);
   const inherits = steps.some((step) => !workflowSelectionChoosesEngineV1(step.execution));
   return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits) };
-}
-
-/** Explicit editor repair only: the caller selects the step and saves through the existing definition Action. */
-export function repairWorkflowPullRequestInput(params: Readonly<{
-  definition: WorkflowDefinitionV1;
-  stepId: string;
-}>): WorkflowDefinitionV1 | null {
-  const declaration = params.definition.inputs.find(input => input.name === 'prUpdate');
-  if (declaration !== undefined && declaration.valueType !== 'json') return null;
-  const step = walkWorkflowBlocks(params.definition.blocks).find(block => block.id === params.stepId);
-  if (step?.kind !== 'step' || step.inputMode === 'none') return null;
-  const selected = updateWorkflowBlock(params.definition, params.stepId, block => block.kind !== 'step'
-    || block.input.some(input => input.kind === 'input' && input.name === 'prUpdate' && (input.path?.length ?? 0) === 0)
-    ? block : { ...block, input: [...block.input, { kind: 'input', name: 'prUpdate' }] });
-  return declaration === undefined
-    ? { ...selected, inputs: [...selected.inputs, { name: 'prUpdate', valueType: 'json', required: true }] }
-    : selected;
 }
 
 export function validateWorkflowEditorDraft(
@@ -176,24 +159,6 @@ export function buildWorkflowEditorDraftFromDefinition(params: Readonly<{
 // ---------------------------------------------------------------------------
 // Inheritance
 // ---------------------------------------------------------------------------
-
-export type WorkflowFieldInheritance = 'inherited' | 'override';
-
-/**
- * Whether a step reads a field from the workflow default or authored its own.
- *
- * An override that happens to equal the current default is still an override:
- * collapsing it into inheritance would silently change the step the next time
- * the default changes.
- */
-export function resolveWorkflowStepFieldInheritance(
-  step: WorkflowStep,
-  field: keyof WorkflowStepExecutionSelection,
-): WorkflowFieldInheritance {
-  const execution = step.execution;
-  if (execution === undefined) return 'inherited';
-  return Object.hasOwn(execution, field) ? 'override' : 'inherited';
-}
 
 /** Value-only authoring fields. Roles and execution placement are bound by run admission, not a view. */
 export function resolveEffectiveWorkflowStepExecution(
@@ -593,9 +558,4 @@ export function resolveWorkflowExportBlockedReason(params: Readonly<{
   validation: WorkflowDraftValidation;
 }>): WorkflowCommandBlockedReason | null {
   return params.validation.valid ? null : 'definition_invalid';
-}
-
-/** Steps in authored order, which the announcement and Flow owners both read. */
-export function listWorkflowSteps(draft: WorkflowEditorDraft): readonly WorkflowStep[] {
-  return walkWorkflowBlocks(draft.blocks).filter((block): block is WorkflowStep => block.kind === 'step');
 }

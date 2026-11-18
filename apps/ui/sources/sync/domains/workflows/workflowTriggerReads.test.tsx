@@ -10,7 +10,6 @@ import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, creat
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
-import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import {
     WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -31,7 +30,7 @@ const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { listWorkflowTriggerSets, removeWorkflowTrigger, updateWorkflowTrigger } = await import('./workflowTriggerActions');
 const { useWorkflowTriggerSets } = await import('@/components/workflows/triggers/useWorkflowTriggerSets');
-const { useSessionTriggerLastRuns } = await import('@/components/workflows/triggers/useSessionTriggerLastRuns');
+const { useWorkflowAutomationSummaries } = await import('@/components/workflows/library/useWorkflowLibrarySummaries');
 const { useServerCredentialAccountScopeStates } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
@@ -81,30 +80,6 @@ describe('Account trigger reads through real Action and Automation owners', () =
         });
     });
 
-    it('opens one exact private Event definition without publishing a partial list census', async () => {
-        const automationId = 'private-event';
-        const triggerId = '00000000-0000-4000-8000-000000000001';
-        const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId, triggerId, triggerRevision: 1,
-            triggerKind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
-            sourceSelectorId: '00000000-0000-4000-8000-000000000002' });
-        if (binding.triggerKind !== 'pluginEvent') throw new Error('Expected Event binding');
-        const definition = { v: 1 as const, sourceInstanceId: 'receipt-source', sourceConfig: { periodMs: 600000 },
-            displayLabel: 'Retained receipt source', filter: null, maximumObservationAgeMs: null };
-        const row = AutomationDefinitionDetailSchema.parse({ ...automation(automationId), executionRecipe: undefined, assignments: [], observationOnly: {
-            kind: 'observationOnly', templateVersion: 1,
-            deploymentEnvironment: { serverId: 'home', projectSourceId: 'project', environmentId: 'production' } },
-            triggers: [{ id: triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'pluginEvent',
-                eventRef: binding.eventRef, sourceSelectorId: binding.sourceSelectorId, sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null,
-                triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, definition })) }] });
-        home.answer(serverId, `GET /v3/automations/${automationId}`, { body: row });
-        const before = storage.getState().workflowTriggerSetsById;
-        const beforeQueries = storage.getState().workflowTriggerSetIdsByQuery;
-        const { readWorkflowTriggerEventDefinition } = await import('./workflowTriggerActions');
-        expect(await readWorkflowTriggerEventDefinition({ automationId, triggerId })).toEqual(definition);
-        expect(storage.getState().workflowTriggerSetsById).toBe(before);
-        expect(storage.getState().workflowTriggerSetIdsByQuery).toBe(beforeQueries);
-    });
     it('opens a cold seventy-row trigger census in one demanded detail page and delivers a changed recipe', async () => {
         let rows = Array.from({ length: 70 }, (_, index) => {
             const row = automation(`cold-rule-${index}`);
@@ -331,8 +306,8 @@ describe('Account trigger reads through real Action and Automation owners', () =
         home.answer(serverId, route, { body: {
             automationSummaries: [{ automationId: 'habit', lastRun }], remainingAutomationIds: [],
         } });
-        const ids = ['habit']; const hook = await renderHook(() => useSessionTriggerLastRuns(ids));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().lastRunsByAutomationId.habit).toEqual(lastRun));
+        const ids = ['habit']; const hook = await renderHook(() => useWorkflowAutomationSummaries(ids));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get('habit')?.lastRun).toEqual(lastRun));
         expect(home.requestsFor(route).map(request => request.input)).toEqual([
             expect.objectContaining({ operation: 'summaries', request: { automationIds: ids } }),
         ]);

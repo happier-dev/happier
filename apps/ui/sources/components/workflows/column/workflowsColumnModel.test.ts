@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 
-import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
@@ -10,7 +8,6 @@ vi.mock('@/text', async () => {
 
 import {
     readOpenWorkflowDefinition,
-    selectHistoryPreviewRuns,
     splitLibraryDefinitions,
 } from './workflowsColumnModel';
 
@@ -48,13 +45,5 @@ describe('splitLibraryDefinitions', () => {
         const split = splitLibraryDefinitions([header('mine'), header('owned', 'owner'), header('theirs', 'edit')] as never);
         expect(split.library.map((entry) => entry.definitionId)).toEqual(['mine', 'owned']);
         expect(split.sharedWithYou.map((entry) => entry.definitionId)).toEqual(['theirs']);
-    });
-});
-
-describe('selectHistoryPreviewRuns', () => {
-    it('shows settled runs only, so a running run is never listed twice', () => {
-        const run = (id: string, state: WorkflowRunSummaryV1['state']) => ({ id, state }) as WorkflowRunSummaryV1;
-        const preview = selectHistoryPreviewRuns([run('a', 'running'), run('b', 'succeeded'), run('c', 'cancelled'), run('d', 'paused')]);
-        expect(preview.map((entry) => entry.id)).toEqual(['b', 'c']);
     });
 });

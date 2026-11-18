@@ -1009,11 +1009,7 @@ export const en = {
         ineligible: 'This run has moved on, so that is no longer possible.',
         runMovedOn: 'The run moved on. Refresh and try again.',
         custodyPending: 'Happier is still waiting for the machine to confirm.',
-        runFinished: 'This run has finished.',
-        checkpointUnavailable: 'There is no saved point to resume from.',
-        recoveryEvidenceRequired: 'Open this run to see its recovery choices.',
         executionNotStarted: 'No step has started yet.',
-        custodySettled: 'This run is already settled.',
         unavailableHere: 'This is not available right now.',
     },
 

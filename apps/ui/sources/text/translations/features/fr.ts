@@ -20662,11 +20662,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         ineligible: 'Cette exécution a avancé, ce n’est donc plus possible.',
         runMovedOn: 'L’exécution a avancé. Actualise et réessaie.',
         custodyPending: 'Happier attend encore la confirmation de la machine.',
-        runFinished: 'Cette exécution est terminée.',
-        checkpointUnavailable: 'Il n’y a aucun point enregistré à partir duquel reprendre.',
-        recoveryEvidenceRequired: 'Ouvre cette exécution pour voir ses options de reprise.',
         executionNotStarted: 'Aucune étape n’a encore démarré.',
-        custodySettled: 'Cette exécution est déjà clôturée.',
         unavailableHere: 'Ce n’est pas disponible pour le moment.',
     },
 

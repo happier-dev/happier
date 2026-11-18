@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { WorkflowDefinitionV1Schema, type WorkflowBlock, type WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { createWorkflowEditorDraft, resolveSelectionAfterRemoval, toggleWorkflowBlockCollapsed, EMPTY_WORKFLOW_EDITOR_VIEW_STATE, type WorkflowEditorDraft } from './workflowEditorDraft';
+import { createWorkflowEditorDraft, resolveSelectionAfterRemoval, type WorkflowEditorDraft } from './workflowEditorDraft';
 import * as draftOwner from './workflowEditorDraft';
 import { materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
 import { WORKFLOW_STARTER_EXAMPLES_V1} from '@happier-dev/protocol/workflows/builtins/examples';
@@ -365,12 +365,6 @@ describe('workflow override semantics', () => {
 });
 
 describe('workflow editor view state', () => {
-  it('collapse is a view fact and never touches authored content', () => {
-    const collapsed = toggleWorkflowBlockCollapsed(EMPTY_WORKFLOW_EDITOR_VIEW_STATE, 'a');
-    expect(collapsed.collapsedBlockIds.has('a')).toBe(true);
-    expect(toggleWorkflowBlockCollapsed(collapsed, 'a').collapsedBlockIds.has('a')).toBe(false);
-  });
-
   it('moves selection to a surviving meaningful control after a removal', () => {
     const draft = draftWith([step('a'), step('b'), step('c')]);
     expect(resolveSelectionAfterRemoval({ draftBeforeRemoval: draft, removedBlockId: 'b' })).toBe('c');

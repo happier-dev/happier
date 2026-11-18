@@ -11,7 +11,6 @@ import {
   buildWorkflowTriggerStartOptions,
   commitWorkflowTriggerWhen,
   createWorkflowTriggerStartWhen,
-  readWorkflowTriggerStart,
   readWorkflowTriggerStartId,
   removeWorkflowTriggerRow,
 } from './workflowTriggerStarts';
@@ -108,7 +107,6 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     // After keeps the Action but never a wait policy (P02: after Actions do not wait for a check).
     expect(start('action:after', chosen)).toEqual({ kind: 'action', phase: 'after', actionIds: ['deployments.deploy'] });
     expect(readWorkflowTriggerStartId(chosen)).toBe('action:before');
-    expect(readWorkflowTriggerStart(chosen)).toBe('action');
   });
 
   it('joins the triggers into one sentence: every summary after the first starts lowercase, a name keeps its capitals', () => {
@@ -132,26 +130,19 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       .some((option) => option.id === 'session:sessionStarts')).toBe(true);
   });
 
-  it('groups every trigger kind under the start it is edited with', () => {
-    expect(
-      readWorkflowTriggerStart(start('schedule')),
-    ).toBe('schedule');
-    expect(readWorkflowTriggerStart({ kind: 'pluginEvent', value: null })).toBe(
-      'pluginEvent',
-    );
+  it('reads every trigger kind as the start it is edited with', () => {
+    expect(readWorkflowTriggerStartId(start('schedule'))).toBe('schedule');
+    // An Event with none chosen yet, and a Run event (created from the run it follows), are not a menu start.
+    expect(readWorkflowTriggerStartId({ kind: 'pluginEvent', value: null })).toBeNull();
     for (const kind of Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as Array<keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1>) {
-      expect(readWorkflowTriggerStart({ kind })).toBe('sessionEvent');
+      expect(readWorkflowTriggerStartId({ kind })).toBe(`session:${kind}`);
     }
-    expect(
-      readWorkflowTriggerStart({ kind: 'ciFailed', pullRequest: null }),
-    ).toBe('sessionPullRequest');
-    expect(
-      readWorkflowTriggerStart({
-        kind: 'runLifecycle',
-        condition: 'terminal',
-        source: { kind: 'workflow_run', runId: 'run-1' },
-      }),
-    ).toBe('runEvent');
+    expect(readWorkflowTriggerStartId({ kind: 'ciFailed', pullRequest: null })).toBe('session:ciFailed');
+    expect(readWorkflowTriggerStartId({
+      kind: 'runLifecycle',
+      condition: 'terminal',
+      source: { kind: 'workflow_run', runId: 'run-1' },
+    })).toBeNull();
   });
 
   it('a new schedule is complete at once and joins the draft as an addition', () => {

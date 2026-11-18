@@ -20479,11 +20479,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         ineligible: '該執行已經往下走了，所以這一步不再可行。',
         runMovedOn: '執行已繼續推進。請重新整理後再試一次。',
         custodyPending: 'Happier 仍在等待該機器確認。',
-        runFinished: '該執行已結束。',
-        checkpointUnavailable: '沒有可供繼續的儲存點。',
-        recoveryEvidenceRequired: '開啟該執行即可查看復原選項。',
         executionNotStarted: '還沒有任何步驟開始。',
-        custodySettled: '該執行已經結清。',
         unavailableHere: '目前無法使用。',
     },
 

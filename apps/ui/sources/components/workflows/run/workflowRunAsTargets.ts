@@ -19,11 +19,6 @@ import type { DetachedExecutionRunSupport } from '@/sync/ops/actions/executionRu
 
 export type WorkflowRunAsTargetKind = WorkflowRunExecutionTargetV1['kind'];
 
-export const WORKFLOW_RUN_AS_TARGET_KINDS: readonly WorkflowRunAsTargetKind[] = [
-    'session',
-    'detached_run',
-];
-
 /**
  * Why a runtime cannot be chosen. Each value has its own localized sentence, so
  * an unavailable choice explains itself instead of reading "not available yet"

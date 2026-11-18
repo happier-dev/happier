@@ -17,11 +17,6 @@ import type {
   WorkflowActionFieldBindingV1,
   WorkflowActionValueReferenceV1,
 } from '@happier-dev/protocol/workflows/workflowLeafV1';
-import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
-
-import type { ComposerEditorReference } from '@/components/ui/forms/composerEditor/composerEditorTypes';
-
-import { resolveWorkflowTokenReferenceStates } from './workflowPromptSuggestions';
 
 /**
  * The editor seam for workflow values inside an Action field. The field's
@@ -160,25 +155,4 @@ export function listWorkflowActionFieldTextParts(
   }
   pushText(binding.document.text.slice(cursor));
   return parts;
-}
-
-/** The validator's verdict on each value inside one field, keyed by token ref, as the prompt's chips read it. */
-export function resolveWorkflowActionFieldReferenceStates(
-  binding: WorkflowActionTextBindingV1,
-  field: string,
-  blockIssues: readonly WorkflowValidationIssue[],
-):
-  | ReadonlyMap<string, NonNullable<ComposerEditorReference['state']>>
-  | undefined {
-  const prefix = `/input/${field.replace(/~/g, '~0').replace(/\//g, '~1')}/document/references/`;
-  return resolveWorkflowTokenReferenceStates(
-    binding.document.references,
-    blockIssues,
-    (path) => {
-      const at = path.lastIndexOf(prefix);
-      const match =
-        at < 0 ? null : /^(\d+)\/ref$/.exec(path.slice(at + prefix.length));
-      return match ? Number(match[1]) : null;
-    },
-  );
 }

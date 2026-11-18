@@ -14,7 +14,6 @@ vi.mock('@/text', async () => {
 });
 
 import {
-    resolveWorkflowOperationUnavailableReason,
     resolveWorkflowProblemPresentation,
     resolveWorkflowRunProblemPresentation,
     resolveWorkflowsUnavailablePresentation,
@@ -266,36 +265,6 @@ describe('workflowProblemPresentation', () => {
             .toMatchObject({ code: null, message: 'workflows.problem.generic' });
         expect(resolveWorkflowProblemPresentation(undefined))
             .toMatchObject({ code: null, message: 'workflows.problem.generic' });
-    });
-
-    it('explains a disabled control from the canonical availability reason, never its code', () => {
-        const availability = {
-            pause: false,
-            resumeBoundary: false,
-
-
-
-            restoreWorkspace: false,
-            cancel: false,
-            inspectExecution: false,
-            disabledReasons: [
-                { operation: 'cancel' as const, code: 'run_terminal' },
-                { operation: 'resume_boundary' as const, code: 'checkpoint_unavailable' },
-                { operation: 'retry' as const, code: 'a_code_this_client_does_not_know' },
-            ],
-        };
-
-        expect(resolveWorkflowOperationUnavailableReason(availability, 'cancel'))
-            .toBe('workflows.problem.runFinished');
-        expect(resolveWorkflowOperationUnavailableReason(availability, 'resume_boundary'))
-            .toBe('workflows.problem.checkpointUnavailable');
-        // An unknown reason is still a reason: it says the control is not
-        // available without leaking a server identifier.
-        expect(resolveWorkflowOperationUnavailableReason(availability, 'retry'))
-            .toBe('workflows.problem.unavailableHere');
-        // An operation the owner recorded no reason for shows none, rather than
-        // a manufactured explanation.
-        expect(resolveWorkflowOperationUnavailableReason(availability, 'pause')).toBeNull();
     });
 
     it('describes the unavailable feature as unavailable, not as a failed load', () => {

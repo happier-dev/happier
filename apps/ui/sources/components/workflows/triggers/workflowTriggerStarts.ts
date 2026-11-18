@@ -14,29 +14,8 @@ import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, SESS
 import { resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
-/**
- * What a saved trigger reads as. A run event is created from the run it follows;
- * pull-request triggers are authored with their Session context.
- */
-export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest' | 'action';
-
 type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
 export const WORKFLOW_SESSION_EVENT_KINDS = Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as SessionEventKind[];
-
-export function readWorkflowTriggerStart(when: TriggerWhenValue): WorkflowTriggerStart {
-    if (isSessionLifecycleWhen(when)) return 'sessionEvent';
-    switch (when.kind) {
-        case 'schedule':
-        case 'pluginEvent':
-        case 'action':
-            return when.kind;
-        case 'prComment':
-        case 'ciFailed':
-            return 'sessionPullRequest';
-        case 'runLifecycle':
-            return 'runEvent';
-    }
-}
 
 /** A plugin-declared Event on the trigger set's Machine, as the trigger-event catalog presents it. */
 export type WorkflowTriggerEventOption = Readonly<{
