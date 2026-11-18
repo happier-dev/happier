@@ -247,12 +247,7 @@ export function createActionOperationRunner(deps: Readonly<{
           request.resumeRetained ? createCanonicalJsonSigningInput(comparableInput(request.input)) : inputIdentity));
     const hasMatchingOrigin = !existing || deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
       && deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin);
-    // Only the domain's fresh-admission policy can replace failed prepared input,
-    // and only after the owner positively recorded that no effect was attempted.
-    const noEffectFreshReentry = existing && hasMatchingOrigin && !hasMatchingInputIdentity
-      && existing.state === 'failed' && existing.error?.effectAttempted === false && !active.has(existing.operationId)
-      && action.operationReentry?.(existing, request.input) === 'freshEquivalentInput';
-    if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry && !noEffectFreshReentry)) {
+    if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry)) {
       return await timeWebLatencyPhase('action.operation.input_conflict', () => ({
         ok: false as const, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict',
       }), undefined, () => ({ operationId: existing.operationId,
@@ -671,9 +666,12 @@ export function createActionOperationRunner(deps: Readonly<{
         ? request.failureResult?.read(existing.result) : null;
       const settled = (refusal && terminal ? { ...terminal, ...refusal } : terminal) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
         ...(existing.operationCredentialUses ? { operationCredentialUses: existing.operationCredentialUses } : {}) } : null);
-      const reentry = pendingApproval
+      let reentry = pendingApproval
         ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
-        : noEffectFreshReentry ? 'fresh' : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
+        : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
+      if (reentry === 'freshEquivalentInput') {
+        reentry = existing.state === 'failed' && existing.error?.effectAttempted === false ? 'fresh' : 'replay';
+      }
       if (reentry === 'replay' && settled) return settled;
       if (reentry === 'reinvoke') {
         const resumed = deps.store.reenter(existing.operationId);
@@ -685,8 +683,7 @@ export function createActionOperationRunner(deps: Readonly<{
         deps.store.updateObservation(existing.operationId, null, undefined);
         return await invoke(existing.operationId, existing.cancellation, true);
       }
-      if (reentry !== 'fresh' && !(reentry === 'freshEquivalentInput'
-        && existing.state === 'failed' && existing.error?.effectAttempted === false)) {
+      if (reentry !== 'fresh') {
         return { ok: false, errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
       }
       // A fresh re-entry starts a new receipt while retaining the prior approval,

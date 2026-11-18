@@ -132,40 +132,32 @@ describe('action operation canonical execution observer', () => {
     expect(effects).toBe(1);
   });
 
-  it.each([false, true, undefined] as const)('retries regenerated deployment candidates only after confirmed no effect (%s)', async effectAttempted => {
+  it('preserves deployment child and token origin checks when retrying a no-effect failure', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('deployments.deploy');
     let sequence = 0;
     const runner = createActionOperationRunner({ store, generateOperationId: () => `deployment-attempt-${sequence++}`,
       resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation,
-        operationReentry: snapshot => snapshot.state === 'failed' ? 'freshEquivalentInput' : 'replay' }) });
+        operationReentry: () => 'freshEquivalentInput' }) });
+    const semanticInput = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+      requestKey: 'deploy-request', sha: 'a'.repeat(40) };
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'deploy-request',
       targetLinkId: 'target', expectedTargetLinkRevision: 1, contentArtifactId: 'first-candidate',
       contentHeaderVersion: 3, contentBodyVersion: 3 };
-    const request = { actionId: spec.id, scope, requestId: 'deploy-request', input,
+    const request = { actionId: spec.id, scope, requestId: 'deploy-request', input, semanticInput,
       deploymentChildIdentity: 'original-child',
       deploymentTokenOrigin: { serverIdentityId: 'home', credentialId: 'original-credential', environmentId: 'environment' },
       execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
-        error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) };
+        error: 'database_transaction_conflict_exhausted', effectAttempted: false }) };
     await runner.observe(request);
-    let effects = 0;
-    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate' },
-      execute: async () => { effects++; return { ok: true as const, result: { deploymentId: 'receipt' } }; } };
+    const execute = vi.fn(async () => ({ ok: true as const, result: { deploymentId: 'receipt' } }));
+    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate' }, execute };
     expect(await runner.observe({ ...retry, deploymentChildIdentity: 'different-child' }))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
     expect(await runner.observe({ ...retry, deploymentTokenOrigin: { ...request.deploymentTokenOrigin, credentialId: 'different-credential' } }))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-    expect(await runner.observe(retry)).toMatchObject(effectAttempted === false
-      ? { ok: true, result: { deploymentId: 'receipt' } }
-      : { ok: false, errorCode: 'action_request_input_conflict' });
-    expect(effects).toBe(effectAttempted === false ? 1 : 0);
-    if (effectAttempted === false) {
-      expect(store.get(scope, 'deployment-attempt-0')).toMatchObject({ state: 'failed', error: { effectAttempted: false } });
-      expect(await runner.observe(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
-      expect(await runner.observe({ ...retry, input: { ...retry.input, contentArtifactId: 'third-candidate' } }))
-        .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-      expect(effects).toBe(1);
-    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(await runner.observe(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
   });
 
   it.each(['backup_failed', 'cancelled'] as const)('retains exact Test probe cleanup facts on settlement and replay (%s)', async code => {

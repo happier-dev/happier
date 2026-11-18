@@ -106,8 +106,8 @@ export type ActionOperationDeclarationV1 = Readonly<z.infer<typeof ActionOperati
 /** Host-local Action declaration policy for an exact persisted request whose
  * original in-memory invocation is no longer available. This function is not
  * serialized into Action discovery or persisted operation snapshots. `fresh`
- * retains exact input identity; `freshEquivalentInput` lets the domain recognize
- * equivalent prepared input after a confirmed no-effect failure. */
+ * retains exact input identity; `freshEquivalentInput` requires the same authored
+ * input and a retained failure that confirms no effect was attempted. */
 export const ActionOperationReentryDecisionV1Schema = lazyZodSchema(() => z.enum([
   'replay', 'reinvoke', 'resume', 'fresh', 'freshEquivalentInput', 'refuse',
 ]));

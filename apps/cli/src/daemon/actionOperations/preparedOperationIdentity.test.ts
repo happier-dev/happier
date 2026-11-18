@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { DeploymentBackupRestoreConfirmInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createActionOperationCancellationFixture } from './actionOperationCancellation.testkit';
+import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
 import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
@@ -25,8 +28,7 @@ const context = (actionRequestId: string): ActionExecutorContext => ({
   serverId: authored.serverId, actionRequestId,
 });
 
-function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async () => receipt),
-  advanceRevision = true) {
+function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async () => receipt)) {
   let revision = 1;
   let installationId = '';
   const runtime = createHostActionOperationRuntime({ serverId: authored.serverId, machineId,
@@ -36,30 +38,13 @@ function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecut
     runActionOperation: runtime.runActionOperation,
     presentUserActionConfirmation: async () => true,
     resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: authored.environmentId } }),
-    prepareDeploymentAction: async () => ({ input: preparedInput(advanceRevision ? revision++ : revision),
+    prepareDeploymentAction: async () => ({ input: preparedInput(revision++),
       preview: { sourceMethod: 'gitIntegration' } }),
     deploymentAction: deploy,
   });
   return { runtime, deploy, setInstallationId: (id: string) => { installationId = id; },
     invoke: (input: typeof authored, id: string) => executor.execute('deployments.deploy', input, context(id)) };
 }
-
-it('replays a settled authored request after preparation resolves a new candidate and revision', async () => {
-  const { invoke, deploy } = fixture();
-  const first = await invoke(authored, 'transport-1');
-  expect(first).toMatchObject({ ok: true, result: receipt });
-  expect(await invoke(authored, 'transport-2')).toEqual(first);
-  expect(deploy).toHaveBeenCalledTimes(1);
-  expect(deploy.mock.calls[0]?.[1]).toEqual(preparedInput(1));
-});
-
-it('rejects different authored input under the same key even if preparation returns the original operand', async () => {
-  const { invoke, deploy } = fixture(undefined, false);
-  expect(await invoke(authored, 'transport-1')).toMatchObject({ ok: true });
-  expect(await invoke({ ...authored, targetLinkId: 'another-runtime' }, 'transport-2'))
-    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-  expect(deploy).toHaveBeenCalledTimes(1);
-});
 
 it('reconstructs the prepared operand and joins an already pending Deploy', async () => {
   const releaseEffect = Promise.withResolvers<void>();
@@ -95,6 +80,8 @@ it('reconstructs the prepared operand and joins an already pending Deploy', asyn
     });
     expect(observe).toBeDefined();
     expect(await observe!(observationContext)).toEqual(await original);
+    // A normal retry prepares another candidate, but joins the original active operation.
+    expect(await invoke(authored, 'transport-3')).toEqual(await original);
     expect(deploy).toHaveBeenCalledTimes(1);
   } finally {
     releaseEffect.resolve();
@@ -151,13 +138,25 @@ it.each(['legacy', 'split'] as const)('reads the exact restore operand from a %s
   const prepared = DeploymentBackupRestoreConfirmInputV1Schema.parse({ ...target, expectedRevision: 2,
     mode: 'confirm', prepareOperationId: 'prior-review', source: { kind: 'repository', snapshotId: 'snapshot' },
     destination: { kind: 'database', service: 'db', database: 'application' } });
+  const semanticInput = { ...prepared, expectedRevision: 1 };
+  const requestId = 'restore-request';
+  const actionId = 'deployments.backups.restore';
   const store = createActionOperationStore({ projectOpenReceiptPersistence: await open() });
-  store.create({ operationId, scope, actionId: 'deployments.backups.restore', title: 'Restore', cancellation: 'supported',
-    inputIdentity: JSON.stringify(format === 'legacy' ? prepared : { ...prepared, expectedRevision: 1 }),
-    ...(format === 'split' ? { preparedInput: JSON.stringify(prepared) } : {}) });
+  store.create({ operationId, scope, actionId, requestId, title: 'Restore', cancellation: 'supported',
+    inputIdentity: createCanonicalJsonSigningInput(format === 'legacy' ? prepared : semanticInput),
+    ...(format === 'split' ? { preparedInput: createCanonicalJsonSigningInput(prepared) } : {}) });
   store.succeed(operationId, { kind: 'rolledBack', verified: false, nextAction: 'inspect', evidence: {} });
   const reopened = createActionOperationStore({ projectOpenReceiptPersistence: await open() });
   expect(reopened.readDeploymentInvocationInput(scope, operationId)).toEqual(prepared);
   expect(reopened.readDeploymentBackupOperations(scope, target)).toMatchObject([{ input: prepared }]);
   expect(reopened.readDeploymentInvocationInput({ ...scope, accountId: 'someone-else' }, operationId)).toBeUndefined();
+  const spec = getActionSpec(actionId);
+  const runner = createActionOperationRunner({ store: reopened,
+    resolveAction: () => ({ actionId, title: spec.title, operation: spec.operation }) });
+  const execute = vi.fn(async () => ({ ok: true as const, result: {} }));
+  const retry = await runner.observe({ actionId, requestId, scope, input: prepared, semanticInput, execute });
+  expect(retry).toMatchObject(format === 'legacy'
+    ? { ok: false, errorCode: 'action_request_input_conflict' }
+    : { ok: true, result: { kind: 'rolledBack' } });
+  expect(execute).not.toHaveBeenCalled();
 });

@@ -22,7 +22,6 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
-import { hasEquivalentDeploymentOperationRetryInput } from '@/deployments/deploymentOperationRetry';
 import type { ManagedNativeOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
 import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
   readDeploymentActionOperationRequestIdV1, isDeploymentTemplatePreviewInputV1,
@@ -384,10 +383,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
           },
         } : {}),
         ...(request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? {
-          operationReentry: (snapshot: ActionOperationSnapshotV1, input?: unknown) => snapshot.state === 'failed'
-            && snapshot.error?.effectAttempted === false
-            && hasEquivalentDeploymentOperationRetryInput(store.readDeploymentInvocationInput(scope, snapshot.operationId), input)
-              ? 'freshEquivalentInput' as const : 'replay' as const,
+          operationReentry: () => 'freshEquivalentInput' as const,
         } : {}),
       } } : {}),
       scope,

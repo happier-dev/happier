@@ -273,32 +273,21 @@ describe('finite host operation custody', () => {
       errorCode: 'outcome_unknown', details: { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } } } });
   });
 
-  it.each([false, true, undefined] as const)('retries a no-effect deployment with a regenerated candidate, preserving authored-input conflicts and settled effects (%s)', async effectAttempted => {
+  it.each([true, undefined] as const)('replays Deploy failure after preparation when no effect was not confirmed (%s)', async effectAttempted => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home', resolveAccountId: async () => 'owner' });
-    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 2,
-      expectedTargetLinkRevision: 1, requestKey: 'retry-deploy', contentArtifactId: 'first-candidate',
-      contentHeaderVersion: 3, contentBodyVersion: 3 };
-    const request = { actionId: 'deployments.deploy' as const, input, context: { actionRequestId: 'first-request' },
-      execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
-        error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) };
-    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });
-    let effects = 0;
-    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate', contentHeaderVersion: 4, contentBodyVersion: 4 },
-      context: { actionRequestId: 'newly-approved-request' },
-      execute: async () => { effects++; return { ok: true as const, result: { deploymentId: 'receipt' } }; } };
-    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, expectedRevision: input.expectedRevision + 1 } }))
-      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-    if (effectAttempted !== false) {
-      expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-      expect(await runtime.runActionOperation({ ...retry, input })).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });
-      expect(effects).toBe(0);
-      return;
-    }
-    expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
-    expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
-    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, contentArtifactId: 'third-candidate' } }))
-      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-    expect(effects).toBe(1);
+    const semanticInput = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', requestKey: 'retry-deploy' };
+    const input = { ...semanticInput, expectedRevision: 2,
+      expectedTargetLinkRevision: 1, contentArtifactId: 'first-candidate', contentHeaderVersion: 3, contentBodyVersion: 3 };
+    const first = await runtime.runActionOperation({ actionId: 'deployments.deploy', input, semanticInput,
+      context: { actionRequestId: 'first-request' },
+      execute: async () => ({ ok: false, errorCode: 'database_transaction_conflict_exhausted',
+        error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) });
+    expect(first).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });
+    const execute = vi.fn(async () => ({ ok: true as const, result: {} }));
+    expect(await runtime.runActionOperation({ actionId: 'deployments.deploy', semanticInput,
+      input: { ...input, contentArtifactId: 'regenerated-candidate', expectedRevision: 3 },
+      context: { actionRequestId: 'second-request' }, execute })).toEqual(first);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('rejoins teardown when signed receipt head versions advance, preserving intent conflicts', async () => {

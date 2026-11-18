@@ -32,6 +32,7 @@ import { createCommittedContributedActionInvoker, createCommittedContributedActi
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeBindings/resolveTarget';
 import * as installationStore from '@/daemon/identity/store';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import * as cloudflare from '../../../../packages/plugins/deploy-cloudflare/src/index';
@@ -66,10 +67,13 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // Home persistence and Cloudflare HTTP are the boundaries. The actual portable
 // Account artifact, role admission, reviewed child and receipt writer stay real.
-it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'watched-non-production'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
+it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'watched-non-production',
+    'settled authored replay', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
     const watched = scenario === 'watched-non-production';
+    const retryAfterNoEffect = scenario === 'same authored retry after no effect' || scenario === 'changed authored sha after no effect';
+    const authoredRetry = scenario === 'settled authored replay' || retryAfterNoEffect;
     const worker = scenario === 'production' || scenario === 'settled-worker';
-    const outcome = scenario === 'second-preview' || scenario === 'production' ? 'succeeded'
+    const outcome = authoredRetry || scenario === 'second-preview' || scenario === 'production' ? 'succeeded'
         : scenario === 'lost-response' || scenario === 'missing-preview' ? 'outcome_unknown'
         : scenario.startsWith('settled-') || watched ? 'queued' : scenario;
     const accountId = 'owner', origin = 'https://platform-home.test';
@@ -199,6 +203,8 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         state: 'queued', startedAtMs: undefined, settledAtMs: undefined,
         acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
     const transitions: unknown[] = [];
+    let refusedReceiptId: string | undefined;
+    let deployAdmissions = 0;
     let time = Date.now();
     const admissions: unknown[] = [];
     app.get('/v1/projects/sources/:sourceId', async () => ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true,
@@ -208,7 +214,12 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
     app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
         environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
-    app.get('/v1/deployments/receipts/:deploymentId', async () => ({ ok: true, deployment: receipt }));
+    app.get('/v1/deployments/receipts/:deploymentId', async (request, reply) => {
+        if ((request.params as { deploymentId: string }).deploymentId === refusedReceiptId) {
+            return reply.code(404).send({ ok: false, error: 'deployment_not_found' });
+        }
+        return { ok: true, deployment: receipt };
+    });
     app.get('/v1/deployments/environments/:environmentId/deployments', async request => ({ ok: true,
         items: (request.query as { inProgressOnly?: string }).inProgressOnly === 'true'
             && (receipt.state === 'failed' || receipt.state === 'succeeded') ? [] : [receipt], nextCursor: null }));
@@ -219,7 +230,16 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
     });
     app.post(AutomationEventActionHttpPathsV1['automation.event.source.status.report'], async () => ({}));
     app.post('/v1/deployments/environments/:environmentId/deploy', async request => {
-        const body = request.body as { contentArtifactId: string; requestKey: string };
+        const body = request.body as { contentArtifactId: string; requestKey: string; actionOperationId: string };
+        if (authoredRetry) {
+            deployAdmissions++;
+            receipt = createDeploymentReceiptHeaderV1({ ...receipt, id: `retry-receipt-${deployAdmissions}`,
+                actionOperationId: body.actionOperationId, contentArtifactId: body.contentArtifactId, requestKey: body.requestKey,
+                state: 'queued', revision: 1, startedAtMs: undefined, settledAtMs: undefined });
+            if (retryAfterNoEffect && deployAdmissions === 1) refusedReceiptId = receipt.id;
+            return { ok: true, environmentId: receipt.environmentId, revision: environment.environment.revision,
+                deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state };
+        }
         receipt = watched && receipt.state === 'failed'
             ? createDeploymentReceiptHeaderV1({ ...receipt, id: 'recovery-receipt', revision: 1, state: 'queued',
                 contentArtifactId: body.contentArtifactId, requestKey: body.requestKey, settledAtMs: undefined, startedAtMs: undefined })
@@ -279,9 +299,51 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
             if (!lease) throw new Error('Fixture registry unavailable');
             return lease;
         } });
+        const operations = authoredRetry ? createHostActionOperationRuntime({
+            serverId, machineId: 'machine-a', resolveAccountId: async () => accountId,
+        }) : undefined;
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+            ...(operations ? { runActionOperation: operations.runActionOperation,
+                resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.environment.id } }) } : {}),
             listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
             invokeContributedAction: invoke });
+        if (authoredRetry) {
+            const { operationAcceptance: _fixtureAcceptance, ...authoredContext } = context;
+            const input = { serverId, environmentId: environment.environment.id, targetLinkId: row.targetLink.id,
+                requestKey: 'reviewed-preview', sourceIntent, sourceMethod: 'gitIntegration' as const };
+            const invoke = (intent: typeof input, actionRequestId: string) =>
+                executor.execute('deployments.deploy', intent, { ...authoredContext, actionRequestId });
+            const providerDeploys = () => providerRequests.filter(request => request.method === 'POST');
+            const first = await invoke(input, 'first-authored-deploy');
+            expect(deployAdmissions, JSON.stringify(first)).toBe(1);
+            if (retryAfterNoEffect) {
+                expect(first).toMatchObject({ ok: false, effectAttempted: false });
+                expect(providerDeploys()).toHaveLength(0);
+            } else {
+                expect(first).toMatchObject({ ok: true, result: { state: 'succeeded' } });
+                expect(providerDeploys()).toHaveLength(1);
+            }
+
+            // Keep the prepared CAS equal for the changed-source case, where only
+            // the fresh candidate identifies the different source in the operand.
+            if (scenario !== 'changed authored sha after no effect') environment.environment.revision++;
+            const retry = await invoke(scenario === 'changed authored sha after no effect'
+                ? { ...input, sourceIntent: { ...sourceIntent, sha: 'e'.repeat(40) } } : input, 'second-authored-deploy');
+            if (scenario === 'changed authored sha after no effect') {
+                expect.soft(retry).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+                expect.soft(deployAdmissions).toBe(1);
+                expect(providerDeploys()).toHaveLength(0);
+            } else if (retryAfterNoEffect) {
+                expect(retry).toMatchObject({ ok: true, result: { state: 'succeeded' } });
+                expect(deployAdmissions).toBe(2);
+                expect(providerDeploys()).toMatchObject([{ body: { commit_hash: sha, branch: gitBranch } }]);
+            } else {
+                expect(retry).toEqual(first);
+                expect(deployAdmissions).toBe(1);
+                expect(providerDeploys()).toHaveLength(1);
+            }
+            return;
+        }
         if (scenario === 'settled-pages') {
             // Home persistence is the boundary: this is the accepted upload
             // receipt tested separately through the real Pages upload Action.
