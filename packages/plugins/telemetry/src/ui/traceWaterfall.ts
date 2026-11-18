@@ -136,3 +136,22 @@ export function projectWaterfall(
     orphans,
   };
 }
+
+/**
+ * The request's direct steps that took the most of its time (D27 #10), largest first: evidence, never a verdict.
+ * Steps can overlap, so their shares need not add up to the whole.
+ */
+export function slowestSteps(
+  waterfall: WaterfallV1,
+  count = 3,
+): readonly Readonly<{ row: WaterfallRowV1; share: number }>[] {
+  const domain = waterfall.domain;
+  const total = domain ? domain.end - domain.start : 0;
+  if (total <= 0) return [];
+  const top = waterfall.root ? 1 : 0;
+  return waterfall.rows
+    .filter((row) => row.depth === top && row.kind !== 'request')
+    .map((row) => ({ row, share: Math.min(1, (row.end - row.start) / total) }))
+    .sort((a, b) => b.share - a.share)
+    .slice(0, count);
+}

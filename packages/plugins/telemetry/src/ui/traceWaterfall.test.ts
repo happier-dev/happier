@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseCaptureSummaryV1 } from '@happier-dev/database-protocol';
-import { projectWaterfall } from './traceWaterfall.js';
+import { projectWaterfall, slowestSteps } from './traceWaterfall.js';
 
 const base = { worktree: 'w', source: 'otlp' as const, traceId: 't1' };
 function span(
@@ -80,5 +80,19 @@ describe('the captured request waterfall', () => {
     const orphaned = projectWaterfall([root, span('lost', 5, 3, { parentSpanId: 'missing' })], []);
     expect(orphaned.orphans).toBe(1);
     expect(orphaned.rows.map((row) => [row.id, row.depth])).toEqual([['req', 0], ['lost', 1]]);
+  });
+
+  it('names the request’s slowest direct steps by their share of its time, never the request itself', () => {
+    const root = span('req', 0, 400, { spanKind: 2, endpointMethod: 'POST', endpointRoute: '/checkout' });
+    const stripe = span('stripe', 20, 300, { parentSpanId: 'req', shape: 'stripe.paymentIntents.create' });
+    const receipt = span('receipt', 330, 60, { parentSpanId: 'req', shape: 'buildReceipt' });
+    const auth = span('auth', 2, 8, { parentSpanId: 'req', shape: 'auth · session' });
+    const nested = span('nested', 25, 290, { parentSpanId: 'stripe', shape: 'https POST' });
+    const steps = slowestSteps(projectWaterfall([root, stripe, receipt, auth, nested], []), 2);
+    expect(steps.map(({ row, share }) => [row.label, share])).toEqual([
+      ['stripe.paymentIntents.create', 0.75],
+      ['buildReceipt', 0.15],
+    ]);
+    expect(slowestSteps(projectWaterfall([], []))).toEqual([]);
   });
 });

@@ -16,6 +16,11 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./capture-views": {
+      "happier-source": "./src/ui/capture/index.ts",
+      "types": "./dist/ui/capture/index.d.ts",
+      "default": "./dist/ui/capture/index.js"
+    },
     "./happier-plugin-ui/telemetry-exception-detail-native": "./src/ui/exceptionDetail.tsx",
     "./happier-plugin-ui/telemetry-app-vitals-widget-native": "./src/ui/widgets/appVitalsWidget.tsx",
     "./happier-plugin-ui/telemetry-metric-widget-native": "./src/ui/widgets/metricWidget.tsx",

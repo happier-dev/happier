@@ -19,6 +19,35 @@ export type Copy = Readonly<{
     nextDeploy: string;
   }>;
   state: Readonly<{ on: string; off: string }>;
+  tabs: Readonly<{
+    label: string;
+    endpoints: string;
+    traces: string;
+    logs: string;
+    queries: string;
+  }>;
+  window: Readonly<{ label: string; hour: string; day: string; week: string }>;
+  menu: Readonly<{ settings: string; clear: string }>;
+  clear: Readonly<{
+    title: (p: Name) => string;
+    body: (p: MachineName) => string;
+    confirm: string;
+    failed: string;
+  }>;
+  offline: Readonly<{
+    title: (p: MachineName) => string;
+    reason: string;
+    body: string;
+  }>;
+  unavailable: Readonly<{ title: string; reason: string }>;
+  request: Readonly<{
+    back: string;
+    waterfall: string;
+    reading: string;
+    unavailable: string;
+    queries: (p: Readonly<{ count: number }>) => string;
+  }>;
+  addCheck: string;
   measurement: Readonly<{ sampled: string; partial: string; unknown: string }>;
   sheet: Readonly<{
     title: (p: Name) => string;
@@ -67,6 +96,39 @@ const en: Copy = {
     nextDeploy: 'Changes apply at the next deploy.',
   },
   state: { on: 'On', off: 'Off' },
+  tabs: {
+    label: 'What the collector kept',
+    endpoints: 'Endpoints',
+    traces: 'Traces',
+    logs: 'Logs',
+    queries: 'Queries',
+  },
+  window: { label: 'Time window', hour: '1 h', day: '24 h', week: '7 d' },
+  menu: { settings: 'Telemetry settings…', clear: 'Clear telemetry…' },
+  clear: {
+    title: ({ name }) => `Clear telemetry for ${name}?`,
+    body: ({ machine }) =>
+      `${machine} deletes the requests, logs and queries it kept for this Environment. New data keeps arriving.`,
+    confirm: 'Clear',
+    failed: 'Telemetry couldn’t be cleared. Try again.',
+  },
+  offline: {
+    title: ({ machine }) => `${machine} isn’t answering`,
+    reason: 'your app keeps running; this is what Happier last read',
+    body: 'Your app keeps running. Its telemetry shows here once the collector is back.',
+  },
+  unavailable: {
+    title: 'Telemetry isn’t available right now',
+    reason: 'the collector didn’t answer this read',
+  },
+  request: {
+    back: 'All traces',
+    waterfall: 'Waterfall',
+    reading: 'Reading the request',
+    unavailable: 'This request isn’t available',
+    queries: ({ count }) => (count === 1 ? '1 query' : `${count} queries`),
+  },
+  addCheck: 'Add a check…',
   measurement: {
     sampled: 'Includes sampled requests',
     partial: 'Some observations are missing',
