@@ -10,7 +10,6 @@ import {
     installRemoteCli,
     installManagedGuestCliViaRemoteDownload,
     deliverManagedNativeArchive,
-    selectManagedGuestCliPayload,
     normalizeRemoteReleaseArch,
     normalizeRemoteReleaseOs,
     parseRemoteBootstrapMachineParams,
@@ -196,9 +195,7 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
     if (params.requireHomePayload) {
         return await installManagedGuestCliViaRemoteDownload({
             homeUrl: params.homeUrl, channel, os, arch, remoteHomeDir: params.remoteHomeDir,
-            ...(params.guestCli?.source === 'home-payload' && params.guestCli.payloads
-                ? { guestCliPayload: selectManagedGuestCliPayload({ guestCli: params.guestCli,
-                    homeUrl: params.homeUrl, target: { os, arch } }) } : {}),
+            ...(params.guestCli ? { guestCli: params.guestCli } : {}),
             signal: params.signal, fetchImpl: runtimeFetch,
             transferArchive: ({ path, chunks }) => {
                 const exec: DedicatedDaemonBootstrapExec = request => params.runTextCommand(params.daemonUsername

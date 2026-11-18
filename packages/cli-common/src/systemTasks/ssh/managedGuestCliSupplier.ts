@@ -14,6 +14,8 @@ import { buildRemoteSelfDownloadFirstPartyInstallCommand, executeRemoteSelfDownl
 type RemoteText = (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
 export type ManagedGuestCliSourceRequest = Readonly<{
   homeUrl: string;
+  /** Source captured by this install's admission, when supplied. */
+  guestCli?: GuestCliIdentityV1;
   channel?: string;
   binaryPath: string;
   runRemoteText: RemoteText;
@@ -54,7 +56,7 @@ export function selectManagedGuestCliPayload(input: Readonly<{
 export async function resolveManagedGuestCliSource(input: ManagedGuestCliSourceRequest): Promise<
   Readonly<{ kind: 'home-payload' }> | Readonly<{ kind: 'public-release'; versionId: string }>
 > {
-  const identity = await readManagedGuestCliIdentity(input);
+  const identity = input.guestCli ?? await readManagedGuestCliIdentity(input);
   if (identity.source === 'home-payload' && !input.localPayloadAvailable) {
     throw new SystemTaskExecutionError('guest_payload_missing', 'This Home requires its guest CLI payload. Choose a connected controller that has the payload, then retry.');
   }
@@ -233,34 +235,37 @@ export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
   fetchImpl?: typeof fetch;
   /** Existing file/exec transport; no Home HTTP client is required on the guest. */
   transferArchive?: (input: Readonly<{ path: string; chunks: AsyncIterable<Uint8Array> }>) => Promise<void>;
-  /** Selected once from the admitted source-Home snapshot, after the native target probe. */
-  guestCliPayload?: GuestCliPayloadV1;
+  /** The admitted source-Home snapshot; this supplier selects its probed target once. */
+  guestCli?: GuestCliIdentityV1;
 }>): Promise<Readonly<{ binaryPath: string; versionId: string; source: string }>> {
   const binaryPath = resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', channel: input.channel, remoteHomeDir: input.remoteHomeDir });
   input.signal?.throwIfAborted();
+  const guestCli = input.guestCli ?? await readManagedGuestCliIdentity(input);
+  const guestCliPayload = guestCli.source === 'home-payload'
+    ? selectManagedGuestCliPayload({ guestCli, homeUrl: input.homeUrl, target: { os: input.os, arch: input.arch } }) : undefined;
   let uploadedStage: string | undefined;
   try {
     let plan: RemoteSelfDownloadFirstPartyInstallPlan;
-    if (input.guestCliPayload) {
+    if (guestCliPayload) {
       if (!input.transferArchive) throw new SystemTaskExecutionError('guest_payload_missing', 'The admitted install transport cannot deliver this Home archive.');
       const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', channel: input.channel,
-        versionId: `local-${input.guestCliPayload.sha256}`, remoteHomeDir: input.remoteHomeDir });
+        versionId: `local-${guestCliPayload.sha256}`, remoteHomeDir: input.remoteHomeDir });
       const staged = await input.runRemoteText(`mkdir -p ${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} || exit $?; mktemp -d ${quoteRemotePathWithHomeExpansion(`${layout.remoteHomeDir}/bootstrap-upload.XXXXXXXX`)}`);
       if (staged.status !== 0 || !staged.stdout.trim()) throw new SystemTaskExecutionError('remote_command_failed', 'Guest CLI archive staging failed.');
       uploadedStage = staged.stdout.trim();
       const archivePath = `${uploadedStage}/archive`;
       // The controller reaches its selected Home. Only the admitted archive bytes,
       // never a controller-local URL, cross the guest's existing install channel.
-      const response = await (input.fetchImpl ?? globalThis.fetch)(input.guestCliPayload.url, {
+      const response = await (input.fetchImpl ?? globalThis.fetch)(guestCliPayload.url, {
         credentials: 'omit', redirect: 'error', signal: input.signal,
       });
       if (!response.ok) throw new SystemTaskExecutionError('guest_payload_missing', `The admitted Home CLI archive could not be read (HTTP ${response.status}).`);
       await input.transferArchive({ path: archivePath, chunks: readArchiveChunks(response) });
       input.signal?.throwIfAborted();
-      plan = buildManagedGuestCliPayloadInstallPlan({ guestCliPayload: input.guestCliPayload,
+      plan = buildManagedGuestCliPayloadInstallPlan({ guestCliPayload,
         channel: input.channel, remoteHomeDir: input.remoteHomeDir, archivePath });
     } else {
-      const source = await resolveManagedGuestCliSource({ ...input, binaryPath });
+      const source = await resolveManagedGuestCliSource({ ...input, guestCli, binaryPath });
       if (source.kind !== 'public-release') throw new SystemTaskExecutionError('guest_payload_missing', 'The Home guest CLI payload is unavailable to this transport.');
       plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: normalizePublicReleaseRingId(input.channel) ?? 'stable',
         versionId: source.versionId, os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,

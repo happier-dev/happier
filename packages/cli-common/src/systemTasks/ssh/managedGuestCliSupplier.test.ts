@@ -69,7 +69,6 @@ describe('managed guest CLI source supplier', () => {
       ] });
       // The admitted producer descriptor remains fixed while download bytes change.
       if (!matching) archive = new Uint8Array([...archive, 0]);
-      const guestCliPayload = selectManagedGuestCliPayload({ guestCli, homeUrl, target: { os: 'linux', arch: 'x64' } });
       const runRemoteText = async (command: string) => {
           // A controller-only origin must never become a guest HTTP request.
           expect(command).not.toContain(homeUrl);
@@ -79,9 +78,9 @@ describe('managed guest CLI source supplier', () => {
             return { status: 1, stdout: String(error.stdout), stderr: String(error.stderr) };
           }
         };
-      const install = transport === 'native' ? installManagedGuestCliViaRemoteDownload({ homeUrl, channel: 'stable', os: 'linux', arch: 'x64', guestCliPayload,
+      const install = transport === 'native' ? installManagedGuestCliViaRemoteDownload({ homeUrl, channel: 'stable', os: 'linux', arch: 'x64', guestCli,
         fetchImpl: async (url, options) => {
-          expect(String(url)).toBe(guestCliPayload.url);
+          expect(String(url)).toBe(`${homeUrl}/v1/runtime/guest-cli/payloads/linux/x64`);
           return await fetch(url, options);
         },
         transferArchive: async ({ path, chunks }: { path: string; chunks: AsyncIterable<Uint8Array> }) => {
@@ -230,6 +229,24 @@ describe('managed guest CLI source supplier', () => {
     await expect(resolveManagedGuestCliBuildIdentity({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl: http.boundary }))
       .resolves.toEqual({ identity: `public-release:${versionId}`, versionId, target: { os: 'linux', arch: 'x64' } });
   });
+  it.each(['home-payload', 'public-release'] as const)('keeps the admitted %s source when the live Home changes', async source => {
+    const urls: string[] = [];
+    const guestCli = GuestCliIdentityV1Schema.parse({ source, line: '0.3', channel: 'stable' });
+    const request = { homeUrl: 'https://home.example', guestCli, localPayloadAvailable: true, localPayloadVersion: '0.3.0',
+      binaryPath: '/missing/happier', runRemoteText: async () => ({ status: 0, stdout: 'managed_guest_cli_absent', stderr: '' }),
+      fetchImpl: (async input => {
+        const url = String(input); urls.push(url);
+        if (url.endsWith('/v1/features')) return Response.json({ capabilities: { guestCli: {
+          source: source === 'home-payload' ? 'public-release' : 'home-payload', line: '0.4', channel: 'stable',
+        } } });
+        return Response.json(['0.3.9', '0.4.0'].map(version => ({ tag_name: `cli-v${version}`, draft: false, prerelease: false })));
+      }) satisfies typeof fetch,
+    };
+    expect(await resolveManagedGuestCliSource(request)).toEqual(source === 'home-payload'
+      ? { kind: 'home-payload' } : { kind: 'public-release', versionId: '0.3.9' });
+    expect(urls.some(url => url.endsWith('/v1/features'))).toBe(false);
+  });
+
   it('refuses an identity without a channel before guest commands or public lookup', async () => {
     const urls: string[] = [];
     const fetchImpl: typeof fetch = async input => {

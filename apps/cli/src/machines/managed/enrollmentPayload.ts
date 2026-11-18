@@ -11,7 +11,7 @@ export async function installManagedNativePayload(input: ManagedNativePayloadIns
   return await installRemoteFirstPartyComponentPayload({
     requireHomePayload: true,
     homeUrl: input.homeUrl,
-    guestCliPayload: input.guestCliPayload,
+    guestCli: input.guestCli,
     componentId: 'happier-cli', channel, signal, onPhase: input.onPhase,
     ...(remoteHomeDir ? { remoteHomeDir } : {}),
   }, {

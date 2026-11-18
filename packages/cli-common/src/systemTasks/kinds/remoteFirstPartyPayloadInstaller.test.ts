@@ -137,6 +137,38 @@ describe('installRemoteFirstPartyComponent', () => {
     } finally { await fixture.cleanup(); }
   });
 
+  it.each([undefined, [{ target: { os: 'linux', arch: 'arm64' } as const, sha256: 'a'.repeat(64), url: '/arm64' }]])(
+    'refuses an unavailable admitted Home archive before consulting a changed public Home (payloads=%j)', async payloads => {
+    const requested: string[] = [];
+    const server = createServer((request, response) => {
+      requested.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(request.url === '/v1/features'
+        ? { capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } } : []));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a changed Home listener');
+      const homeUrl = `http://127.0.0.1:${address.port}`;
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', homeUrl);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
+      const outcome = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, requireHomePayload: true,
+        guestCli: { source: 'home-payload', line: '0.3', channel: 'stable', ...(payloads ? { payloads } : {}) },
+      }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => { throw new Error('An unavailable admitted archive must not be installed'); },
+      }).catch((error: unknown) => error);
+      expect.soft(outcome).toMatchObject({ code: 'guest_payload_missing' });
+      expect(requested).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('delivers the Home development payload instead of the older public release', async () => {
     const fixture = await createPayloadRootFixture();
     let delivered = false;

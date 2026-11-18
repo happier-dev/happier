@@ -30,7 +30,7 @@ describe('portable managed enrollment', () => {
         exec: async () => { throw new Error('No guest IO before payload admission'); } },
     })).rejects.toMatchObject({ code: 'guest_payload_missing' });
   });
-  it.each([false, true])('selects a frozen archive after the target probe and gives Update its own pin (Update=%s)', async replacePayload => {
+  it.each([false, true])('retains the frozen source after the target probe and gives Update its own snapshot (Update=%s)', async replacePayload => {
     const pin = (sha256: string) => GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable', payloads: [
       { target: { os: 'linux', arch: 'arm64' }, sha256: 'c'.repeat(64), url: '/wrong-target' },
       { target: { os: 'linux', arch: 'x64' }, sha256, url: '/v1/runtime/guest-cli/payloads/linux/x64' },
@@ -49,8 +49,7 @@ describe('portable managed enrollment', () => {
       installNativePayload: async installation => { selected = installation; throw stop; },
       native: { putFile: async () => {}, exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }) },
     })).rejects.toBe(stop);
-    expect(selected).toHaveProperty('guestCliPayload', { target: { os: 'linux', arch: 'x64' },
-      sha256: (replacePayload ? 'b' : 'a').repeat(64), url: 'https://home.example.test/v1/runtime/guest-cli/payloads/linux/x64' });
+    expect(selected).toHaveProperty('guestCli', replacePayload ? updated : original);
     expect(original.payloads?.[1]?.sha256).toBe('a'.repeat(64));
     expect(rowReads).toBe(1);
   });

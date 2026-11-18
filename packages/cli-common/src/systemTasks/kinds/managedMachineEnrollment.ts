@@ -1,6 +1,5 @@
 import type { ResolvedHomeTarget } from '../../homeTarget/homeTarget.js';
-import type { GuestCliIdentityV1, GuestCliPayloadV1 } from '@happier-dev/protocol/features';
-import { selectManagedGuestCliPayload } from '../ssh/managedGuestCliSupplier.js';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { DeploymentAppEnrollmentCorrelationV1Schema, type DeploymentAppEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
@@ -42,7 +41,7 @@ export type ManagedNativeBootstrapIO = Readonly<{
 
 type NativeTaskOptions = Parameters<typeof createRemoteNativeBootstrapMachineTaskKind>[0];
 export type ManagedNativePayloadInstallation = Readonly<{
-  guestCliPayload?: GuestCliPayloadV1;
+  guestCli?: GuestCliIdentityV1;
   channel: 'stable' | 'preview' | 'dev';
   homeUrl: string;
   os: 'linux' | 'darwin'; arch: 'x64' | 'arm64'; home: string;
@@ -264,8 +263,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
       transport: { exec, install: async placement => {
         const { os, arch, home } = await probeManagedNativeGuestPlatform(exec, signal);
         const installation = { channel: configuration.channel, homeUrl: input.target.applicationUrl, signal, os, arch, home,
-          ...(guestCli?.source === 'home-payload' && guestCli.payloads ? { guestCliPayload: selectManagedGuestCliPayload({ guestCli,
-            homeUrl: input.target.applicationUrl, target: { os, arch } }) } : {}),
+          ...(guestCli ? { guestCli } : {}),
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
           cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),
@@ -410,8 +408,7 @@ async function runDeploymentAppEnrollment(input: DeploymentAppMachineEnrollmentI
       const platform = await probeManagedNativeGuestPlatform(exec, signal);
       const installed = await deps.installNativePayload({ ...platform, channel: input.channel,
         homeUrl: input.target.applicationUrl, remoteHomeDir: input.happyHomeDir, dedicatedIdentity: false,
-        ...(input.guestCli?.source === 'home-payload' && input.guestCli.payloads ? { guestCliPayload: selectManagedGuestCliPayload({
-          guestCli: input.guestCli, homeUrl: input.target.applicationUrl, target: platform }) } : {}),
+        ...(input.guestCli ? { guestCli: input.guestCli } : {}),
         resource: enrollment, signal, exec, putFile: native.putFile, bootstrapExec: exec, cleanupExec: native.exec });
       binaryPath = installed.binaryPath;
     },

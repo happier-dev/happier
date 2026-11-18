@@ -76,7 +76,7 @@ export async function runUiManagedMachineEnrollment(input: UiManagedMachineEnrol
         ...deps,
         installNativePayload: deps.installNativePayload ?? (installation => installManagedGuestCliViaRemoteDownload({
             homeUrl: installation.homeUrl, channel: installation.channel, os: installation.os, arch: installation.arch,
-            ...(installation.guestCliPayload ? { guestCliPayload: installation.guestCliPayload } : {}),
+            ...(installation.guestCli ? { guestCli: installation.guestCli } : {}),
             remoteHomeDir: installation.remoteHomeDir, signal: installation.signal, fetchImpl: runtimeFetch,
             runRemoteText: command => installation.exec({ command, signal: installation.signal }),
             transferArchive: ({ path, chunks }) => deliverManagedNativeArchive({ chunks, guestPath: path,
