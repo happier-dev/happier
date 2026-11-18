@@ -113,11 +113,17 @@ export async function readDeploymentReceiptActionFactsV1(
     }
     const opened = await open(deployment);
     if ('errorCode' in opened) return opened;
+    const { sourceIntent, failure: recorded, platform } = opened.content;
     const projected = { ...receipt,
-        ...(address.projection === 'investigation' ? { investigation: projectDeploymentReceiptInvestigationV1(opened.content) } : {}),
+        ...(address.projection === 'investigation' ? {
+            investigation: projectDeploymentReceiptInvestigationV1({
+                ...(sourceIntent === undefined ? {} : { sourceIntent }),
+                ...(recorded === undefined ? {} : { failure: recorded }),
+                ...(platform === undefined ? {} : { platform }),
+            }),
+        } : {}),
         ...(opened.cancellationConsequence ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
     if (deployment.state !== 'failed') return projected;
-    const recorded = opened.content.failure;
     if (!recorded) return { ...projected, failureSummary: null };
     const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1(recorded);
     return { ...projected, failureSummary: { phase: recorded.phase, code: recorded.code, requiredFact, remedy } };
