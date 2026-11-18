@@ -3,8 +3,7 @@ import {
     reviewCommentTextSnapshotHasBidiControlsV1,
     reviewCommentTextSnapshotIsLikelyMinifiedV1,
 } from '@happier-dev/protocol/reviews/comments/snapshots';
-import type {
-    ReviewCommentCreateRequestV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewCommentCreateRequestV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type {
     ReviewCommentCreateResponseV1,
 } from '@happier-dev/protocol/reviews/comments/actions';
@@ -13,7 +12,6 @@ import { mapReviewCommentDraftAnchorToDurableV1Target } from '@/sync/domains/inp
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly<{
-    projectId: string;
     draft: ReviewCommentDraft;
     clientMutationId: string;
     workspaceId?: string;
@@ -22,7 +20,7 @@ export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly
     engineId?: string;
     authorDeviceId?: string;
     clientLamport?: number;
-}>): ReviewCommentCreateRequestV1 {
+} & Pick<ReviewCommentCreateRequestV1, 'reviewId' | 'roundOrdinal' | 'projectId' | 'workspace'>>): ReviewCommentCreateRequestV1 {
     const anchor = mapReviewCommentDraftAnchorToDurableV1Target({
         filePath: params.draft.filePath,
         anchor: params.draft.anchor,
@@ -38,7 +36,10 @@ export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly
     ];
 
     return {
+        reviewId: params.reviewId,
+        roundOrdinal: params.roundOrdinal,
         projectId: params.projectId,
+        workspace: params.workspace,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         runId: params.runId,
@@ -68,7 +69,6 @@ export function buildDurableReviewCommentCreateRequestFromDraft(params: Readonly
 }
 
 export type SubmitDurableReviewCommentDraftParams = Readonly<{
-    projectId: string;
     draft: ReviewCommentDraft;
     clientMutationId: string;
     actions: Readonly<{
@@ -81,13 +81,16 @@ export type SubmitDurableReviewCommentDraftParams = Readonly<{
     engineId?: string;
     authorDeviceId?: string;
     clientLamport?: number;
-}>;
+} & Pick<ReviewCommentCreateRequestV1, 'reviewId' | 'roundOrdinal' | 'projectId' | 'workspace'>>;
 
 export async function submitDurableReviewCommentDraft(
     params: SubmitDurableReviewCommentDraftParams,
 ): Promise<ReviewCommentCreateResponseV1> {
     const request = buildDurableReviewCommentCreateRequestFromDraft({
+        reviewId: params.reviewId,
+        roundOrdinal: params.roundOrdinal,
         projectId: params.projectId,
+        workspace: params.workspace,
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         runId: params.runId,

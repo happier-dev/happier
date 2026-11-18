@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     ReviewCommentCreateRequestV1} from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentCreateRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import type {
     ReviewCommentCreateResponseV1,
 } from '@happier-dev/protocol/reviews/comments/actions';
@@ -26,6 +27,23 @@ function draft() {
 }
 
 describe('buildDurableReviewCommentCreateRequestFromDraft', () => {
+    it('promotes a gutter draft using the Review as its sole authority', () => {
+        const request = ReviewCommentCreateRequestV1Schema.parse(buildDurableReviewCommentCreateRequestFromDraft({
+            reviewId: 'review-1',
+            clientMutationId: 'draft-1',
+            draft: { ...draft(), source: 'diff',
+                anchor: { kind: 'line', filePath: 'src/a.ts', line: 4, side: 'before' } },
+        }));
+
+        expect(request).toMatchObject({
+            reviewId: 'review-1',
+            anchor: { kind: 'line', filePath: 'src/a.ts', line: 4, side: 'before' },
+            snapshot: { source: 'diffSide', selectedLines: ['return value.name;'] },
+        });
+        expect(request.projectId).toBeUndefined();
+        expect(request.sessionId).toBeUndefined();
+    });
+
     it('promotes a local draft to a durable create request without deleting local draft state', () => {
         const request = buildDurableReviewCommentCreateRequestFromDraft({
             projectId: 'project-1',
