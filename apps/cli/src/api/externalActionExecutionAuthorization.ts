@@ -1149,8 +1149,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
           externalActionOrigin: { homeId: input.serverIdentityId!, actionId, requestId: input.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } }) });
     const setupApply = actionId === 'machines.setup.apply' ? MachineSetupApplyInputV1Schema.safeParse(input.input) : null;
+    // Preview Create opens private template content and deploys like Instantiate.
     if (isDeploymentChildEffectActionIdV1(actionId) || actionId === 'deployments.teardown'
-      || actionId === 'deployments.templates.instantiate' || setupApply?.success) {
+      || actionId === 'deployments.templates.instantiate' || actionId === 'deployments.environments.create'
+      || setupApply?.success) {
       // PAT authority never becomes the publisher's Account credential custody.
       if (workflowBinding && !('authentication' in workflowBinding)) return fail('admission_unavailable', 'dispatch.workflow_authentication');
       if (publisherAccountId !== accountId) return fail('requester_credential_disclosure_required');

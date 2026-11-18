@@ -871,6 +871,61 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it('seals the Run owner requester box for a PR-event preview Create so the controller can project its Account', async () => {
+    // QA-SWEEP-172 #173j: a trigger Run (host principal) reached the controller
+    // without requester custody and failed requester_account_projection_missing.
+    const token = `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: 'bob', tokenEpoch: 9,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })}.signature`;
+    const actionId = 'deployments.environments.create';
+    const runId = 'preview-run';
+    const requestId = `${runId}/preview-create/0`;
+    const controller = { kind: 'machine' as const, machineId: 'controller' };
+    const input = { serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1', mode: 'apply',
+      name: 'pr-1', purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
+      preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 8, runtimeTargetLinkId: 'runtime-link',
+        pullRequestId: '1', headSha: 'a'.repeat(40) } };
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId,
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url) === 'https://home.test/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (String(url) === `https://home.test/v1/machines/${controller.machineId}`) return { status: 200, data: { machine: {
+        id: controller.machineId, kind: 'persistent', active: true, installationId: 'controller-installation',
+        managedMachineRef: null, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+        access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } } };
+      throw new Error(`Unexpected read ${String(url)}`);
+    });
+    let delivered: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | undefined;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(raw)));
+      if (String(url).endsWith('/execution-authorization')) {
+        expect(request.workflowActionOrigin).toEqual({ runId, requestId });
+        return { status: 200, data: { v: 1, token: 'preview-create-root', binding: {
+          serverIdentityId: 'srv_bob_home', accountId: 'bob', authentication: { kind: 'terminal', tokenEpoch: 9 },
+          admittedMachineRole: 'manage', actionId, requestId, target: controller, machineId: controller.machineId,
+          installationId: 'controller-installation', custodianAccountId: 'bob', accountEncryptionMode: 'plain',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+          workflowActionOrigin: request.workflowActionOrigin,
+        } } };
+      }
+      expect(String(url)).toBe(`https://home.test/v1/actions/${actionId}`);
+      delivered = request;
+      return { status: 200, data: { v: 1, actionId, requestId, execution: { ok: true, result: { ok: true } } } };
+    });
+    const outcome = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId, input, requestId, target: controller,
+      credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      authority: 'account_automation',
+      installedWorkflow: { context, machineId: 'publisher', installationId: 'publisher-installation', privateKey: keys.secretKey } });
+    expect(delivered?.executionAuthorization?.binding, JSON.stringify(outcome)).toMatchObject({ actionId, workflowActionOrigin: { runId, requestId } });
+    const opened = openExternalActionRequesterAccountContextV1({ authorization: delivered!.executionAuthorization!,
+      machineId: controller.machineId, installationId: 'controller-installation', serverIdentityId: 'srv_bob_home',
+      installationPrivateKey: keys.secretKey, purpose: { kind: 'external_action' } });
+    expect(opened).toMatchObject({ token });
+  });
+
   it.each(['action_not_admitted', 'action_outcome_unknown', 'project_requester_home_unavailable', 'target_not_local', 'target_unavailable'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
     const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true, installationId: 'installation',
       revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
