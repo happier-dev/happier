@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import type { TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { act } from 'react-test-renderer';
 
 import {
   collectRenderedTestIds,
@@ -41,6 +43,8 @@ const { resetTeamsDirectoryEngineForTests } =
 const { resetTeamActionClientForTests } =
   await import('@/sync/ops/teams/teamActionClient');
 const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
+const { publishHomeAccountChange } =
+  await import('@/sync/runtime/orchestration/homeAccountChange');
 
 const SUMMARY = bindHomeDomainActionHttpRequestV1(
   TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
@@ -177,5 +181,29 @@ describe('Team overview: Shared with this Team', () => {
     expect(
       ids(screen).filter((id) => id.startsWith('team-overview-shared:')),
     ).toEqual([]);
+  });
+
+  it('keeps the last-known invitation to share while a refresh runs', async () => {
+    const serverId = await addHome([
+      { kind: 'sessions', status: 'available', count: 0 },
+    ]);
+    const screen = await renderScreen(
+      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+    );
+    await vi.waitFor(() =>
+      expect(ids(screen)).toContain('team-overview-shared-empty'),
+    );
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [] },
+      respondAfter: new Promise<void>(() => {}),
+    });
+    await act(async () => {
+      publishHomeAccountChange(serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+    });
+    await vi.waitFor(() =>
+      expect(harness.requestsFor(SUMMARY.path)).toHaveLength(2),
+    );
+    // A refresh never blanks the section under its title (TH-VISUAL-ACCEPT-15).
+    expect(ids(screen)).toContain('team-overview-shared-empty');
   });
 });
