@@ -3442,7 +3442,7 @@ const artifactsBrowserTranslations = { ja: {
         },
         savedToday: ({ count }) => `今日 ${count} 件保存`,
         noMatch: ({ query }) => `「${query}」に一致するアーティファクトはありません`,
-        homeEmpty: '作成または共有したドキュメント、PDF、ファイルがここに表示されます',
+        homeEmpty: '作成または共有したドキュメント、画像、メモリがここに表示されます',
         showAllKinds: 'すべての種類を表示',
         storage: {
             meter: ({ used, limit }) => `${limit} 中 ${used}`,

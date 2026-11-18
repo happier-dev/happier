@@ -3478,7 +3478,7 @@ const artifactsBrowserTranslations = { pt: {
         },
         savedToday: ({ count }) => `${count} salvos hoje`,
         noMatch: ({ query }) => `Nenhum artefato corresponde a “${query}”`,
-        homeEmpty: 'Documentos, PDFs e arquivos que você cria ou compartilha aparecem aqui',
+        homeEmpty: 'Documentos, imagens e memórias que você cria ou compartilha aparecem aqui',
         showAllKinds: 'Mostrar todos os tipos',
         storage: {
             meter: ({ used, limit }) => `${used} de ${limit}`,

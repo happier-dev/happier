@@ -92,9 +92,11 @@ export function HappierStateLine(props: Readonly<{
   /**
    * `trailing` (default): the recovery on the line's end, the sentence wrapping beside it. `below`: a failure
    * that carries Details is a small block, so its actions form one row under the sentence, on its edge
-   * (owner 11-08), and the opened code follows them.
+   * (owner 11-08), and the opened code follows them. `after`: the way forward follows its sentence, on the
+   * same line while both fit and beneath the words when the sentence needs the row, never at the far end of a
+   * wide column (WAVE-ACCEPT-1117C: "Show all kinds" floated ~460 px from its sentence).
    */
-  actionPlacement?: 'trailing' | 'below';
+  actionPlacement?: 'trailing' | 'below' | 'after';
   /** The sentence's line height, so the glyph centres on its first line; absent, the line text's. */
   textLineHeightPx?: number;
   accessibilitySemantics?: 'status' | 'alert';
@@ -134,6 +136,7 @@ export function HappierStateLine(props: Readonly<{
       : { boxPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, gapPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap };
   const sentenceEdgePx = props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0;
   const actionsBelow = props.actionPlacement === 'below';
+  const actionsAfter = props.actionPlacement === 'after' && props.action != null;
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={{
       minHeight: menu ? HAPPIER_MENU_ROW_METRICS.minHeightPx : metrics.minHeightPx,
@@ -165,14 +168,21 @@ export function HappierStateLine(props: Readonly<{
         minWidth: 0,
         // The sentence takes the room the recovery leaves and wraps there; it moves the recovery beneath only
         // when that room is narrower than a readable sentence.
-        ...(props.action ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: menu ? LINE_TEXT_BASIS_PX : STATE_LINE_TEXT_BASIS_PX } : {}),
+        ...(props.action && !actionsAfter ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: menu ? LINE_TEXT_BASIS_PX : STATE_LINE_TEXT_BASIS_PX } : {}),
       }}>
         {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, height: props.textLineHeightPx ?? metrics.text.lineHeight, alignItems: 'center', justifyContent: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
-        <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
+        {actionsAfter ? (
+          // The words and their way forward wrap as one run: side by side while they fit, the action beneath on the
+          // sentence's edge once the sentence takes the row.
+          <View style={{ flexShrink: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: metrics.gapPx }}>
+            <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
+            <View style={{ flexShrink: 0 }}>{props.action}</View>
+          </View>
+        ) : <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>}
       </View>
       {/* Beside the sentence the growing sentence leaves it at the line's end; moved beneath, it starts on the
           sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
-      {props.action ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : { flexShrink: 0, marginLeft: sentenceEdgePx }}>{props.action}</View> : null}
+      {props.action && !actionsAfter ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : { flexShrink: 0, marginLeft: sentenceEdgePx }}>{props.action}</View> : null}
       {props.below ? <View style={{ flexBasis: '100%', paddingLeft: sentenceEdgePx }}>{props.below}</View> : null}
     </View>
   );

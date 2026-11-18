@@ -346,7 +346,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         },
         savedToday: ({ count }) => `${count} saved today`,
         noMatch: ({ query }) => `No artifacts match “${query}”`,
-        homeEmpty: 'Documents, PDFs and files you create or share appear here',
+        homeEmpty: 'Documents, images and memories you create or share appear here',
         showAllKinds: 'Show all kinds',
         storage: {
             meter: ({ used, limit }) => `${used} of ${limit}`,

@@ -3484,7 +3484,7 @@ const artifactsBrowserTranslations = { ca: {
         },
         savedToday: ({ count }) => `${count} desats avui`,
         noMatch: ({ query }) => `Cap artefacte coincideix amb “${query}”`,
-        homeEmpty: 'Aquí apareixen els documents, PDF i fitxers que crees o comparteixes',
+        homeEmpty: 'Aquí apareixen els documents, imatges i memòries que crees o comparteixes',
         showAllKinds: 'Mostra tots els tipus',
         storage: {
             meter: ({ used, limit }) => `${used} de ${limit}`,

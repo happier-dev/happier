@@ -172,8 +172,8 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
 
     if (props.layout === 'line') {
         // In a list line the ways forward are quiet inline links, never buttons: the rows around it
-        // stay the content. The shared line keeps the action on the trailing edge beside its sentence;
-        // when the column cannot keep the sentence readable, the action wraps beneath on its edge.
+        // stay the content. On a page or in a list they follow their sentence (beneath it once the sentence
+        // needs the row), never at the far end of a wide column; a menu or catalog row keeps them on its end.
         const lineLinks = [props.primaryAction, props.secondaryAction].filter(
             (entry): entry is EmptyStatePrimaryAction => entry !== undefined,
         );
@@ -204,6 +204,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 testID={props.testID}
                 icon={lineGlyph}
                 action={lineAction ?? undefined}
+                actionPlacement={props.lineDensity === undefined ? 'after' : undefined}
                 density={props.lineDensity}
             >
                 <Text testID={props.titleTestID} style={stylesheet.lineText}>

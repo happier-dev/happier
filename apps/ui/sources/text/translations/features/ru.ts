@@ -3488,7 +3488,7 @@ const artifactsBrowserTranslations = { ru: {
         },
         savedToday: ({ count }) => `Сегодня сохранено: ${count}`,
         noMatch: ({ query }) => `Нет артефактов по запросу «${query}»`,
-        homeEmpty: 'Здесь появляются документы, PDF и файлы, которые вы создаёте или которыми делитесь',
+        homeEmpty: 'Здесь появляются документы, изображения и память, которые вы создаёте или которыми делитесь',
         showAllKinds: 'Показать все типы',
         storage: {
             meter: ({ used, limit }) => `${used} из ${limit}`,

@@ -3219,6 +3219,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // is a column of its own, which draws its whole edge (`DetailsPaneBody`).
   const pageColumnEdgePx = useHappierColumnEdgePx();
   const detailColumnEdgePx = pushedPage ? pageColumnEdgePx : 0;
+  // A standalone page table has the page sheet edge even when it recomposes as a list.
+  // A nested sheet already owns that edge (for example the configurator's size table).
+  const stageOnSheetEdge = pageSections || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null);
 
   // The open item stays marked in the list or on its card while its detail is open anywhere: in the split, pushed,
   // in the host details pane, or wherever the caller shows it (`detail: 'none'`).
@@ -3308,10 +3311,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <PageColumn maxWidthPx={pageColumnMaxWidthPx}>
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
-            // A standalone page table has the page sheet edge even when it recomposes as a list.
-            // A nested sheet already owns that edge (for example the configurator's size table).
-            pageSections || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null)
-              ? { marginHorizontal: pageSheetInsetPx } : null,
+            stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
             // A table among a page's sections is a sheet with an edge; a Collection that IS the page's body (it
             // fills its region under the page header, lab `merged-list`) lies flat and full-bleed.
             pageScroll && composition === 'table' && (hasRows || loadingFirstWindow) ? {
@@ -3404,6 +3404,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                         {...(ruledInsetPx === null ? {} : { ruledInsetPx })}
                         {...(props.testID === undefined ? {} : { testID: props.testID })}
                       />
+                    ) : stageOnSheetEdge ? (
+                      // The stage already stands on the sheet edge, so a line in the empty slot steps only the rest of
+                      // the way to the page's text edge (WAVE-ACCEPT-1117C: it sat a whole text inset further in).
+                      <HappierColumnEdgeContext.Provider value={pageColumnEdgePx + pageSheetInsetPx}>{props.empty}</HappierColumnEdgeContext.Provider>
                     ) : props.empty}
                     footer={(pageSections || props.footer === undefined) && footerLine === null && summaryRows === null ? undefined : (
                       <>

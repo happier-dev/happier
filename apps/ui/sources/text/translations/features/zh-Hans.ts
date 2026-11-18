@@ -3387,7 +3387,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
         },
         savedToday: ({ count }) => `今天保存了 ${count} 个`,
         noMatch: ({ query }) => `没有与“${query}”匹配的工件`,
-        homeEmpty: '你创建或共享的文档、PDF 和文件会显示在这里',
+        homeEmpty: '你创建或共享的文档、图片和记忆会显示在这里',
         showAllKinds: '显示所有类型',
         storage: {
             meter: ({ used, limit }) => `${used} / ${limit}`,

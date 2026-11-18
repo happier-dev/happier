@@ -3388,7 +3388,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
         },
         savedToday: ({ count }) => `今天儲存了 ${count} 個`,
         noMatch: ({ query }) => `沒有符合「${query}」的成品`,
-        homeEmpty: '你建立或分享的文件、PDF 與檔案會顯示在這裡',
+        homeEmpty: '你建立或分享的文件、圖片與記憶會顯示在這裡',
         showAllKinds: '顯示所有類型',
         storage: {
             meter: ({ used, limit }) => `${used} / ${limit}`,
