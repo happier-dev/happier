@@ -13,7 +13,7 @@ import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creat
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ManagedMachineFullV1, ManagedMachineV1, ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyPurposeV1Schema, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { randomUUID } from 'node:crypto';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -523,10 +523,23 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     && request.machine.retention.effect === 'delete') ? 'machines.managed.delete' : 'machines.managed.power.set';
             const finiteRequestId = request.purpose.kind === 'accepted-input-start' && request.purpose.target.origin.kind === 'finite-command'
                 ? request.purpose.target.origin.actionRequestId : undefined;
+            const finiteTarget = finiteRequestId !== undefined && request.purpose.kind === 'accepted-input-start'
+                ? request.purpose.target : undefined;
             const requestId = finiteRequestId ?? randomUUID();
             const schedulerSignal = finiteRequestId === undefined ? request.signal : undefined;
             let completion: Promise<ActionExecuteResult> | undefined;
             const observed = await params.observeActionExecution({ actionId, input: { managedId: request.machine.id, purpose: request.purpose },
+                ...(finiteTarget ? { joinEarlierActive: (input: unknown) => {
+                    if (!input || typeof input !== 'object' || Reflect.get(input, 'managedId') !== request.machine.id) return false;
+                    const purpose = ManagedPolicyPurposeV1Schema.safeParse(Reflect.get(input, 'purpose'));
+                    if (!purpose.success || purpose.data.kind !== 'accepted-input-start'
+                        || purpose.data.target.origin.kind !== 'finite-command') return false;
+                    const target = purpose.data.target;
+                    return target.homeId === finiteTarget.homeId && target.managedId === finiteTarget.managedId
+                        && target.enrolledMachineId === finiteTarget.enrolledMachineId
+                        && target.controller?.machineId === finiteTarget.controller?.machineId
+                        && target.controller?.installationId === finiteTarget.controller?.installationId;
+                } } : {}),
                 ...(request.response ? { response: request.response } : {}),
                 actionRequestId: requestId, execute: operation => {
                     operation.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: request.machine.id } });
@@ -543,6 +556,12 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         if (lifetime.aborted) cancel();
                         let retained: Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof readRequesterAccountActionContext>>['retainForOperation']>>> | undefined;
                         try {
+                            if (finiteTarget && operation.earlierActiveResult) {
+                                return await waitForObservation(operation.earlierActiveResult, lifetime);
+                            }
+                            if (finiteTarget && request.machine.intentRevision !== finiteTarget.expectedIntentRevision) {
+                                return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+                            }
                             const requester = finiteRequestId === undefined ? null : readRequesterAccountActionContext(request.actionOrigin);
                             retained = await requester?.retainForOperation?.(lifetime);
                             const actionOrigin = retained?.authorization ?? request.actionOrigin;

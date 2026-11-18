@@ -11489,6 +11489,14 @@ The operation owns execution cancellation after admission. Scheduler-owned
 wakes retain their scheduler lifetime, and explicit operation cancellation
 continues to stop admitted work.
 
+Concurrent finite Sends for the same managed Machine join its active controller
+wake operation before native preparation or power approval. Each admitted root
+retains its own operation receipt and observes that shared result. A late root
+may join while the wake advances the Machine intent revision; without an active
+wake, the existing revision check still refuses stale input before native work.
+Cancelling a follower stops its observation; explicit cancellation of the shared
+operation still stops that operation. Different Machines remain independent.
+
 Effective configuration travels through admitted Action fields. The canonical
 full `modelSelection` preserves Team source and binding revision; it cannot be
 combined with the legacy flat model aliases. Model grants are enforced before

@@ -244,6 +244,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     /** Receiving-host metadata for a typed operation arm, never public input. */
     operation?: ActionOperationDeclarationV1;
     response?: 'admission';
+    joinEarlierActive?: Parameters<typeof runner.observe>[0]['joinEarlierActive'];
     workflowContinuationResult?: ManagedWorkflowContinuationResultPort;
     actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
     sessionId?: string;
@@ -370,6 +371,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       actionId: request.actionId,
       ...(request.workflowContinuationResult ? { readWorkflowContinuationResult: request.workflowContinuationResult.read } : {}),
       ...(request.response ? { response: request.response } : {}),
+      ...(request.joinEarlierActive ? { joinEarlierActive: request.joinEarlierActive } : {}),
       ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { action: { actionId: spec.id,
         title: spec.title, operation: request.operation ?? spec.operation,
         ...(request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? {
@@ -427,7 +429,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
         ? 'supported'
         : 'unsupported',
-      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => {
+      execute: async ({ actionRequestId, resumeActionRequest, signal, earlierActiveResult, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => {
         const execute = resumeActionRequest && retainedTeardown
           ? retainedTeardown.resume ?? retainedTeardown.execute : request.execute;
         const result = await execute({
@@ -437,6 +439,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
             : actionRequestId ? { actionRequestId } : {}),
           ...(resumeActionRequest ? { resumeActionRequest } : {}),
           signal,
+          ...(earlierActiveResult ? { earlierActiveResult } : {}),
           operationProgress: { update: updateProgress },
           operationOwnerUpdate: { update: publishOwnerUpdate },
           operationCancellation: { onRequest: onCancellationRequested },

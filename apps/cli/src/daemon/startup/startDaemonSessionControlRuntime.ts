@@ -11693,7 +11693,6 @@ export async function startDaemonSessionControlRuntime(
                       || !sameStrictJsonValue(origin.binding, admitted.authorization.binding)
                       || request.machine.id !== target.managedId || request.machine.homeId !== target.homeId
                       || request.machine.enrolledMachineId !== target.enrolledMachineId
-                      || request.machine.intentRevision !== target.expectedIntentRevision
                       || !sameStrictJsonValue(request.machine.controller, target.controller)
                       || !await admitted.isCurrent()) return refused;
                     const release = admitted.retain();

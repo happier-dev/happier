@@ -21,6 +21,8 @@ export type HostActionOperationExecute = (context: Readonly<{
   actionRequestId?: string;
   resumeActionRequest?: true;
   signal: AbortSignal;
+  /** Earlier compatible invocation selected by this host's operation owner. */
+  earlierActiveResult?: Promise<ActionExecuteResult>;
   requesterWorkAttributionV1?: import('@happier-dev/protocol/machines/requesterWorkAttributionV1').RequesterWorkAttributionV1;
   operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
   operationOwnerUpdate: Readonly<{ update: (update: ActionOperationOwnerUpdate) => void }>;

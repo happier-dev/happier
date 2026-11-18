@@ -1045,7 +1045,7 @@ describe('daemon managed Machine Action factory', () => {
         expect(nativeEffects).toEqual([]);
     });
     it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'reconnected-wake', 'cleanup-native-refused',
-        'finite-disconnected-wake', 'finite-cancelled-wake'] as const)(
+        'finite-disconnected-wake', 'finite-cancelled-wake', 'finite-concurrent-wake'] as const)(
         'resumes %s through the remote app replay adapter and actual live operation', async purpose => {
         const wake = !purpose.startsWith('cleanup');
         const denied = purpose === 'denied-wake';
@@ -1053,6 +1053,11 @@ describe('daemon managed Machine Action factory', () => {
         const reconnected = purpose === 'reconnected-wake';
         const finite = purpose.startsWith('finite-');
         const finiteCancelled = purpose === 'finite-cancelled-wake';
+        const concurrent = purpose === 'finite-concurrent-wake';
+        let nativeStarted!: () => void;
+        const nativePowerStarted = new Promise<void>(resolve => { nativeStarted = resolve; });
+        let releasePower!: () => void;
+        const nativePowerRelease = new Promise<void>(resolve => { releasePower = resolve; });
         const nativeRefused = purpose === 'cleanup-native-refused';
         const nativeDetails = { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } as const;
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
@@ -1076,7 +1081,10 @@ describe('daemon managed Machine Action factory', () => {
             nativeRoleResults: wake ? { get inspect() { return { observedAt: Date.now(), availability: 'present',
                 power: effects.includes('power') ? 'running' : 'stopped', storage: 'retained' }; } }
                 : nativeRefused ? { destroy: { kind: 'refused', code: 'provider_unavailable', nativeCause: nativeDetails.nativeCause } } : {},
-            onNativeRole: role => { effects.push(role); } });
+            onNativeRole: async role => {
+                effects.push(role);
+                if (concurrent && role === 'power') { nativeStarted(); await nativePowerRelease; }
+            } });
         const controller = { machineId: 'controller', installationId: 'installation' };
         let machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
             controller,
@@ -1091,11 +1099,17 @@ describe('daemon managed Machine Action factory', () => {
             origin: finite ? { kind: 'finite-command', actionRequestId: 'original-finite' }
                 : { kind: 'session-input', session: { homeId: machine.homeId, sessionId: 'retained-session' },
                 pendingRequestId: 'original-input', requestedAt: Date.now() } });
+        const otherMachine = ManagedMachineV1Schema.parse({ ...machine, id: 'other-managed', enrolledMachineId: 'other-guest',
+            resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { guest: 'other' } } });
+        let otherApprovalWaiting!: () => void;
+        const otherApprovalHeld = new Promise<void>(resolve => { otherApprovalWaiting = resolve; });
         let rearmed = false;
         let failedActivation: ReturnType<typeof PendingActivationAuthorizationV1Schema.parse> | undefined;
         type ArtifactWire = { id: string; header: string; body: string; dataEncryptionKey: string;
             headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number; provenance?: unknown };
         let artifact: ArtifactWire | undefined;
+        const approvalArtifacts = new Map<string, ArtifactWire>();
+        let approveConcurrentArtifacts: (() => void) | undefined;
         const retirementArtifacts = new Map<string, ArtifactWire>();
         const ensureRetirementArtifacts = () => {
             if (retirementArtifacts.size > 0 || !artifact) return;
@@ -1130,6 +1144,7 @@ describe('daemon managed Machine Action factory', () => {
         const policyFailures: unknown[] = [];
         onTestFailed(() => console.error('Managed policy approval boundary', JSON.stringify({
             controllerPaths, unexpectedHomeReads, policyFailures, effects, artifactPresent: Boolean(artifact),
+            approvalArtifactCount: approvalArtifacts.size,
             controllerDiagnostics: controllerDiagnostics.mock.calls.filter(([message]) => message === '[MANAGED MACHINE] Controller request failed'),
             executor: artifact ? resolveApprovalExecutor(storedApproval()) : null,
             waiters: artifact ? getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id) : null,
@@ -1146,12 +1161,21 @@ describe('daemon managed Machine Action factory', () => {
             if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({ v: 1,
                 encryptionMode: 'plain', nativeEmail: null,
                 password: { status: 'not_enrolled', revision: null } }) };
-            if (artifact && path === `/v1/artifacts/${artifact.id}`) {
+            const approvalArtifact = [...approvalArtifacts.values()].find(row => path === `/v1/artifacts/${row.id}`);
+            if (approvalArtifact) {
                 // Creation also re-reads the open Artifact before it returns.
                 // Only the coordinator's initial read follows waiter registration.
                 if (storedApproval().status === 'open'
-                    && getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id) === 1) waiting();
-                return { status: 200, data: { ...artifact, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' } };
+                    && getSharedBlockingApprovalCoordinator().getLiveWaiterCount(approvalArtifact.id) === 1) waiting();
+                if (concurrent && getSharedBlockingApprovalCoordinator().getLiveWaiterCount(approvalArtifact.id) === 1) {
+                    const content = decodePlainArtifactStoredContent(approvalArtifact.body);
+                    const request = StoredApprovalRequestSchema.parse(JSON.parse(String(content && typeof content === 'object'
+                        ? Reflect.get(content, 'body') : null)));
+                    if (request.actionArgs && typeof request.actionArgs === 'object'
+                        && Reflect.get(request.actionArgs, 'managedId') === otherMachine.id) otherApprovalWaiting();
+                }
+                approveConcurrentArtifacts?.();
+                return { status: 200, data: { ...approvalArtifact, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' } };
             }
             if (path === '/v1/artifacts') {
                 ensureRetirementArtifacts();
@@ -1186,23 +1210,28 @@ describe('daemon managed Machine Action factory', () => {
                         encryptionMode: 'plain', publicAudience: 'none' }, recipientCensus: null };
                 }) } };
             }
-            if (path === '/v1/artifacts' || artifact && path === `/v1/artifacts/${artifact.id}`) {
+            const approvalArtifact = [...approvalArtifacts.values()].find(row => path === `/v1/artifacts/${row.id}`);
+            if (path === '/v1/artifacts' || approvalArtifact) {
                 const record = body as { id?: string; header: string; body: string; dataEncryptionKey?: string;
                     expectedHeaderVersion?: number; expectedBodyVersion?: number; provenance?: unknown };
                 if (path === '/v1/artifacts') {
                     if (!record.id || !record.dataEncryptionKey) throw new Error('Missing canonical approval Artifact fields');
-                    artifact = { id: record.id, header: record.header, body: record.body, dataEncryptionKey: record.dataEncryptionKey,
+                    const created = { id: record.id, header: record.header, body: record.body, dataEncryptionKey: record.dataEncryptionKey,
                         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, provenance: record.provenance };
+                    approvalArtifacts.set(created.id, created);
+                    artifact ??= created;
                     ensureRetirementArtifacts();
                     return { status: 200, data: { id: record.id, headerVersion: 1, bodyVersion: 1 } };
                 }
-                if (!artifact) throw new Error('No cleanup Artifact to update');
-                expect(record.expectedHeaderVersion).toBe(artifact.headerVersion);
-                expect(record.expectedBodyVersion).toBe(artifact.bodyVersion);
-                artifact = { ...artifact, header: record.header, body: record.body, provenance: record.provenance,
-                    headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion + 1, seq: artifact.seq + 1, updatedAt: artifact.updatedAt + 1 };
-                publishApprovalArtifactUpdate(artifact);
-                return { status: 200, data: { success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
+                if (!approvalArtifact) throw new Error('No cleanup Artifact to update');
+                expect(record.expectedHeaderVersion).toBe(approvalArtifact.headerVersion);
+                expect(record.expectedBodyVersion).toBe(approvalArtifact.bodyVersion);
+                const updated = { ...approvalArtifact, header: record.header, body: record.body, provenance: record.provenance,
+                    headerVersion: approvalArtifact.headerVersion + 1, bodyVersion: approvalArtifact.bodyVersion + 1, seq: approvalArtifact.seq + 1, updatedAt: approvalArtifact.updatedAt + 1 };
+                approvalArtifacts.set(updated.id, updated);
+                if (artifact?.id === updated.id) artifact = updated;
+                publishApprovalArtifactUpdate(updated);
+                return { status: 200, data: { success: true, headerVersion: updated.headerVersion, bodyVersion: updated.bodyVersion } };
             }
             const retirementEntry = [...retirementArtifacts.entries()].find(([id]) => path === `/v1/artifacts/${id}`);
             if (retirementEntry) {
@@ -1226,9 +1255,11 @@ describe('daemon managed Machine Action factory', () => {
                 return { status: 200, data: { ok: true, didFail: true } };
             }
             if (path.endsWith('/policies')) return { status: 200, data: { machines: [machine], targets: rearmed ? [target] : [] } };
-            if (path.endsWith('/actions/get')) return { status: 200, data: machine };
+            const requestedMachine = concurrent && body && typeof body === 'object'
+                && Reflect.get(body, 'managedId') === otherMachine.id ? otherMachine : machine;
+            if (path.endsWith('/actions/get')) return { status: 200, data: requestedMachine };
             if (path.endsWith('/prepare-policy')) return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
-                machine: wake ? { ...machine, desired: 'start' } : machine,
+                machine: wake ? { ...requestedMachine, desired: 'start' } : requestedMachine,
                 requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
             }) };
             if (path.endsWith('/admit-policy')) machine = ManagedMachineV1Schema.parse({ ...machine, desired: wake ? 'start' : 'delete', intentRevision: 2 });
@@ -1241,7 +1272,14 @@ describe('daemon managed Machine Action factory', () => {
         const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: 'controller', serverId: configuration.activeServerId,
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials: ownCredentials }), isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }) });
-        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'cleanup-operation' });
+        let operationSequence = 0;
+        const operationIds: string[] = [];
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
+            generateOperationId: () => {
+                const id = operationSequence++ === 0 ? 'cleanup-operation' : `concurrent-operation-${operationSequence}`;
+                operationIds.push(id);
+                return id;
+            } });
         const executorParams = { sessionId: 'cleanup', token, credentials: ownCredentials, serverId: configuration.activeServerId,
             serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, mode: 'plain' as const, ctx: null,
             pluginActionExecutionOwner: 'current_process' as const, isApprovalExecutionOriginCurrent: currentness,
@@ -1255,7 +1293,7 @@ describe('daemon managed Machine Action factory', () => {
                 const observed = await operations.observeExecution(request);
                 // The original reply socket can retire after host admission,
                 // before even the admission acknowledgement gets back to Home.
-                if (finite) rpc.onSocketDisconnect();
+                if (finite && !concurrent) rpc.onSocketDisconnect();
                 return observed;
             },
             waitForActionOperationCompletion: (...args) => operations.runner.waitForCompletion(...args),
@@ -1277,6 +1315,7 @@ describe('daemon managed Machine Action factory', () => {
         const app = createActionExecutor({ ...createCliActionDeps(executorParams),
             isApprovalExecutionOriginCurrent: currentness });
         let execution: Promise<ActionExecuteResult> = Promise.resolve({ ok: true, result: null });
+        let submitConcurrent: ((root: string, separateMachine?: true) => Promise<{ operationId: string; terminal: Promise<unknown> }>) | undefined;
         const runtime = wake && !finite ? createDaemonManagedMachinePolicyRuntime({
             readCensus: signal => readManagedMachinePolicyCensus({ homeId: machine.homeId, controller,
                 custodianAccountId: 'account', privateKey: signing.secretKey, token, serverUrl, signal }),
@@ -1291,8 +1330,27 @@ describe('daemon managed Machine Action factory', () => {
                 machineRuntimeDemand: 'required',
                 requestId: 'original-finite', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'session', sessionId: 'retained-session' },
             } });
-            registerManagedFiniteWake(rpc, { readCurrent: async () => machine, executePolicy: managed.executePolicy,
+            registerManagedFiniteWake(rpc, { readCurrent: async id => id === otherMachine.id ? otherMachine : machine, executePolicy: managed.executePolicy,
                 observePolicy: managed.observePolicy });
+            submitConcurrent = async (root, separateMachine) => {
+                const current = separateMachine ? otherMachine : machine;
+                const currentTarget = { ...target, managedId: current.id, enrolledMachineId: current.enrolledMachineId,
+                    expectedIntentRevision: root === 'late' || root === 'after-completion'
+                        ? target.expectedIntentRevision : current.intentRevision,
+                    origin: { kind: 'finite-command' as const, actionRequestId: root } };
+                const origin = { ...actionOrigin, binding: { ...actionOrigin.binding, requestId: root, machineId: current.enrolledMachineId,
+                    target: { kind: 'session' as const, sessionId: `session-${root}` } } };
+                const admitted = await rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`,
+                    params: { target: currentTarget, actionOrigin: origin }, authorization: ACTION_API_SERVER_ORIGIN });
+                expect(admitted).toMatchObject({ ok: true, result: { status: 'accepted' } });
+                if (!admitted || typeof admitted !== 'object' || !('result' in admitted) || !admitted.result
+                    || typeof admitted.result !== 'object' || !('operationId' in admitted.result)
+                    || typeof admitted.result.operationId !== 'string') throw new Error('Missing concurrent receipt');
+                const operationId = admitted.result.operationId;
+                return { operationId, terminal: rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`,
+                    params: { target: currentTarget, actionOrigin: origin, observation: { operationId } },
+                    authorization: ACTION_API_SERVER_ORIGIN }) };
+            };
             const submitted = rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { target, actionOrigin },
                 authorization: ACTION_API_SERVER_ORIGIN });
             // Admission is returned while the real approval remains held. Native
@@ -1364,6 +1422,74 @@ describe('daemon managed Machine Action factory', () => {
                 rearmed = false;
                 runtime!.notifyChanged();
             }
+            if (concurrent) {
+                if (!submitConcurrent) throw new Error('Missing finite RPC submitter');
+                const submit = submitConcurrent;
+                // A separate managed Machine must own its own Ask, even while
+                // this controller already has a compatible active power Action.
+                const separate = await submit('separate-machine', true);
+                await otherApprovalHeld;
+                await operations.handlers.cancel({ operationId: separate.operationId });
+                expect(await separate.terminal).toMatchObject({ ok: false, errorCode: 'cancelled' });
+                expect(effects).toEqual([]);
+                const followers = await Promise.all(['second', 'third', 'cancelled'].map(root => submit(root)));
+                expect(new Set(['cleanup-operation', ...followers.map(item => item.operationId)]).size).toBe(4);
+                await operations.handlers.cancel({ operationId: followers[2]!.operationId });
+                const replaying = new Set<string>();
+                const replays: Promise<unknown>[] = [];
+                approveConcurrentArtifacts = () => {
+                    for (const row of approvalArtifacts.values()) {
+                        if (replaying.has(row.id) || getSharedBlockingApprovalCoordinator().getLiveWaiterCount(row.id) === 0) continue;
+                        const content = decodePlainArtifactStoredContent(row.body);
+                        const request = StoredApprovalRequestSchema.parse(JSON.parse(String(content && typeof content === 'object'
+                            ? Reflect.get(content, 'body') : null)));
+                        if (request.v !== 2 || request.status !== 'open') continue;
+                        replaying.add(row.id);
+                        replays.push(replayLiveCliApproval({ artifactId: row.id, request, decision: 'approve',
+                            context: decisionContext, account: approvingAccount }));
+                    }
+                };
+                approveConcurrentArtifacts();
+                await nativePowerStarted;
+                // Home captured this Session's wake target before Start advanced
+                // the revision; its RPC arrives while native Start is in flight.
+                const late = await submit('late');
+                releasePower();
+                const outcomes = await Promise.all([execution, ...followers.map(item => item.terminal), late.terminal]);
+                const approvalTargets = [...approvalArtifacts.values()].map(row => {
+                    const content = decodePlainArtifactStoredContent(row.body);
+                    const request = StoredApprovalRequestSchema.parse(JSON.parse(String(content && typeof content === 'object'
+                        ? Reflect.get(content, 'body') : null)));
+                    return request.actionArgs && typeof request.actionArgs === 'object' ? Reflect.get(request.actionArgs, 'managedId') : null;
+                });
+                expect(approvalTargets.filter(id => id === machine.id)).toHaveLength(1);
+                expect(approvalTargets.filter(id => id === otherMachine.id)).toHaveLength(1);
+                expect(approvalArtifacts.size).toBe(2);
+                expect(outcomes).toEqual([expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true }),
+                    expect.objectContaining({ ok: true }), expect.objectContaining({ ok: false, errorCode: 'cancelled' }),
+                    expect.objectContaining({ ok: true })]);
+                await Promise.all(replays);
+                expect(effects).toEqual(['power', 'bootstrap']);
+                expect(await operations.handlers.getV2({ operationId: separate.operationId, waitForTerminal: true })).toMatchObject({
+                    kind: 'found', operation: { requestId: 'separate-machine', state: 'cancelled',
+                        domainRef: { kind: 'managedMachine', id: otherMachine.id } } });
+                for (const [index, operationId] of ['cleanup-operation', ...followers.map(item => item.operationId), late.operationId].entries()) {
+                    expect(await operations.handlers.getV2({ operationId, waitForTerminal: true })).toMatchObject({ kind: 'found',
+                        operation: { operationId, requestId: ['original-finite', 'second', 'third', 'cancelled', 'late'][index],
+                            state: index === 3 ? 'cancelled' : 'succeeded',
+                            domainRef: { kind: 'managedMachine', id: machine.id } } });
+                }
+                // A completed receipt is no longer an executing wake. The same
+                // stale target must fail visibly instead of replaying its effect.
+                const completed = await submit('after-completion');
+                expect(await completed.terminal).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+                expect(await operations.handlers.getV2({ operationId: completed.operationId, waitForTerminal: true })).toMatchObject({
+                    kind: 'found', operation: { requestId: 'after-completion', state: 'failed',
+                        error: { errorCode: 'admission_unavailable' } } });
+                expect(approvalArtifacts.size).toBe(2);
+                expect(effects).toEqual(['power', 'bootstrap']);
+                return;
+            }
             const replay = reconnected ? undefined : retired || finiteCancelled ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
                 : denied ? await app.execute('approval.request.decide', { artifactId: artifact.id, decision: 'reject' }, decisionContext)
                     : await replayLiveCliApproval({ artifactId: artifact.id, request: asked, decision: 'approve',
@@ -1388,7 +1514,8 @@ describe('daemon managed Machine Action factory', () => {
                 .toMatchObject({ kind: 'found', operation: { state: retired || reconnected || finiteCancelled ? 'cancelled' : denied || nativeRefused ? 'failed' : 'succeeded',
                     ...(nativeRefused ? { error: { errorCode: 'provider_unavailable', details: nativeDetails } } : {}) } });
         } finally {
-            await operations.handlers.cancel({ operationId: 'cleanup-operation' });
+            releasePower();
+            for (const operationId of operationIds) await operations.handlers.cancel({ operationId });
             await settled;
             await runtime?.stop();
         }

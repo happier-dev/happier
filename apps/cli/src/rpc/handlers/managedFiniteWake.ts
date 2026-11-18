@@ -20,7 +20,7 @@ export function registerManagedFiniteWake(rpc: RpcHandlerRegistrar, input: Reado
             ? input.observePolicy({ target, actionOrigin, ...request.data.observation, signal: context.signal }) : refused;
         const machine = await input.readCurrent(target.managedId, context.signal);
         if (!machine || !machine.controller || !target.controller || context.signal.aborted || machine.homeId !== target.homeId
-            || machine.enrolledMachineId !== target.enrolledMachineId || machine.intentRevision !== target.expectedIntentRevision
+            || machine.enrolledMachineId !== target.enrolledMachineId
             || machine.controller.machineId !== target.controller.machineId
             || machine.controller.installationId !== target.controller.installationId) return refused;
         return input.executePolicy({ machine, purpose: { kind: 'accepted-input-start', target }, actionOrigin, signal: context.signal,

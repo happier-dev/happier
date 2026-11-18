@@ -57,6 +57,7 @@ import type {
 
 type ActiveInvocation = Readonly<{
   actionId: string;
+  input: unknown;
   scope: ActionOperationScope;
   controller: AbortController;
   cancellation: 'unsupported' | 'supported';
@@ -142,6 +143,8 @@ export function createActionOperationRunner(deps: Readonly<{
     rejoinPendingApproval?: true;
     approvedActionReplay?: import('@happier-dev/protocol/actions').ActionExecutorContext['approvedActionReplay'];
     input?: unknown;
+    /** Host domain correspondence only; every root retains its own receipt. */
+    joinEarlierActive?: (input: unknown) => boolean;
     /** The admitting owner's public refusal projection also serves retained replies. */
     failureResult?: Readonly<{
       project: (failure: Extract<ActionExecuteResult, { ok: false }>) => unknown;
@@ -159,6 +162,7 @@ export function createActionOperationRunner(deps: Readonly<{
       actionRequestId?: string;
       resumeActionRequest?: true;
       signal: AbortSignal;
+      earlierActiveResult?: Promise<ActionExecuteResult>;
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       updateProgress: (update: ActionOperationProgressUpdate) => void;
       publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
@@ -247,6 +251,13 @@ export function createActionOperationRunner(deps: Readonly<{
       cancellation: 'unsupported' | 'supported',
       resumeActionRequest = false,
     ): Promise<ActionExecuteResult> => {
+      // Select before scheduling this invocation. Only preceding active work
+      // can be joined, so simultaneous roots cannot form a cycle.
+      const joinEarlierActive = request.joinEarlierActive;
+      const earlier = joinEarlierActive ? [...active.values()].find(candidate =>
+        candidate.actionId === action.actionId && candidate.scope.accountId === request.scope.accountId
+        && candidate.scope.machineId === request.scope.machineId && !candidate.controller.signal.aborted
+        && joinEarlierActive(candidate.input)) : undefined;
       const controller = new AbortController();
       const retainedReview = createActionOperationSetupReview({ signal: controller.signal,
         publish: details => { deps.store.updateSetupReview(operationId, details); } });
@@ -316,6 +327,7 @@ export function createActionOperationRunner(deps: Readonly<{
             actionRequestId: request.requestId ?? operationId,
             ...(resumeActionRequest ? { resumeActionRequest: true as const } : {}),
             signal: controller.signal,
+            ...(earlier ? { earlierActiveResult: earlier.result } : {}),
             updateProgress,
             publishOwnerUpdate,
             onCancellationRequested,
@@ -604,7 +616,7 @@ export function createActionOperationRunner(deps: Readonly<{
       });
       // Retain both observations on one invocation. Each spawn caller opts in
       // independently; the receipt never changes the native/input lifecycle.
-      active.set(operationId, { actionId: action.actionId, scope: request.scope, controller, get cancellation() { return cancellation; }, result, acceptance,
+      active.set(operationId, { actionId: action.actionId, input: request.input, scope: request.scope, controller, get cancellation() { return cancellation; }, result, acceptance,
         ...(action.actionId === 'projects.service.relocate' ? { serviceMoveStart: { claimed: false } } : {}),
         resumeSetupReview: retainedReview.resume,
         refreshSetupReview: retainedReview.refresh,
