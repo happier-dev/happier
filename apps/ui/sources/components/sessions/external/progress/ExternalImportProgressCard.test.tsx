@@ -390,7 +390,7 @@ describe('ExternalImportProgressCard', () => {
         }));
 
         // Paused work keeps its reported phase visible and asks the reader to resume.
-        expect(screen.getTextContent()).toContain('settings.machineSetupTaskWaitingForInput');
+        expect(screen.getTextContent()).toContain('inbox.needsYou');
         expect(screen.findByTestId('external-session-operation-step-row-importing')).not.toBeNull();
         expect(onResume).not.toHaveBeenCalled();
         expect(onCancel).not.toHaveBeenCalled();
