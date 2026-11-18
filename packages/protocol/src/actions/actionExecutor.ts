@@ -15,7 +15,7 @@ import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.j
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
