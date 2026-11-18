@@ -7,7 +7,7 @@ import {
   buildQualifiedPluginContributionKey,
   parseQualifiedPluginContributionKey,
 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 
 import {
   type ManagedProvisionerSelection,
@@ -319,7 +319,7 @@ function MachineIsolationKindStep(
         {catalog.reading ? (
           <MachineProvisionerSectionsSkeleton compact testID="machine-isolation-add.loading" />
         ) : (
-          catalog.scopeState
+          <SheetBodyEdge>{catalog.scopeState}</SheetBodyEdge>
         )}
       </>
     );
@@ -348,7 +348,7 @@ function MachineIsolationKindStep(
   return (
     <>
       {lead}
-      {catalog.scopeState}
+      <SheetBodyEdge>{catalog.scopeState}</SheetBodyEdge>
       {catalog.approval.approvalId ? (
         <AttentionBanner
           testID="machine-isolation-add.approval"
@@ -372,6 +372,14 @@ function MachineIsolationKindStep(
       ) : null}
     </>
   );
+}
+
+/**
+ * The sheet draws its own content edge (the lead sentence stands on it), so the catalog's page line (no kinds, no
+ * online controller, a failed read) stands on that edge instead of adding a loose page line's inset of its own.
+ */
+function SheetBodyEdge(props: Readonly<{ children: React.ReactNode }>) {
+  return <HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider>;
 }
 
 function PickedMark() {

@@ -8916,6 +8916,7 @@ const machineDetailPageTranslations = { ca: translated({
                     kindStatement: "Quin tipus d’entorn aïllat?",
                     kindDetail: ({ machine }: { machine: string }) => `El que triïs instal·la el que necessita a ${machine}, amb el teu permís.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `No s’han pogut llegir els tipus d’entorn aïllat que pot fer servir ${machine}.`,
+                    noKinds: ({ machine }: { machine: string }) => `Encara no hi ha res a ${machine} que pugui crear un entorn aïllat.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Es configura a ${machine}`,
                     notHere: "No en aquesta màquina",
                     footerNote: "Les instal·lacions i els inicis de sessió et pregunten primer. No es crea res fins que comença la feina.",

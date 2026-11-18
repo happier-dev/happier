@@ -8809,6 +8809,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     kindStatement: "哪种沙盒？",
                     kindDetail: ({ machine }: { machine: string }) => `你选的类型会在你同意后，在 ${machine} 上安装所需内容。`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `无法读取 ${machine} 可用的沙盒类型。`,
+                    noKinds: ({ machine }: { machine: string }) => `目前 ${machine} 上还无法创建沙盒。`,
                     setsUpOn: ({ machine }: { machine: string }) => `在 ${machine} 上设置`,
                     notHere: "不在此机器上",
                     footerNote: "安装和登录会先征求你的同意。开始工作前不会创建任何内容。",

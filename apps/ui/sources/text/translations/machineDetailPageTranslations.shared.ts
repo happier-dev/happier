@@ -105,6 +105,7 @@ export const english = {
                 kindStatement: "What kind of sandbox?",
                 kindDetail: ({ machine }: { machine: string }) => `Whichever you pick installs what it needs on ${machine}, with your OK.`,
                 kindsUnavailable: ({ machine }: { machine: string }) => `Couldn’t read the sandbox kinds ${machine} can use.`,
+                noKinds: ({ machine }: { machine: string }) => `Nothing on ${machine} can make a sandbox yet.`,
                 setsUpOn: ({ machine }: { machine: string }) => `Sets up on ${machine}`,
                 notHere: "Not on this machine",
                 footerNote: "Installs and sign-ins ask you first. Nothing is created until work starts.",

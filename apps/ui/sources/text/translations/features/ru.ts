@@ -8947,6 +8947,7 @@ const machineDetailPageTranslations = { ru: translated({
                     kindStatement: "Какой тип песочницы?",
                     kindDetail: ({ machine }: { machine: string }) => `Выбранный вариант с вашего согласия установит на ${machine} всё нужное.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `Не удалось прочитать типы песочниц, доступные на ${machine}.`,
+                    noKinds: ({ machine }: { machine: string }) => `На ${machine} пока нечем создать песочницу.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Настраивается на ${machine}`,
                     notHere: "Не на этой машине",
                     footerNote: "Установки и входы сначала спрашивают вас. Ничего не создаётся, пока не начнётся работа.",

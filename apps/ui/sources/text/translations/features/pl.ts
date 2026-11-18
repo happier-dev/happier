@@ -8946,6 +8946,7 @@ const machineDetailPageTranslations = { pl: translated({
                     kindStatement: "Jaki rodzaj piaskownicy?",
                     kindDetail: ({ machine }: { machine: string }) => `To, co wybierzesz, za twoją zgodą zainstaluje na ${machine} to, czego potrzebuje.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `Nie udało się odczytać rodzajów piaskownic dostępnych na ${machine}.`,
+                    noKinds: ({ machine }: { machine: string }) => `Na ${machine} nic jeszcze nie może utworzyć piaskownicy.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Konfiguruje się na ${machine}`,
                     notHere: "Nie na tej maszynie",
                     footerNote: "Instalacje i logowania najpierw pytają. Nic nie powstaje, dopóki praca się nie zacznie.",

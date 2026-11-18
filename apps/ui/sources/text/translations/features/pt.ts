@@ -8910,6 +8910,7 @@ const machineDetailPageTranslations = { pt: translated({
                     kindStatement: "Que tipo de sandbox?",
                     kindDetail: ({ machine }: { machine: string }) => `A que escolheres instala o que precisa em ${machine}, com a tua autorização.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `Não foi possível ler os tipos de sandbox que ${machine} pode usar.`,
+                    noKinds: ({ machine }: { machine: string }) => `Nada em ${machine} pode criar um sandbox ainda.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Configura-se em ${machine}`,
                     notHere: "Não nesta máquina",
                     footerNote: "Instalações e inícios de sessão perguntam-te primeiro. Nada é criado até o trabalho começar.",

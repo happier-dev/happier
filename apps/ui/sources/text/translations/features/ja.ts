@@ -8869,6 +8869,7 @@ const machineDetailPageTranslations = { ja: translated({
                     kindStatement: "どの種類のサンドボックス？",
                     kindDetail: ({ machine }: { machine: string }) => `選んだものが、あなたの許可を得て ${machine} に必要なものをインストールします。`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `${machine} で使えるサンドボックスの種類を読み取れませんでした。`,
+                    noKinds: ({ machine }: { machine: string }) => `${machine} にはまだサンドボックスを作れるものがありません。`,
                     setsUpOn: ({ machine }: { machine: string }) => `${machine} にセットアップ`,
                     notHere: "このマシンでは使えません",
                     footerNote: "インストールとサインインは事前に確認します。作業が始まるまで何も作成されません。",

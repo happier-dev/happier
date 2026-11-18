@@ -266,7 +266,11 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             diagnosticDetail={failure ? describeManagedProvisionerFailure(failure) : undefined}
             title={t(partialRead ? 'managedMachines.add.checksUnreadable' : 'managedMachines.add.controllerUnreadable', { controller: controllerName })}
             action={{ label: t('common.retry'), onPress: catalog.refresh }} />
-        : cards.length === 0 ? <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.providers.empty')} />
+        // A Machine's sandbox catalog has nothing to make here; "create a machine" is the Add-a-machine picker's line.
+        : cards.length === 0 ? <SurfaceStateCard testID="managed-picker.empty" kind="empty" size="line"
+            title={props.sessionPlacement === 'controller-local'
+                ? t('machineDetailPage.isolation.add.noKinds', { machine: controllerName })
+                : t('managedMachines.providers.empty')} />
         : null;
     const localResources = Object.values(checks).flatMap(result => result.kind === 'succeeded' && result.value.localResources
         ? [result.value.localResources] : [])[0];

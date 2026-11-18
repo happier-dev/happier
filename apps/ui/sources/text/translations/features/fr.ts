@@ -8932,6 +8932,7 @@ const machineDetailPageTranslations = { fr: translated({
                     kindStatement: "Quel type de bac à sable ?",
                     kindDetail: ({ machine }: { machine: string }) => `Celui que tu choisis installe ce dont il a besoin sur ${machine}, avec ton accord.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `Impossible de lire les types de bac à sable utilisables sur ${machine}.`,
+                    noKinds: ({ machine }: { machine: string }) => `Rien sur ${machine} ne peut encore créer de bac à sable.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Se configure sur ${machine}`,
                     notHere: "Pas sur cette machine",
                     footerNote: "Les installations et connexions te demandent d’abord. Rien n’est créé avant que le travail commence.",

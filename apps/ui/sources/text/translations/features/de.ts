@@ -8927,6 +8927,7 @@ const machineDetailPageTranslations = { de: translated({
                     kindStatement: "Welche Art von Sandbox?",
                     kindDetail: ({ machine }: { machine: string }) => `Was du wählst, installiert mit deinem OK, was es auf ${machine} braucht.`,
                     kindsUnavailable: ({ machine }: { machine: string }) => `Die Sandbox-Arten für ${machine} konnten nicht gelesen werden.`,
+                    noKinds: ({ machine }: { machine: string }) => `Auf ${machine} kann noch nichts eine Sandbox erstellen.`,
                     setsUpOn: ({ machine }: { machine: string }) => `Wird auf ${machine} eingerichtet`,
                     notHere: "Nicht auf dieser Maschine",
                     footerNote: "Installationen und Anmeldungen fragen dich zuerst. Erstellt wird erst, wenn Arbeit beginnt.",
