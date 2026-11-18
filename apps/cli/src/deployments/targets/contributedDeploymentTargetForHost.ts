@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
     type ActionExecutorContext } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
+import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
@@ -37,6 +37,7 @@ import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import { resolveOwnServerDeploymentIdentityForHost } from './ownServer/paths';
 import { openDeploymentStageLog, readDeploymentStageLogs, type DeploymentStageLogWriter } from './stageLog';
 
@@ -471,7 +472,6 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     } } : {}) });
                 content = captureControllerBuildLog(content, buildOutput);
                 effectContent = content;
-                buildOutput?.assertWritten();
                 if (!result.ok) {
                     const unknown = isActionOutcomeUnknownErrorCodeV1(result.errorCode) || result.effectAttempted === true;
                     const failureContent = receiptFailureContent(content, result, result.effectAttempted === false
@@ -526,7 +526,11 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             }
             return result;
         } finally {
-            await buildOutput?.close().catch(() => undefined);
+            // A diagnostic sink failure cannot replace the provider outcome already settled above.
+            await buildOutput?.close().catch(error => {
+                logger.warnLocalFile('[Deployment] Controller build log unavailable',
+                    projectActionFailureCauseV1(error, 'deployment.logs.close', { allowUnknownErrorCode: false }));
+            });
         }
     }
     /** Select the target's declared reader once; own-server keeps its native reader. */

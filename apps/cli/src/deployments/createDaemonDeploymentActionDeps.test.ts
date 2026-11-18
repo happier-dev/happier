@@ -22,6 +22,7 @@ import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ART
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
     DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema,
@@ -171,7 +172,19 @@ const pendingSocket = vi.hoisted(() => {
 });
 vi.mock('socket.io-client', () => ({ io: () => pendingSocket.createSocket() }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+const stageLogWriteBoundary = vi.hoisted(() => ({ diskFull: false }));
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, writeSync: (...args: Parameters<typeof actual.writeSync>) => {
+        if (stageLogWriteBoundary.diskFull && args[1] instanceof Uint8Array
+            && Buffer.from(args[1]).includes('controller build stdout')) {
+            throw Object.assign(new Error('Stage log disk is full'), { code: 'ENOSPC' });
+        }
+        return Reflect.apply(actual.writeSync, actual, args);
+    } };
+});
+
+afterEach(() => { stageLogWriteBoundary.diskFull = false; vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 const ownerContext: RpcActionExecutorContext = { authority: 'present_user', signal: new AbortController().signal,
     machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-a',
@@ -1368,7 +1381,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
@@ -1395,7 +1408,8 @@ describe('installed deployment storage and target composition', () => {
         const rootSourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
         if (rootSourceIntent.kind !== 'repository') throw new Error('Repository source fixture required');
         const controllerBuildFailure = scenario === 'controller build failure';
-        const controllerBuildOutput = controllerBuildFailure || scenario === 'controller build success';
+        const controllerLogWriteFailure = scenario === 'controller build log write failure';
+        const controllerBuildOutput = controllerBuildFailure || scenario === 'controller build success' || controllerLogWriteFailure;
         const sourceAdmissionFailure = scenario === 'source admission failure';
         const roleFails = controllerBuildFailure || scenario === 'provider failure' || scenario === 'Home source read refusal' || sourceAdmissionFailure;
         const roleErrorCode = controllerBuildFailure ? 'deployment_failed' : sourceAdmissionFailure ? 'agent_isolation_unavailable'
@@ -2276,7 +2290,9 @@ describe('installed deployment storage and target composition', () => {
                 providerSends++;
                 throw new Error('Refused deployment must not reach the provider');
             });
-            const receipt = createDeploymentReceiptHeaderV1({ id: 'platform-receipt', environmentId: environment.environment.id,
+            // Controller build cases create exclusive stage-log directories.
+            const buildReceiptId = controllerBuildOutput ? `platform-receipt-${scenario.replaceAll(' ', '-')}` : undefined;
+            const receipt = createDeploymentReceiptHeaderV1({ id: buildReceiptId ?? 'platform-receipt', environmentId: environment.environment.id,
                 targetLinkId: row.targetLink.id, state: scenario === 'uncertain receipt observe' ? 'outcome_unknown' : scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
                 actionOperationId: 'platform-operation', requestedByAccountId: 'owner',
                 startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: 'reserved-platform-content',
@@ -2395,7 +2411,7 @@ describe('installed deployment storage and target composition', () => {
                     return { status: 200, data: DeploymentReceiptResultV1Schema.parse({ ok: true, environmentId: receipt.environmentId,
                         deploymentId: receipt.id, revision: environment.environment.revision + 1,
                         deploymentRevision: receipt.revision + 1,
-                        state: backgroundObservation ? transition.state
+                        state: backgroundObservation || controllerBuildOutput ? transition.state
                             : scenario === 'reviewed child' || scenario === 'upload source' || scenario === 'retained receipt observe' ? 'succeeded' : 'failed' }) };
                 }
                 return requestHttp(request);
@@ -2412,7 +2428,15 @@ describe('installed deployment storage and target composition', () => {
                 generateOperationId: () => operationSequence++ === 0 ? 'platform-operation' : `platform-operation-${operationSequence}` });
             let replayPreparer: ReturnType<typeof createDaemonApprovalExecutionAuthorizationPreparer> | undefined;
             const resolveTarget = createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://platform.test' });
+            const actionAutomations = controllerBuildOutput ? createActionAutomationPortV1({
+                accountId: 'owner',
+                // This Home has no automation triggers. The Action still runs real admission.
+                seed: async () => ({ v: 1, rows: [] }),
+                settle: async () => {},
+            }) : undefined;
+            if (actionAutomations) onTestFinished(() => actionAutomations.dispose());
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                ...(actionAutomations ? { actionAutomations } : {}),
                 ...(rootApproval ? { ...rootApprovalStore, runActionOperation: operations.runActionOperation,
                     prepareApprovalExecutionAuthorization: request => replayPreparer!(request),
                     isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: 'machine-a', serverId: 'home',
@@ -2826,8 +2850,11 @@ describe('installed deployment storage and target composition', () => {
             const invokeRoot = () => operations.runActionOperation({ actionId: 'deployments.deploy', input: candidate.input,
                 context: { ...context, actionRequestId: 'platform-request' },
                 execute: operationContext => executor.execute('deployments.deploy', candidate.input, operationContext) });
+            const logWarnings = controllerLogWriteFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
+            stageLogWriteBoundary.diskFull = controllerLogWriteFailure;
             const result = await invokeRoot();
-            expect(reserved).toBe(!requiresChildApproval);
+            stageLogWriteBoundary.diskFull = false;
+            expect(reserved, JSON.stringify(result)).toBe(!requiresChildApproval);
             if (controllerBuildOutput) {
                 if (controllerBuildFailure) expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'deployment_failed', details: { failure: { phase: 'build' } } });
                 else expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
@@ -2838,6 +2865,18 @@ describe('installed deployment storage and target composition', () => {
                 const persisted = DeploymentPlatformContentV1Schema.parse(JSON.parse(body.body));
                 if (controllerBuildFailure) expect(persisted.platform.observation).not.toHaveProperty('providerDeploymentId');
                 else expect(persisted.platform.observation.providerDeploymentId).toBe('provider-deployment');
+                if (controllerLogWriteFailure) {
+                    expect(receipt.state).toBe('succeeded');
+                    expect(persisted.failure).toBeUndefined();
+                    expect(logWarnings).toHaveBeenCalledWith('[Deployment] Stage log write failed', expect.objectContaining({
+                        errorCode: 'ENOSPC',
+                    }));
+                    expect(logWarnings).toHaveBeenCalledWith('[Deployment] Controller build log unavailable', expect.objectContaining({
+                        errorCode: 'deployment_log_unavailable',
+                    }));
+                    expect(childInvocations).toBe(1);
+                    return;
+                }
                 expect(persisted.platform.stageLogs?.[0]?.excerpt?.text).toContain('controller build stdout\n');
                 expect(persisted.platform.stageLogs?.[0]?.excerpt?.text).toContain('controller build stderr\n');
                 const readInput = { serverId: 'home', environmentId: receipt.environmentId, deploymentId: receipt.id,
