@@ -5481,3 +5481,18 @@ test('a direct node run of the e2e Vitest heartbeat wrapper is admitted like its
     assert.equal(policy.workerTool, 'vitest', args.join(' '));
   }
 });
+
+test('a direct node run of the UI e2e Playwright heartbeat wrapper is admitted like its package script', () => {
+  // MUTAGEN-STAGE / TRIAGE-W1-WRITES (2026-11-18): `hstack-exec -- node scripts/run-playwright-with-heartbeat.mjs`
+  // was unclassified, so the routed run on windows2-linux held no admission and the UI web
+  // export's nested package-dist prebuild queued at positions 13-16 for 23+ min. The same
+  // file via `pnpm run test:ui:e2e` was admitted as validation.
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const tail = ['scripts/run-playwright-with-heartbeat.mjs', '--config', 'playwright.ui.config.mjs', 'suites/ui-e2e/x.spec.ts'];
+  const options = { cwd: 'packages/tests', repoRoot, env: {} };
+  const viaScript = resolveRemoteCommandPolicy(['pnpm', 'run', 'test:ui:e2e', 'suites/ui-e2e/x.spec.ts'], options);
+  assert.equal(viaScript.heavyClass, 'validation');
+  for (const args of [['node', ...tail], ['env', 'HAPPIER_E2E_UI=1', 'node', ...tail], ['pnpm', 'exec', 'node', ...tail]]) {
+    assert.equal(resolveRemoteCommandPolicy(args, options).heavyClass, viaScript.heavyClass, args.join(' '));
+  }
+});

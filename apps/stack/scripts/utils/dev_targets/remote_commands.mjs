@@ -224,6 +224,9 @@ const COMMAND_RULES = [
   // A direct `node` run of the e2e heartbeat wrapper is the same workload as its package scripts.
   ...[{ command: ['node', 'nodejs'] }, { managerNode: ['1'] }].map(when => ({ when: { ...when, entry: ['run-vitest-with-heartbeat.mjs'] },
     set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } })),
+  // Its UI Playwright sibling (2026-11-18): unclassified, the nested UI export prebuild queued 23+ min.
+  ...[{ command: ['node', 'nodejs'] }, { managerNode: ['1'] }].map(when => ({ when: { ...when, entry: ['run-playwright-with-heartbeat.mjs'] },
+    set: { ...validation } })),
   ...['apps/ui', 'apps/cli'].flatMap(componentOverride => [
     { when: { command: ['node', 'nodejs'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },
     { when: { managerNode: ['1'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },
