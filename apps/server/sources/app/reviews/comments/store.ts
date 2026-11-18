@@ -30,7 +30,7 @@ import {
 } from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
 import type { ReviewAccessCapability } from "./permissions";
-import { resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
+import { acquireArtifactPublicationLocksInTx, resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
 import { markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -1034,6 +1034,13 @@ async function sourcesWithAppearances(rows: readonly ReviewCommentRow[]): Promis
 }
 
 export function createSqlReviewCommentStore(): ReviewCommentStore {
+    async function persistAppearance(appearance: ReviewCommentAppearanceV1): Promise<void> {
+        await inTx(async (tx) => {
+            await acquireArtifactPublicationLocksInTx(tx, appearance.reviewId);
+            await recordAppearanceInTx(tx, appearance);
+        });
+    }
+
     async function persistCreate(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult> {
             const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
             const event = ReviewCommentEventV1Schema.parse(params.event);
@@ -1047,6 +1054,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             }));
             try {
                 return await inTx(async (tx) => {
+                    if (comment.reviewId) await acquireArtifactPublicationLocksInTx(tx, comment.reviewId);
                     await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
                         accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
                         storageMode: mode,
@@ -1146,13 +1154,13 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     const rows = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment)) : [];
                     if (rows[0]) {
                         const found = rowToSource(rows[0]);
-                        if (params.appearance && found.structural.reviewId) await inTx((tx) => recordAppearanceInTx(tx, { ...params.appearance!, reviewId: found.structural.reviewId!, commentId: found.structural.id }));
+                        if (params.appearance && found.structural.reviewId) await persistAppearance({ ...params.appearance, reviewId: found.structural.reviewId, commentId: found.structural.id });
                         return { comment: found, replayed: true };
                     }
                     throw error;
                 }
                 const replay = resolveCanonicalCreateReplay(raced, params.createRequestFingerprint);
-                if (params.appearance && replay.comment.structural.reviewId) await inTx((tx) => recordAppearanceInTx(tx, { ...params.appearance!, reviewId: replay.comment.structural.reviewId!, commentId: replay.comment.structural.id }));
+                if (params.appearance && replay.comment.structural.reviewId) await persistAppearance({ ...params.appearance, reviewId: replay.comment.structural.reviewId, commentId: replay.comment.structural.id });
                 return replay;
             }
     }
@@ -1161,6 +1169,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
             const event = ReviewCommentEventV1Schema.parse(params.event);
             await inTx(async (tx) => {
+                if (comment.reviewId) await acquireArtifactPublicationLocksInTx(tx, comment.reviewId);
                 const mode = storageMode(params);
                 await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
                     accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
@@ -1283,7 +1292,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
     }
 
     return {
-        recordAppearance: (appearance) => inTx((tx) => recordAppearanceInTx(tx, appearance)),
+        recordAppearance: persistAppearance,
         async listAppearances(params) {
             const rows = await db.$queryRaw<Array<{ review_id: string; comment_id: string; round_ordinal: number; run_id: string; reviewer_id: string; machine_id: string | null; session_id: string | null }>>(Prisma.sql`
                 SELECT review_id, comment_id, round_ordinal, run_id, reviewer_id, machine_id, session_id FROM review_comment_appearances

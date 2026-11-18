@@ -513,7 +513,7 @@ async function readCommentRow(
     const rows = await tx.$queryRaw<ReviewCommentMigrationStorageCommentRow[]>(Prisma.sql`
         SELECT ${Prisma.raw(COMMENT_MIGRATION_SELECT_COLUMNS)}
         FROM review_comments
-        WHERE account_id = ${accountId} AND id = ${commentId}
+        WHERE account_id = ${accountId} AND id = ${commentId} AND review_id IS NULL
         LIMIT 1
     `);
     return rows[0] ?? null;
@@ -529,6 +529,7 @@ async function readEventRow(
         SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
         FROM review_comment_events
         WHERE account_id = ${accountId} AND comment_id = ${commentId} AND event_id = ${eventId}
+            AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
         LIMIT 1
     `);
     return rows[0] ?? null;
@@ -582,7 +583,7 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                 SELECT COUNT(*) AS count
                 FROM review_comment_publication_correlations
                 WHERE account_id = ${accountId}
-                    AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
+                    AND (comment_id IS NULL OR comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL))
             `);
             return toNumber(rows[0]?.count ?? 0);
         },
