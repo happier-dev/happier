@@ -341,3 +341,35 @@ export async function connectFreshVercelThroughDeploymentUi(params: Readonly<{
         for (const file of localFiles) file.delete();
     }
 }
+
+/** Submit the mounted New Session action with the same manual custody completion as the UI. */
+export async function submitUiSessionSpawnNew(params: Readonly<{
+    serverUrl: string;
+    addressAnchorUrl?: string;
+    accountSecret: Uint8Array;
+    input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
+    machineHomeDir: string;
+    userAttemptId: string;
+}>) {
+    const [{ getActiveServerAccountScope }, {
+        buildManualSessionCreationKey, completeManualSessionSpawnNewActionCustody, executeManualSessionSpawnNewAction,
+    }] = await Promise.all([
+        import('@/sync/domains/scope/activeServerAccountScope'),
+        import('@/sync/ops/actions/sessionSpawnNewAction'),
+    ]);
+    const ui = await connectUiPersonActionClient(params);
+    try {
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('New Session Account scope unavailable');
+        const result = await executeManualSessionSpawnNewAction({
+            ...params.input,
+            executionTarget: { ...params.input.executionTarget, serverId: scope.serverId },
+            creationKey: buildManualSessionCreationKey(params.userAttemptId),
+        }, { surface: 'ui', actionRequestId: params.userAttemptId }, {
+            scope, machineHomeDir: params.machineHomeDir, userAttemptId: params.userAttemptId,
+        });
+        if (result.status !== 'executed') throw new Error(`New Session submission: ${result.reason}`);
+        await completeManualSessionSpawnNewActionCustody(result.custody);
+        return result.action;
+    } finally { await ui.close(); }
+}

@@ -75,6 +75,15 @@ export function connectFreshVercelThroughDeploymentUi(params: Readonly<{
     providerFetch: typeof globalThis.fetch;
 }>): Promise<import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef>;
 
+export function submitUiSessionSpawnNew(params: Readonly<{
+    serverUrl: string;
+    addressAnchorUrl?: string;
+    accountSecret: Uint8Array;
+    input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
+    machineHomeDir: string;
+    userAttemptId: string;
+}>): Promise<unknown>;
+
 export function createAccountOutputFixture(params: Readonly<{
     serverId: string; homeId: string; baseUrl: string; ownerToken: string; ownerAccountId: string;
     memberToken: string; memberAccountId: string; machineId: string; replacementMachineId?: string;
