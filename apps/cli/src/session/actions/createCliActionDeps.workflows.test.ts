@@ -300,7 +300,7 @@ describe('createCliActionDeps workflow boundary', () => {
         reason: 'requester_runtime_unavailable', errorCode: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' } });
     expect(http.get.mock.calls.length + http.post.mock.calls.length + machineRpc.mock.calls.length).toBe(beforeHttp);
   });
-  it.each(['compiled_cli_missing_runtime', 'account_person', 'compiled_cli', 'compiled_cli_no_target', 'compiled_cli_missing_machine', 'bound_cli', 'standalone_mcp', 'standalone_mcp_ask', 'terminal_person', 'agent_process', 'session_custody', 'inherited_custody'] as const)(
+  it.each(['compiled_cli_missing_runtime', 'account_person', 'compiled_cli', 'compiled_cli_no_target', 'compiled_cli_missing_machine', 'bound_cli', 'standalone_mcp', 'standalone_mcp_unbound', 'standalone_mcp_ask', 'terminal_person', 'agent_process', 'session_custody', 'inherited_custody'] as const)(
     'retains only a person CLI starter through credentialed daemon admission and stored Workflow materialization (%s)', async actor => {
     const originalExitCode = process.exitCode;
     // Private daemon control uses Axios.request; retain its real loopback HTTP
@@ -322,7 +322,7 @@ describe('createCliActionDeps workflow boundary', () => {
       : `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 0,
         provenance: { v: 1, kind: authenticationKind, authority } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-    const standaloneMcp = actor === 'standalone_mcp' || actor === 'standalone_mcp_ask';
+    const standaloneMcp = actor === 'standalone_mcp' || actor === 'standalone_mcp_unbound' || actor === 'standalone_mcp_ask';
     const approvalHome = actor === 'standalone_mcp_ask' ? Fastify() : null;
     const approvalArtifacts = approvalHome ? registerPlainArtifactRoutes(approvalHome, 'account-1') : null;
     if (approvalHome) onTestFinished(() => approvalHome.close());
@@ -522,7 +522,8 @@ describe('createCliActionDeps workflow boundary', () => {
         { readCredentialsFn: async () => credentials }));
       } else if (standaloneMcp) {
         const { mcp } = runWithServerHttpBaseUrl(serverApiUrl, () => createExternalMcpServer({ credentials,
-          defaultSessionId: sessionId, machineId: target.machineId, serverFeaturesSnapshot: enabledFeatures,
+          ...(actor === 'standalone_mcp_unbound' ? {} : { defaultSessionId: sessionId }),
+          machineId: target.machineId, serverFeaturesSnapshot: enabledFeatures,
           daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'workflow-starter-control' },
         }));
         const client = new Client({ name: 'workflow-mcp-daemon', version: '1' });
@@ -533,7 +534,7 @@ describe('createCliActionDeps workflow boundary', () => {
             arguments: { actionId: 'workflow.run.start', input } }));
           const content = result.content.find(item => item.type === 'text');
           const payload: unknown = content?.type === 'text' ? JSON.parse(content.text) : null;
-          expect(result.isError, JSON.stringify(result)).not.toBe(true);
+          expect(result.isError, JSON.stringify(result)).toBe(actor === 'standalone_mcp_unbound');
           output.push(JSON.stringify({ ok: true, data: payload }));
         } finally {
           await client.close(); await mcp.close();
@@ -567,6 +568,12 @@ describe('createCliActionDeps workflow boundary', () => {
         return;
       }
       const commandResult = JSON.parse(output.join(''));
+      if (actor === 'standalone_mcp_unbound') {
+        expect(commandResult, JSON.stringify({ execution, output })).toMatchObject({ ok: true,
+          data: { errorCode: 'target_unavailable', details: { reason: 'workspace_unavailable' } } });
+        expect(http.post.mock.calls.filter(([, body]) => body.operation === 'admit')).toEqual([]);
+        return;
+      }
       if (actor === 'standalone_mcp_ask') {
         expect(commandResult).toMatchObject({ ok: true, data: { kind: 'approval_request_created', actionId: 'workflow.run.start' } });
         const artifactId: unknown = commandResult.data.artifactId;
