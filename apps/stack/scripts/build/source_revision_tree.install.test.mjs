@@ -136,6 +136,11 @@ test('a base installs its revision\'s lockfile, never another lane\'s uncommitte
 
   const { baseDir } = await prepareHeadBase(context, 'edited');
   assert.equal(loadFixtureDep(baseDir), 'committed');
+  // The base is exactly its pinned installation: the refresh owner admits it, so no
+  // dependency refresh runs a package manager inside the base or its clones.
+  const readiness = await inspectDependencyRefresh({ installDir: baseDir, env });
+  assert.equal(readiness.required, false, 'a revision base never needs a dependency refresh');
+  assert.equal(readiness.installedIdentity, readiness.installIdentity);
   const rnem = await realpath(createRequire(join(baseDir, 'apps/ui/package.json')).resolve('react-native-enriched-markdown'));
   assert.equal(existsSync(join(dirname(rnem), 'lib/module/web/streamingReveal.js')), true,
     'the UI outputs are written into the installation the base mounts');

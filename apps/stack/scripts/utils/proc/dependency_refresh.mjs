@@ -35,6 +35,15 @@ export function resolveDependencyRefreshMarkerPath(installDir) {
   return join(installDir, 'node_modules', REFRESH_MARKER);
 }
 
+/** A provisioner that placed exactly the installation of `identity` at `installDir`
+ * (a source revision tree mounting its pinned installation) publishes it, so readers
+ * admit the tree and no refresh ever installs into it. The marker is replaced by
+ * rename: a clone's hardlinked copy is never written through. */
+export async function publishDependencyRefreshMarker({ installDir, identity }) {
+  await writeJsonAtomic(resolveDependencyRefreshMarkerPath(installDir), { version: REFRESH_STATE_VERSION,
+    identity, stacksNeedingRestart: [] });
+}
+
 export function resolveDependencyInstallRoot(componentDir) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   return monorepoRoot && existsSync(join(monorepoRoot, 'package.json')) ? monorepoRoot : componentDir;

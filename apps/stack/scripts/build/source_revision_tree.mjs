@@ -14,7 +14,7 @@ import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
-import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
+import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { cloneTree, extractRevision, isRevisionDependencyInput, prepareRevisionInstall, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
@@ -195,6 +195,10 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   // Windows). Every workspace of the revision resolves inside the tree, so no
   // import reaches the moving checkout's packages.
   await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
+  // The base (and every clone) is exactly that installation: publish its identity,
+  // replacing any captured or mounted marker, so no dependency refresh ever runs a
+  // package manager inside a tree (a half-failed one left trees with unpatched Jiti).
+  await publishDependencyRefreshMarker({ installDir: baseDir, identity: install.identity });
   // Plugin UI preparation reads the manifests this derivation places.
   await deriveDaemonPluginPublication({ treeDir: baseDir, env, signal });
   if (preparePluginUi) await prepareDaemonPluginUi({ treeDir: baseDir, env, signal });
@@ -360,6 +364,17 @@ export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor
     // Existing clones retain their own files and pinned installation.
     const built = !marker?.installIdentity || !BASE_COMPONENTS.every(component => marker.components?.includes(component))
       || (preparePluginUi && !marker.pluginUiPrepared);
+    if (!built && existsSync(join(baseDir, 'node_modules'))
+      && (await readJson(resolveDependencyRefreshMarkerPath(baseDir)))?.identity !== marker.installIdentity) {
+      // A base published before it carried its installation's marker: publish it in
+      // place (by rename, so clones keep their own copy) before the next clone.
+      const modules = join(baseDir, 'node_modules');
+      await chmod(modules, 0o755);
+      try {
+        await publishDependencyRefreshMarker({ installDir: baseDir, identity: marker.installIdentity });
+        await chmod(resolveDependencyRefreshMarkerPath(baseDir), 0o444);
+      } finally { await chmod(modules, 0o555); }
+    }
     if (marker && built) await setSourceRevisionTreeWritable(baseDir);
     if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, preparePluginUi,
       installIdentity: marker?.installIdentity, env, signal, requestBaseArchive });
