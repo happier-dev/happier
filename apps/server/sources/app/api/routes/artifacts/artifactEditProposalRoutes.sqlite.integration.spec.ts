@@ -5,8 +5,8 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
-import { createMemoryDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { MEMORY_ARCHIVE_TOPIC_TITLE_V1, MemoryDocArtifactHeaderV1StoredSchema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
+import { createMemoryDocInLibrary, readMemoryDocInLibrary, rememberMemoryFactInLibrary, type PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1 as paths, DocEditAcceptTransportInputV1Schema, DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -88,7 +88,7 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
             accept, token, app, post, current, disposition };
     }
 
-    it('opens a passage Discussion, rejoins one accepted proposal and saves the exact decision through real HTTP', async () => {
+    it('opens a passage Discussion, rejoins one accepted proposal and replaces the saved decision through real HTTP', async () => {
         const f = await fixture();
         const events = vi.spyOn(eventRouter, 'emitUpdate');
         try {
@@ -123,28 +123,54 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
             const decision = { reason: 'Highlight the Payments runbook instruction', sourceMessageRef: receipt.proposalRef,
                 approvedBy: settlement.decidedBy };
             const expiresAtMs = Date.UTC(2030, 0, 1);
-            const saved = await createMemoryDocInLibrary({ request: { title: 'Payments decisions', text: 'Emphasize the runbook passage', expiresAtMs },
-                decision, sourceSessionRef: null, randomId: () => crypto.randomUUID(), store: {
-                    read: async () => { throw new Error('Creating the first decision does not load an existing document'); },
-                    update: async () => { throw new Error('Creating the first decision does not update an existing document'); },
-                    create: async ({ header, body, memoryDecisionSource }) => {
-                        const id = crypto.randomUUID();
-                        const response = await f.app.inject({ method: 'POST', url: '/v1/artifacts/memory-decision/create', headers,
-                            payload: { id, header: encoded(header), body: encoded({ body }),
-                                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, memoryDecisionSource } });
-                        expect(response.statusCode, response.body).toBe(200);
-                        return ArtifactCreateHttpResponseV1Schema.parse(response.json()).id;
-                    },
-                } });
-            const loaded = await f.app.inject({ method: 'GET', url: `/v1/artifacts/${saved.artifactId}`, headers });
-            expect(loaded.statusCode, loaded.body).toBe(200);
-            const artifact = ArtifactHttpReadV1Schema.parse(loaded.json());
-            const stored = decodePlainArtifactStoredContent(artifact.body);
-            if (!stored || typeof stored !== 'object' || !('body' in stored) || typeof stored.body !== 'string') {
-                throw new Error('Expected a plain Memory document');
-            }
-            const memory = MemoryDocBodyV1Schema.parse(JSON.parse(stored.body));
-            expect(memory.index).toMatchObject([{ id: saved.factId, decision, expiresAtMs }]);
+            const store: PromptLibraryArtifactStore = {
+                read: async artifactId => {
+                    const response = await f.app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`, headers });
+                    expect(response.statusCode, response.body).toBe(200);
+                    const { id, header, body, headerVersion, bodyVersion } = ArtifactHttpReadV1Schema.parse(response.json());
+                    const stored = decodePlainArtifactStoredContent(body);
+                    if (!stored || typeof stored !== 'object' || !('body' in stored) || typeof stored.body !== 'string') {
+                        throw new Error('Expected a plain Memory document');
+                    }
+                    return { id, revision: { headerVersion, bodyVersion },
+                        header: MemoryDocArtifactHeaderV1StoredSchema.parse(decodePlainArtifactStoredContent(header)), body: stored.body };
+                },
+                create: async ({ header, body, memoryDecisionSource }) => {
+                    const id = crypto.randomUUID();
+                    const response = await f.app.inject({ method: 'POST', url: '/v1/artifacts/memory-decision/create', headers,
+                        payload: { id, header: encoded(header), body: encoded({ body }),
+                            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, memoryDecisionSource } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    return ArtifactCreateHttpResponseV1Schema.parse(response.json()).id;
+                },
+                update: async ({ artifactId, expectedRevision, body, memoryDecisionSource }) => {
+                    const response = await f.app.inject({ method: 'POST', url: `/v1/artifacts/${artifactId}/memory-decision`, headers,
+                        payload: { expectedBodyVersion: expectedRevision.bodyVersion, body: encoded({ body }), memoryDecisionSource } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ success: true, bodyVersion: expectedRevision.bodyVersion + 1 });
+                },
+            };
+            const text = 'Emphasize the runbook passage';
+            const author = { store, sourceSessionRef: null, randomId: () => crypto.randomUUID() };
+            const saved = await createMemoryDocInLibrary({ ...author, decision, request: { title: 'Payments decisions', text, expiresAtMs } });
+            const readMemory = { store, artifactId: saved.artifactId };
+            const before = await readMemoryDocInLibrary(readMemory);
+            expect(before).toMatchObject({ body: { index: [{ id: saved.factId, text, decision, expiresAtMs }] } });
+
+            const replacement = { ...decision, reason: 'Keep the warning prominent during the Payments rollout' };
+            const request = { ref: { kind: 'doc' as const, serverId: 'home', artifactId: saved.artifactId },
+                expectedRevision: before.revision, text: 'Always emphasize the runbook passage', expiresAtMs: Date.UTC(2031, 0, 1) };
+            expect(await rememberMemoryFactInLibrary({ ...author, decision: replacement, request })).toMatchObject({ ok: false,
+                errorCode: 'memory_duplicate_choice_required', revision: before.revision, candidates: [{ factId: saved.factId }] });
+            const replaced = await rememberMemoryFactInLibrary({ ...author, decision: replacement, request: { ...request,
+                duplicateChoice: { kind: 'replace', factId: saved.factId, expectedRevision: before.revision } } });
+            expect(replaced).toMatchObject({ ok: true });
+            if (!replaced.ok) throw new Error(replaced.errorCode);
+            expect(await readMemoryDocInLibrary(readMemory)).toMatchObject({ body: { index: [{ id: replaced.factId,
+                supersedes: saved.factId, text: request.text, decision: replacement, expiresAtMs: request.expiresAtMs }] } });
+            expect(await readMemoryDocInLibrary({ ...readMemory, topic: MEMORY_ARCHIVE_TOPIC_TITLE_V1 })).toMatchObject({ topic: {
+                facts: [{ id: saved.factId, text, decision, expiresAtMs, archivedByMutation: true }],
+            } });
         } finally { events.mockRestore(); await f.app.close(); }
     });
 
