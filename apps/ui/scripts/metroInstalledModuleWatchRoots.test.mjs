@@ -79,7 +79,7 @@ test('Metro admits a newly generated locale bundle before its index is published
 });
 
 
-test('replacement Metro serves the published generation without resolving through its predecessor', async () => {
+test('running and replacement Metro each serve the dependency generation they watch', async () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-generation-replacement-')));
   const generationStore = path.join(fixture, '.happier/deps/node_modules');
   const generationA = path.join(generationStore, 'gA');
@@ -87,6 +87,7 @@ test('replacement Metro serves the published generation without resolving throug
   const rootModules = path.join(fixture, 'node_modules');
   const ui = path.join(fixture, 'apps/ui');
   const entry = path.join(ui, 'entry.js');
+  const mathEntry = path.join(ui, 'math.js');
   const asyncRequire = path.join(ui, 'asyncRequire.js');
   const configPath = path.resolve(uiRoot, 'metro.config.js');
   const runtimeRoot = path.dirname(require.resolve('metro-runtime/package.json'));
@@ -97,15 +98,30 @@ test('replacement Metro serves the published generation without resolving throug
       mkdirSync(path.join(generation, 'apps/ui/node_modules'), { recursive: true });
       writeFileSync(path.join(generation, 'node_modules/dep/package.json'), '{"name":"dep","main":"index.js"}');
       writeFileSync(path.join(generation, 'node_modules/dep/index.js'), `module.exports = ${JSON.stringify(path.basename(generation))};\n`);
+      const katex = path.join(generation, 'node_modules/katex');
+      mkdirSync(path.join(katex, 'dist'), { recursive: true });
+      writeFileSync(path.join(katex, 'package.json'), JSON.stringify({
+        name: 'katex',
+        main: './dist/katex.js',
+        exports: {
+          '.': { require: './dist/katex.js', import: './dist/katex.mjs' },
+          './*': './*',
+        },
+      }));
+      writeFileSync(path.join(katex, 'dist/katex.js'), 'module.exports = "katex-cjs";\n');
+      writeFileSync(path.join(katex, 'dist/katex.mjs'), `export default "katex-${path.basename(generation)}";\n`);
     }
     mkdirSync(rootModules, { recursive: true });
     mkdirSync(ui, { recursive: true });
     writeFileSync(entry, 'module.exports = require("dep");\n');
+    writeFileSync(mathEntry, 'import "katex";\nmodule.exports = require("katex");\n');
     writeFileSync(asyncRequire, 'module.exports = {};\n');
     const selectGeneration = generation => {
-      const link = path.join(rootModules, 'dep');
-      try { unlinkSync(link); } catch {}
-      symlinkSync(path.join(generation, 'node_modules/dep'), link, 'junction');
+      for (const pkg of ['dep', 'katex']) {
+        const link = path.join(rootModules, pkg);
+        rmSync(link, { force: true });
+        symlinkSync(path.join(generation, 'node_modules', pkg), link, 'junction');
+      }
     };
     const loadConfig = generation => {
       process.env.HAPPIER_UI_METRO_GENERATION_ROOT = generation;
@@ -126,23 +142,36 @@ test('replacement Metro serves the published generation without resolving throug
         getModulesRunBeforeMainModule: () => [], getPolyfills: () => [] };
       return configured;
     };
-    const build = async generation => {
+    const withMetro = async (generation, run) => {
       selectGeneration(generation);
       const configured = loadConfig(generation);
       const { default: Server } = require('metro/private/Server');
       const server = new Server(configured, { watch: true });
       try {
-        return await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
-          entryFile: entry, platform: 'web', dev: true, minify: false, lazy: false });
+        return await run((entryFile) => server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+          entryFile, platform: 'web', dev: true, minify: false, lazy: false }));
       } finally { await server.end(); }
     };
-    const before = await build(generationA);
-    assert.match(before.code, /gA/);
-    assert.doesNotMatch(before.code, /gB/);
-    const after = await build(generationB);
-    assert.match(after.code, /gB/);
-    assert.doesNotMatch(after.code, /gA/);
-    assert.doesNotMatch(after.code, /metro-two-generation-replacement/);
+    await withMetro(generationA, async (build) => {
+      const before = await build(entry);
+      assert.match(before.code, /gA/);
+      assert.doesNotMatch(before.code, /gB/);
+
+      // The original watcher is still serving while the checkout links advance.
+      // Node's ambient checkout import is also outside these fixture watch roots.
+      selectGeneration(generationB);
+      const pendingReplacement = await build(mathEntry);
+      assert.match(pendingReplacement.code, /katex-gA/);
+      assert.doesNotMatch(pendingReplacement.code, /katex-(gB|cjs)/);
+    });
+    await withMetro(generationB, async (build) => {
+      const after = await build(entry);
+      assert.match(after.code, /gB/);
+      assert.doesNotMatch(after.code, /gA/);
+      const math = await build(mathEntry);
+      assert.match(math.code, /katex-gB/);
+      assert.doesNotMatch(math.code, /katex-(gA|cjs)/);
+    });
   } finally {
     if (originalGenerationRoot === undefined) delete process.env.HAPPIER_UI_METRO_GENERATION_ROOT;
     else process.env.HAPPIER_UI_METRO_GENERATION_ROOT = originalGenerationRoot;

@@ -963,12 +963,6 @@ const resolveAppRequest = (context, moduleName, platform) => {
     }
     return { type: 'sourceFile', filePath: privatePluginUiInventory };
   }
-  // Mermaid imports KaTeX as ESM while enriched Markdown requires it. Both
-  // consume its default renderer; selecting the public ESM build once avoids
-  // retaining two copies of the same parser, fonts and symbol tables on web.
-  if (platform === "web" && moduleName === "katex") {
-    return { type: "sourceFile", filePath: require.resolve("katex/dist/katex.mjs") };
-  }
   // Unistyles' Babel-generated component requires otherwise select its source
   // exports, while theme setup imports the packaged ESM runtime. Both must use
   // the same exported implementation or the rendered tree has no active theme.
@@ -1015,8 +1009,13 @@ const resolveAppRequest = (context, moduleName, platform) => {
   const patchedEnrichedMarkdownResolution = resolvePatchedEnrichedMarkdownModule(moduleName, context?.originModulePath);
   if (patchedEnrichedMarkdownResolution) return patchedEnrichedMarkdownResolution;
 
-  // Fix event-target-shim/index import - exports define "." not "./index"
   let resolvedModuleName = moduleName;
+  // Mermaid and enriched Markdown share one web renderer. Select its ESM
+  // entry through Metro so it stays in the generation the file map watches.
+  if (platform === "web" && moduleName === "katex") {
+    resolvedModuleName = "katex/dist/katex.mjs";
+  }
+  // Fix event-target-shim/index import - exports define "." not "./index"
   if (moduleName === "event-target-shim/index") {
     resolvedModuleName = "event-target-shim";
   }
