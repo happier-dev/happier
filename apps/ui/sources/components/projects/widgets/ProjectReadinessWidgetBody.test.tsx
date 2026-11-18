@@ -253,9 +253,14 @@ it('says a Project with no Environments in one line with Add, never a chooser ab
   const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
     <ProjectReadinessWidgetBody target={target} testID="readiness" />
   </AccountNoticeInvestigationBoundary>);
-  await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).map(card => card.props.kind)).toEqual(['empty']), { timeout: 20000 });
+  // P1: the state is the primary line, its hint quieter beneath it, Add at the end; never one joined sentence.
+  const { WidgetGlanceRow } = await import('@/components/widgets/glance/WidgetGlanceRow');
+  const { t } = await import('@/text');
+  await vi.waitFor(() => expect(screen.findAllByType(WidgetGlanceRow).map(row => [row.props.title, row.props.fact]))
+    .toEqual([[t('projects.readiness.empty'), t('projects.readiness.emptyHint')]]), { timeout: 20000 });
   expect(screen.findAllByType(SelectionListFilterChip)).toHaveLength(0);
-  expect(screen.findAllByType(SurfaceStateCard)[0]!.props.action).toMatchObject({ testID: 'readiness.add' });
+  expect(screen.findAllByType(SurfaceStateCard)).toHaveLength(0);
+  expect(screen.findAllByTestId('readiness.add').length).toBeGreaterThan(0);
 });
 
 it('keeps unavailable facts visible while ready facts fold without another read or write', async () => {

@@ -78,14 +78,15 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
   if (!projectId) return <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.sourceRequired')} />;
   const items = collection.snapshot.value?.items ?? [];
   const settled = collection.snapshot.status !== 'idle' && collection.snapshot.status !== 'loading';
-  // No Environments: one line and its Add (phone-lists P1), never a chooser with nothing to choose above it.
+  // No Environments: the state as the primary line, its hint quieter under it and Add at its end (phone-lists P1),
+  // never a chooser with nothing to choose above it.
   if (settled && collection.snapshot.status !== 'unavailable' && collection.snapshot.value?.coverage !== 'partial'
     && items.length === 0 && !collection.hasPreviousPage && !collection.hasNextPage) {
     return <View testID={props.testID}>
-      <SurfaceStateCard kind="empty" size="line" iconName={deploymentEnvironmentGlyph()}
-        title={t('projects.readiness.empty')} reason={t('projects.readiness.emptyHint')}
-        action={{ label: t('common.add'), testID: `${props.testID}.add`,
-          onPress: () => openNewApp(null, null, { projectSourceId: projectId }) }} />
+      <WidgetGlanceRow testID={`${props.testID}.empty`} mark={deploymentEnvironmentGlyph()}
+        title={t('projects.readiness.empty')} fact={t('projects.readiness.emptyHint')}
+        trailing={<SectionActionButton testID={`${props.testID}.add`} title={t('common.add')}
+          onPress={() => openNewApp(null, null, { projectSourceId: projectId })} />} />
     </View>;
   }
   return <View testID={props.testID} style={{ gap: theme.space.s8 }}>
