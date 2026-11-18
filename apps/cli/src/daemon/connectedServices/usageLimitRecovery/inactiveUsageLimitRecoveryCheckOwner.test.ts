@@ -23,7 +23,7 @@ function recovery(
     resetAtMs: 5_000,
     nextCheckAtMs: 5_000,
     attemptCount: 0,
-    maxAttempts: 3,
+    maxAttempts: 0,
     lastProbeError: null,
     resumePromptMode: 'standard',
     selectedAuth: { kind: 'native' },
@@ -126,7 +126,7 @@ it('keeps current runtime B and its runner when delayed runtime A has the same u
       ...recovery('same-usage', 1_001, 'runtime-a'),
       attemptCount: 2,
       nextCheckAtMs: 7_000,
-      maxAttempts: 2,
+      maxAttempts: 0,
     };
     const runB = vi.fn(async () => ({ attempt: 'b' }));
     const runA = vi.fn(async () => ({ attempt: 'a' }));
@@ -357,7 +357,7 @@ it('merges same-identity progress and refreshes its runner through the real file
       ...attemptB,
       attemptCount: 2,
       nextCheckAtMs: 7_000,
-      maxAttempts: 2,
+      maxAttempts: 0,
     };
     const runInitialB = vi.fn(async () => ({ attempt: 'initial-b' }));
     const runProgressedB = vi.fn(async () => ({ attempt: 'progressed-b' }));
@@ -380,7 +380,7 @@ it('merges same-identity progress and refreshes its runner through the real file
       armedAtMs: attemptB.armedAtMs,
       attemptCount: 2,
       nextCheckAtMs: 7_000,
-      maxAttempts: 2,
+      maxAttempts: 0,
     });
     releaseInitialCompletion();
     await initialSchedule;
