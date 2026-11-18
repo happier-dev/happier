@@ -200,6 +200,7 @@ export async function waitForServerReady(url, {
   startupDeadline = null,
   env = null,
   cliHomeDir = null,
+  serverId = null,
   continueWhileChildAlive = process.env.HAPPIER_STACK_TUI === '1',
   onTimeoutCheckpoint = ({ phase }) => {
     console.warn(`[stack] server ${phase} is still in progress at ${url}; continuing to wait (TUI is attended)`);
@@ -223,7 +224,7 @@ export async function waitForServerReady(url, {
   // Metadata and listener-only commands do not consume authenticated Home
   // readiness. Load its Protocol graph only at the startup readiness boundary.
   const { resolveHomeDescriptorReadiness, readHomeDescriptorReadinessContext } = await import('./home_descriptor_readiness.mjs');
-  const home = readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl: url });
+  const home = readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl: url, serverId });
 
   if (childProcess && typeof childProcess.once === 'function') {
     if (childProcess.exitCode !== null && childProcess.exitCode !== undefined) {

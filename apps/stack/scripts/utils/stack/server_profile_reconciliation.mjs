@@ -186,6 +186,22 @@ export function buildStackServerProfileSetArgs({ serverId, internalServerUrl, pu
 }
 
 /**
+ * Every CLI identity of a shared-database stack (default and named) keeps its own saved Home.
+ * When that saved Home differs from the identity this stack's own server recorded, the identity's
+ * daemon start proves the live server publishes the recorded one (the readiness owner, with that
+ * identity's credential) and returns the record for `server set --home-identity-record`; the CLI
+ * re-establishes the profile in place, keeping its Account and credentials. Null otherwise.
+ */
+export async function proveStackHomeIdentityTransition({ env, cliHomeDir, serverId, serverUrl, timeoutMs }) {
+  const ownIdentity = readStackOwnServerIdentity(env);
+  const established = ownIdentity ? readStackServerProfileHomeDescriptor({ homeDir: cliHomeDir, serverId }) : null;
+  if (!established || established.homeServerIdentityId === ownIdentity) return null;
+  const { waitForServerReady } = await import('../server/server.mjs');
+  const readiness = await waitForServerReady(serverUrl, { env, cliHomeDir, serverId, timeoutMs, continueWhileChildAlive: false });
+  return readiness.homeIdentityRecordPath ?? null;
+}
+
+/**
  * The stack-owned profile's Home binding, snapshotted by the reload rollback owner right before a
  * replacement activates. Only a shared-database consumer can change it by its own doing.
  */

@@ -6,7 +6,7 @@ import { resolveStackActiveServerId } from '../auth/stable_scope_id.mjs';
 import { resolveCliHomeDir } from '../stack/dirs.mjs';
 import { readStackOwnServerIdentity, readStackServerProfileHomeDescriptor, resolveStackOwnServerIdentityRecordPath } from '../stack/server_profile_reconciliation.mjs';
 
-export function readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl }) {
+export function readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl, serverId: profileId = null }) {
   // Auth-safe startup exposes the login listener first. It cannot require the
   // sign-in it is starting, and it never refreshes retained Home endpoints.
   if (env?.HAPPIER_STACK_AUTH_FLOW === '1') return null;
@@ -15,7 +15,8 @@ export function readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl 
   if (!cliHomeDir && !env?.HAPPIER_STACK_CLI_HOME_DIR && !env?.HAPPIER_HOME_DIR) return null;
   const scopedEnv = env ?? {};
   const homeDir = cliHomeDir || resolveCliHomeDir(scopedEnv, { preferStackCliHomeDir: true });
-  const serverId = resolveStackActiveServerId({ env: scopedEnv });
+  // A caller reconciling one CLI identity names its profile; otherwise the stack scope resolves it.
+  const serverId = profileId || resolveStackActiveServerId({ env: scopedEnv });
   const descriptor = readStackServerProfileHomeDescriptor({ homeDir, serverId });
   if (!descriptor) return null;
   const paths = resolveStackCredentialPaths({ cliHomeDir: homeDir, serverUrl, env: { ...scopedEnv,

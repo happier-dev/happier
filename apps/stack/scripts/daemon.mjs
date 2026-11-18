@@ -39,6 +39,7 @@ import {
   assertStackServerProfileReconciled,
   buildStackServerProfileSetArgs,
   classifyStackServerProfileFailure,
+  proveStackHomeIdentityTransition,
 } from './utils/stack/server_profile_reconciliation.mjs';
 import {
   resolveCliDistBuildLockPath,
@@ -1983,8 +1984,8 @@ export async function startLocalDaemonWithAuth({
   sourceRuntimeLaunchUpdate = null,
   preserveSessionsOnRestart = false,
   allowSignInRequired = false,
-  // Set only when server readiness proved the live server publishes this stack's own recorded
-  // Home identity (shared-database consumer); profile reconciliation re-establishes onto it.
+  // Set when this runner's server readiness already proved the live server publishes this stack's
+  // own recorded Home identity; otherwise profile reconciliation proves it for this CLI identity.
   homeIdentityRecordPath = null,
 }) {
   const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
@@ -2286,12 +2287,13 @@ export async function startLocalDaemonWithAuth({
     if (existsSync(join(cliHomeDir, 'settings.json'))) {
       const serverId = String(daemonEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
       if (serverId) {
+        const profileSetTimeoutMs = Math.max(1, startVerifyTimeoutMs);
         const profileSetArgs = [
           ...daemonCommand.argsPrefix,
           ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl,
-            homeIdentityRecordPath }),
+            homeIdentityRecordPath: homeIdentityRecordPath ?? await proveStackHomeIdentityTransition({
+              env: daemonEnv, cliHomeDir, serverId, serverUrl: internalServerUrl, timeoutMs: profileSetTimeoutMs }) }),
         ];
-        const profileSetTimeoutMs = Math.max(1, startVerifyTimeoutMs);
         try {
           // Profile reconciliation is part of daemon startup preflight. Its child-process budget
           // must share the lifecycle-owned readiness deadline so a guessed shorter timeout cannot

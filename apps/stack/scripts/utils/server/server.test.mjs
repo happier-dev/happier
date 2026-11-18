@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { waitForBackgroundStackReadiness } from '../../stack/run_script_with_stack_env.mjs';
 
@@ -564,4 +564,52 @@ test('resolveServerReadyTimeoutMs prefers an explicit override and does not over
     resolveServerMigrationTimeoutMs({ env: { HAPPIER_STACK_SERVER_MIGRATION_TIMEOUT_MS: '86400001' } }),
     30 * 60_000,
   );
+});
+
+// ORCH-TOP 2026-11-18 16:32Z (#176d): after the shared-DB server minted its own Home identity, every
+// NAMED CLI identity's daemon restart refused (`home-profile identity_mismatch`): only the default
+// identity's start carried the record. Each identity's daemon start now proves the live server
+// publishes the stack's own recorded identity, with that identity's own profile and credential.
+test('every CLI identity of a shared-database stack (default and named) proves its own Home re-establishment', async t => {
+  const { proveStackHomeIdentityTransition } = await import('../stack/server_profile_reconciliation.mjs');
+  const { applyStackActiveServerScopeEnv } = await import('../auth/stable_scope_id.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'hstack-identities-home-' });
+  const stackEnv = { HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_STACK: 'qa',
+    HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'repo-dev' };
+  const stackBaseDir = fixture.path('stacks', 'qa');
+  const url = 'http://127.0.0.1:41236';
+  const descriptor = identity => ({ v: 1, homeServerIdentityId: identity, revision: 4, canonicalServerUrl: url,
+    endpoints: [{ kind: 'https', url }] });
+  const recordPath = join(stackBaseDir, 'server-light', 'runtime', 'server.identity');
+  await mkdir(dirname(recordPath), { recursive: true });
+  await writeFile(recordPath, 'srv_stack_minted\n');
+  const identities = [];
+  for (const identity of ['default', 'qa-sd-e', 'qa-sd-f']) {
+    const env = applyStackActiveServerScopeEnv({ env: stackEnv, stackName: 'qa', cliIdentity: identity });
+    const serverId = env.HAPPIER_ACTIVE_SERVER_ID;
+    const cliHomeDir = identity === 'default' ? join(stackBaseDir, 'cli') : join(stackBaseDir, 'cli-identities', identity);
+    await mkdir(join(cliHomeDir, 'servers', serverId), { recursive: true });
+    await writeFile(join(cliHomeDir, 'servers', serverId, 'access.key'), JSON.stringify({ token: `token-${identity}` }));
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ schemaVersion: 6, activeServerId: serverId,
+      servers: { [serverId]: { id: serverId, serverUrl: url, webappUrl: url, homeConnectionDescriptor: descriptor('srv_shared_source') } } }));
+    identities.push({ identity, env, serverId, cliHomeDir });
+  }
+  let served = 'srv_stack_minted';
+  const tokens = [];
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    tokens.push(options?.headers?.Authorization);
+    return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: served } },
+      homeConnectionDescriptor: descriptor(served) });
+  });
+  const prove = ({ env, cliHomeDir, serverId }) => proveStackHomeIdentityTransition({ env, cliHomeDir, serverId,
+    serverUrl: url, timeoutMs: 60_000 });
+
+  for (const entry of identities) assert.equal(await prove(entry), recordPath, `${entry.identity} re-establishes on the record`);
+  assert.deepEqual(tokens, identities.map(({ identity }) => `Bearer token-${identity}`), 'each identity proves with its own credential');
+  // The incumbent server of a rolled-back reload still publishes the profiles' Home: nothing to re-establish.
+  served = 'srv_shared_source';
+  for (const entry of identities) assert.equal(await prove(entry), null);
+  // Any other Home stays refused.
+  served = 'srv_foreign_home';
+  await assert.rejects(prove(identities[2]), /does not match the established Home/);
 });
