@@ -319,6 +319,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
   observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
+  readConnectedAccountCatalogCustodianMachineId?: () => string | undefined;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   openTeamDirect?: Parameters<typeof createRuntimeProviderServices>[0]['openTeamDirect'];
 }>): RuntimeProviderModelManagementServices {
@@ -656,6 +657,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         if (!resolveSelection || request.providerConnection || request.sourceConnectionId) return unavailable();
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
         const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
+        const catalogCustodianMachineId = accountContext ? undefined : input.readConnectedAccountCatalogCustodianMachineId?.();
         const sources = request.connectedServices
           ? resolveAgentPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
               connectedServices: request.connectedServices }).map(candidate => ({ target: candidate.binding.target,
@@ -673,6 +675,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             ...(route && provider ? { provider, purpose: route.purpose } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
             providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
             resolveSelection, signal: operationLifetime.signal,
+            ...(catalogCustodianMachineId ? { catalogCustodianMachineId, readModelProjection: input.readModelProjection } : {}),
             ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
               resolveContributedCatalogParsers: leasedCatalogParserResolver(lease) }) } : {}),
           }), operationLifetime);

@@ -85,12 +85,22 @@ type ConnectedAccountCatalogInput = Readonly<{
   providerSettings: ProviderSettingsV1;
   resolveSelection: ResolveManagedProviderPurposeBindingIntentSelection;
   observeModels?: ObserveConnectedAccountModels;
+  catalogCustodianMachineId?: string;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   provider?: ResolvedProviderContribution;
   purpose?: string;
   agentPurpose?: ConnectedAccountPurposeDeclarationV1;
   signal?: AbortSignal;
 }>;
+
+function connectedAccountCatalogConnectionId(
+  application: ProviderBrokerSourceApplicationBindingV1,
+  target: NonNullable<DaemonProviderModelProjectionRequestV1['connectedAccountTarget']>,
+) {
+  return ProviderConnectionIdSchema.parse(`connected-source:${computeCanonicalDomainSeparatedDigest(
+    'happier.connected-source-model-projection.v1', [JSON.stringify(application), JSON.stringify(target)],
+  )}`);
+}
 
 type ConnectedAccountSourceGroup = Omit<DaemonProviderModelProjectionGroupV1, 'rows'> & Readonly<{
   application: ProviderBrokerSourceApplicationBindingV1;
@@ -131,27 +141,29 @@ async function readConnectedAccountModelCatalogFromSource(input: Omit<ConnectedA
       if (!application || (input.request.application && !pluginJsonValuesEqual(application, input.request.application))) continue;
       if (!input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
-      const connectionId = ProviderConnectionIdSchema.parse(`connected-source:${computeCanonicalDomainSeparatedDigest(
-        'happier.connected-source-model-projection.v1', [JSON.stringify(application), JSON.stringify(target)],
-      )}`);
+      const connectionId = connectedAccountCatalogConnectionId(application, target);
       if (!observations.has(selection)) {
         let observed: ReturnType<typeof observedConnectedAccountDescriptors> = null;
-        if (input.observeModels) {
+        if (input.observeModels && !input.catalogCustodianMachineId) {
           observed = observedConnectedAccountDescriptors(await input.observeModels({
             account: selection.resolved.account, machineId: input.request.machineId, source,
             currentOnly: input.request.refreshPolicy === 'current_only',
             refresh: input.request.forceRefresh === true, signal,
           }));
         } else if (family.catalogObservation && input.readModelProjection && input.request.agentTargetKey) {
-          // Launch has no Account-bound native capability transport. Resolve the
-          // same source-only projection used by the picker through its admitted port.
-          const projection = await input.readModelProjection({ machineId: input.request.machineId,
-            agentTargetKey: input.request.agentTargetKey, connectedAccountTarget: target,
+          // Launch and guest discovery both use the admitted source-only port.
+          // On the controller, observe the member already resolved on the guest.
+          const observationTarget = input.catalogCustodianMachineId
+            ? { kind: 'account' as const, account: selection.resolved.account } : target;
+          const projection = await input.readModelProjection({ machineId: input.catalogCustodianMachineId ?? input.request.machineId,
+            agentTargetKey: input.request.agentTargetKey, connectedAccountTarget: observationTarget,
             // `application` was projected from this same request key.
             application: { ...application, agentTargetKey: input.request.agentTargetKey }, sourceCatalog: true, refreshPolicy: input.request.refreshPolicy,
             forceRefresh: input.request.forceRefresh }, signal);
-          if (projection.status === 'error') return { groups: [], error: projection.error, isCurrent: async () => !signal.aborted };
-          const group = projection.groups.find(group => group.connectionId === connectionId && group.catalogObserved);
+          if (projection.status === 'error') return { groups: [], error: { ...projection.error,
+            machineId: input.request.machineId, connectedAccountTarget: target }, isCurrent: async () => !signal.aborted };
+          const observationId = observationTarget === target ? connectionId : connectedAccountCatalogConnectionId(application, observationTarget);
+          const group = projection.groups.find(group => group.connectionId === observationId && group.catalogObserved);
           if (group) observed = { descriptors: group.rows.map(row => row.descriptor),
             stale: group.rows.some(row => row.catalog.stale) };
         }

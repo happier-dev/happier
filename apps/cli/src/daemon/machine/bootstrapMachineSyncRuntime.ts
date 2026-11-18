@@ -22,6 +22,7 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import type { CliUpdateFacts } from '@happier-dev/protocol';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { DevcontainerChildProjectionV1Schema } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/handlers';
 import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { readDaemonPluginUiArtifactBytes } from '@/rpc/handlers/daemonContributionRegistryProjection';
@@ -1215,7 +1216,14 @@ export async function bootstrapMachineSyncRuntime(
       ...(params.resolveManagedPurposeBindingIntentSelection
         ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
         : {}),
-      ...(readProviderModelProjection ? { readModelProjection: readProviderModelProjection } : {}),
+      ...(readProviderModelProjection ? { readModelProjection: readProviderModelProjection,
+        readConnectedAccountCatalogCustodianMachineId: () => {
+          const snapshot = connectedApiMachine.getMachineMetadataSnapshot();
+          if (snapshot.status !== 'ready') return undefined;
+          // Home projects this field from the guest's current enrollment.
+          const child = DevcontainerChildProjectionV1Schema.safeParse(snapshot.metadata.devcontainerChild);
+          return child.success ? child.data.relation.parentMachineId : undefined;
+        } } : {}),
       modelSettingsMutation: providerConnectionRuntimeServices?.service.mutateModelSettings
         ?? providerConnectionUnavailable,
       localCatalogFallback: createProviderLocalCatalogFallbackRunner({
