@@ -43,6 +43,7 @@ it.skipIf(process.platform !== 'linux')('public-only author enrolls its retained
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
     reloadConfiguration();
     const home = await createDeploymentSocketHome({ encryptionMode: 'e2ee',
+        dbProvider: process.env.HAPPIER_DB_PROVIDER === 'postgres' ? 'postgres' : 'sqlite',
         prepareMachineContent: (key, metadata) => createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key,
             encryptionVariant: 'dataKey' }).encodeStored(metadata) });
     onTestFinished(() => home.close());
