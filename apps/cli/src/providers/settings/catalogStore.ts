@@ -1,6 +1,7 @@
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { $ZodError } from 'zod/v4/core';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { loadProviderConnectionsCatalogV1, providerConnectionsSourceNeedsCleanupV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
@@ -8,8 +9,9 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
   ProviderConnectionsRowMutationV1Schema, ProviderConnectionsRowMutationResponseV1Schema,
   sealProviderConnectionsContentV1, listProviderConnectionsCatalogSavedSecretRefsV1, readRetainedProviderConnectionsCatalogV1,
-  type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+  type ProviderConnectionsCatalogSnapshotV1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
+import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { StoredCredentials } from '@/persistence';
@@ -26,6 +28,16 @@ import { logger } from '@/ui/logger';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 type CatalogReadPhase = 'admission_currentness' | 'account_currentness' | 'storage_currentness' | 'row' | 'source' | 'history';
+
+export function projectProviderCatalogReadFailure(error: unknown, signal?: AbortSignal):
+  Extract<ProviderConnectionsCatalogSnapshotV1, { status: 'unavailable' }> {
+  const code = error instanceof Error && 'code' in error ? error.code : undefined;
+  return { status: 'unavailable', reason: signal?.aborted ? 'cancelled'
+    : code === 'scope-retired' || code === 'unauthorized' || code === 'forbidden' || code === 'unsupported' || code === 'account-mode-mismatch' ? code
+    : isRetryableAccountEncryptionCurrentnessError(error) ? 'unreachable'
+    : code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable' ? 'encryption-material-unavailable'
+    : error instanceof $ZodError ? 'invalid-stored-content' : 'unreachable' };
+}
 
 /** File-only catalog observations never serialize Account content or transport errors. */
 export async function observeProviderCatalogPhase<T>(input: Readonly<{ catalogReadId: string; phase: CatalogReadPhase }>, work: () => Promise<T>): Promise<T> {
@@ -117,6 +129,7 @@ function createCapturedStore(input: Readonly<{
     return response.data as unknown;
   };
   const readRow = () => observePhase('row', async () => ProviderConnectionsRowReadResponseV1Schema.parse(await request(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)));
+  const readCatalogRow = () => readRow().catch(error => projectProviderCatalogReadFailure(error, input.signal));
   const readStorageContext = async (usage: 'identity' | 'fresh-authority' = 'fresh-authority') => {
     await verifyCurrent();
     const context = await observePhase('storage_currentness', () => resolveCliAccountStorageContext({ credentials: input.credentials, serverBaseUrl: base, usage,
@@ -180,7 +193,7 @@ function createCapturedStore(input: Readonly<{
   /** Mutations require existing row authority and never initialize or clean a retained source. */
   const readCatalogForMutation = async () => (async () => {
     const context = await readStorageContext('identity');
-    const catalog = await loadProviderConnectionsCatalogV1({ ...context, signal: input.signal, readRow });
+    const catalog = await loadProviderConnectionsCatalogV1({ ...context, signal: input.signal, readRow: readCatalogRow });
     const admitted = await readStorageContext();
     await verifyCurrent();
     return admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' };
@@ -190,7 +203,7 @@ function createCapturedStore(input: Readonly<{
     const context = await readStorageContext('identity');
     let initializeSource = false;
     const catalog = await loadProviderConnectionsCatalogV1({ ...context, signal: input.signal, readRow: async () => {
-      const row = await readRow();
+      const row = await readCatalogRow();
       initializeSource = row.status === 'absent';
       return row;
     }, ...options, onReadyBeforeCleanup: options?.onReadyBeforeCleanup ? async ready => {

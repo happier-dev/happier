@@ -7,6 +7,7 @@ import { lookup } from 'node:dns/promises';
 
 import { createProviderEndpointFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeObservationIdentityV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
@@ -446,10 +447,10 @@ export function createRuntimeProviderServices(input: Readonly<{
     error: createProviderErrorV1('provider_feature_disabled', identity),
   });
   const providerProbeUnavailable = (
-    identity: Readonly<{ connectionId: string; machineId: string }>,
+    detail: RuntimeProviderIdentity & Pick<ProviderErrorV1, 'failureCause'>,
   ): Readonly<{ status: 'error'; error: ProviderErrorV1 }> => ({
     status: 'error',
-    error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+    error: createProviderErrorV1('provider_endpoint_unavailable', detail),
   });
   const isProviderFeatureEnabled = () => input.featureGate?.isEnabled('providers') === true;
   const withProviderFeatureCurrentness = (
@@ -469,6 +470,16 @@ export function createRuntimeProviderServices(input: Readonly<{
       }),
     };
 
+  const catalogDeadlineError = (identity: RuntimeProviderIdentity, error: ProviderOperationAbandonedError) =>
+    createProviderErrorV1('provider_catalog_unavailable', { ...identity,
+      failureCause: projectActionFailureCauseV1(error, 'providers.catalog.deadline'),
+    });
+
+  const authorizationChanged = (identity: RuntimeProviderIdentity, reason: string) =>
+    createProviderErrorV1('provider_authorization_changed', { ...identity,
+      failureCause: { phase: 'providers.catalog.currentness', errorClass: 'Error', errorCode: reason, httpStatus: null },
+    });
+
   const refreshAmbientCatalog = async (identity: RuntimeProviderIdentity, lifetime: RuntimeProviderOperationScope['lifetime']) => {
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity).error;
     // An issued snapshot reader retains its caller's already-admitted basis.
@@ -481,7 +492,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       }), lifetime);
       return catalog.status === 'ready' ? null : catalogAdmissionError(catalog, identity);
     } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError && error.reason !== 'cancelled') return createProviderErrorV1('provider_catalog_unavailable', identity);
+      if (error instanceof ProviderOperationAbandonedError && error.reason === 'deadline') return catalogDeadlineError(identity, error);
       throw error;
     }
   };
@@ -495,7 +506,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
     if (scope.isAccountCurrent && !await scope.isAccountCurrent()) {
-      return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', identity) };
+      return { ok: false as const, error: authorizationChanged(identity, 'account_scope_retired') };
     }
     const readSnapshot = scope.getAccountSettingsSnapshot ?? getSnapshot;
     let snapshot = settingsBasis?.snapshot ?? readSnapshot();
@@ -507,7 +518,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     }
     if (!settingsBasis && !scope.accountSettingsBasis && snapshot?.providerConnectionsCatalog?.status !== 'ready') {
       if (scope.getAccountSettingsSnapshot) return { ok: false as const,
-        error: createProviderErrorV1('provider_catalog_unavailable', identity) };
+        error: catalogAdmissionError(snapshot.providerConnectionsCatalog, identity) };
       if (!snapshot?.scopeKey) return { ok: false as const, error: createProviderErrorV1('provider_settings_invalid', identity) };
       let catalog;
       try {
@@ -515,15 +526,15 @@ export function createRuntimeProviderServices(input: Readonly<{
           expectedScopeKey: snapshot.scopeKey, signal: scope.lifetime.signal,
         }), scope.lifetime);
       } catch (error) {
-        if (error instanceof ProviderOperationAbandonedError && error.reason !== 'cancelled') {
-          return { ok: false as const, error: createProviderErrorV1('provider_catalog_unavailable', identity) };
+        if (error instanceof ProviderOperationAbandonedError && error.reason === 'deadline') {
+          return { ok: false as const, error: catalogDeadlineError(identity, error) };
         }
         throw error;
       }
       snapshot = readSnapshot();
       if (!isProviderFeatureEnabled()) return { ok: false as const, error: providerFeatureDisabled(identity).error };
       if (catalog.status !== 'ready') return { ok: false as const, error: catalogAdmissionError(catalog, identity) };
-      if (!snapshot) return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', identity) };
+      if (!snapshot) return { ok: false as const, error: authorizationChanged(identity, 'account_snapshot_unavailable') };
     }
     const scopedAccountSettingsBasisIsCurrent = !settingsBasis
       && scope.accountSettingsBasis !== undefined
@@ -531,7 +542,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!settingsBasis && scope.accountSettingsBasis && !scopedAccountSettingsBasisIsCurrent) {
       return {
         ok: false as const,
-        error: createProviderErrorV1('provider_authorization_changed', identity),
+        error: authorizationChanged(identity, 'account_scope_changed'),
       };
     }
     // Nested phases consume the admitted model/settings facts. Only Account
@@ -577,7 +588,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     ) {
       return {
         ok: false as const,
-        error: createProviderErrorV1('provider_authorization_changed', identity),
+        error: authorizationChanged(identity, 'connection_dns_evidence_missing'),
       };
     }
     let dnsEvidenceByEndpointUrl = scope.dnsEvidenceByConnectionId?.get(identity.connectionId);
@@ -596,7 +607,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!dnsEvidenceByEndpointUrl) {
       return {
         ok: false as const,
-        error: createProviderErrorV1('provider_authorization_changed', identity),
+        error: authorizationChanged(identity, 'dns_evidence_unavailable'),
       };
     }
     if (!isProviderFeatureEnabled()) {
@@ -1048,9 +1059,9 @@ export function createRuntimeProviderServices(input: Readonly<{
     admittedSnapshot?: ActiveAccountSettingsSnapshot,
   ): Promise<SavedResolutionResult> {
     const snapshot = context.snapshot;
-    if (!snapshot) return { ok: false, error: createProviderErrorV1('provider_authorization_changed', identity) };
+    if (!snapshot) return { ok: false, error: authorizationChanged(identity, 'account_snapshot_unavailable') };
     if (admittedSnapshot && admittedSnapshot.scopeKey !== snapshot.scopeKey) {
-      return { ok: false, error: createProviderErrorV1('provider_authorization_changed', identity) };
+      return { ok: false, error: authorizationChanged(identity, 'account_scope_changed') };
     }
     let savedSecretSnapshot = admittedSnapshot ?? snapshot;
     let references: SavedSecretOperationReferenceV1[] = [];
@@ -1218,7 +1229,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       status: 'error', error: createProviderErrorV1('provider_connection_invalid', identity),
     };
     if (context.accountReadScope === null) return {
-      status: 'error', error: createProviderErrorV1('provider_authorization_changed', identity),
+      status: 'error', error: authorizationChanged(identity, 'account_read_scope_unavailable'),
     };
     const admittedScope = {
       lifetime: context.lifetime, registry: context.registry,
@@ -1251,8 +1262,8 @@ export function createRuntimeProviderServices(input: Readonly<{
         ...identity, machineId: placement.machineId,
       }, signal), context.lifetime);
     } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError && error.reason !== 'cancelled') return {
-        status: 'error', error: createProviderErrorV1('provider_catalog_unavailable', identity),
+      if (error instanceof ProviderOperationAbandonedError && error.reason === 'deadline') return {
+        status: 'error', error: catalogDeadlineError(identity, error),
       };
       throw error;
     }
@@ -1265,7 +1276,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (result.status === 'success') {
       if ('connectionRevision' in result) {
         if (result.connectionRevision !== connection.connection.revision) return {
-          status: 'error', error: createProviderErrorV1('provider_authorization_changed', identity),
+          status: 'error', error: authorizationChanged(identity, 'hub_connection_revision_changed'),
         };
       } else if ('requestFingerprint' in result) {
         const request = hub.value.request;
@@ -1275,7 +1286,7 @@ export function createRuntimeProviderServices(input: Readonly<{
             path: probe.path, parser: probe.parser })] : [];
         });
         if (!fingerprints.includes(result.requestFingerprint)) return {
-          status: 'error', error: createProviderErrorV1('provider_authorization_changed', identity),
+          status: 'error', error: authorizationChanged(identity, 'hub_request_fingerprint_changed'),
         };
       } else if ('groups' in result && result.groups.some(group => (
         group.connectionId !== identity.connectionId
@@ -1287,7 +1298,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         || group.rows.some(row => row.ref.providerConnectionId !== identity.connectionId
           || row.ref.agentTargetKey !== result.agentTargetKey || row.descriptor.id !== row.ref.modelId)
       ))) {
-        return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', identity) };
+        return { status: 'error', error: authorizationChanged(identity, 'hub_model_projection_changed') };
       }
     }
     return result;
@@ -1336,8 +1347,8 @@ export function createRuntimeProviderServices(input: Readonly<{
       },
       admitSource: async usageSourceId => {
         const snapshot = context.value.readSnapshot();
-        if (!snapshot || !isProviderFeatureEnabled()) return { ok: false,
-          error: createProviderErrorV1('provider_authorization_changed', identity) };
+        if (!snapshot) return { ok: false, error: authorizationChanged(identity, 'account_snapshot_unavailable') };
+        if (!isProviderFeatureEnabled()) return { ok: false, error: authorizationChanged(identity, 'providers_disabled') };
         return admitRuntimeProviderSavedSecret({ connection, providerSettings, snapshot,
           getAccountSettingsSnapshot: context.value.readSnapshot, lifetime: scope.lifetime, usageSourceId,
         });
@@ -1681,7 +1692,10 @@ export function createRuntimeProviderServices(input: Readonly<{
               ? snapshot.providerConnectionsCatalog
               : await awaitWithinProviderOperation(prepareProviderConnectionsCatalogForCli({ expectedScopeKey: snapshot.scopeKey }), lifetime);
             if (!isProviderFeatureEnabled()) return providerFeatureDisabled({ connectionId: request.draftConnectionId, machineId: request.machineId });
-            if (catalog.status !== 'ready') return providerProbeUnavailable({ connectionId: request.draftConnectionId, machineId: request.machineId });
+            if (catalog.status !== 'ready') return providerProbeUnavailable({
+              connectionId: request.draftConnectionId, machineId: request.machineId,
+              failureCause: catalogAdmissionError(catalog).failureCause,
+            });
             return draftProbeService.probe(request, lifetime);
           } catch (error) {
             if (error instanceof ProviderOperationAbandonedError && error.reason !== 'cancelled') return providerProbeUnavailable({ connectionId: request.draftConnectionId, machineId: request.machineId });

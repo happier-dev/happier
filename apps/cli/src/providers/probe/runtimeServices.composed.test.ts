@@ -777,6 +777,44 @@ describe('runtime provider services', () => {
     }
   });
 
+  it('reports the retained catalog refusal from its existing Account snapshot', async () => {
+    const snapshot = { ...providerSnapshot(grantedSettings()),
+      providerConnectionsCatalog: { status: 'unavailable', reason: 'scope-retired' } as const };
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', registry,
+      featureGate: { isEnabled: () => true } });
+    await expect(services.resolveCatalogContext({ connectionId, machineId: 'machine-a' }, undefined,
+      { getAccountSettingsSnapshot: () => snapshot, lifetime: { wallDeadlineAtMs: Date.now() + 25 } })).resolves.toMatchObject({ status: 'error', error: {
+      code: 'provider_authorization_changed', failureCause: { phase: 'providers.catalog', errorCode: 'scope-retired' },
+    } });
+  });
+
+  it('retains the Home catalog refusal when a draft probe cannot open its Account catalog', async () => {
+    const credentials = { token: 'draft-provider-catalog-refused', encryption: null };
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token), providerConnectionsCatalog: { status: 'loading' } });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, settingsVersion: 4, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/provider-connections') return { status: 403, data: {} };
+      throw new Error(`Unexpected draft Provider catalog request: ${path}`);
+    });
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', registry,
+      featureGate: { isEnabled: () => true } });
+    await expect(services.probeDraft({
+      kind: 'draft', draftConnectionId: ProviderConnectionIdSchema.parse('pc_refused_draft'), machineId: 'machine-a',
+      template: { v: 1, name: 'Draft', endpointTemplates: [{ id: 'openai', protocol: 'openai-chat',
+        baseUrl: 'https://draft.example/v1', capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
+          statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+      catalog: { source: 'manual', manualModelPolicy: 'allowed' } }, savedSecretId: null,
+    })).resolves.toMatchObject({ status: 'error', error: {
+      code: 'provider_endpoint_unavailable', retryable: true,
+      failureCause: { phase: 'providers.catalog', errorCode: 'forbidden' },
+    } });
+  });
+
   it('spends the existing Provider operation deadline while opening a demanded Account catalog', async () => {
     vi.useFakeTimers();
     const credentials = { token: 'provider-catalog-deadline', encryption: null };
@@ -809,7 +847,10 @@ describe('runtime provider services', () => {
     try {
       await rowEntered.promise;
       await vi.advanceTimersByTimeAsync(26);
-      expect(observed).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+      expect(observed).toMatchObject({ status: 'error', error: {
+        code: 'provider_catalog_unavailable', retryable: true,
+        failureCause: { phase: 'providers.catalog.deadline' },
+      } });
     } finally {
       releaseRow.resolve();
       await pending;

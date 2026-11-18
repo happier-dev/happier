@@ -1,8 +1,6 @@
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createProviderCatalogAdmissionError, readProviderSettingsForCli } from './read';
-import { $ZodError } from 'zod/v4/core';
 import { awaitWithinProviderOperation, type ProviderOperationLifetime } from '../operationLifetime';
-import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
 import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { randomUUID } from 'node:crypto';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -11,7 +9,8 @@ import { beginActiveProviderConnectionsCatalogRefresh, commitActiveProviderConne
   getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
-import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation, observeProviderCatalogPhase } from './catalogStore';
+import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation, observeProviderCatalogPhase,
+  projectProviderCatalogReadFailure } from './catalogStore';
 
 export { readActiveProviderConnectionsCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -165,13 +164,7 @@ function refresh(input: RefreshInput, intent: 'read' | 'reobserve' | 'change' = 
           }
         }, hasPendingCleanup: () => !context && pending.get(key)?.completion === work && reloadAfterPending.has(key) });
       } catch (error) {
-        const code = error instanceof Error && 'code' in error ? error.code : undefined;
-        catalog = { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled'
-          : !current() || code === 'scope-retired' ? 'scope-retired'
-          : code === 'unauthorized' || code === 'forbidden' || code === 'unsupported' || code === 'account-mode-mismatch' ? code
-          : isRetryableAccountEncryptionCurrentnessError(error) ? 'unreachable'
-          : code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable' ? 'encryption-material-unavailable'
-          : error instanceof $ZodError ? 'invalid-stored-content' : 'unreachable' };
+        catalog = projectProviderCatalogReadFailure(error, input.signal);
       }
       if (!current()) return { status: 'unavailable', reason: 'scope-retired' };
       if (!context && publishedReady) {
