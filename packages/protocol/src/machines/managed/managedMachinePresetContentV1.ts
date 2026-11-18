@@ -319,12 +319,13 @@ export function readManagedMachinePresetLaunchNameOverrideForModeV1(params: Read
   return readManagedMachinePresetContentOverrideForModeV1(params);
 }
 
+/** Accept opaque author drafts; sealing validates them into the typed private content. */
 export type ManagedMachinePresetContentSealParamsV1 =
-  | Readonly<{ presetId: string; mode: 'plain'; content: ManagedMachinePresetContentV1 }>
+  | Readonly<{ presetId: string; mode: 'plain'; content: unknown }>
   | Readonly<{
       presetId: string;
       mode: 'e2ee';
-      content: ManagedMachinePresetContentV1;
+      content: unknown;
       /** Server-owned verified owner/member/custodian census; never UI-selected keys. */
       recipientCensus: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
       randomBytes: (length: number) => Uint8Array;
@@ -646,18 +647,19 @@ export function captureManagedMachinePresetAuthorEffectReviewV1(
   } });
 }
 
+/** Replacement validates opaque drafts before merging with authenticated incumbent content. */
 export type ManagedMachinePresetAuthorContentReplacementParamsV1 =
   | Readonly<{
       presetId: string;
       mode: 'plain';
       projection: unknown;
-      content: ManagedMachinePresetContentV1;
+      content: unknown;
     }>
   | Readonly<{
       presetId: string;
       mode: 'e2ee';
       projection: unknown;
-      content: ManagedMachinePresetContentV1;
+      content: unknown;
       accountId: string;
       accountKey: Uint8Array;
       /** Server-owned current owner/member/custodian census. */

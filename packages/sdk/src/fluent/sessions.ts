@@ -21,7 +21,7 @@ type SessionSpawnSuccessWithInitialInputFailure = SessionSpawnSuccessResult & Re
   initialInput: SessionSpawnInitialInputFailure;
 }>;
 type AgentBackendInventoryItem = PublicActionResultById['agents.backends.list']['items'][number];
-type AgentIdentity = SessionSpawnActionInput['agentTarget']['identity'];
+type AgentIdentity = NonNullable<SessionSpawnActionInput['agentTarget']>['identity'];
 
 /**
  * Author-facing Session creation input for a client already bound to a
