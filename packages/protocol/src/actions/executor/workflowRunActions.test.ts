@@ -2764,19 +2764,27 @@ describe('shared Account workflow run owner', () => {
   });
 
   it('projects a failed child from an interrupted automatic check for D14 override', async () => {
-    const failedChildRun = {
-      ...runSnapshot().run,
-      state: 'interrupted' as const,
+    const snapshot = runSnapshot();
+    const interruptedRun = { ...snapshot.run, state: 'interrupted' as const };
+    const root = storedRootInvocation(snapshot);
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({
+      ...root.progress,
       stepProgress: {
         completed: 0, total: 1,
-        destinations: [{ sourceKey: 'inline', blockId: 'check', sessionIds: ['session'],
-          observation: { recordId: '66666666-6666-4666-8666-666666666666', sequence: '0', attempt: '0',
+        destinations: [{ sourceKey: '$root', blockId: 'check', sessionIds: [],
+          observation: { recordId: '77777777-7777-4777-8777-777777777777', sequence: '1', attempt: '0',
             contentRevision: '0', lifecycle: 'failed' as const, blockKind: 'action' as const } }],
       },
-    };
+    });
+    const rootProgress = { index: root.index, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+      sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: {
+        v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: root.index.id, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
+      }, progress })) };
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
-      if (operation.operation !== 'wait') throw new Error(`unexpected_storage_operation:${operation.operation}`);
-      return { observation: 'waiting', run: failedChildRun };
+      if (operation.operation === 'wait') return { observation: 'waiting', run: interruptedRun };
+      if (operation.operation === 'get') return { ...snapshot, run: interruptedRun, rootProgress };
+      throw new Error(`unexpected_storage_operation:${operation.operation}`);
     } }));
     await expect(owner.waitAutomaticCheck({
       run: { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'account-1',
@@ -2788,8 +2796,11 @@ describe('shared Account workflow run owner', () => {
 
   it('keeps an interrupted automatic check unavailable without failed-child evidence', async () => {
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
-      if (operation.operation !== 'wait') throw new Error(`unexpected_storage_operation:${operation.operation}`);
-      return { observation: 'waiting', run: { ...runSnapshot().run, state: 'interrupted' as const } };
+      const snapshot = runSnapshot();
+      const run = { ...snapshot.run, state: 'interrupted' as const };
+      if (operation.operation === 'wait') return { observation: 'terminal', run };
+      if (operation.operation === 'get') return { ...snapshot, run };
+      throw new Error(`unexpected_storage_operation:${operation.operation}`);
     } }));
     await expect(owner.waitAutomaticCheck({
       run: { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'account-1',

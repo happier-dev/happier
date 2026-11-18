@@ -3141,7 +3141,18 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (failure !== undefined) throw failure;
         }
         if (raw.observation === 'changed') continue;
-        const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
+        let automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
+        if (automaticRun?.state === 'interrupted') {
+          // Wait summaries omit private root progress. Open the exact Run's
+          // existing root observation before classifying a failed check.
+          const snapshot = await getSnapshot(args.input.runId, args.context.signal);
+          const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census: snapshot.keyCensus });
+          if (resolved.kind !== 'available') throw workflowError(resolved.reason);
+          const { stepProgress, stepProgressCurrentness } = openRootProgress(args.input.runId, snapshot.rootProgress,
+            resolved.encryption, snapshot.keyCensus.ownerAccountId);
+          automaticRun = { ...snapshot.run, stepProgress, stepProgressCurrentness };
+          stored = { ...raw, run: automaticRun };
+        }
         const run = automaticRun ?? record(raw.run);
         const pendingCombinedSettlement = combined !== undefined && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
             || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
