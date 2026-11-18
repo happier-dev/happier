@@ -1,7 +1,7 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { SkillCatalogItemV1Schema, type AgentSessionInputFilesService, type AgentSessionSendRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readStructuredInputMentionSourcesV1 } from '@happier-dev/plugin-sdk/sessions';
-import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { HappierStructuredInputV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { MuseMsp } from './msp.js';
 import { readMuseRecord } from './events.js';
 

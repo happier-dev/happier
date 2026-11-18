@@ -26,7 +26,11 @@ it('sends host-resolved Channel file context without treating its dispatch metad
     },
   });
   expect(prepared.requiredPrompt).toContain('PEBBLE attachment content');
-  expect(prepared.structuredInput).toHaveProperty('resolvedComposerAttachments');
+  expect(prepared.structuredInput).toMatchObject({ resolvedComposerAttachments: [{
+    instanceId: 'channel-file-1', attachment: { pluginId: 'happier.channels', localId: 'channel-file' },
+    key: 'file-1', value: { fileId: 'file-1' },
+  }] });
+  expect(prepared.structuredInput).not.toHaveProperty('composerAttachments');
   expect(await resolveMuseTurnInput({ text: prepared.requiredPrompt,
     structuredInput: AgentRuntimeJsonValueSchema.parse(prepared.structuredInput) }, {
     nativeSessionId: 'native-session', msp: { client },

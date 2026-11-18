@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { formatReasoningEffortTierLabel } from '@happier-dev/plugin-sdk/providers';
 import type { AgentPreflightSessionControlsContributionV1, AgentSessionModel, AgentSessionModelsSnapshot, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 

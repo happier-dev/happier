@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { createAgentExternalSessionsProducerOverflowFailure, getAgentExternalSessionsInvocationFailure,
   isAgentExternalSessionsResultWithinByteBudget, readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
-import { projectExternalSessionCandidateTitle } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { projectExternalSessionCandidateTitle } from '@happier-dev/plugin-sdk/sessions/external';
 import { createMuseEventProjection, readMuseRecord } from './events.js';
 import { openMuseMsp, type MuseMsp } from './msp.js';
 

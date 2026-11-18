@@ -51,12 +51,12 @@
     "vitest:local": "vitest"
   },
   "dependencies": {
-    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/tests": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
