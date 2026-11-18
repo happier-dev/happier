@@ -25,7 +25,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { dispatchOriginalAccountAction } from '../../../../apps/cli/src/api/externalActionExecutionAuthorization';
 import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '../../../../apps/cli/src/mcp/runtime/sessionMcpLocalClient';
-import { readRetainedExecutionRunRecord } from '../../../../apps/cli/src/daemon/executionRunRegistry';
+import { readRetainedExecutionRunRecord } from '../../../../apps/cli/src/daemon/executionRunRegistry.testkit';
 import { reloadConfiguration } from '../../../../apps/cli/src/configuration';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ProjectSessionDefaultsGetOutputV1Schema } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
@@ -40,8 +40,8 @@ const projectAgentKey = 'agent:happier.agent.claude/claude';
 const projectModel = { source: 'native' as const, agentTargetKey: projectAgentKey, modelId: 'matrix-project-model' };
 const features = { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_BOTS__ENABLED: '1' };
 
-/** One canonical server/Postgres/daemon fixture; each cell has its own test
- * result so a refusal cannot hide the remaining creation branches. */
+/** One canonical server/Postgres/daemon fixture; setup is shared for cost and
+ * correctness, while each cell retains its own result after setup succeeds. */
 describe('TS.F.spawnMatrix: creation entry × defaults context', () => {
   let fixture: TeamSetupFFixture;
   type Account = Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
