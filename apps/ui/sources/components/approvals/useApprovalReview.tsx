@@ -11,7 +11,7 @@ import { readDiscussionDraftApproval } from './discussionDraftApproval';
 import { WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
-import { ApprovalAutomaticChecks, readApprovalAutomaticChecksShown, useApprovalAutomaticChecksControls } from './ApprovalAutomaticChecks';
+import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, readApprovalAutomaticChecksShown, useApprovalAutomaticChecksControls } from './ApprovalAutomaticChecks';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
@@ -596,7 +596,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       {parsed.kind === 'built_in' ? (
         <ApprovalAcceptedOperationStatusRow request={parsed.request} serverId={approvalServerId} testID="approvals.operation" />
       ) : null}
-      {executionFailure ? (
+      {/* A before check's refusal says its reason in the checks block, once (lab wait-v-arefused). */}
+      {executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? (
         <Item
           testID="approvals.execution-failure"
           // The Status row already names an unknown outcome, so this row leads with what to do instead of repeating it.
@@ -697,6 +698,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
               <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionValue} serverId={approvalServerId ?? null}
                 canAllow={canAllow} automaticCheckSkips={automaticCheckSkips}
                 automaticChecksExecutionAccountName={automaticChecksExecutionAccountName}
+                failureReason={failureSummary ?? null}
                 onOpenRoute={openRoute} testID="approvals.automatic-checks" />
             </SectionContentRow>
           </ItemGroup>

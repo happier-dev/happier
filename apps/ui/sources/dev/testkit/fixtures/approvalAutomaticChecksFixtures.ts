@@ -73,19 +73,14 @@ const PREDEPLOY = {
   ...FREEZE,
   automationId: 'automation-pre-deploy',
   triggerId: 'trigger-pre-deploy',
-  workflowId: '6f1a2c3d-4b5e-4f60-8a71-0c2d3e4f5a61',
+  workflowId: 'artifact-pre-deploy-checks',
 };
 const NOTIFY = {
   ...FREEZE,
   automationId: 'automation-tell-releases',
   triggerId: 'trigger-tell-releases',
-  workflowId: '6f1a2c3d-4b5e-4f60-8a71-0c2d3e4f5a62',
+  workflowId: 'artifact-tell-releases',
   mode: 'notify' as const,
-};
-/** The saved workflows the scenes name, so a card reads "Pre-deploy checks" as it does live, never "A check". */
-export const APPROVAL_CHECKS_WORKFLOW_TITLES: Readonly<Record<string, string>> = {
-  [PREDEPLOY.workflowId]: 'Pre-deploy checks',
-  [NOTIFY.workflowId]: 'Tell #releases',
 };
 const ref = (row: Readonly<{ automationId: string; triggerId: string }>) => ({
   automationId: row.automationId,
@@ -258,6 +253,9 @@ export function createApprovalChecksSceneFixture(
       caller: { kind: 'host' },
       accountId: params.accountId,
       serverId: params.serverId,
+      // The in-place review addresses this Home by its portable identity, so the request names it too; without it
+      // the review fails closed ("Failed to load approval").
+      serverIdentityId: params.serverId,
       actionId: 'session.title.set',
       requestId: `dev-approval-checks-person-${scene}`,
     } : {
