@@ -8,7 +8,7 @@ import { useMachinePresenceMembership } from '@/sync/domains/machines/reachabili
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
-import { currentUiContextReadClientRpcMethod, isCurrentUiContextClientRpcMethod,
+import { DESKTOP_UI_ACTION_CLIENT_RPC_METHOD, currentUiContextReadClientRpcMethod, isCurrentUiContextClientRpcMethod,
     sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCurrentUiContributedActionRpcHandler } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -16,6 +16,7 @@ import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { getDesktopAppWindowMountedSurfaces, subscribeDesktopAppWindowMountedSurfaces } from '@/desktop/window/appWindowSurface';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { useMountedClientActionMethods } from './mountedClientActionAddresses';
 
 function useMachineClientActionBindings({
@@ -118,10 +119,13 @@ export function ClientActionReverseRuntime(): null {
         getDesktopAppWindowMountedSurfaces, getDesktopAppWindowMountedSurfaces);
     const currentUiReader = useOptionalCurrentUiContextReader();
     const currentSessionId = currentUiReader?.readCurrentSessionId?.() ?? null;
-    const methods = React.useMemo(() => [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...localMethods,
+    // The authenticated Home responder is already elected by the native window owner.
+    const desktopMethod = desktopHostKind() === 'tauri' ? DESKTOP_UI_ACTION_CLIENT_RPC_METHOD : null;
+    const methods = React.useMemo(() => [...new Set([RPC_METHODS.UI_ACTION_EXECUTE,
+        ...(desktopMethod ? [desktopMethod] : []), ...localMethods,
         ...windowSurfaces.flatMap(surface => surface.homeId === serverId && surface.accountId === accountId
             ? surface.methods ?? [] : []),
-    ])].filter(isSocketRoom), [serverId, accountId, localMethods, windowSurfaces]);
+    ])].filter(isSocketRoom), [serverId, accountId, desktopMethod, localMethods, windowSurfaces]);
     // Registration belongs to the runtime, without one React mount per Machine or method.
     useMachineClientActionBindings({ serverId, generation, accountId, machineIds: selectableMachineIds, methods,
         sessionId: currentSessionId, readCurrentSessionId: currentUiReader?.readCurrentSessionId, contributedMachineIds });

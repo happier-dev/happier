@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { ActionIdSchema, type ActionId } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
@@ -31,6 +31,22 @@ export function clientActionAmbiguous(clients: readonly SocketRpcAnsweringClient
   return { ok: false, errorCode: 'client_ambiguous',
     error: 'Pass clientId from details.clients to choose an exact answering client.',
     details: { clients: [...clients], recovery: { kind: 'choose_client', inputField: 'clientId' } } };
+}
+
+export const DESKTOP_UI_ACTION_CLIENT_RPC_METHOD = `${RPC_METHODS.UI_ACTION_EXECUTE}.desktop` as const;
+
+const DESKTOP_ACTION_IDS: ReadonlySet<ActionId> = new Set([
+  ...ACTION_ID_FAMILIES_V1.desktop_shell, ...ACTION_ID_FAMILIES_V1.desktop_windows,
+]);
+
+/** Desktop effects use the Home's desktop responder, even for an Agent with a bound Session. */
+export function resolveDesktopUiActionClientRpcMethod(actionId: ActionId, input: unknown): typeof DESKTOP_UI_ACTION_CLIENT_RPC_METHOD | undefined {
+  const presentation = actionId === 'session.open' && input && typeof input === 'object' && 'presentation' in input
+    ? input.presentation : undefined;
+  if (DESKTOP_ACTION_IDS.has(actionId) || presentation === 'overlay' || presentation === 'window') {
+    return DESKTOP_UI_ACTION_CLIENT_RPC_METHOD;
+  }
+  return undefined;
 }
 
 /** A mounted Session view, rather than any signed-in client on the Account. */

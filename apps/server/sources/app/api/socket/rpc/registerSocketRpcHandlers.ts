@@ -119,7 +119,7 @@ import { buildMachineRpcAvailabilityRoom, buildRpcMethodRoom } from "./rpcMethod
 import { RPC_REGISTERED_METHODS_SOCKET_DATA_KEY, readSocketRegisteredRpcMethods } from './rpcRegisteredMethods';
 import { getMachineSocketRoom } from "../../socketRooms";
 import { isWorkflowDraftClientRpcMethod } from '@happier-dev/protocol/actions/workflowAuthoringAction';
-import { isMountedWorkReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { DESKTOP_UI_ACTION_CLIENT_RPC_METHOD, isMountedWorkReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
 import { readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
 import { resolveSessionBrowserRpcCapabilityV1, type SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
@@ -131,6 +131,7 @@ const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
     RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
     RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
     RPC_METHODS.UI_ACTION_EXECUTE,
+    DESKTOP_UI_ACTION_CLIENT_RPC_METHOD,
 ]);
 
 function isMachineVisibleClientRpcMethod(method: string): boolean {
@@ -1253,10 +1254,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 return;
             }
             const reverseAutomationSeparator = method.indexOf(':');
+            const reverseMethod = method.slice(reverseAutomationSeparator + 1);
             const reverseClientContinuation = reverseAutomationSeparator > 0
-                && isMachineVisibleClientRpcMethod(method.slice(reverseAutomationSeparator + 1));
+                && isMachineVisibleClientRpcMethod(reverseMethod);
             const appClientContinuation = answeringClient !== undefined
-                && method.slice(reverseAutomationSeparator + 1) === RPC_METHODS.UI_ACTION_EXECUTE
+                && (reverseMethod === RPC_METHODS.UI_ACTION_EXECUTE || reverseMethod === DESKTOP_UI_ACTION_CLIENT_RPC_METHOD)
                 && params.ephemeralRunnerAdmission == null
                 && isPresentUserLiveApprovalOriginCaller(params.socket)
                 && await hasCurrentSocketCredential(params.userId, params.socket);

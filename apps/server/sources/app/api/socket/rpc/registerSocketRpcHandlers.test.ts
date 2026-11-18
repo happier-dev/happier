@@ -22,6 +22,7 @@ import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import { Server, type Socket } from "socket.io";
 import { watchSessionScopedMachineAccess } from "../sessionScopedBinding";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DESKTOP_UI_ACTION_CLIENT_RPC_METHOD } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createSha256SecretDigest } from "@/app/auth/secretDigest";
 import { auth } from "@/app/auth/auth";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
@@ -1316,10 +1317,10 @@ describe("registerSocketRpcHandlers", () => {
         }
     });
 
-    it('lets an Account app discover and explicitly select connected apps, including itself, without fallback', async () => {
+    it.each([RPC_METHODS.UI_ACTION_EXECUTE, DESKTOP_UI_ACTION_CLIENT_RPC_METHOD])('%s lets an Account app discover and explicitly select connected apps, including itself, without fallback', async rpcMethod => {
         machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installed-machine-1' });
         const { io, createRoomAwareSocket } = createRoomAwareIo();
-        const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
+        const method = `machine-1:${rpcMethod}`;
         const effects: string[] = [];
         const apps = ['app-a', 'app-b', 'app-c'].map((id, index) => createRoomAwareSocket({ id,
             data: { userId: 'user-1', clientType: 'user-scoped', ...(index < 2 ? { rpcDeviceLabel: `Device ${index}` } : {}) },
@@ -1334,7 +1335,7 @@ describe("registerSocketRpcHandlers", () => {
             registerSocketRpcHandlers({ userId: 'user-1', socket: app as unknown as Socket, io });
             await triggerSocketHandler(app, SOCKET_RPC_EVENTS.REGISTER, { method }, vi.fn());
         }
-        const call = { method: `machine-1:answering-client.v1/${RPC_METHODS.UI_ACTION_EXECUTE}`, params: 'encrypted-action' };
+        const call = { method: `machine-1:answering-client.v1/${rpcMethod}`, params: 'encrypted-action' };
         const discovery = vi.fn();
         await triggerSocketHandler(apps[0]!, SOCKET_RPC_EVENTS.CALL, { ...call,
             answeringClient: { requireSingle: true, includeCandidates: true } }, discovery);
@@ -1358,11 +1359,11 @@ describe("registerSocketRpcHandlers", () => {
         expect(effects).toEqual(['app-a', 'app-b', 'app-a']);
     });
 
-    it('refuses app continuations from another Account or restricted credential and retains daemon-only reverse methods', async () => {
+    it.each([RPC_METHODS.UI_ACTION_EXECUTE, DESKTOP_UI_ACTION_CLIENT_RPC_METHOD])('%s refuses app continuations from another Account or restricted credential and retains daemon-only reverse methods', async rpcMethod => {
         machineFindFirstMock.mockImplementation(async args => (args as { where: { accountId: string } }).where.accountId === 'user-1'
             ? { revokedAt: null, replacedByMachineId: null } : null);
         const { io, createRoomAwareSocket } = createRoomAwareIo();
-        const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
+        const method = `machine-1:${rpcMethod}`;
         const effect = vi.fn(async () => 'encrypted-result');
         const receiver = createRoomAwareSocket({ id: 'receiver', data: { clientType: 'user-scoped' },
             timeout: () => ({ emitWithAck: effect }) });
@@ -1377,16 +1378,16 @@ describe("registerSocketRpcHandlers", () => {
             const ack = vi.fn();
             await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { params: 'encrypted-action',
                 method: scenario === 'raw-method' ? method
-                    : `machine-1:answering-client.v1/${scenario === 'other-method' ? RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE : RPC_METHODS.UI_ACTION_EXECUTE}`,
+                    : `machine-1:answering-client.v1/${scenario === 'other-method' ? RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE : rpcMethod}`,
                 ...(scenario === 'raw-method' ? {} : { answeringClient: { clientId: receiver.id } }) }, ack);
             expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         }
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it('routes a versioned answering-client continuation through the existing authenticated Machine owner', async () => {
+    it.each([RPC_METHODS.UI_ACTION_EXECUTE, DESKTOP_UI_ACTION_CLIENT_RPC_METHOD])('routes %s through the existing authenticated Machine owner', async rpcMethod => {
         machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installed-machine-1' });
-        const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
+        const method = `machine-1:${rpcMethod}`;
         const effects: string[] = [];
         const targets = ['app-a', 'app-b'].map(id => ({ id, data: { clientType: 'user-scoped' },
             timeout: () => ({ emitWithAck: async () => { effects.push(id); return 'encrypted-result'; } }) }));
@@ -1395,7 +1396,7 @@ describe("registerSocketRpcHandlers", () => {
         const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: targets,
             'app-a': [targets[0]!], 'app-b': [targets[1]!], [getMachineSocketRoom('user-1', 'machine-1')]: [socket] });
         registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
-        const call = { method: `machine-1:answering-client.v1/${RPC_METHODS.UI_ACTION_EXECUTE}`, params: 'encrypted-action' };
+        const call = { method: `machine-1:answering-client.v1/${rpcMethod}`, params: 'encrypted-action' };
         const refused = vi.fn();
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { ...call, answeringClient: { requireSingle: true } }, refused);
         expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS' }));

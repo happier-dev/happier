@@ -131,6 +131,121 @@ afterEach(async () => {
 });
 
 describe('admitted app Actions and daemon-to-app continuations', () => {
+  it('delivers background Agent desktop Actions to the mounted desktop instead of the focused browser', async () => {
+    const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
+    const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
+    const { registerDesktopAppWindowWorkspace } = await import('@/desktop/window/appWindowRuntime');
+    const { registerMountedDesktopOverlayPresentation } = await import('@/components/appShell/workspace/desktopOverlayPresentationRuntime');
+    const accountId = 'relay-account';
+    const sessionId = 'agent-in-background';
+    const machine = createMachineFixture({ id: 'desktop-action-machine', activeAt: Date.now(),
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {},
+      sessions: { [sessionId]: createSessionFixture({ id: sessionId, serverId }) } });
+    const socket = clientSockets.slice().reverse().find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
+    if (!socket) throw new Error('Account reverse receiver absent');
+    const registered = new Set<string>();
+    const emit = vi.spyOn(socket, 'emit').mockImplementation((event, ...args) => {
+      const payload: unknown = args[0];
+      if (payload && typeof payload === 'object' && 'method' in payload && typeof payload.method === 'string') {
+        if (event === SOCKET_RPC_EVENTS.REGISTER) registered.add(payload.method);
+        if (event === SOCKET_RPC_EVENTS.UNREGISTER) registered.delete(payload.method);
+      }
+      return socket;
+    });
+    releases.push(() => emit.mockRestore());
+    const browserRuntime = await renderScreen(React.createElement(ClientActionReverseRuntime));
+    const browserRooms = new Set(registered);
+    await browserRuntime.unmount();
+    const { mockIPC, clearMocks } = await import('@tauri-apps/api/mocks');
+    const { createDesktopSecureStorageBoundary } = await import('@/dev/testkit/mocks/desktopSecureStorage');
+    const secureStorage = createDesktopSecureStorageBoundary();
+    const displays = { displays: [], automaticResolvesTo: null };
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      switch (command) {
+        case 'plugin:event|listen': return Number(args?.handler);
+        case 'plugin:event|unlisten': return null;
+        case 'desktop_secure_storage_read':
+        case 'desktop_secure_storage_write':
+        case 'desktop_secure_storage_remove': return await secureStorage.invoke(command, args);
+        case 'desktop_host_get_availability':
+          return { activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' } };
+        case 'desktop_app_window_restore': return [];
+        case 'desktop_app_window_placement': return { frame: null, previousFrame: null, workArea: null };
+        case 'desktop_activity_overlay_request_presentation': return;
+        case 'desktop_displays_list': return displays;
+        case 'desktop_app_window_open': {
+          const record = args?.record;
+          if (!record || typeof record !== 'object' || !('windowId' in record)) throw new Error('Window record missing');
+          return { windowId: record.windowId, ready: true, reused: false };
+        }
+        default: throw new Error(`Unexpected native command: ${command}`);
+      }
+    });
+    if (typeof window === 'undefined') vi.stubGlobal('window', { location: new URL('https://relay.test/'),
+      addEventListener() {}, removeEventListener() {} });
+    Object.assign(window, { crypto: globalThis.crypto });
+    mockIPC((command, args) => invoke(command, args as Record<string, unknown> | undefined));
+    const nativeWindow = window as unknown as { __TAURI_INTERNALS__: { metadata?: { currentWindow: { label: string } } } };
+    nativeWindow.__TAURI_INTERNALS__.metadata = { currentWindow: { label: 'main' } };
+    vi.stubGlobal('__TAURI_INTERNALS__', nativeWindow.__TAURI_INTERNALS__);
+    releases.push(() => { clearMocks(); vi.unstubAllGlobals(); });
+    const scope = { serverId, accountId };
+    const workspace = createWorkspaceState(createWorkspaceEmptyTab('desktop-test-tab'));
+    const releaseWorkspace = registerDesktopAppWindowWorkspace({ windowId: 'main', scope, getState: () => workspace,
+      dispatch: () => {}, catalog: [], activateTab: () => {}, placementMetrics: { cascadeOffset: 24, screenInset: 24 } });
+    const pinned: unknown[] = [];
+    // Mount the overlay presentation port. The real route renders independently of the reverse responder.
+    releases.push(registerMountedDesktopOverlayPresentation(async target => { pinned.push(target); return { ok: true }; }));
+
+    const desktop = { id: 'desktop', data: { uiLastFocusedAt: 1 }, timeout: () => ({
+      emitWithAck: async (_event: string, payload: unknown) => await new Promise<unknown>(resolve => {
+        for (const receive of socket.listeners(SOCKET_RPC_EVENTS.REQUEST)) receive(payload, resolve);
+      }),
+    }) };
+    const browserDelivery = vi.fn(async (_event: string, _payload: unknown) => ({
+      v: 1, execution: { ok: false, errorCode: 'unavailable', error: 'desktop_overlay_unavailable' },
+    }));
+    const browser = { id: 'browser', data: { uiLastFocusedAt: 2 }, timeout: () => ({ emitWithAck: browserDelivery }) };
+    const reverse = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => false,
+      callConnectedClientRpc: async (method, payload, options) => {
+        const wireMethod = `${machine.id}:${method}`;
+        const selection = selectRpcTarget({ targets: [
+          ...(registered.has(wireMethod) ? [desktop] : []),
+          ...(browserRooms.has(wireMethod) ? [browser] : []),
+        ], answeringClient: options.answeringClient });
+        if (selection.type !== 'target') return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
+        options.onIssued();
+        return { ok: true, result: await selection.target.timeout(0).emitWithAck(SOCKET_RPC_EVENTS.REQUEST,
+          { method: wireMethod, params: JSON.parse(JSON.stringify(payload)) }) };
+      },
+    }));
+    const caller = createActionExecutor({ clientActionExecute: reverse,
+      resolveSessionReference: async () => ({ kind: 'unique', address: { serverId, sessionId } }) });
+    const context = { surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId, serverId,
+      runtimeAccountId: accountId } as const;
+    const runtime = await renderScreen(React.createElement(ClientActionReverseRuntime));
+    try {
+      const notch = await caller.execute('desktop.notch.set', { state: 'open' }, context);
+      const displayList = await caller.execute('desktop.displays.list', {}, context);
+      const overlay = await caller.execute('session.open', { sessionId, presentation: 'overlay' }, context);
+      const window = await caller.execute('desktop.windows.open', { chrome: 'full',
+        target: { kind: 'session', ...scope, sessionId } }, context);
+      expect.soft(notch).toEqual({ ok: true, result: { applied: true } });
+      expect.soft(displayList).toEqual({ ok: true, result: displays });
+      expect.soft(overlay).toMatchObject({ ok: true, result: { ok: true } });
+      expect.soft(window).toMatchObject({ ok: true, result: { status: 'opened', windowId: expect.any(String) } });
+      expect(pinned).toEqual([{ serverId, sessionId }]);
+      expect(browserDelivery).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledWith('desktop_activity_overlay_request_presentation', { requestedState: 'open' });
+    } finally {
+      await runtime.unmount();
+      await act(async () => { releaseWorkspace(); });
+    }
+  });
+
   it.each(['cli', 'agent'] as const)('detail-navigation.T6 %s lists a large mounted catalog once and selects only the addressed client and column', async surface => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');

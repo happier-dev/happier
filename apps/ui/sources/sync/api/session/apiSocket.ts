@@ -41,7 +41,7 @@ import {
 } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { UiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { resolveDesktopUiActionClientRpcMethod, type UiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import {
     SocketRpcAnsweringClientCandidatesV1Schema,
     type SocketRpcAnsweringClientCandidateV1,
@@ -1001,7 +1001,8 @@ class ApiSocket {
         signal?: AbortSignal;
     }>): Promise<Readonly<{ result: unknown; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
         let answeringClients: readonly SocketRpcAnsweringClientCandidateV1[] | undefined;
-        const result = await this.machineRPC(input.machineId, RPC_METHODS.UI_ACTION_EXECUTE, input.request, {
+        const method = resolveDesktopUiActionClientRpcMethod(input.request.actionId, input.request.input) ?? RPC_METHODS.UI_ACTION_EXECUTE;
+        const result = await this.machineRPC(input.machineId, method, input.request, {
             answeringClient: input.answeringClient ?? {},
             signal: input.signal,
             onResponse: response => {

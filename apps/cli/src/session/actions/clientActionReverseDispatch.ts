@@ -11,6 +11,7 @@ import {
   mountedWorkReadClientRpcMethod,
   sessionUiActionClientRpcMethod,
   parseClientActionDispatchResult,
+  resolveDesktopUiActionClientRpcMethod,
   voiceRunActionClientRpcMethod, UiActionDispatchResultV1Schema, type VoiceRunActionDispatchRequestV1,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
@@ -85,7 +86,7 @@ export function createClientActionReverseDispatcher(
       || isSessionClientControlActionId(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
       || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read
-      || actionId === 'session.open' || actionId === 'desktop.windows.open'
+      || actionId === 'session.open'
       || actionId === 'links.openExternal' || actionId === 'file.view.preference.set'
       || actionId === 'projects.sources.moveToTeam' || actionId === 'session.messages.pins'
       || actionId === 'session.space_membership.set';
@@ -118,7 +119,9 @@ export function createClientActionReverseDispatcher(
     // Read and invoke select the same App socket. The current-UI command owner
     // decides whether the opaque command still exists; its separate registration
     // must not re-decide the answering client's availability.
+    const desktopMethod = resolveDesktopUiActionClientRpcMethod(actionId, input);
     const method = voiceRun ? voiceRunActionClientRpcMethod(voiceRun.runId)
+      : desktopMethod ? desktopMethod
       : actionId === 'session.work.get' && input && typeof input === 'object'
       && typeof Reflect.get(input, 'sessionId') === 'string'
       ? mountedWorkReadClientRpcMethod(actionId, Reflect.get(input, 'sessionId'))

@@ -789,6 +789,15 @@ In 0.3 development, workspace controls address the answering client's window,
 not the invoking Agent's viewed Session. An explicit `clientId` still selects
 only that eligible client; it never falls back to another window.
 
+Notch controls, the display inventory, desktop window opens and
+`session.open` with `presentation: 'overlay'` or `'window'` use the desktop
+responder for the authenticated Home and Account. The existing answering-client
+selector applies within that room. A background Agent Session can reach its
+desktop even when a browser has focus. An exact `clientId` must belong to that
+room. When the room is empty, the existing Action-specific absence result
+applies. The mounted overlay and native window owners still settle their own
+availability. Desktop routing requires matching 0.3 development components.
+
 In 0.3 development, client-placed widget Actions route from their qualified
 surface owner. Home, Project, plugin-area and core-page surfaces use the Account
 answering client even when the invoking Agent's Session is in the background.
