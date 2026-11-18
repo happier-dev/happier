@@ -345,8 +345,17 @@ class AdmissionRefusal extends Error {
  * lists or flags reuse the recorded peak. */
 export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = process.cwd(), command, args = [] }) {
   const separator = args[0] === '--heavyweight-admitted-exec' ? args.indexOf('--') : -1;
-  const tokens = separator >= 0 ? args.slice(separator + 1) : [command, ...args];
-  const entry = [String(tokens[0] ?? '').split('/').at(-1)];
+  let tokens = separator >= 0 ? args.slice(separator + 1) : [command, ...args];
+  const program = index => String(tokens[index] ?? '').split('/').at(-1);
+  // The identity is the program that runs: `env NAME=value …` and a package
+  // manager's exec launcher (`pnpm exec node x.mjs`, `npx vitest`) only start it.
+  for (;;) {
+    if (program(0) === 'env') { tokens = tokens.slice(1); while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0] ?? '')) tokens = tokens.slice(1); continue; }
+    if (['pnpm', 'npm', 'yarn'].includes(program(0)) && ['exec', 'x', 'dlx'].includes(tokens[1])) { tokens = tokens.slice(2); continue; }
+    if (['npx', 'bunx'].includes(program(0))) { tokens = tokens.slice(1); continue; }
+    break;
+  }
+  const entry = [program(0)];
   for (const token of tokens.slice(1)) {
     if (token === '--test') { entry.push(token); break; }
     if (token.startsWith('-')) continue;

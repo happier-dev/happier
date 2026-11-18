@@ -577,3 +577,22 @@ test('old-format inheritance refuses a forged incarnation, mismatched machine an
     assert.equal(owner.connections(), 0);
     assert.equal(await owner.unchanged(), true);
   });
+
+test('a command identity names the program it runs, not its env prefix or package-manager launcher', () => {
+  // P03-INFRA-SWEEP-5 (2026-11-18): `env HAPPIER_E2E_…=1 pnpm run …` became the identity
+  // `env HAPPIER_E2E_…=1` and `pnpm exec node <script>` became `pnpm exec node`, so a core
+  // e2e run (recorded peak 4.2 GiB as `node <script>`) missed its record and reserved 33 GiB
+  // as the controller head, while unrelated `pnpm exec node` scripts shared one peak.
+  const identity = (...argv) => admissionClient.admissionCommandIdentity({ repoDir: '/r', cwd: '/r', command: argv[0], args: argv.slice(1) }).entry;
+  const script = 'packages/tests/scripts/run-extended-db-docker.mjs';
+  const direct = identity('node', script, '--db', 'postgres');
+  assert.equal(direct, `node ${script}`);
+  assert.equal(identity('pnpm', 'exec', 'node', script, '--mode', 'e2e'), direct);
+  assert.equal(identity('env', 'A=1', 'B=2', 'node', script), direct);
+  assert.equal(identity('/usr/bin/env', 'A=1', 'pnpm', 'run', 'test:e2e:core:postgres:docker', '--e2e-file', 'x.ts'),
+    identity('pnpm', 'run', 'test:e2e:core:postgres:docker', '--e2e-file', 'y.ts'));
+  assert.notEqual(identity('pnpm', 'exec', 'node', 'scripts/a.mjs'), identity('pnpm', 'exec', 'node', 'scripts/b.mjs'));
+  // Unchanged forms keep their recorded keys.
+  assert.equal(identity('pnpm', 'run', 'test:local', '--run', 'x.test.tsx'), 'pnpm run test:local');
+  assert.equal(identity('node', '--test', 'a.test.mjs'), 'node --test');
+});
