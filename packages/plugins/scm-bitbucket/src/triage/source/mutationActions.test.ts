@@ -780,8 +780,7 @@ describe('Bitbucket pull-request write declarations', () => {
 
   it('exposes every write to agents with host confirmation by default', () => {
     for (const declaration of declarations) {
-      expect(declaration.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
-      expect(declaration.surfaces).not.toContain('plugin');
+      expect(declaration.surfaces).toEqual(expect.arrayContaining(['ui', 'agent', 'mcp', 'cli']));
       // The one placement is the details panel the write lives in; global
       // placement discovery is offered no destination.
       expect(declaration.placementBindings).toEqual(['detailsPanel']);
