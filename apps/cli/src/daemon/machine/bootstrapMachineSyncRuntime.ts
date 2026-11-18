@@ -48,7 +48,6 @@ import {
 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1, parseHostEventPayloadV1, type HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -1939,9 +1938,7 @@ export async function bootstrapMachineSyncRuntime(
             scheduler: inactiveUsageLimitRecoveryScheduler,
             getServerFeaturesSnapshot: () => params.getServerFeaturesSnapshot?.(),
             isCurrent: () => !params.isShuttingDown(),
-            runCheckNow: currentSessionId => connectedApiMachine.invokeLocalMachineAction(
-              RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, { sessionId: currentSessionId },
-            ),
+            runCheckNow: machineRpcLifecycleRegistration.probeInactiveUsageLimitRecovery,
           }).catch(error => logger.warn('[DAEMON RUN] Usage-limit reconnect recovery remains pending', error));
         },
         visitOwnedSession: async (sessionId, session) => {

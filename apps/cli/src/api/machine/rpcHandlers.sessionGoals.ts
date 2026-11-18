@@ -233,16 +233,6 @@ async function resolveLocalUsageLimitContext(params: Readonly<{
     : { ...base, mode: transport.mode, ctx: transport.ctx };
 }
 
-function readRecoveryFromUsageLimitResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
-  const metadata = (result as Record<string, unknown>).metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
-    (metadata as Record<string, unknown>).sessionUsageLimitRecoveryV1,
-  );
-  return parsed.success ? parsed.data : null;
-}
-
 async function isUsageLimitRecoveryEnabled(
   deps?: RegisterMachineSessionGoalRpcHandlersDeps,
 ): Promise<boolean> {
@@ -340,7 +330,10 @@ async function executeUsageLimitControl(params: Readonly<{
   operation: UsageLimitOperation;
   raw: unknown;
   deps?: RegisterMachineSessionGoalRpcHandlersDeps;
-}>): Promise<unknown> {
+}>): Promise<Readonly<{
+  result: ReturnType<typeof normalizeUsageLimitRecoveryOperationResult>;
+  resolvedSessionId?: string;
+}>> {
   const parsed = params.operation === 'enable'
     ? SessionUsageLimitWaitResumeEnableRequestV1Schema.safeParse(params.raw)
     : params.operation === 'cancel'
@@ -349,15 +342,15 @@ async function executeUsageLimitControl(params: Readonly<{
         ? SessionUsageLimitConsumeResetCreditRequestV1Schema.safeParse(params.raw)
         : SessionUsageLimitCheckNowRequestV1Schema.safeParse(params.raw);
   if (!parsed.success) {
-    return buildUsageLimitRecoveryOperationError({
+    return { result: buildUsageLimitRecoveryOperationError({
       errorCode: 'invalid_parameters',
       status: 'malformed_response',
-    });
+    }) };
   }
   if (!await isUsageLimitRecoveryEnabled(params.deps)) {
-    return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), {
+    return { result: normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), {
       sessionId: parsed.data.sessionId,
-    });
+    }) };
   }
   const resolved = await resolveLocalUsageLimitContext({
     sessionId: parsed.data.sessionId,
@@ -366,18 +359,18 @@ async function executeUsageLimitControl(params: Readonly<{
     deps: params.deps,
   });
   if (!resolved.ok) {
-    return normalizeUsageLimitRecoveryOperationResult(resolved.result, {
+    return { result: normalizeUsageLimitRecoveryOperationResult(resolved.result, {
       sessionId: parsed.data.sessionId,
-    });
+    }) };
   }
 
   const stageDaemonMutation = params.deps?.stageUsageLimitRecoveryMutation;
   if (!stageDaemonMutation) {
-    return buildUsageLimitRecoveryOperationError({
+    return { result: buildUsageLimitRecoveryOperationError({
       errorCode: 'daemon_usage_limit_recovery_custody_unavailable',
       status: 'unsupported',
       sessionId: resolved.sessionId,
-    });
+    }) };
   }
   const stageUsageLimitRecoveryMutation = async (mutation: DaemonUsageLimitRecoveryFieldMutation) => {
     await stageDaemonMutation({ mutation, rawSession: resolved.rawSession });
@@ -483,28 +476,40 @@ async function executeUsageLimitControl(params: Readonly<{
         });
   }
 
-  const recovery = readRecoveryFromUsageLimitResult(result);
-  if (recovery?.status === 'waiting') {
-    await params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
-      sessionId: resolved.sessionId,
-      recovery,
-      runCheckNow: async () => await executeUsageLimitControl({
-        operation: 'checkNow',
-        raw: {
-          sessionId: resolved.sessionId,
-          ...(recovery.resumePromptMode ? { resumePromptMode: recovery.resumePromptMode } : {}),
-        },
-        deps: params.deps,
-      }),
-    });
-  }
-  return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: resolved.sessionId });
+  return {
+    result: normalizeUsageLimitRecoveryOperationResult(result, { sessionId: resolved.sessionId }),
+    resolvedSessionId: resolved.sessionId,
+  };
 }
 
 export function registerMachineSessionGoalRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   deps?: RegisterMachineSessionGoalRpcHandlersDeps;
-}>): void {
+}>) {
+  // A scheduler-owned probe returns its result for settlement of the current claim.
+  const probeInactiveUsageLimitRecovery = async (
+    sessionId: string,
+    resumePromptMode?: SessionUsageLimitRecoveryV1['resumePromptMode'],
+  ) => {
+    const { result } = await executeUsageLimitControl({
+      operation: 'checkNow',
+      raw: { sessionId, ...(resumePromptMode ? { resumePromptMode } : {}) },
+      deps: params.deps,
+    });
+    return result;
+  };
+  const invokeUsageLimitControl = async (operation: UsageLimitOperation, raw: unknown) => {
+    const { result, resolvedSessionId } = await executeUsageLimitControl({ operation, raw, deps: params.deps });
+    const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(result.metadata?.sessionUsageLimitRecoveryV1);
+    if (resolvedSessionId && recovery.success && recovery.data.status === 'waiting') {
+      await params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
+        sessionId: resolvedSessionId,
+        recovery: recovery.data,
+        runCheckNow: () => probeInactiveUsageLimitRecovery(resolvedSessionId, recovery.data.resumePromptMode),
+      });
+    }
+    return result;
+  };
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_GOAL_GET, async (raw: unknown, context) => (
     await executeGoalControl({ operation: 'get', raw, deps: params.deps, context })
   ));
@@ -524,15 +529,16 @@ export function registerMachineSessionGoalRpcHandlers(params: Readonly<{
     await executeCatalogControl({ operation: 'skills', raw, deps: params.deps })
   ));
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE, async (raw: unknown) => (
-    await executeUsageLimitControl({ operation: 'enable', raw, deps: params.deps })
+    await invokeUsageLimitControl('enable', raw)
   ));
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL, async (raw: unknown) => (
-    await executeUsageLimitControl({ operation: 'cancel', raw, deps: params.deps })
+    await invokeUsageLimitControl('cancel', raw)
   ));
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, async (raw: unknown) => (
-    await executeUsageLimitControl({ operation: 'checkNow', raw, deps: params.deps })
+    await invokeUsageLimitControl('checkNow', raw)
   ));
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT, async (raw: unknown) => (
-    await executeUsageLimitControl({ operation: 'consumeResetCredit', raw, deps: params.deps })
+    await invokeUsageLimitControl('consumeResetCredit', raw)
   ));
+  return { probeInactiveUsageLimitRecovery };
 }

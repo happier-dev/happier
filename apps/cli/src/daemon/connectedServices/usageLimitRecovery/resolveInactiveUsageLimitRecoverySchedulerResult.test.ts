@@ -30,8 +30,16 @@ describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
         [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
           resetAtMs: null, nextCheckAtMs: null },
       } },
-    })).toEqual({ status: 'wait', nextCheckAtMs: null, lastProbeError: null,
+    })).toEqual({ status: 'wait', resetAtMs: null, nextCheckAtMs: null, lastProbeError: null,
       selectedAuth: metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY].selectedAuth });
+  });
+
+  it('carries a provider reset separately from the next scheduled check', () => {
+    const recovery = { ...metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], nextCheckAtMs: 2_750 };
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: true, status: 'waiting', metadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery } },
+    })).toEqual({ status: 'wait', resetAtMs: 2_000, nextCheckAtMs: 2_750, lastProbeError: null,
+      selectedAuth: recovery.selectedAuth });
   });
 
   it('keeps waiting after a transport cancellation without a terminal acknowledgement', () => {

@@ -643,6 +643,9 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     }));
 
     if ((this.#intentVersionsBySessionId.get(input.sessionId) ?? 0) !== recoveryStartedVersion) {
+      if (durablePreparation?.status === 'claimed') {
+        await this.#settleDurableClaim(input.sessionId, effectClaimToken, () => undefined);
+      }
       return { status: 'inactive' };
     }
 
@@ -746,38 +749,9 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     effectClaimToken?: string,
   ): Promise<boolean> {
     if (effectClaimToken && this.#store?.transact) {
-      const settled = await this.#store.transact(sessionId, (current) => {
-        const intent = current.intent === null ? null : this.#normalizeIntent(current.intent);
-        if (
-          !intent
-          || current.effectClaimToken !== effectClaimToken
-          || !this.#isSameIntentVersion(intent, expected)
-        ) {
-          return {
-            intent,
-            effectClaimToken: current.effectClaimToken,
-            result: false,
-          };
-        }
-        return {
-          intent: replacement,
-          effectClaimToken: null,
-          result: true,
-        };
-      });
-      if (!settled) return false;
-      this.#intentVersionsBySessionId.set(
-        sessionId,
-        (this.#intentVersionsBySessionId.get(sessionId) ?? 0) + 1,
-      );
-      if (replacement === null) {
-        this.#intentsBySessionId.delete(sessionId);
-        this.#clearTimer(sessionId);
-      } else {
-        this.#intentsBySessionId.set(sessionId, replacement);
-        this.#schedule(sessionId, replacement);
-      }
-      return true;
+      return await this.#settleDurableClaim(sessionId, effectClaimToken, intent => (
+        this.#isSameIntentVersion(intent, expected) ? replacement : undefined
+      ));
     }
     return await this.transact({
       sessionId,
@@ -788,6 +762,35 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
         return { intent: replacement, result: true };
       },
     });
+  }
+
+  /** The completed executor retires its own claim even if newer work superseded its result. */
+  async #settleDurableClaim(
+    sessionId: string,
+    effectClaimToken: string,
+    replace: (current: TIntent) => TIntent | null | undefined,
+  ): Promise<boolean> {
+    const settled = await this.#store?.transact?.<{ applied: boolean; intent: TIntent | null } | null>(sessionId, (current) => {
+      if (current.effectClaimToken !== effectClaimToken) return { ...current, result: null };
+      const intent = current.intent === null ? null : this.#normalizeIntent(current.intent);
+      const replacement = intent === null ? undefined : replace(intent);
+      const applied = replacement !== undefined;
+      return {
+        intent: applied ? replacement : current.intent,
+        effectClaimToken: null,
+        result: { applied, intent: applied ? replacement : intent },
+      };
+    });
+    if (!settled) return false;
+    this.#intentVersionsBySessionId.set(sessionId, (this.#intentVersionsBySessionId.get(sessionId) ?? 0) + 1);
+    if (settled.intent === null) {
+      this.#intentsBySessionId.delete(sessionId);
+      this.#clearTimer(sessionId);
+    } else {
+      this.#intentsBySessionId.set(sessionId, settled.intent);
+      this.#schedule(sessionId, settled.intent);
+    }
+    return settled.applied;
   }
 
   #resolveNextRetryAtMs(attemptCount: number): number {

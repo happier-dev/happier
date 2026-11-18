@@ -538,6 +538,88 @@ describe('DurableBackoffRecoveryScheduler', () => {
     }
   });
 
+  it('releases its completed claim after a different scheduler publishes newer work', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-recovery-replacement-'));
+    const file = join(directory, 'intents.json');
+    const { DurableBackoffRecoveryScheduler } = await loadModule();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const earlier = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+      store: createRecoveryIntentFileStore<TestIntent>(file),
+      recover: async () => {
+        started.resolve();
+        await release.promise;
+        return { status: 'success' };
+      },
+    }));
+    const later = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+      store: createRecoveryIntentFileStore<TestIntent>(file), recover: async () => ({ status: 'success' }),
+    }));
+    const sessionId = 'sess_replaced';
+    await earlier.upsert({ sessionId, intent: intent({ nextRetryAtMs: 60_000 }) });
+    const wake = earlier.wake({ sessionId, reason: 'manual' });
+    try {
+      await started.promise;
+      const newer = intent({ nextRetryAtMs: 90_000, lastError: 'newer_observation' });
+      await later.upsert({ sessionId, intent: newer });
+      await expect(later.wake({ sessionId, reason: 'manual' })).resolves.toEqual({ status: 'checking' });
+      release.resolve();
+      await expect(wake).resolves.toEqual({ status: 'inactive' });
+      expect(later.read(sessionId)).toEqual(newer);
+      await expect(later.wake({ sessionId, reason: 'manual' })).resolves.toEqual({ status: 'succeeded' });
+    } finally {
+      release.resolve();
+      await wake;
+      earlier.dispose();
+      later.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the newer scheduler claim held when cancelled work completes late', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-recovery-claim-transfer-'));
+    const file = join(directory, 'intents.json');
+    const { DurableBackoffRecoveryScheduler } = await loadModule();
+    const holdRecovery = () => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+        store: createRecoveryIntentFileStore<TestIntent>(file),
+        recover: async () => {
+          started.resolve();
+          await release.promise;
+          return { status: 'success' };
+        },
+      }));
+      return { started, release, scheduler };
+    };
+    const earlier = holdRecovery();
+    const later = holdRecovery();
+    const sessionId = 'sess_replaced';
+    await earlier.scheduler.upsert({ sessionId, intent: intent({ nextRetryAtMs: 60_000 }) });
+    const wake = earlier.scheduler.wake({ sessionId, reason: 'manual' });
+    let nextWake: Promise<{ status: string }> | undefined;
+    try {
+      await earlier.started.promise;
+      await later.scheduler.cancel({ sessionId });
+      await later.scheduler.upsert({ sessionId, intent: intent({ nextRetryAtMs: 90_000 }) });
+      nextWake = later.scheduler.wake({ sessionId, reason: 'manual' });
+      await later.started.promise;
+      earlier.release.resolve();
+      await expect(wake).resolves.toEqual({ status: 'inactive' });
+      await expect(earlier.scheduler.wake({ sessionId, reason: 'manual' })).resolves.toEqual({ status: 'checking' });
+      later.release.resolve();
+      await expect(nextWake).resolves.toEqual({ status: 'succeeded' });
+    } finally {
+      earlier.release.resolve();
+      later.release.resolve();
+      await Promise.all([wake, nextWake]);
+      earlier.scheduler.dispose();
+      later.scheduler.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not overwrite a cancellation when in-flight recovery later succeeds', async () => {
     const { DurableBackoffRecoveryScheduler } = await loadModule();
     let releaseRecovery!: () => void;

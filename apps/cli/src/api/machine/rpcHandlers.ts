@@ -470,6 +470,7 @@ export type MachineRpcHandlerDeps = Readonly<{
 
 export type MachineRpcLifecycleRegistration = Readonly<{
   isSessionActive?: MachineRpcHandlers['isSessionActive'];
+  probeInactiveUsageLimitRecovery: ReturnType<typeof registerMachineSessionGoalRpcHandlers>['probeInactiveUsageLimitRecovery'];
   /** Closed custodian work consumes the same capability service without requester ingress. */
   hostCapabilities: ReturnType<typeof registerCapabilitiesHandlers>;
   captureExecutionRunWorkflowRequester?: ExecutionRunHostBridge['captureWorkflowRequester'];
@@ -585,7 +586,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       },
     });
   }
-  registerMachineSessionGoalRpcHandlers({
+  const { probeInactiveUsageLimitRecovery } = registerMachineSessionGoalRpcHandlers({
     rpcHandlerManager,
     deps: {
       resumeInactiveSessionWhenUsageLimitReady: params.deps?.resumeInactiveSessionWhenUsageLimitReady,
@@ -1251,6 +1252,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
 
   return {
     hostCapabilities,
+    probeInactiveUsageLimitRecovery,
     retireFiniteExecution,
     captureExecutionRunResumeMaterialization: (runId, occurrenceId) =>
       detachedExecutionRunManager?.captureResumeMaterialization(runId, occurrenceId) ?? null,
