@@ -75,9 +75,14 @@ import { createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapsho
   sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol';
 import { DiscussionMachinePublicationV2Schema, DISCUSSION_AGENT_POST_EVENT_V1 } from '@happier-dev/protocol/discussions/api';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionMessageReplyAccountMutationV1Schema, type SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '../workflows/workflowRunStorage.testkit';
 import { createWorkflowRunRecoveryReader } from '../workflows/recovery';
 import { createWorkflowDiscussionResultPublisher } from '../workflows/workflowDiscussionPublication';
@@ -1119,12 +1124,24 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     const accountId = 'account';
     const machineId = 'publication-worker';
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+    const serverId = 'srv_home';
     const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.fixture`, encryption: null };
-    const origin = { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 };
+    const origin = { discussion: { serverId, discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 };
     const sessionId = 'c123456789012345678901234';
+    // Stop leaves already completed children eligible for their approved returns.
+    const invocationIds = ['one', 'two'];
+    const originalLocalId = (invocationRecordId: string) => deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation', runId, invocationRecordId });
+    const originals = new Map<string, SessionMessageReplyProgressV1>(invocationIds.map(invocationRecordId => [originalLocalId(invocationRecordId), {
+      v: 1, mode: 'wait', workflow: { purpose: 'invocation', runId, invocationRecordId },
+      discussion: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: sessionId },
+      acceptedTurnId: `turn-${invocationRecordId}`, disposition: 'observing', outcome: { kind: 'terminal_no_result' },
+    }]));
+    const sessionMetadata = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', metadata: createTestMetadata({ machineId, path: '/repo' }), agentState: null });
     const returned = new Set<string>();
     const artifacts = new Map<string, Record<string, unknown>>();
     const httpCalls: string[] = [];
+    const returnMutations: unknown[] = [];
     const home = createServer(async (request, response) => {
       response.setHeader('content-type', 'application/json');
       response.setHeader('connection', 'close');
@@ -1132,13 +1149,33 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       httpCalls.push(`${request.method} ${path}`);
       const reply = (value: unknown, status = 200) => { response.statusCode = status; response.end(JSON.stringify(value)); };
       if (path === '/v1/features') return reply({ features: { sessions: { enabled: true, conversations: { enabled: true } },
-        sharing: { enabled: true, session: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } });
+        sharing: { enabled: true, session: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: serverId } } });
       if (path === '/v1/account/profile') return reply({ id: accountId });
       if (path === '/v1/account/encryption') return reply({ mode: 'plain', updatedAt: 1 });
       if (path === '/v1/account/encryption/currentness') return reply({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
       if (path === '/v2/account/settings') return reply({ version: 1, content: { t: 'plain', v: {} } });
-      if (path === `/v2/sessions/${sessionId}`) return reply({ session: createSessionRecordFixture({ id: sessionId,
-        active: false, encryptionMode: 'plain', metadata: JSON.stringify({ machineId, path: '/repo' }) }) });
+      if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return reply(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
+      if (path === `/v2/sessions/${sessionId}`) return reply({ session: { ...createSessionRecordFixture({ id: sessionId,
+        active: false, encryptionMode: 'plain' }), metadataLayoutVersion: sessionMetadata.metadataLayoutVersion,
+        metadata: sessionMetadata.sharedMetadata.ciphertext, ownerMetadata: sessionMetadata.ownerMetadata } });
+      const originalPrefix = `/v2/sessions/${sessionId}/messages/by-local-id/`;
+      if (path.startsWith(originalPrefix) && path.endsWith('/reply')) {
+        const localId = decodeURIComponent(path.slice(originalPrefix.length, -'/reply'.length));
+        const progress = originals.get(localId);
+        if (!progress) return reply({ v: 1, status: 'none' });
+        if (request.method === 'GET') return reply({ v: 1, status: 'available', progress });
+        let bytes = ''; for await (const chunk of request) bytes += chunk.toString();
+        const mutation = SessionMessageReplyAccountMutationV1Schema.safeParse(JSON.parse(bytes));
+        if (mutation.success && mutation.data.kind === 'discussion_publication') returnMutations.push(mutation.data.publication);
+        if (!mutation.success || mutation.data.kind !== 'discussion_publication'
+          || mutation.data.discussionId !== progress.discussion?.discussionId || mutation.data.messageId !== progress.discussion?.messageId
+          || mutation.data.acceptedTurnId !== progress.acceptedTurnId || mutation.data.publication.kind !== 'approval_pending') {
+          return reply({ v: 1, ok: false, error: 'invalid_request' });
+        }
+        const updated = { ...progress, returnPublication: mutation.data.publication };
+        originals.set(localId, updated);
+        return reply({ v: 1, ok: true, progress: updated });
+      }
       if (path === '/v1/discussions/discussion/participants') return reply({ discussionId: 'discussion', ownerAccountId: accountId,
         access: 'owner', grants: [], participants: [{ participant: { kind: 'session', sessionId }, answerPolicy: 'drafts_for_approval', createdAt: 1 }] });
       if (path === '/v1/discussions/discussion') return reply({ discussion: { id: 'discussion', ownerAccountId: accountId,
@@ -1184,7 +1221,8 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         document: { text: 'Answer', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } })) },
         context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
           workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
-          origin: { kind: 'direct', discussion: origin }, resultDelivery: { kind: 'originating_discussion', ...origin },
+          origin: { kind: 'direct', discussion: origin, authenticatedStarterV1: { requestRef: runId, requester: { serverId, accountId } } },
+          resultDelivery: { kind: 'originating_discussion', ...origin },
           authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
         effects: { resolveTargetAvailability: async () => true } });
       if (!admitted.ok) throw new Error('Workflow admission failed');
@@ -1199,12 +1237,12 @@ describe('createDaemonMachineBootstrapRuntime', () => {
           parentRecordId: id === 'root' ? null : 'root', memberOrdinal: id === 'two' ? '1' : '0', attempt: '0' },
         progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: id === 'root' ? '$root' : id, scope: [] },
           blockKind: id === 'root' ? 'root' : 'step', attempt: '0', logicalInvocationRecordId: id,
-          ...(id === 'root' ? {} : { execution: { kind: 'session' as const, sessionId, localInputId: id } }) } }));
+          ...(id === 'root' ? {} : { execution: { kind: 'session' as const, sessionId, localInputId: originalLocalId(id) } }) } }));
       await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
         rootInvocation: { id: 'root', contentEnvelope: seal('root', '0') } });
       await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope,
-        invocations: ['one', 'two'].map((id, index) => ({ id, sequence: String(index + 1), parentRecordId: 'root',
-          memberOrdinal: String(index), lifecycle: 'cancelled', contentEnvelope: seal(id, String(index + 1)) })) });
+        invocations: invocationIds.map((id, index) => ({ id, sequence: String(index + 1), parentRecordId: 'root',
+          memberOrdinal: String(index), lifecycle: 'completed', contentEnvelope: seal(id, String(index + 1)) })) });
       storage.requestControl('cancelled');
       const runOwner = createWorkflowAccountRunActionOwner({ storage, resolveAccountId: async () => accountId,
         definitions: { get: async () => { throw new Error('No mutable definition read'); } },
@@ -1214,17 +1252,9 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       // HTTP and Machine Socket.IO are the only substituted boundaries. The
       // bootstrap, strict packets, stored readers, publisher and settlement stay real.
       const get = axios.get.bind(axios);
-      vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
-        if (!url.includes('/messages/by-local-id/')) return get(new URL(url, serverUrl).pathname.startsWith('/v1/artifacts')
-          ? url : serverUrl + new URL(url).pathname, config);
-        const id = decodeURIComponent(url.split('/messages/by-local-id/')[1]!.split('/')[0]!);
-        return { status: 200, data: { v: 1, status: 'available', progress: {
-          v: 1, mode: 'wait', workflow: { purpose: 'invocation', runId, invocationRecordId: id },
-          discussion: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: sessionId },
-          disposition: returned.has(id) ? 'returned' : 'observing', outcome: { kind: 'cancelled' },
-        } } };
-      });
-      const publish = createDiscussionReplyReturnPublisher({ credentials, machineId, serverId: 'home', serverHttpBaseUrl: serverUrl,
+      vi.spyOn(axios, 'get').mockImplementation(async (url, config) => get(new URL(url, serverUrl).pathname.startsWith('/v1/artifacts')
+        ? url : serverUrl + new URL(url).pathname, config));
+      const publish = createDiscussionReplyReturnPublisher({ credentials, machineId, serverId, serverHttpBaseUrl: serverUrl,
         workflowActionContext: buildWorkflowActionContext({ ...admitted.snapshot, runId }),
         signal: new AbortController().signal, isCurrent: async () => true,
         actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}), getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
@@ -1261,7 +1291,14 @@ describe('createDaemonMachineBootstrapRuntime', () => {
           const packet = DiscussionMachinePublicationV2Schema.parse(raw);
           if (packet.operation !== 'approved_replay' || !packet.publication.replyReturn?.workflow) throw new Error('Expected Workflow approval replay');
           const publication = packet.publication;
-          returned.add(publication.replyReturn!.requestLocalId);
+          const localId = publication.replyReturn!.requestLocalId;
+          const progress = originals.get(localId);
+          if (!progress || progress.acceptedTurnId !== publication.replyReturn!.acceptedTurnId
+            || progress.returnPublication?.kind !== 'approval_pending'
+            || progress.returnPublication.artifactId !== publication.draftReview.artifactId) throw new Error('Expected retained original approval');
+          const { returnPublication: _publication, ...original } = progress;
+          originals.set(localId, { ...original, disposition: 'returned', returnedInputLocalId: publication.request.localId });
+          returned.add(localId);
           publications.push(packet);
           return { v: 1, ok: true, value: { messageSeq: publications.length + 1, message: { id: `reply-${publications.length}`,
             discussionId: 'discussion', localId: publication.request.localId, seq: publications.length + 1, authorAccountId: accountId,
@@ -1271,15 +1308,16 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         Reflect.set(client, 'socket', socket);
         await runtime.recoverWorkflowRuns?.('startup');
         expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
-        const store = createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: serverUrl });
-        const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId: 'home',
+        expect(publications).toHaveLength(0);
+        const store = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: serverUrl });
+        const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId,
           serverApiUrl: serverUrl });
         if (!currentness) throw new Error('Missing approval currentness');
         const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
-          serverId: 'home', serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+          serverId, serverIdentityId: serverId, serverHttpBaseUrl: serverUrl,
           postAgentDiscussionMessage: async (request, options) => {
             if (!options?.approvedActionReplay) throw new Error('Expected recorded approval execution');
-            return await createApprovedDiscussionAgentPublisher({ credentials, machineId, serverId: 'home', serverUrl,
+            return await createApprovedDiscussionAgentPublisher({ credentials, machineId, serverId, serverUrl,
               isApprovalExecutionOriginCurrent: currentness, publish: (publication, options) => client.postAgentDiscussionMessage(publication, options),
               executeSourceAction: async (actionId, input, context) => actionId === 'workflow.run.invocations.get'
                 ? { ok: true, result: await runOwner.execute({ actionId, input: WorkflowInvocationGetRequestV1Schema.parse(input), context }) }
@@ -1287,7 +1325,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
             })(request, { ...options, approvedActionReplay: options.approvedActionReplay, callerAuthority: 'present_user' });
           },
         }, { isApprovalExecutionOriginCurrent: currentness });
-        for (const id of ['one', 'two']) {
+        for (const id of invocationIds) {
           // Startup owns the first Ask; the first committed return wakes the
           // same reader to reach the second. The test never requests a retry.
           const { artifactId, captured } = await vi.waitFor(async () => {
@@ -1295,23 +1333,29 @@ describe('createDaemonMachineBootstrapRuntime', () => {
               request: await store.approvalsGet({ artifactId }) })));
             const pending = candidates.find(({ request }) => request?.v === 2 && request.status === 'open'
               && request.executionOriginV1.discussionReplyReturn && 'requestLocalId' in request.executionOriginV1.discussionReplyReturn
-              && request.executionOriginV1.discussionReplyReturn.requestLocalId === id);
-            if (pending?.request?.v !== 2) throw new Error(`Missing ${id} publication approval`);
+              && request.executionOriginV1.discussionReplyReturn.requestLocalId === originalLocalId(id));
+            if (pending?.request?.v !== 2) throw new Error(`Missing ${id} publication approval ${JSON.stringify({ httpCalls, returnMutations })}`);
+            expect(originals.get(originalLocalId(id))?.returnPublication).toEqual({ kind: 'approval_pending', artifactId: pending.artifactId });
             return { artifactId: pending.artifactId, captured: pending.request };
           });
-          const approved = ApprovalRequestV2Schema.parse({ ...captured, status: 'approved', updatedAtMs: captured.updatedAtMs + 1,
-            decision: { kind: 'approve', authority: 'present_user', decidedAtMs: captured.updatedAtMs + 1 } });
+          const updatedAtMs = captured.updatedAtMs + 1;
+          const decision = { kind: 'approve' as const, authority: 'present_user' as const, decidedAtMs: updatedAtMs };
+          const checks = captured.automaticChecks;
+          if (checks) expect(checks).toMatchObject({ phase: 'consent', selectionStatus: 'ready', humanApprovalRequired: true, selected: [], consents: [] });
+          const approved = ApprovalRequestV2Schema.parse({ ...captured, status: 'approved', updatedAtMs, decision,
+            ...(checks ? { automaticChecks: { ...checks, phase: 'passed', humanDecision: decision } } : {}) });
           expect(await store.approvalsUpdate({ artifactId, request: approved })).toEqual({ ok: true });
           const replayed = await runWithServerHttpBaseUrl(serverUrl, () => executor.replayApprovedApprovalRequest({ artifactId,
-            callerAuthority: 'present_user' }));
+            callerAuthority: 'present_user', currentAccount: { accountId, serverId, serverIdentityId: serverId } }));
           expect(replayed, JSON.stringify({ replayed, httpCalls })).toMatchObject({ ok: true, result: { status: 'executed' } });
           if (id === 'one') {
             await vi.waitFor(() => expect(recoverySelections).toEqual([undefined, runId]));
             expect(storage.run().workflowCustodyState).toBe('pending');
+            expect(publications).toHaveLength(1);
           }
         }
         await vi.waitFor(() => expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' }));
-        expect([...returned]).toEqual(['one', 'two']);
+        expect([...returned]).toEqual(invocationIds.map(originalLocalId));
         expect(publications).toHaveLength(2);
         expect(recoverySelections).toEqual([undefined, runId, runId]);
       } finally { await client.shutdown(); vi.restoreAllMocks(); }
