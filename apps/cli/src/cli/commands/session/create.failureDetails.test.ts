@@ -5,10 +5,12 @@ import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actio
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { SessionSpawnNewActionResultV1Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { captureConsoleJsonOutput, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { configuration } from '@/configuration';
+import { readStoredCredentials } from '@/persistence';
 
 import { cmdSessionCreate } from './create';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
@@ -193,6 +195,51 @@ it('names the mismatched serverId and allowed profile in the P0-DATA recipe refu
       } finally { output.restore(); }
     });
   } finally { process.exitCode = previousExitCode; }
+});
+
+it('reports Account plugin census failure in Session-create JSON before dispatch', async () => {
+  const censusPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'];
+  const requestId = '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616';
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'POST' && request.url === censusPath) {
+      response.writeHead(503).end(JSON.stringify({ error: 'unavailable', errorCode: 'database_connection_unavailable', requestId }));
+      return;
+    }
+    response.writeHead(404).end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected fixture Home');
+  const url = `http://127.0.0.1:${address.port}`;
+  const previousExitCode = process.exitCode;
+  try {
+    process.exitCode = undefined;
+    await withConfiguredDaemonTestHome({ prefix: 'session-create-catalog-', env: {
+      HAPPIER_SERVER_URL: url,
+      HAPPIER_WEBAPP_URL: url,
+      HAPPIER_TOKEN: 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43),
+    } }, async ({ homeDir }) => {
+      const output = captureConsoleJsonOutput();
+      try {
+        await cmdSessionCreate(['--path', homeDir, '--agent', 'pi', '--json'], { readCredentialsFn: readStoredCredentials });
+        expect(output.json()).toMatchObject({ ok: false, kind: 'session_create', error: {
+          code: 'plugin_account_census_failed',
+          requestId,
+          details: { reason: 'plugin_account_census_failed' },
+          failureCause: { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+        } });
+        expect(() => JSON.parse(output.logs.join('\n'))).not.toThrow();
+        expect(process.exitCode).toBe(1);
+        expect(requests).toEqual([`POST ${censusPath}`]);
+      } finally { output.restore(); }
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    process.exitCode = previousExitCode;
+  }
 });
 
 it.each([

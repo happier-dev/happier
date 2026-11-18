@@ -33,7 +33,7 @@ type SpawnAgentDefinition = Readonly<{
 
 type SpawnAgentCatalog = Readonly<{
   definitions: Iterable<SpawnAgentDefinition>;
-  unavailableAgentPluginsByBackendId?: Readonly<Record<string, Pick<UnavailableAgentPlugin, 'pluginId' | 'code' | 'unavailableCode' | 'unavailableCause'>>>;
+  unavailableAgentPluginsByBackendId?: Readonly<Record<string, Pick<UnavailableAgentPlugin, 'pluginId' | 'code' | 'unavailableCode' | 'unavailableCause' | 'unavailableRequestId'>>>;
 }>;
 
 type SpawnAgentDefinitions = Iterable<SpawnAgentDefinition> | SpawnAgentCatalog;
@@ -71,7 +71,7 @@ function nonEmptyString(value: unknown): string | null {
 
 type SessionCreateArgumentDetails =
   | Readonly<{ field: 'serverId'; allowedValues: readonly string[] }>
-  | Readonly<{ reason: UnavailableAgentPlugin['code'] | 'agent_target_parse_failed' | 'agent_identity_unavailable' | 'agent_execution_target_unavailable' }>;
+  | Readonly<{ reason: 'agent_target_parse_failed' | 'agent_identity_unavailable' | 'agent_execution_target_unavailable' }>;
 
 function invalidSessionCreateArgument(
   message: string,
@@ -221,11 +221,10 @@ async function resolveAgentTarget(
           && (requestedTarget?.kind !== 'agent' || entry.pluginId === requestedTarget.identity.pluginId))
       : undefined;
     if (unavailable) {
-      throw Object.assign(createPluginEnablementUnavailableError(unavailable,
+      throw createPluginEnablementUnavailableError(unavailable,
         unavailable.code === 'plugin_disabled'
-          ? 'Invalid session create argument: This Agent plugin is disabled. Re-enable it in Plugins before starting a Session.'
-          : 'Invalid session create argument: Account plugin execution is unavailable.'),
-        { details: { reason: unavailable.code } });
+          ? 'This Agent plugin is disabled. Re-enable it in Plugins before starting a Session.'
+          : 'Account plugin execution is unavailable.');
     }
     invalidSessionCreateArgument('--backend does not identify an executable Agent.', { reason: 'agent_identity_unavailable' });
   }

@@ -1,5 +1,5 @@
 import type { ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 
 /** Admission and catalog projections change when any owning scope fact changes. */
@@ -32,12 +32,16 @@ export function resolveBundledPluginEnablement(params: Readonly<{
 
 /** Session entry points carry the admission owner's cause to Action settlement. */
 export function createPluginEnablementUnavailableError(
-    fact: Pick<ResolvedPluginEnablement, 'unavailableCode' | 'unavailableCause'> & Readonly<{ code?: UnavailableAgentPlugin['code'] }>,
+    fact: Pick<ResolvedPluginEnablement, 'unavailableCode' | 'unavailableCause' | 'unavailableRequestId'> & Readonly<{ code?: UnavailableAgentPlugin['code'] }>,
     message?: string,
-): Error & Readonly<{ code: UnavailableAgentPlugin['code']; failureCause?: ActionFailureCauseV1 }> {
+): ReturnType<typeof createActionExecuteFailureError> {
     const code = fact.unavailableCode ?? fact.code ?? 'plugin_disabled';
-    return Object.assign(new Error(message ?? code), {
-        code,
+    return createActionExecuteFailureError({
+        ok: false,
+        errorCode: code,
+        error: message ?? code,
+        details: { reason: code },
         ...(fact.unavailableCause ? { failureCause: fact.unavailableCause } : {}),
+        ...(fact.unavailableRequestId ? { requestId: fact.unavailableRequestId } : {}),
     });
 }

@@ -51,7 +51,7 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
     accountFailure = Object.freeze({ failureCause: Object.freeze({ ...failureCause, errorCode }),
       ...(requestId.success ? { requestId: requestId.data } : {}),
     });
-    logger.warn('[PLUGIN RUNTIME] Account plugin census failed', accountFailure);
+    logger.warnLocalFile('[PLUGIN RUNTIME] Account plugin census failed', accountFailure);
   }
   return resolveBundledPluginEnablement({ pluginIds, accountEnabledById, machineEnabledById, accountFailure });
 }

@@ -157,7 +157,7 @@ describe('bundled admission Account boundary', () => {
                 response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] },
             })) } };
         });
-        const warn = vi.spyOn(logger, 'warn');
+        const warn = vi.spyOn(logger, 'warnLocalFile');
         const read = () => readCurrentBundledPluginEnablement({ machineEnabledById: {}, accountStorageDependencies: {
             readCredentials: async () => ({ token: 'fixture', encryption: null }), resolveBaseUrl: () => 'http://census.test',
         } });
