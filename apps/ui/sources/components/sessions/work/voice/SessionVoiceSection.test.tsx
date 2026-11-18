@@ -72,7 +72,7 @@ describe('Work voice source display', () => {
       await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu)).toHaveLength(1));
       const picker = screen.findByType(DropdownMenu);
       expect(picker.props.open).toBe(false);
-      expect(picker.props.itemTrigger.detailFormatter()).toBe(`${t('sessionVoice.followAccount')} · Marin`);
+      expect(picker.props.itemTrigger.detailFormatter()).toBe(`${t('sessionVoice.followAccount')} ·\u00A0Marin`);
     } finally { await account.dispose(); }
   });
 
@@ -124,7 +124,7 @@ describe('Work voice source display', () => {
       await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu)).toHaveLength(1));
       const picker = screen.findByType(DropdownMenu);
       expect(picker.props.open).toBe(false);
-      expect(picker.props.itemTrigger.detailFormatter()).toBe(`${t('sessionVoice.followAccount')} · Neural C`);
+      expect(picker.props.itemTrigger.detailFormatter()).toBe(`${t('sessionVoice.followAccount')} ·\u00A0Neural C`);
       expect(catalogRequests).toEqual([expect.objectContaining({ params: {
         target: { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' }, catalog: 'voices',
       } })]);
@@ -183,7 +183,7 @@ describe('Work voice source display', () => {
       const picker = screen.findByType(DropdownMenu);
       const provider = tLoose('settingsVoice.local.googleCloudTts.provider.title');
       expect(picker.props.itemTrigger.detailFormatter()).toBe(displayName
-        ? `${expectedName} · ${provider}` : `${t('sessionVoice.followAccount')} · ${expectedName}`);
+        ? `${expectedName} ·\u00A0${provider}` : `${t('sessionVoice.followAccount')} ·\u00A0${expectedName}`);
       expect(picker.props.items.find((item: { id: string }) => item.id === '__follow__').subtitle)
         .toBe(t('sessionVoice.accountVoice', { voice: expectedName, provider }));
     } finally { await account.dispose(); }

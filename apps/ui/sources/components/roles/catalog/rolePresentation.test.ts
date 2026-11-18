@@ -27,7 +27,7 @@ describe('role row facts', () => {
             .not.toContain(t('roles.rail.chooseEngine'));
         // A role that pins no engine still leads with its engine fact: it runs on the default agent.
         expect(describeRoleRowFacts({ roleId: 'writer', role: { runsAs: session } }, { label: null, unavailable: false }))
-            .toBe(`${t('roles.rail.defaultEngine')} · ${t('roles.settings.runsAsSession')}`);
+            .toBe(`${t('roles.rail.defaultEngine')} ·\u00A0${t('roles.settings.runsAsSession')}`);
     });
 
     it('leaves the engine out of the line while the catalog has not said which agent an unpinned role follows', () => {
@@ -37,6 +37,6 @@ describe('role row facts', () => {
 
     it('says the Orchestrator runs as this session rather than a runs-as it cannot change', () => {
         expect(describeRoleRowFacts({ roleId: 'orchestrator', role: { runsAs: session } }, { label: null, unavailable: false }))
-            .toBe(`${t('roles.rail.defaultEngine')} · ${t('roles.settings.runsAsThisSession')}`);
+            .toBe(`${t('roles.rail.defaultEngine')} ·\u00A0${t('roles.settings.runsAsThisSession')}`);
     });
 });

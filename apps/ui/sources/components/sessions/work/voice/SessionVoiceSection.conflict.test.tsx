@@ -101,7 +101,7 @@ describe('Work voice › a choice that met a newer Session', () => {
       // A stale basis is a change to review, not a refusal, and the picker still shows the current choice.
       expect(screen.getTextContent()).not.toContain(t('sessionVoice.refused'));
       expect(screen.getTextContent()).toContain(t('sessionIntentConflict.changedNow', { subject: t('sessionVoice.title'), current: 'Neural D' }));
-      expect(screen.findByType(DropdownMenu).props.itemTrigger.detailFormatter()).toBe(`Neural D · ${tLoose('settingsVoice.local.googleCloudTts.provider.title')}`);
+      expect(screen.findByType(DropdownMenu).props.itemTrigger.detailFormatter()).toBe(`Neural D ·\u00A0${tLoose('settingsVoice.local.googleCloudTts.provider.title')}`);
       await screen.update(<ModalProvider>{element(current)}</ModalProvider>);
       await screen.pressByTestIdAsync(`session-work-voice.conflict.${decision}`);
       await vi.waitFor(() => expect(screen.findByTestId('session-work-voice.conflict')).toBeNull());

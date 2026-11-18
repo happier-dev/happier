@@ -139,7 +139,7 @@ describe('Inbox session row line', () => {
     const candidate = readyCandidate();
     const line = buildInboxSessionContextLine(candidate, { showHome: true, showNeed: false,
       worker: { leadTitle: 'Payments v2 rollout', headline: 'Runbook drafted' } }) ?? '';
-    expect(line).toBe(`Runbook drafted · ${t('inbox.work.rows.reportsTo', { lead: 'Payments v2 rollout' })}`);
+    expect(line).toBe(`Runbook drafted ·\u00A0${t('inbox.work.rows.reportsTo', { lead: 'Payments v2 rollout' })}`);
     // An unreadable lead has no title to show: the row keeps saying where it runs.
     expect(buildInboxSessionContextLine(candidate, { showHome: false, showNeed: false, worker: { leadTitle: null } })).toContain('0.3');
   });

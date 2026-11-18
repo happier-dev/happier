@@ -105,7 +105,7 @@ describe('Session Role value row (Work tab top row)', () => {
         } } });
         const screen = await renderScreen(<SessionRoleValueRow sessionId="lead" serverId={home!.serverId} testID="session-work-role" />);
 
-        expect(declared(screen, 'session-work-role', 'detail')!.props.detail).toBe('Orchestrator · sessionWork.role.handsOff');
+        expect(declared(screen, 'session-work-role', 'detail')!.props.detail).toBe('Orchestrator ·\u00A0sessionWork.role.handsOff');
 
         await act(async () => {
             declared(screen, 'session-work-role', 'onPress')!.props.onPress();

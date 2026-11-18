@@ -579,7 +579,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ));
         expect(option).toMatchObject({
             disabled: false,
-            subtitle: 'Acme · Unavailable · Try again',
+            subtitle: 'Acme ·\u00A0Unavailable ·\u00A0Try again',
         });
         option?.onSelect?.();
         expect(recover).toHaveBeenCalledWith(resource);
@@ -648,7 +648,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ));
         expect(option).toMatchObject({
             label: 'Shared build account',
-            subtitle: 'Acme · Source removed · Ask the owner',
+            subtitle: 'Acme ·\u00A0Source removed ·\u00A0Ask the owner',
             disabled: false,
         });
         option?.onSelect?.();
@@ -964,7 +964,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             .toEqual([createConnectedServiceOptionId('service.plugin/mail', 'work'), createNativeServiceOptionId('service.plugin/mail'), 'route-source:ready']);
         // A short reason with the step the viewer can take, not the Home's long sentence.
         const team = last?.kind === 'static' ? last.options[0] : undefined;
-        expect(team?.subtitle).toBe('Broker offline · Ask the owner');
+        expect(team?.subtitle).toBe('Broker offline ·\u00A0Ask the owner');
         expect(model.optionAvailabilityById.get(createReauthServiceOptionId('service.plugin/mail', 'old')))
             .toEqual({ availability: 'unavailable', unavailableReason: presentConnectedAccountSignedOut().state });
         expect(model.optionAvailabilityById.get(createConnectedServiceOptionId('service.plugin/mail', 'work')))

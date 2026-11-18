@@ -14,6 +14,7 @@ export type ProjectFilesOptionId =
 export const PROJECT_FILES_OPTIONS = [
   {
     id: 'copy_once',
+    groupTitleKey: 'machineDetailPage.projectFiles.groupCopyOnce',
     titleKey: 'machineDetailPage.projectFiles.copyOnce',
     subtitleKey: 'machineDetailPage.projectFiles.copyOnceHelp',
     forSessionKey: 'machineDetailPage.projectFiles.forSessionCopyOnce',
@@ -21,6 +22,7 @@ export const PROJECT_FILES_OPTIONS = [
   },
   {
     id: 'git_clone',
+    groupTitleKey: 'machineDetailPage.projectFiles.groupGitClone',
     titleKey: 'machineDetailPage.projectFiles.gitClone',
     subtitleKey: 'machineDetailPage.projectFiles.gitCloneHelp',
     forSessionKey: 'machineDetailPage.projectFiles.forSessionGitClone',
@@ -28,6 +30,7 @@ export const PROJECT_FILES_OPTIONS = [
   },
   {
     id: 'keep_synced',
+    groupTitleKey: 'machineDetailPage.projectFiles.groupSync',
     titleKey: 'machineDetailPage.projectFiles.keepSynced',
     subtitleKey: 'machineDetailPage.projectFiles.keepSyncedHelp',
     forSessionKey: 'machineDetailPage.projectFiles.forSessionKeepSynced',
@@ -35,6 +38,7 @@ export const PROJECT_FILES_OPTIONS = [
   },
   {
     id: 'keep_both_in_sync',
+    groupTitleKey: 'machineDetailPage.projectFiles.groupSync',
     titleKey: 'machineDetailPage.projectFiles.twoWay',
     subtitleKey: 'machineDetailPage.projectFiles.twoWayHelp',
     forSessionKey: 'machineDetailPage.projectFiles.forSessionTwoWay',
@@ -43,6 +47,8 @@ export const PROJECT_FILES_OPTIONS = [
 ] as const satisfies readonly Readonly<{
   id: ProjectFilesOptionId;
   titleKey: string;
+  /** The option's own settings group says what it configures, never the option's name again. */
+  groupTitleKey: string;
   subtitleKey: string;
   forSessionKey: string;
   mark: 'default' | 'advanced' | null;

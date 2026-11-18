@@ -92,6 +92,26 @@ async function renderOperationRow(accessoryLayout?: 'adaptive') {
 }
 
 describe('Item page operation placement', () => {
+  it('keeps trailing facts (a picker row\'s check) on their line in a narrow row until they outgrow their share', async () => {
+    const { act } = await import('react-test-renderer');
+    const { Item } = await import('./Item');
+    const { ListPresentationProvider } = await import('./listPresentation');
+    const screen = await renderScreen(
+      <ListPresentationProvider value="page">
+        <Item title="Use CLI settings" subtitle="The model your CLI is set to"
+          rightElement={React.createElement('Operation', { testID: 'operation' })}
+          accessoryMaxWidth="row" accessoryLayout="adaptive" />
+      </ListPresentationProvider>,
+    );
+    const { direction, layout } = measuredRow(screen, act);
+    // A lone selected check on a phone row stays where it is.
+    await layout({ row: 358, operation: 24 });
+    expect(direction()).not.toBe('column');
+    // Readiness, agent glyphs and a star wider than half the row move beneath the name.
+    await layout({ row: 358, operation: 220 });
+    expect(direction()).toBe('column');
+  });
+
   it('keeps a short operation beside its label in a narrow row (a dialog pane, a phone)', async () => {
     const { act } = await import('react-test-renderer');
     const { direction, layout } = measuredRow(await renderOperationRow(), act);

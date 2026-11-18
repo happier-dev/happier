@@ -187,7 +187,7 @@ describe('WorkerUpdateCard hosted navigation', () => {
 
         expect(screen.findHostByTestId('worker-update-title')?.props.children).toBe('Support runbook for retries');
         expect(screen.findHostByTestId('worker-update-state')?.props.children).toBe('sessionWork.workerUpdate.state.settled');
-        expect(screen.findHostByTestId('worker-update-kind')?.props.children).toBe('sessionWork.kinds.session · 12m');
+        expect(screen.findHostByTestId('worker-update-kind')?.props.children).toBe('sessionWork.kinds.session ·\u00A012m');
         expect(screen.findHostByTestId('worker-update-result')?.props.children).toBe('Runbook drafted and published.');
         expect(screen.findHostByTestId('worker-update-footer')).toBeTruthy();
         expect(screen.findAllHostsByTestId('worker-fact')).toHaveLength(1);

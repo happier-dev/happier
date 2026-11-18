@@ -244,12 +244,12 @@ describe('Work › Roles and Notes', () => {
         ]);
         // Lab csinfo I2: the header summarises the differences; the scope reads above the rows.
         const count = screen.findByTestId('session-agents-section-count:session-work-roles')!;
-        expect(count.props.children).toBe('roles.session.countChanged:1 · roles.session.countAdded:1');
+        expect(count.props.children).toBe('roles.session.countChanged:1 ·\u00A0roles.session.countAdded:1');
         expect(screen.findByTestId('session-work-roles.description')!.props.children).toBe('roles.session.info');
         // Each difference is two lines: the name, then where it differs, its engine and how it runs.
         const facts = (roleId: string) => declared(screen, `session-work-roles.row.${roleId}`, 'subtitle')!.props.subtitle as string;
-        expect(facts('builder').startsWith('roles.session.changedHere · ')).toBe(true);
-        expect(facts('session:research')).toMatch(/^roles\.session\.addedHere · .* · roles\.session\.runsInBackground$|^roles\.session\.addedHere · roles\.session\.runsInBackground$/u);
+        expect(facts('builder').startsWith('roles.session.changedHere ·\u00A0')).toBe(true);
+        expect(facts('session:research')).toMatch(/^roles\.session\.addedHere ·\u00A0.* ·\u00A0roles\.session\.runsInBackground$|^roles\.session\.addedHere ·\u00A0roles\.session\.runsInBackground$/u);
         // Only a changed role offers Reset, always visible beside the row (never nested in its press target).
         expect(screen.findByTestId('session-work-roles.row.builder.reset')).toBeTruthy();
         expect(screen.findByTestId('session-work-roles.row.session:research.reset')).toBeNull();

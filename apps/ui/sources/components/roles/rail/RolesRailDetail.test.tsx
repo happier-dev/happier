@@ -37,7 +37,7 @@ describe('RolesRailDetailView', () => {
       .findAll((node) => typeof node.children?.[0] === 'string')
       .map((node) => String(node.children[0]));
     expect(texts).toContain(
-      t('roles.rail.uses', { label: 'Builder · Opus 5.5 · High' }),
+      t('roles.rail.uses', { label: 'Builder ·\u00A0Opus 5.5 · High' }),
     );
     expect(texts.some((text) => text.startsWith('Effective'))).toBe(false);
     await screen.unmount();

@@ -109,7 +109,7 @@ export function MachinePresetProjectFilesSection(
           }}
         />
       </ItemGroup>
-      <ItemGroup testID={`${props.testID}.option`} title={t(option.titleKey)}>
+      <ItemGroup testID={`${props.testID}.option`} title={t(option.groupTitleKey)}>
         {value?.kind === 'git_clone' ? (
           <>
             {/* Unnamed, both come from the session's folder when it starts (lab F4); a named clone shows its own. */}

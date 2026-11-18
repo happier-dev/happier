@@ -332,11 +332,11 @@ describe('Work primitives for plugin authors', () => {
     );
     try {
       expect(byTestId(mounted.container, 'facts')!.textContent).toBe(
-        'Linux · Codex',
+        'Linux ·\u00A0Codex',
       );
       expect(byTestId(mounted.container, 'empty-facts')).toBeNull();
       expect(authorBarrel.joinHappierFacts('Linux', null, '', 'Codex')).toBe(
-        'Linux · Codex',
+        'Linux ·\u00A0Codex',
       );
     } finally {
       mounted.unmount();
@@ -801,7 +801,7 @@ describe('Work primitives for plugin authors', () => {
         byTestId(mounted.container, 'summary:attention-dot'),
       ).not.toBeNull();
       expect(byTestId(mounted.container, 'summary:facts')?.textContent).toBe(
-        'Workflow run · 7 of 12',
+        'Workflow run ·\u00A07 of 12',
       );
       const word = byTestId(mounted.container, 'summary:state:label')!;
       expect(word.textContent).toBe('Waiting for you');
@@ -891,8 +891,8 @@ describe('Work primitives for plugin authors', () => {
     }
 
     it('follows real facts after one separator and leaves the line alone when omitted', () => {
-      expect(readFacts(['Deploy', 'Production'])).toBe('Deploy · Production');
-      expect(readFacts(['Deploy'], '2h')).toBe('Deploy · 2h');
+      expect(readFacts(['Deploy', 'Production'])).toBe('Deploy ·\u00A0Production');
+      expect(readFacts(['Deploy'], '2h')).toBe('Deploy ·\u00A02h');
       expect(readFacts([], '2h')).toBe('2h');
     });
 
@@ -901,7 +901,7 @@ describe('Work primitives for plugin authors', () => {
     });
 
     it('keeps a numeric zero tail, which is a renderable fact', () => {
-      expect(readFacts(['Pending'], 0)).toBe('Pending · 0');
+      expect(readFacts(['Pending'], 0)).toBe('Pending ·\u00A00');
     });
   });
 

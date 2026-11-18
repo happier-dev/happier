@@ -62,7 +62,7 @@ describe('SessionStepWork (lab session-F)', () => {
             const screen = await renderScreen(<SessionStepWork runId="run-release" serverId={home} machineName="MacBook Pro" />);
             expect(screen.findByTestId('session-work-step-run')?.props.children).toBe('Prepare the 0.3 release');
             expect(screen.findByTestId('session-work-step-facts')?.props.children)
-                .toBe(`${t('workflows.list.stepsProgress', { completed: 2, total: 6 })} · MacBook Pro`);
+                .toBe(`${t('workflows.list.stepsProgress', { completed: 2, total: 6 })} ·\u00A0MacBook Pro`);
             expect(screen.getTextContent()).toContain(t('sessionWork.step.checkedByWorkflow'));
             expect(screen.findByTestId('session-work-step-nothing')).not.toBeNull();
             expect(homes.requestsFor(runStoragePath)).toEqual([]);

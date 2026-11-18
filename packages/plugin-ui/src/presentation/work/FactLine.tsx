@@ -3,7 +3,8 @@ import { Fragment, type ReactNode } from 'react';
 import type { HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkHost, useHappierWorkTheme, type HappierWorkHost, type HappierWorkTextRole, type HappierWorkTheme } from './workTheme.js';
 
-export const FACT_SEPARATOR = ' · ';
+/** A wrapped line breaks before the dot, never after it: the separator keeps with the fact that follows (a no-break space). */
+export const FACT_SEPARATOR = ' \u00B7\u00A0';
 
 /** Ordered human facts, omitting absent values without changing their wording. */
 export function joinHappierFacts(...facts: readonly (string | null | undefined)[]): string {

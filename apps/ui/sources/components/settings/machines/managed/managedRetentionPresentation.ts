@@ -7,6 +7,7 @@ import type { RetentionV1 } from '@happier-dev/protocol/machines/managed/managed
 import { describeRetention as describeSharedRetention, formatRetentionDuration as formatSharedRetentionDuration,
   type ManagedDurationLabels } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { type ProviderPrice } from './managedMachineDisplay';
@@ -186,7 +187,7 @@ export function describeRetentionPolicy(
 ): string {
   const label = describeRetention(policy.retention);
   return keepOffersWake(policy.retention) && policy.wakeOnAcceptedMessage
-    ? `${label} · ${t('managedRetention.wakes')}`
+    ? joinHappierFacts(label, t('managedRetention.wakes'))
     : label;
 }
 
@@ -196,7 +197,7 @@ export function describeDefaultPolicy(
 ): string {
   const label = describeRetention(policy.retention);
   if (!keepOffersWake(policy.retention)) return label;
-  return `${label} · ${policy.wakeOnAcceptedMessage ? t('managedRetention.wakeOn') : t('managedRetention.wakeOff')}`;
+  return joinHappierFacts(label, policy.wakeOnAcceptedMessage ? t('managedRetention.wakeOn') : t('managedRetention.wakeOff'));
 }
 
 export type RetentionChoice = Readonly<{
