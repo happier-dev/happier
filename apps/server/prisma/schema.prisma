@@ -3666,6 +3666,7 @@ model ReviewMetadata {
     @@index([projectSourceId, state, artifactId])
     @@index([workflowId, startedAt(sort: Desc), artifactId])
     @@index([state, startedAt(sort: Desc), artifactId])
+    @@index([finishedAt, artifactId])
 }
 
 model Artifact {
