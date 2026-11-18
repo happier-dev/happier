@@ -19088,7 +19088,6 @@ settingsSession: {
               backupUnchecked: "Nicht prüfbar",
               columnEvery: "Alle",
               countChecks: ({ count }: { count: number }) => (count === 1 ? '1 Prüfung' : `${count} Prüfungen`),
-              countFailing: ({ count }: { count: number }) => `${count} schlagen fehl`,
               countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 Dienst' : `${services} Dienste`} auf ${machines === 1 ? '1 Maschine' : `${machines} Maschinen`}`,
               columnCheck: "Prüfung",
               columnUptime: "Letzte 30 Tage",

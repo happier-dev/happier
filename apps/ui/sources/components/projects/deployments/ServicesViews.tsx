@@ -5,7 +5,7 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import { formatHappierDataBytesParts } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytesParts, type HappierPageCountPart } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -48,7 +48,7 @@ export const SERVICES_VIEWS = [
 ] as const;
 export type ServicesView = typeof SERVICES_VIEWS[number]['id'];
 /** A view's count line, from its own read's reported rows (the page's head draws it, MainScreenHeader `count`). */
-export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (string | null)[]; needYou?: number }>;
+export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly HappierPageCountPart[]; needYou?: number }>;
 
 /** The route's `view`, read once: anything else is the Apps view. */
 export function readServicesView(
@@ -203,7 +203,7 @@ export function ServicesDatabasesView(
   const uncovered = backups.coverage?.rows.filter((row) => row.status === 'uncovered').length ?? 0;
   const countParts = React.useMemo(() => read.snapshot.value ? [
     rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,
-    uncovered > 0 ? t('projects.deployments.notBackedUpCount', { count: uncovered }) : null,
+    uncovered > 0 ? { text: t('projects.deployments.notBackedUpCount', { count: uncovered }), tone: 'warning' as const } : null,
   ] : null, [read.snapshot.value, rows.length, uncovered]);
   useReportViewCount('databases', countParts, props.onCount, uncovered);
   if (!read.snapshot.value) {
@@ -255,9 +255,9 @@ export function ServicesDatabasesView(
 }
 
 /** A view publishes its count line to the page head when its words change (MainScreenHeader `count`). */
-export function useReportViewCount(view: ServicesView, parts: readonly (string | null)[] | null,
+export function useReportViewCount(view: ServicesView, parts: readonly HappierPageCountPart[] | null,
   onCount: (count: ServicesViewCount) => void, needYou = 0) {
-  const signature = parts ? parts.join('\u0000') : null;
+  const signature = parts ? parts.map((part) => typeof part === 'object' && part ? `${part.tone}:${part.text}` : String(part)).join('\u0000') : null;
   const latest = React.useRef(parts);
   latest.current = parts;
   React.useEffect(() => {
@@ -349,8 +349,9 @@ export function ServicesDomainsView(
     const unreachable = needs.filter((need) => need === 'notReachable').length;
     return [
       items.length > 0 ? t('projects.deployments.editors.domainsCount', { count: items.length }) : null,
-      waiting > 0 ? t('projects.deployments.editors.domainsWaitingForDns', { count: waiting }) : null,
-      unreachable > 0 ? t('projects.deployments.editors.domainsNotReachable', { count: unreachable }) : null,
+      // The counts that need the person speak in their rows' tones (lab svcDom: amber waiting, rose not reachable).
+      waiting > 0 ? { text: t('projects.deployments.editors.domainsWaitingForDns', { count: waiting }), tone: 'warning' as const } : null,
+      unreachable > 0 ? { text: t('projects.deployments.editors.domainsNotReachable', { count: unreachable }), tone: 'danger' as const } : null,
     ];
   }, [items, read.snapshot.value]);
   // The Domains tab's needs-you count: the addresses its count line says need the person.

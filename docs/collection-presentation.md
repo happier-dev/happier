@@ -626,7 +626,10 @@ A page's count line ("12 Machines · 3 online") has one owner:
 `HappierPageCountLine` and `formatHappierPageCount` in
 [`PageCountLine.tsx`](../packages/plugin-ui/src/presentation/layout/PageCountLine.tsx).
 It formats the owner's reported parts, draws one quiet meta line in tabular
-figures, and reserves an empty, hidden line while counts are pending. Core
+figures, and reserves an empty, hidden line while counts are pending. A part
+that needs the person may carry a tone (`{ text: '1 down', tone: 'danger' }`,
+or `'warning'`); only that part speaks, in the tone's ink, through the host's
+own text renderer (approved pfc-redesign and monitoring-1115 count lines). Core
 `MainScreenHeader` draws it last in its under-band. `HappierPageHeader`'s
 `count`/`countPending` draw it last in the header, and the public plugin
 `PageHeader` forwards them. Pages pass counts their owners report and never

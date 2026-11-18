@@ -18849,7 +18849,6 @@ settingsSession: {
           backupUnchecked: "Vérification impossible",
           columnEvery: "Toutes les",
           countChecks: ({ count }: { count: number }) => (count === 1 ? '1 vérification' : `${count} vérifications`),
-          countFailing: ({ count }: { count: number }) => `${count} en échec`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 service' : `${services} services`} sur ${machines === 1 ? '1 Machine' : `${machines} Machines`}`,
           columnCheck: "Vérification",
           columnUptime: "30 derniers jours",

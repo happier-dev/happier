@@ -22374,7 +22374,6 @@ const enProjects = {
         backupUnchecked: "Couldn’t check",
         columnEvery: "Every",
         countChecks: ({ count }: { count: number }) => (count === 1 ? '1 check' : `${count} checks`),
-        countFailing: ({ count }: { count: number }) => `${count} failing`,
         countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 service' : `${services} services`} on ${machines === 1 ? '1 Machine' : `${machines} Machines`}`,
         columnCheck: "Check",
         columnUptime: "Last 30 days",

@@ -7,6 +7,7 @@ import {
   formatHappierPageCount,
   HappierPageCountLine,
   type HappierPageCountLineTextRender,
+  type HappierPageCountPart,
   type HappierSearchDisclosure,
   useHappierSearchDisclosure,
 } from '@happier-dev/plugin-ui/presentation';
@@ -71,7 +72,7 @@ export type MainScreenHeaderProps = Readonly<{
   /** What stands right under the title: filter chips, a view switch, a saved space's strip. */
   band?: React.ReactNode;
   /** The page's count line ("40 artifacts · 1 saved today"), last before the body: the owner's counts, one per part. */
-  count?: readonly (string | null | undefined | false)[];
+  count?: readonly HappierPageCountPart[];
   /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
   countPending?: boolean;
   /** What the open search reports (its scope, "Search everything"), under the field. Never a count. */
@@ -206,7 +207,10 @@ export function useMainScreenSearch(search: MainScreenSearch | null): HappierSea
 const MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
 const NO_COUNT: readonly string[] = Object.freeze([]);
 // Core's own text owner draws the shared count line's words (its type scale and font scaling).
-const renderCountText: HappierPageCountLineTextRender = (input) => (
+// A part that needs the person speaks in its state's ink, as Monitoring's glance counts do.
+const renderCountText: HappierPageCountLineTextRender = (input) => input.tone ? (
+  <Text style={input.tone === 'danger' ? styles.countDanger : styles.countWarning}>{input.text}</Text>
+) : (
   <Text testID={input.testID} variant="meta" numberOfLines={1} style={styles.count}>{input.text}</Text>
 );
 
@@ -224,6 +228,12 @@ const styles = StyleSheet.create((theme) => ({
   count: {
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
+  },
+  countDanger: {
+    color: theme.colors.state.danger.textForeground,
+  },
+  countWarning: {
+    color: theme.colors.state.warning.textForeground,
   },
   under: {
     width: '100%',

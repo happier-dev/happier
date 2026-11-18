@@ -18594,7 +18594,6 @@ settingsSession: {
           backupUnchecked: "无法检查",
           columnEvery: "间隔",
           countChecks: ({ count }: { count: number }) => `${count} 项检查`,
-          countFailing: ({ count }: { count: number }) => `${count} 项失败`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${machines} 台机器上的 ${services} 个服务`,
           columnCheck: "检查",
           columnUptime: "最近 30 天",

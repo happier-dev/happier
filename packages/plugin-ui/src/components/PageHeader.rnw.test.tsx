@@ -9,6 +9,7 @@ import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js'
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT } from '../presentation/layout/pageText.js';
 import { HappierPageCountLine } from '../presentation/layout/PageCountLine.js';
+import { HappierText } from '../presentation/text/Text.js';
 
 describe('public PageHeader composition', () => {
   it("draws the page's count line from the plugin's own counts, exactly as a core main screen draws it", () => {
@@ -25,6 +26,23 @@ describe('public PageHeader composition', () => {
       for (const property of ['font-size', 'line-height', 'font-weight', 'font-family', 'color', 'font-variant-numeric'] as const) {
         expect(getComputedStyle(line!).getPropertyValue(property)).toBe(getComputedStyle(core).getPropertyValue(property));
       }
+    } finally { view.unmount(); }
+  });
+
+  it('lets a count that needs the person speak in its tone, the rest of the line staying quiet', () => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="checks" title="Checks" count={['7 checks', { text: '1 down', tone: 'danger' }, { text: '1 slow', tone: 'warning' }]} />
+      <HappierText testID="danger" tone="danger">x</HappierText>
+      <HappierText testID="warning" tone="warning">x</HappierText>
+    </PluginUiProvider>);
+    try {
+      const line = view.container.querySelector<HTMLElement>('[data-testid="checks:count"]')!;
+      expect(line.textContent).toBe('7 checks · 1 down · 1 slow');
+      const ink = (testID: string) => getComputedStyle(view.container.querySelector(`[data-testid="${testID}"]`)!).color;
+      const spoken = [...line.querySelectorAll<HTMLElement>('*')].filter((node) => node.textContent === '1 down' || node.textContent === '1 slow');
+      expect(spoken.map((node) => getComputedStyle(node).color)).toEqual([ink('danger'), ink('warning')]);
+      expect(getComputedStyle(line).color).not.toBe(ink('danger'));
     } finally { view.unmount(); }
   });
 

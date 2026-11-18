@@ -40,6 +40,7 @@ import { useServiceCheckSelection } from './ServiceCheckList';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import type { HappierPageCountPart } from '@happier-dev/plugin-ui/presentation';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { useServicesListView, useServicesSpaceHeader, type ServicesListViewController } from './useServicesListView';
 
@@ -454,7 +455,7 @@ function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
 const COUNT_QUERY = Object.freeze({ includeTotal: true });
 const NO_DEMAND: DeploymentReadDemandV1 = Object.freeze({ mounted: false, visible: false, focused: false });
 
-function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, total: number | undefined): readonly (string | null)[] {
+function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, total: number | undefined): readonly HappierPageCountPart[] {
   let needYou = 0;
   let deploying = 0;
   for (const item of items) {
@@ -470,7 +471,8 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, to
     accountTotal ? t('projects.deployments.services.countEnvironmentsTotal', { count: total })
       : items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
     items.length > 0 && paged && !accountTotal ? t('projects.deployments.services.countOnPage') : null,
-    needYou > 0 ? t('projects.deployments.services.needYou', { count: needYou }) : null,
+    // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you").
+    needYou > 0 ? { text: t('projects.deployments.services.needYou', { count: needYou }), tone: 'danger' as const } : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
   ];
 }

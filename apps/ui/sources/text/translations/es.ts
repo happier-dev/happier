@@ -18975,7 +18975,6 @@ settingsSession: {
           backupUnchecked: "No se pudo comprobar",
           columnEvery: "Cada",
           countChecks: ({ count }: { count: number }) => (count === 1 ? '1 comprobación' : `${count} comprobaciones`),
-          countFailing: ({ count }: { count: number }) => `${count} fallando`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 servicio' : `${services} servicios`} en ${machines === 1 ? '1 Máquina' : `${machines} Máquinas`}`,
           columnCheck: "Comprobación",
           columnUptime: "Últimos 30 días",

@@ -9,7 +9,7 @@ export { beginThemeSurfaceInspection, createThemeSurfaceInspectionBinding } from
 export * from './index.public.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner
 // through `PageHeader`'s `count` (one drawing, one formatting rule).
-export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender } from './layout/PageCountLine.js';
+export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender, type HappierPageCountPart, type HappierPageCountTone } from './layout/PageCountLine.js';
 // Host-only: the one rule between list and column rows, for core rows (column rows, Sessions) that draw it themselves;
 // plugin rows draw it through `List.Item`.
 export {

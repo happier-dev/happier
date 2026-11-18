@@ -11,7 +11,7 @@ import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappi
 import { HappierPageHeaderFlushTopContext, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 import { useHappierColumnEdgeRemainder } from './columnEdge.js';
-import { formatHappierPageCount, HappierPageCountLine } from './PageCountLine.js';
+import { formatHappierPageCount, HappierPageCountLine, type HappierPageCountPart } from './PageCountLine.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 
@@ -105,7 +105,7 @@ export type HappierPageHeaderProps = Readonly<{
    * The page's count line from its owner's reported counts ("12 apps · 3 failing"), last in the header: each
    * part already says its number in words; absent or empty parts drop out, and no part means no line.
    */
-  count?: readonly (string | null | undefined | false)[];
+  count?: readonly HappierPageCountPart[];
   /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
   countPending?: boolean;
   /** The surrounding navigation's back control, when there is one. */

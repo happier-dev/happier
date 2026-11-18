@@ -1,6 +1,7 @@
 import { useEffect, useMemo, type ReactElement, type ReactNode } from 'react';
 
 import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
+import type { HappierPageCountPart } from '../presentation/layout/PageCountLine.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { normalizeHappierPageOperations } from '../presentation/layout/pageOperations.js';
 import { usePluginHostApi } from '../hostApi/context.js';
@@ -48,9 +49,10 @@ export type PageHeaderProps = Readonly<{
   /**
    * The page's count line, last in the header: the counts your owner reports, each part saying its number in
    * words (`['12 apps', failing > 0 ? `${failing} failing` : null]`). Absent or empty parts drop out; no part, no
-   * line. Never count rows on the page for it.
+   * line. Never count rows on the page for it. A count that needs the person may speak in its tone
+   * (`{ text: '1 down', tone: 'danger' }`); the rest of the line stays quiet.
    */
-  count?: readonly (string | null | undefined | false)[];
+  count?: readonly HappierPageCountPart[];
   /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
   countPending?: boolean;
   /** At most one primary page action plus context controls. */

@@ -18889,7 +18889,6 @@ settingsSession: {
           backupUnchecked: "確認できません",
           columnEvery: "間隔",
           countChecks: ({ count }: { count: number }) => `${count} 件のチェック`,
-          countFailing: ({ count }: { count: number }) => `${count} 件失敗中`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${machines} 台のマシン上の ${services} サービス`,
           columnCheck: "チェック",
           columnUptime: "過去 30 日",

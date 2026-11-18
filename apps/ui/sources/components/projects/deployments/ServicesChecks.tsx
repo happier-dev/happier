@@ -146,11 +146,15 @@ function ChecksList(props: Readonly<{
 }>) {
   const { rows, partial } = props;
   const offlineObservers = useServiceCheckOfflineObservers(rows, props.scope);
-  const failing = React.useMemo(() => serviceCheckMonitorSummary(rows, offlineObservers).down, [rows, offlineObservers]);
+  const summary = React.useMemo(() => serviceCheckMonitorSummary(rows, offlineObservers), [rows, offlineObservers]);
+  const { down, degraded } = summary;
+  // Monitoring's words and tones (monitoring-1115 A1 "1 down · 1 slow"): one word per state on every Check surface.
   const count = React.useMemo(() => [partial ? t('projects.deployments.monitoring.checksAtLeast', { count: rows.length })
     : t('projects.deployments.services.countChecks', { count: rows.length }),
-    failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, partial, rows.length]);
-  useReportViewCount('checks', count, props.onCount, failing);
+    down > 0 ? { text: t('projects.deployments.monitoring.glanceDown', { count: down }), tone: 'danger' as const } : null,
+    degraded > 0 ? { text: t('projects.deployments.monitoring.glanceFailing', { count: degraded }), tone: 'warning' as const } : null],
+  [degraded, down, partial, rows.length]);
+  useReportViewCount('checks', count, props.onCount, down);
   return (
     <ServiceCheckList testID="services.checks" rows={rows} scope={props.scope} selection={props.selection}
       accessibilityLabel={t('projects.deployments.services.checks')} />
