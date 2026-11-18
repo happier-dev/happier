@@ -216,6 +216,13 @@ describe("resolveScopedUsageContributions", () => {
         expect(result.totalContributions.map(event => event.id)).toEqual(rows.map(event => event.id));
         expect(sortedEvents, 'one replay order, one subject input order and one merged contribution order').toBeLessThanOrEqual(3 * rows.length);
     });
+    it('folds a single accounting subject wider than the JavaScript call argument limit', () => {
+        const rows = Array.from({ length: 140_000 }, (_, index) => row(`event-${index}`, index, 'turn_delta', 1));
+        const result = resolveScopedUsageContributions(rows);
+        expect(result.totalContributions).toHaveLength(rows.length);
+        expect(result.totalContributions[0]?.id).toBe('event-0');
+        expect(result.totalContributions.at(-1)?.id).toBe('event-139999');
+    });
     it('preserves global same-instant runtime ranks when unrelated subject bodies are omitted', () => {
         const ordered = (id: string, scope: string, total: number, createdAt: number, runtime: string, sequence: number) => ({
             ...row(id, 100, scope, total), source: 'runtime', createdAt: new Date(createdAt),

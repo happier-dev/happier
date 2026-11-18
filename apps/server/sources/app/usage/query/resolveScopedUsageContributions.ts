@@ -273,8 +273,10 @@ export function* resolveScopedUsageContributionsSteps(
             (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
             && (range?.endMs === undefined || row.observedAt.getTime() < range.endMs)
         ));
-        totalContributions.push(...selected);
-        for (const row of selected) for (const reason of row.coverageReasons ?? []) coverageReasons.add(reason);
+        for (const row of selected) {
+            totalContributions.push(row);
+            for (const reason of row.coverageReasons ?? []) coverageReasons.add(reason);
+        }
         if (shouldYield()) yield;
     }
 
