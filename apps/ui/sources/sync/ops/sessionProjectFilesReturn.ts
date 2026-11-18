@@ -1,4 +1,7 @@
-import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
+import {
+  SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1,
+  SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1,
+} from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import type { SessionWorkspaceReturnInputV1, SessionWorkspaceReturnPreviewV1,
   SessionWorkspaceReturnApplyResultV1 } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -34,14 +37,14 @@ export function prepareSessionProjectFilesReturn(
   context: UiActionExecutorContext,
 ): Promise<SessionProjectFilesReturnPrepareResult> {
   // The canonical Action executor validates this exact output schema before returning.
-  return createDefaultActionExecutor().execute(SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], input, context) as Promise<SessionProjectFilesReturnPrepareResult>;
+  return createDefaultActionExecutor().execute(SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1, input, context) as Promise<SessionProjectFilesReturnPrepareResult>;
 }
 
 export function applySessionProjectFilesReturn(
   input: Extract<SessionWorkspaceReturnInputV1, { returnId: string }>,
   context: UiActionExecutorContext,
 ): Promise<SessionProjectFilesReturnApplyResult> {
-  return createDefaultActionExecutor().execute(SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], input, context) as Promise<SessionProjectFilesReturnApplyResult>;
+  return createDefaultActionExecutor().execute(SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1, input, context) as Promise<SessionProjectFilesReturnApplyResult>;
 }
 
 /** Uses the same captured-comparison reader as the Session's changed-files review. */
