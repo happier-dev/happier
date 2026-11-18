@@ -144,7 +144,8 @@ describe('Action completion contract', () => {
     expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: undefined }))
       .toMatchObject({ kind: 'outcome_uncertain' });
   });
-  it.each(['review.start', 'subagents.plan.start'] as const)('declares execution-run completion for %s', (actionId) => {
+  it('declares native execution-run completion for subagents.plan.start', () => {
+    const actionId = 'subagents.plan.start';
     const spec = getActionSpec(actionId);
     expect(spec).toMatchObject({ completion: { awaits: 'execution_runs' } });
     expect(serializeActionSpec(spec)).not.toHaveProperty('completion');

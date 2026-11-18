@@ -9,6 +9,7 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
 import { ReviewPublicationEvidenceSchema, ReviewReviewerOutcomeV1Schema } from '../../reviews/reviewPublicationEvidence.js';
 import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
+import { parseWorkflowRunStartActionResultReferenceV1 } from '../../workflows/actionsV1.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
@@ -181,7 +182,16 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
   },
 };
 
-export const reviewStartCompletion = reviewStartExecutionRunCompletion;
+export const reviewStartCompletion: ActionCompletionDeclaration = {
+  awaits: 'workflow_runs',
+  executionRuns: reviewStartExecutionRunCompletion,
+  terminalOutputSchema: StrictJsonValueSchema,
+  launched: output => {
+    const started = parseWorkflowRunStartActionResultReferenceV1(output);
+    return { workflows: started ? [{ key: 'review', runId: started.runId }] : [] };
+  },
+  terminal: (_output, workflows) => workflows[0]?.workflow.result,
+};
 
 export const planStartCompletion: ActionCompletionDeclaration = {
   awaits: 'execution_runs',

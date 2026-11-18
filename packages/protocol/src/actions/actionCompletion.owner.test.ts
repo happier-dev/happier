@@ -13,6 +13,24 @@ import {
 } from './actionCompletion.js';
 
 describe('Action completion owner', () => {
+  it('awaits the exact composed Review Workflow receipt and returns its terminal aggregate', async () => {
+    const run = { id: 'review-workflow', sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
+      origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'machine',
+      workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+      availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: { run, admission: 'created' } });
+    expect(prepared).toMatchObject({ kind: 'awaiting', state: { awaitedWorkflows: [{ key: 'review', runId: run.id }] } });
+    if (prepared.kind !== 'awaiting') throw new Error('Expected retained Review Workflow');
+    const result = { review: { state: 'completed', counts: { total: 51, needsDecision: 1 } },
+      human: { verdicts: [{ verdict: 'request_changes' }], needsYou: { needsYou: true } } };
+    expect(await resumeActionCompletionV1({ actionId: 'review.start', completion: freezeActionCompletionContractV1(reviewStartCompletion),
+      state: prepared.state, resolveDeclaration: () => reviewStartCompletion,
+      observeWorkflow: async () => ({ observation: 'terminal', matchedCondition: 'terminal', run: { ...run, state: 'succeeded' }, result }),
+    })).toEqual({ kind: 'completed', value: result });
+  });
+
   it.each(['complete', 'failed'] as const)('settles an exact retained commit proposal when its output is %s', (state) => {
     const observation = ExecutionRunGetRequestSchema.parse({ runId: 'generator', waitForOutput: {
       kind: 'scm_diff_summary', output: 'commitPlan', comparisonId: 'comparison-1', resultId: 'saved-1', afterRevision: 2 } }).waitForOutput;
