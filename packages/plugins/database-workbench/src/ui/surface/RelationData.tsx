@@ -313,6 +313,17 @@ function JsonValue(
   );
 }
 
+/** One reference per pointing table, the first in catalogue order. */
+function firstPerTable(incoming: readonly DatabaseIncomingForeignKeyV1[]): readonly DatabaseIncomingForeignKeyV1[] {
+  const seen = new Set<string>();
+  return incoming.filter((reference) => {
+    const table = `${reference.source.schema}.${reference.source.name}`;
+    if (seen.has(table)) return false;
+    seen.add(table);
+    return true;
+  });
+}
+
 /**
  * "Referenced by" (lab longValue): each table whose rows point at this row, one press from those rows, filtered to
  * this row's key by the existing rows read. No counts (D41): naming a table costs nothing, counting it would.
@@ -618,16 +629,20 @@ export function RelationData(
                 )
         }
       />
-      {/* One row on screen (a reference opened here): the tables pointing at it are one press away (lab dbBrowse/fk). */}
+      <Row gap="small" align="center">
+      {/* One row on screen (a reference opened here): one "Referenced by" with each pointing table, at the footer's
+          end before the pager (lab dbBrowse/fk). A table that points twice is named once; the row pane offers both. */}
       {page.rows.length === 1 && (page.incomingForeignKeys?.length ?? 0) > 0 ? (
-        <Row gap="small" align="center" wrap>
-          {(page.incomingForeignKeys ?? NO_INCOMING).map((reference) => (
+        <Row gap="xsmall" align="center">
+          <Icon name="forward" size="small" tone="secondary" />
+          <Text tone="secondary" variant="meta" value={translate('plugins.database.rows.referencedByLead', 'Referenced by')} />
+          {firstPerTable(page.incomingForeignKeys ?? NO_INCOMING).map((reference) => (
             <Button
-              key={`${reference.source.schema}.${reference.source.name}:${reference.name}`}
+              key={`${reference.source.schema}.${reference.source.name}`}
               variant="plain"
               size="small"
-              icon={<Icon name="forward" size="small" tone="secondary" />}
-              title={translate('plugins.database.rows.referencedBy', 'Referenced by {table}', { table: reference.source.name })}
+              title={reference.source.name}
+              accessibilityLabel={translate('plugins.database.rows.openIncoming', 'Open {table} rows that point at this row', { table: reference.source.name })}
               onPress={() => tools.openIncoming(page.rows[0]!.rowKey, reference)}
             />
           ))}
@@ -654,6 +669,7 @@ export function RelationData(
           onPress={next}
         />
       </Row>}
+      </Row>
     </Row>
   );
   return (

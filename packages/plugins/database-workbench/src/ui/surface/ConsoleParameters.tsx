@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
+  Menu,
   Row,
-  Select,
   Stack,
   Text,
   TextField,
@@ -53,10 +53,18 @@ export function ConsoleParameters(
         ?? { type: 'text' as const, text: '' };
     }));
   };
-  // One wrapping line of compact typed fields, each named by its placeholder (lab p7AddNow/params); what they are
-  // for is said once under them.
+  // The block's lead says what these are for (lab p7AddNow/params "Parameters · sent separately…"); then one wrapping
+  // line of compact fields, each named by its placeholder, its type a quiet word before its value.
   return (
     <Stack gap="xsmall">
+      <Text
+        variant="meta"
+        tone="secondary"
+        value={translate(
+          'plugins.database.console.parametersLead',
+          'Parameters · sent separately from the statement, never pasted into it',
+        )}
+      />
       <Row gap="medium" align="center" wrap>
         {props.slots.map((slot) => {
           const input = inputAt(slot);
@@ -68,19 +76,11 @@ export function ConsoleParameters(
             // A narrow pane wraps a parameter's value under its type rather than past the edge.
             <Row key={`${slot.index}:${slot.placeholder}`} gap="xsmall" align="center" wrap>
               <Text variant="code" tone="secondary" value={slot.placeholder} />
-              <Select
-                label={translate(
-                  'plugins.database.console.parameterType',
-                  'Type of {placeholder}',
-                  { placeholder: slot.placeholder },
-                )}
-                presentation="field"
+              <SlotType
+                placeholder={slot.placeholder}
+                type={input.type}
                 options={typeOptions}
-                value={input.type}
-                onChange={(next) => {
-                  const type = TYPES.find((candidate) => candidate === next);
-                  if (type) replace(slot, { ...input, type });
-                }}
+                onChange={(type) => replace(slot, { ...input, type })}
               />
               {input.type === 'null' ? null : (
                 <TextField
@@ -111,14 +111,46 @@ export function ConsoleParameters(
           );
         })}
       </Row>
-      <Text
-        variant="meta"
-        tone="secondary"
-        value={translate(
-          'plugins.database.console.parametersLine',
-          'Sent separately from the statement, never pasted into it.',
-        )}
-      />
     </Stack>
+  );
+}
+
+/**
+ * A slot's type: quiet words with a caret ("text ⌄") qualifying the value beside it, opening the shared menu of
+ * types, rather than a field box that outweighs the value it qualifies.
+ */
+function SlotType(
+  props: Readonly<{
+    placeholder: string;
+    type: ConsoleParameterInput['type'];
+    options: readonly Readonly<{ value: ConsoleParameterInput['type']; label: string }>[];
+    onChange: (type: ConsoleParameterInput['type']) => void;
+  }>,
+) {
+  const translate = usePluginTranslation();
+  const [open, setOpen] = React.useState(false);
+  const label = translate('plugins.database.console.parameterType', 'Type of {placeholder}', { placeholder: props.placeholder });
+  const current = props.options.find((option) => option.value === props.type)?.label ?? props.type;
+  return (
+    <Menu
+      open={open}
+      onOpenChange={setOpen}
+      trigger={current}
+      triggerAccessibilityLabel={`${label}: ${current}`}
+      triggerAppearance="text"
+      triggerSize="small"
+      triggerDisclosure
+      groups={[{
+        id: 'types',
+        accessibilityLabel: label,
+        items: props.options.map((option) => ({ id: option.value, kind: 'radio' as const, radioGroupId: 'type', label: option.label })),
+      }]}
+      radioGroups={[{ id: 'type', accessibilityLabel: label, selectedId: props.type }]}
+      onSelect={(id) => {
+        const type = TYPES.find((candidate) => candidate === id);
+        if (type) props.onChange(type);
+        setOpen(false);
+      }}
+    />
   );
 }

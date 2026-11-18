@@ -338,6 +338,23 @@ describe('Database workbench surfaces', () => {
       expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: 'data/public/invoice_lines' }));
     } finally { await fixture.dispose(); }
   });
+  it('offers one Referenced by at the footer when one row is on screen', async () => {
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'incoming-footer', mountNonce: 'incoming-footer' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation },
+    });
+    try {
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Open invoice_lines rows that point at this row' }));
+      await settle(20);
+      expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: 'data/public/invoice_lines' }));
+    } finally { await fixture.dispose(); }
+  });
   it('offers one typed field per placeholder in the Console statement, text by default', async () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'console-slots', mountNonce: 'console-slots' },
@@ -359,6 +376,8 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(await fixture.getByRole('textbox', { name: 'Value of $1' })).toBeTruthy();
       expect(await fixture.getByRole('textbox', { name: 'Value of $2' })).toBeTruthy();
+      // The type is a quiet word qualifying the value, text until the person picks another.
+      expect(await fixture.getByRole('button', { name: 'Type of $1: text' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
