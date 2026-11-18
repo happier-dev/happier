@@ -88,6 +88,15 @@ test('does not blame a packet for an entry graph its base already fails', { time
   assert.match(result.preexisting[0], /^protocol-managed-credential-delivery: /);
 });
 
+test('refuses the 1f986f64d8a tree: a server route names an Action spec its Protocol lacks', { timeout: 900_000 }, async () => {
+  // The real incident: the route consumed the uncommitted review.get spec; every HEAD server died at boot.
+  const result = await commitTreeEntryLoads({ repo: real, base: '1f986f64d8a~1', tree: '1f986f64d8a', graphIds: ['server-routes'] });
+  assert.equal(result.findings.length, 1, JSON.stringify(result));
+  assert.match(result.findings[0], /^server-routes: .*Unknown action spec: review\.get/);
+  const selection = await selectCommitTreeEntryGraphs({ repo: real, base: '1f986f64d8a~1', tree: '1f986f64d8a' });
+  assert.ok(selection.selected.includes('server-routes'), JSON.stringify(selection));
+});
+
 test('selects only the entry graphs whose workspace closure owns a changed path', async () => {
   const git = (...args) => execFileSync('git', args, { cwd: real, encoding: 'utf8' }).trim();
   const head = git('rev-parse', 'HEAD');
@@ -106,5 +115,6 @@ test('selects only the entry graphs whose workspace closure owns a changed path'
   })() });
   assert.ok(ui.selected.includes('ui-catalog'), JSON.stringify(ui));
   assert.ok(!ui.selected.includes('server'), JSON.stringify(ui));
+  assert.ok(!ui.selected.includes('server-routes'), JSON.stringify(ui));
   assert.ok(!ui.selected.includes('protocol-service-placement-actions'), JSON.stringify(ui));
 });

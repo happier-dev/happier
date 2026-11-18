@@ -12,6 +12,13 @@ const tooling = new URL('../../', import.meta.url);
 const ENTRY_GRAPHS_PATH = 'apps/stack/scripts/perf/entry-graphs.mjs';
 const ENTRY_LOAD_PATH = 'apps/stack/scripts/perf/entry-load.mjs';
 const GENERATED = 'apps/server/generated';
+// Route composition of the tree's server (P03 ORCH 2026-11-18): the entry graphs stop at the server's import probe,
+// so an Action a route names but the packet's Protocol lacks (1f986f64d8a: review.get) passed them. This graph
+// composes the server's routes on a bare app (no database, no listener) through the server's own registration
+// entry, and runs only for packets that touch Protocol Action specs or server sources.
+const SERVER_ROUTES_GRAPH = 'server-routes';
+const SERVER_ROUTES_ENTRY = 'apps/server/sources/app/api/api.ts';
+const SERVER_ROUTES_INPUT = /^packages\/protocol\/src\/actions\/|^apps\/server\/sources\//;
 const GENERATOR_INPUTS = ['apps/server/prisma/schema.prisma', 'apps/server/prisma/sqlite/schema.prisma',
   'apps/server/prisma/mysql/schema.prisma', 'apps/server/scripts/generateClients.ts'];
 // Root-level paths a source graph can load (scripts, configs, manifests, the lockfile, patches).
@@ -86,7 +93,10 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree }) {
     const closure = workspaceSourcePackageClosure(packages, [owner]);
     return [...owners].some(name => closure.has(name));
   }).map(graph => graph.id);
-  return { graphs: graphs.map(graph => graph.id), selected, changed };
+  let routes = false;
+  try { git(['cat-file', '-e', `${tree}:${SERVER_ROUTES_ENTRY}`]); routes = true; } catch { /* no server in this tree */ }
+  return { graphs: [...graphs.map(graph => graph.id), ...(routes ? [SERVER_ROUTES_GRAPH] : [])],
+    selected: [...selected, ...(routes && changed.some(path => SERVER_ROUTES_INPUT.test(path)) ? [SERVER_ROUTES_GRAPH] : [])], changed };
 }
 
 async function pruneGenerated(dir, keep) {
@@ -196,7 +206,9 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
       const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
       await mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs });
       at = mark('mountMs', at);
-      const output = await runTreeHarness({ dir, selected: ids, env, signal });
+      const harnessIds = ids.filter(id => id !== SERVER_ROUTES_GRAPH);
+      const output = harnessIds.length ? await runTreeHarness({ dir, selected: harnessIds, env, signal }) : [];
+      if (ids.includes(SERVER_ROUTES_GRAPH)) output.push(await runServerRoutes({ dir, env, signal }));
       mark('loadsMs', at);
       return output;
     });
@@ -226,6 +238,64 @@ for (const graph of ENTRY_GRAPHS.filter(graph => ids.includes(graph.id))) consol
     throw new Error(`tree entry-load harness exited ${code_} with ${results.length}/${selected.length} results: ${stderr.slice(-400)}`);
   }
   return results;
+}
+
+const SERVER_ROUTES_PROBE = `const [dir] = process.argv.slice(2);
+const { createRequire } = await import('node:module');
+const { join } = await import('node:path');
+const requireFromServer = createRequire(join(dir, 'apps/server/package.json'));
+const started = performance.now();
+const result = { graph: '${SERVER_ROUTES_GRAPH}', entry: '${SERVER_ROUTES_ENTRY}' };
+try {
+  await import(join(dir, 'apps/server/sources/configureZodLocale.ts'));
+  const { runLightServerMain } = await import(join(dir, 'apps/server/sources/flavors/light/main.ts'));
+  await runLightServerMain(['--probe-runtime-import']);
+  const { default: fastify } = await import(requireFromServer.resolve('fastify'));
+  const { default: rateLimit } = await import(requireFromServer.resolve('@fastify/rate-limit'));
+  const { registerApiRoutes } = await import(join(dir, '${SERVER_ROUTES_ENTRY}'));
+  const { enableSchemaValidation } = await import(join(dir, 'apps/server/sources/app/api/utils/enableSchemaValidation.ts'));
+  const { resolveApiRateLimitPluginOptions } = await import(join(dir, 'apps/server/sources/app/api/utils/apiRateLimitPolicy.ts'));
+  const app = fastify({ logger: false });
+  try {
+    await app.register(rateLimit, resolveApiRateLimitPluginOptions(process.env));
+    app.decorate('authenticate', async () => {});
+    enableSchemaValidation(app);
+    registerApiRoutes(app);
+    await app.ready();
+    Object.assign(result, { status: 'passed' });
+  } finally { await app.close(); }
+} catch (error) {
+  Object.assign(result, { status: 'failed', firstFailingModule: '${SERVER_ROUTES_ENTRY}',
+    loadError: { name: error?.name ?? 'Error', message: String(error?.message ?? error) } });
+}
+console.log('ENTRY_RESULT ' + JSON.stringify({ ...result, elapsedMs: performance.now() - started }));
+process.exit(0);`;
+
+/** Composes the tree server's routes with the tree's own source runtime; the probe file lives inside the tree. */
+async function runServerRoutes({ dir, env, signal }) {
+  const { mkdtemp: makeTemp, writeFile } = await import('node:fs/promises');
+  const home = await makeTemp(join(tmpdir(), 'commit-tree-routes-'));
+  const probe = join(dir, 'apps/server/.commit-tree-route-probe.mjs');
+  try {
+    await writeFile(probe, SERVER_ROUTES_PROBE);
+    const child = spawn(process.execPath, ['--import', join(dir, 'packages/cli-common/registerSourceRuntime.mjs'), probe, dir], {
+      cwd: join(dir, 'apps/server'), signal, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...env, HAPPIER_STACK_TOOLING_PACKAGES: 'live', TSX_TSCONFIG_PATH: join(dir, 'apps/server/tsconfig.json'), TSX_DISABLE_CACHE: '1',
+        HAPPIER_HOME_DIR: home, HAPPIER_SERVER_LIGHT_DATA_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home } });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    const code = await new Promise((resolvePromise, reject) => { child.once('error', reject); child.once('close', resolvePromise); });
+    const line = stdout.split('\n').find(entry => entry.startsWith('ENTRY_RESULT '));
+    // A probe that dies before reporting failed to load the server's startup graph; the stderr names the cause.
+    if (!line) {
+      return { graph: SERVER_ROUTES_GRAPH, entry: SERVER_ROUTES_ENTRY, status: 'failed', elapsedMs: 0, firstFailingModule: SERVER_ROUTES_ENTRY,
+        loadError: { name: 'Error', message: `route composition probe exited ${code}: ${stderr.trim().split('\n').filter(entry => !/^\s+at /.test(entry)).slice(-3).join(' | ')}` } };
+    }
+    return JSON.parse(line.slice('ENTRY_RESULT '.length));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 /** Where report-mode verdicts land, one JSON line per candidate (P03 ORCH reads the cost from it). */
