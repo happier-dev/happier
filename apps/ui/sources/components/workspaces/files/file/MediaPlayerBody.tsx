@@ -11,6 +11,7 @@ import {
   type UseFilePreviewSourceInput,
   type FilePreviewSourceState,
 } from '@/components/ui/media/useFilePreviewSource';
+import { previewUnavailableCard, resolvePreviewUnavailable } from '@/components/ui/media/previewUnavailable';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -263,18 +264,28 @@ export function MediaPlayerBody(props: MediaPlayerBodyProps) {
       onOpenInDefaultApp={props.onOpenInDefaultApp}
     />
   ) : preview.status === 'error' ? (
-    <SurfaceStateCard
-      testID={`file-${props.kind}-error`}
-      kind="error"
-      size="pane"
-      title={t('files.viewer.loadFailed', { name: props.title })}
-      diagnosticCode={preview.error}
-      action={{
-        label: t('common.retry'),
-        onPress: retry,
-        testID: `file-${props.kind}-retry`,
-      }}
-    />
+    (() => {
+      const card = previewUnavailableCard(resolvePreviewUnavailable({
+        error: preview.error,
+        errorCode: preview.errorCode,
+      }), props.title);
+      return <SurfaceStateCard
+        testID={`file-${props.kind}-error`}
+        kind={card.kind}
+        size="pane"
+        title={card.title}
+        {...(card.reason ? { reason: card.reason } : {})}
+        {...(card.diagnosticCode ? { diagnosticCode: card.diagnosticCode } : {})}
+        {...(card.retryable
+          ? { action: { label: t('common.retry'), onPress: retry, testID: `file-${props.kind}-retry` } }
+          : props.onDownload
+            ? { action: { label: t('files.viewer.download'), onPress: props.onDownload } }
+            : {})}
+        {...(props.onOpenInDefaultApp
+          ? { secondaryAction: { label: fileOpenActionLabel(), onPress: props.onOpenInDefaultApp } }
+          : {})}
+      />;
+    })()
   ) : preview.status === 'loaded' ? (
     props.kind === 'video' ? (
       <HeldVideoPlayer

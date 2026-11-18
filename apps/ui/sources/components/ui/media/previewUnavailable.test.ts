@@ -16,6 +16,10 @@ describe('why a preview has no picture', () => {
         expect(resolvePreviewUnavailable({ error: message, errorCode: 'unsupported' })).toEqual({ kind: 'unsupported' });
         expect(resolvePreviewUnavailable({ error: message, errorCode: 'not_found' })).toEqual({ kind: 'missing' });
         expect(resolvePreviewUnavailable({ error: message, errorCode: 'blob_unavailable' })).toEqual({ kind: 'unverified', error: message });
+        expect(resolvePreviewUnavailable({ error: `ENOENT: no such file or directory, stat '/tmp/recording.webm'`, errorCode: 'ENOENT' }))
+            .toEqual({ kind: 'missing' });
+        expect(resolvePreviewUnavailable({ error: `ENOENT: no such file or directory, stat '/tmp/recording.webm'`, errorCode: null }))
+            .toEqual({ kind: 'missing' });
         expect(resolvePreviewUnavailable({ error: message, errorCode: null })).toEqual({ kind: 'loadFailed', error: message });
         expect(resolvePreviewUnavailable({ error: message, errorCode: 'machine_carrier_transport_failed' })).toEqual({ kind: 'loadFailed', error: message });
     });
