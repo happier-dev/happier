@@ -20,6 +20,10 @@ import { holdNativeAdmissionFixtureMemory, installNativeAdmissionControllerFixtu
 import { FIXTURE_MACHINE_SCHEMA, generateServerClients, installServerGeneratorFixture, writeServerSchemas } from '../../apps/stack/scripts/testkit/core/server_generator_fixture.mjs';
 
 // A shared dirty checkout: the worktree holds both halves of a change, a commit takes only one.
+
+// The commit lock is flock(1); hosts without it (native Windows, stock macOS) run no commit wrapper and take a plain CAS.
+const hasFlock = process.platform !== 'win32' && spawnSync('flock', ['--version']).error?.code !== 'ENOENT';
+
 async function checkout(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-coherence-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
@@ -490,7 +494,7 @@ test('the finalizer refuses an unparsable source, the same commit gate as every 
   assert.equal(git('rev-parse', 'HEAD').trim(), base);
 });
 
-test('the finalizer moves HEAD only under the commit wrapper lock', { skip: process.platform === 'win32' }, async (t) => {
+test('the finalizer moves HEAD only under the commit wrapper lock', { skip: !hasFlock }, async (t) => {
   const { repo, git, base, finalize } = await zeroTsPacket(t, 'export const tool = 1;\n');
   const lock = join(repo, '.git', 'p03-commit-partial.lock');
   const observed = join(repo, 'observed-head');

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { commitFromPrivateIndex } from './commitFromPrivateIndex.mjs';
+
+
+// The commit lock is flock(1); hosts without it (native Windows, stock macOS) run no commit wrapper and take a plain CAS.
+const hasFlock = process.platform !== 'win32' && spawnSync('flock', ['--version']).error?.code !== 'ENOENT';
 
 function fixture(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'private-index-test-'));
@@ -287,7 +291,7 @@ test('recovery never stages descendants when a later commit replaced a selected 
 
 // P03-GATE-FIX 2026-11-17: this path moved HEAD without the commit wrapper's lock, so DBW-SPINE's packet lost its
 // final compare-and-swap after passing under that lock. Every committer serializes its ref update on the same lock.
-test('waits for the commit wrapper lock before moving HEAD', { skip: process.platform === 'win32' }, async (t) => {
+test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }, async (t) => {
   const f = fixture(t);
   const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
   const released = path.join(f.cwd, 'released');
