@@ -136,6 +136,23 @@ describe('accepted Workflow selection bindings', () => {
     expect(reads).toEqual([]);
   });
 
+  it('keeps a Role model participant\'s source-aware model selection in the frozen launch', async () => {
+    const agentTargetKey = buildBackendTargetKeyV2(agentTarget);
+    const modelSelection = { v: 2 as const, updatedAt: 1, ref: { source: 'native' as const, agentTargetKey, modelId: 'model-a' } };
+    const role = RoleArtifactV1Schema.parse({ name: 'Selected', instructions: 'Role', engine: { agentTargetKey, modelId: 'model-a' },
+      runsAs: { kind: 'session' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true });
+    const launch = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/project' },
+      agentTarget, roleId: 'selected-role', modelSelection };
+    const authored = { version: 1, defaults: {}, inputs: [{ name: 'chosen', valueType: 'json', required: true,
+      inputType: { hostType: 'agentParticipant' } }],
+      blocks: [{ ...definition.blocks[0], execution: { participant: { kind: 'input', name: 'chosen' } } }] };
+    const accepted = await materialize({ definition: authored, context: { ...context, inputs: { chosen: { kind: 'model', launch } } },
+      effects: { resolveTargetAvailability: available, readRoleSelection: async (id?: string) => id ? { settingsRoles: { [id]: role } } : {} } });
+    expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true });
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    expect(accepted.snapshot.materializedLeaves[0]?.participant).toMatchObject({ kind: 'model', launch: { modelSelection } });
+  });
+
   it('preserves a configured Agent identity from an engine option key through admission', async () => {
     const configured = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'configured' };
     const authored = { version: 1, defaults: {}, inputs: [{ name: 'engines', valueType: 'json', required: true }], blocks: [{

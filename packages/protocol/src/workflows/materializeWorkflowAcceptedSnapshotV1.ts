@@ -746,7 +746,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                 let projected: unknown = role ? projectAgentStartSelectionV1(chosenLaunch,
                   { engine: role.engine!, ...(role.profileId ? { profileId: role.profileId } : {}) }, 'spawn_new',
                   { machineId: input.context.machineId, directory: input.context.workspaceTarget.project.directory },
-                  chosenLaunch.modelSelection?.ref) : chosenLaunch;
+                  chosenLaunch.modelSelection) : chosenLaunch;
                 if (accepted) {
                   if (accepted.participant.kind !== 'model') return invalidInput(leaf.id);
                   // A replay selects the host-opened effective launch, never a changed Profile catalog.
