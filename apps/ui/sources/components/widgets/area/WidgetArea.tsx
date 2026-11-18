@@ -11,6 +11,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { findWidgetLayoutItemV1, flattenWidgetLayoutWidgetsV1, getWidgetLayoutItemIdV1, normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1, supportsWidgetGroupsV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetLayoutGroupV1, type WidgetLayoutItemV1, type WidgetPlacementV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { WidgetGroupFrame, type WidgetGroupChildPlacement } from '@/components/widgets/group/WidgetGroupFrame';
+import { WidgetGroupSubjectStateContext, WidgetGroupSubjectStateScope, useWidgetGroupSubjectState } from '@/components/widgets/group/widgetGroupSubjectState';
 import { WidgetGroupMenuButton } from '@/components/widgets/group/WidgetGroupMenuButton';
 import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
@@ -677,8 +678,11 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     const slotCommands = useCurrentUiContextLocalCommands(slotAddOpen ? [{ key: 'close', title: `${t('common.close')}: ${name}`,
         description: `${testID}.slotAdd.close`, invoke: () => setSlotAddOpen(false) }] : [], { contextKey: `${testID}.slotAdd`, unbound: 'local' });
     const source = describeWidgetGroupContext(group.context, labels);
+    // What its widgets follow is named in the header once, and so is that subject's state (O2, WAVE-ACCEPT-1118D).
+    const subject = useWidgetGroupSubjectState();
     return (
         <View style={styles.cell}>
+            <WidgetGroupSubjectStateContext.Provider value={subject.lend}>
             <WidgetGroupFrame
                 testID={testID}
                 group={group}
@@ -690,6 +694,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 {...(props.canEdit ? { onAddToGroup: () => setSlotAddOpen(true), addAnchorRef: slotAnchorRef } : {})}
                 title={props.organizing && props.canEdit ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
                 source={source ? widgetGroupPinnedSource(source) : undefined}
+                meta={subject.state}
                 menu={props.canEdit && !props.organizing ? <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} /> : null}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
                 renderChild={(instanceId, placement) => props.renderChild(instanceId, placement, labels)}
@@ -698,6 +703,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 onDropLayout={drop.onLayout}
                 dropFeedback={<WidgetGroupDropFeedback drag={drop} group={group} surface={props.surface} testID={`${testID}.drop`} />}
             />
+            </WidgetGroupSubjectStateContext.Provider>
             {menu.overlays}
             {slotAddOpen ? (
                 <WidgetAreaAddPopover anchorRef={slotAnchorRef} surface={props.surface} {...(props.area ? { area: props.area } : {})} placements={props.placements}
@@ -949,6 +955,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             <WidgetFrameBodyActionsContext.Provider value={setBodyActions}>
             <WidgetFrameInstanceIdContext.Provider value={instance.id}>
             <WidgetAboutContext.Provider value={definition.about ?? null}>
+            {/* A header naming the followed value also says its state once (O2); this body then leaves it out. */}
+            <WidgetGroupSubjectStateScope instanceId={instance.id} follows={groupNamesFollowed}>
             <WidgetSurface
                 scope={surface}
                 admittedViewer={props.admittedViewer ?? undefined}
@@ -966,6 +974,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 testID={`${testID}.body`}
             />
+            </WidgetGroupSubjectStateScope>
             </WidgetAboutContext.Provider>
             </WidgetFrameInstanceIdContext.Provider>
             </WidgetFrameBodyActionsContext.Provider>
@@ -975,7 +984,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             </View>
             </PluginSurfaceFocusEligibilityProvider>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />,
-    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
+    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (

@@ -86,7 +86,7 @@ const { SurfaceStateContentContext } = await import('@/components/ui/surfaces/Su
 const { clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { machineResourceStore } =
   await import('@/sync/domains/machines/resources/machineResourceStore');
-const { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext } =
+const { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext, WidgetFrameBodySubjectStateContext } =
   await import('@/components/widgets/frame/widgetFrameBodyCaption');
 const { MachineVitalsWidget } = await import('./MachineVitalsWidget');
 const { useMachineWidgetVitalsView } = await import('./machineWidgetVitalsView');
@@ -418,6 +418,35 @@ describe('Vitals widget (lab rw V, VS)', () => {
     });
     expect(screen.findByTestId('vitals.offline')).toBeTruthy();
     expect(boundary.rpc).not.toHaveBeenCalled();
+  });
+
+  it('lends its offline state to a group header that says it once, and then leaves its own Offline and last seen out (O2)', async () => {
+    seed(createMachineFixture({ id: 'm1', active: false, activeAt: Date.now() - 86_400_000, daemonState: { resources } }));
+    const lent: (string | null)[] = [];
+    const lend = (state: string | null) => { lent.push(state); };
+    const settle = async () => { await act(async () => { for (let turn = 0; turn < 4; turn++) await Promise.resolve(); }); };
+    // In a group whose header names this machine, the header says "Offline · Last seen …" for every widget in it.
+    const grouped = await renderScreen(
+      <WidgetFrameBodySubjectStateContext.Provider value={{ lend, saidAbove: true }}>
+        <MetaHost><WidgetPresentationProvider value={{ size: 'medium', footprint: getWidgetSizeFootprintV1('home', 'medium')! }}>
+          <MachineVitalsWidget input={{ machine: { serverId: HOME, machineId: 'm1' } }} serverId={HOME} testID="vitals" />
+        </WidgetPresentationProvider></MetaHost>
+      </WidgetFrameBodySubjectStateContext.Provider>,
+    );
+    await settle();
+    expect(lent.at(-1)).toContain('machines.widgets.body.common.presenceOffline');
+    const groupedText = grouped.getTextContent();
+    // No Offline badge in its own frame and no second last-seen sentence in its body.
+    expect(groupedText.split(/\s+/)).not.toContain('machines.widgets.body.common.offline');
+    expect(groupedText).not.toContain('machines.widgets.body.common.lastSeen');
+    expect(groupedText).toContain('machines.widgets.body.common.readingsReturn');
+    await grouped.unmount();
+    // Anywhere else nothing says it above: the widget keeps its own Offline badge and last-seen line.
+    const alone = await renderVitals('medium');
+    await settle();
+    expect(alone.getTextContent().split(/\s+/)).toContain('machines.widgets.body.common.offline');
+    expect(alone.getTextContent()).toContain('machines.widgets.body.common.lastSeen');
+    await alone.unmount();
   });
 
   it('keeps an unanswered Vitals read loading, then shows unsupported only after the owner answers', async () => {

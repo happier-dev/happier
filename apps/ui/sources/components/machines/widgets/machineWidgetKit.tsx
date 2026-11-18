@@ -17,7 +17,7 @@ import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyMeta, useWidgetFrameBodySubjectState, useWidgetFrameSubjectStateSaidAbove } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -117,7 +117,7 @@ export function useMachineWidgetMachine(
       [serverId],
     ),
   );
-  return React.useMemo(() => {
+  const facts = React.useMemo(() => {
     const activeAt = machine ? readMachineActivity(machine).activeAt : null;
     return {
       machine,
@@ -131,6 +131,11 @@ export function useMachineWidgetMachine(
         typeof activeAt === 'number' && activeAt > 0 ? activeAt : null,
     };
   }, [language, inventory, machine, presence.reachability, presence.lastSeenAt]);
+  // A group header that names this machine says its offline state once for all its widgets (O2).
+  useWidgetFrameBodySubjectState(facts.online !== false ? null : facts.lastSeenAt
+    ? t('machines.widgets.body.common.presenceOffline', { time: formatLastSeen(facts.lastSeenAt) })
+    : t('machines.widgets.body.common.offline'));
+  return facts;
 }
 
 /** Opens the bound machine's page at the tab (and place) that answers what the widget shows. */
@@ -176,6 +181,8 @@ export function useMachineWidgetFreshness(
   qualifier?: string | null,
 ): void {
   const language = usePreferredLanguage();
+  // The group header above already says "Offline"; a held figure still says how old it is.
+  const offlineSaidAbove = useWidgetFrameSubjectStateSaidAbove();
   const kind = freshness.kind;
   const at = freshness.kind === 'stale' ? freshness.at : null;
   const heldAt = freshness.kind === 'offline' ? freshness.heldAt ?? null : null;
@@ -183,9 +190,9 @@ export function useMachineWidgetFreshness(
     () => {
       const age = kind === 'offline' ? (
         <View style={styles.offlineMeta}>
-          <Text testID={`${testID}.offline`} style={styles.meta}>
+          {offlineSaidAbove ? null : <Text testID={`${testID}.offline`} style={styles.meta}>
             {t('machines.widgets.body.common.offline')}
-          </Text>
+          </Text>}
           {heldAt !== null ? <SurfaceAsOfLabel at={heldAt} testID={`${testID}.asOf`} /> : null}
         </View>
       ) : kind === 'stale' ? (
@@ -194,7 +201,7 @@ export function useMachineWidgetFreshness(
       ) : null;
       return qualifier ? <View style={styles.offlineMeta}>{age}<Text testID={`${testID}.coverage`} style={styles.meta}>{qualifier}</Text></View> : age;
     },
-    [language, at, heldAt, kind, qualifier, testID],
+    [language, at, heldAt, kind, offlineSaidAbove, qualifier, testID],
   );
   useWidgetFrameBodyMeta(meta);
 }
@@ -240,6 +247,7 @@ export function MachineWidgetState(
       }
   >,
 ) {
+  const offlineSaidAbove = useWidgetFrameSubjectStateSaidAbove();
   if (props.kind === 'loading') {
     return (
       <ItemLoadStateRows
@@ -253,6 +261,13 @@ export function MachineWidgetState(
     );
   }
   if (props.kind === 'offline') {
+    // Under a group header that already says "Offline · Last seen …", the body says only what comes back.
+    if (offlineSaidAbove) {
+      return (
+        <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" replacesContent iconName="wifi-slash"
+          title={props.detail || t('machines.widgets.body.common.readingsReturn')} />
+      );
+    }
     const seen = props.lastSeenAt
       ? t('machines.widgets.body.common.lastSeen', {
           time: formatLastSeen(props.lastSeenAt),

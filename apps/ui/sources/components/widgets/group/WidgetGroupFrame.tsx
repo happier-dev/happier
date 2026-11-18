@@ -47,6 +47,8 @@ export type WidgetGroupFrameProps = Readonly<{
    */
   title: string | React.ReactElement | null;
   source?: string | React.ReactElement | HappierWidgetFrameSourceDescriptor | undefined;
+  /** The state of what its widgets follow ("Offline · Last seen 4 days ago"), said once for all of them. */
+  meta?: string | null | undefined;
   menu?: React.ReactNode;
   /** While organizing: the group's bar (name, width, ⋯) above its widgets; an untitled group's options. */
   bar?: React.ReactNode;
@@ -134,6 +136,7 @@ export const WidgetGroupFrame = React.memo(function WidgetGroupFrame(
         placement={props.placement}
         title={props.title}
         {...(titled && props.source ? { source: props.source } : {})}
+        {...(titled && props.meta ? { meta: props.meta } : {})}
         {...(titled && props.menu ? { menu: props.menu } : {})}
         rows={0}
         bodyStyle={styles.body}

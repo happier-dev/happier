@@ -36,6 +36,28 @@ export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
 }
 
 /**
+ * The same lending for the state of what a body follows ("Offline · Last seen 4 days ago"). Only a group whose
+ * header names that followed value takes it: the header says it once for every widget that follows the value, and
+ * those bodies read `true` from `useWidgetFrameSubjectStateSaidAbove` and leave their own copy of that state out
+ * (O2, WAVE-ACCEPT-1118D). Anywhere else nothing takes it and a body says its state itself.
+ */
+export const WidgetFrameBodySubjectStateContext = React.createContext<
+  Readonly<{ lend: (state: string | null) => void; saidAbove: boolean }> | null
+>(null);
+
+export function useWidgetFrameBodySubjectState(state: string | null): void {
+  const lend = React.useContext(WidgetFrameBodySubjectStateContext)?.lend;
+  React.useEffect(() => {
+    lend?.(state);
+    return () => lend?.(null);
+  }, [state, lend]);
+}
+
+export function useWidgetFrameSubjectStateSaidAbove(): boolean {
+  return React.useContext(WidgetFrameBodySubjectStateContext)?.saidAbove === true;
+}
+
+/**
  * The same lending for the header's name: a body whose widget is named by what it shows (a Metric by its
  * metric: "CPU" with the CPU mark) lends that name and mark in place of its definition's generic ones. A name the
  * person gave the widget always wins, so a host applies this only to an unnamed instance. Without a mark the

@@ -26,7 +26,7 @@ import { MemoryTile } from '@/components/machines/vitals/MemoryTile';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
-import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyMeta, useWidgetFrameSubjectStateSaidAbove } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
@@ -160,7 +160,9 @@ function GuardBody(
   // error and not-reported all remain unknown rather than inheriting default Off.
   const on = guard.on;
   const offline = guard.offline || facts.online === false;
-  const metaText = guardHeaderStateText({
+  // The group header above already says the machine is offline (O2); the frame says nothing then.
+  const offlineSaidAbove = useWidgetFrameSubjectStateSaidAbove();
+  const metaText = offline && offlineSaidAbove ? null : guardHeaderStateText({
     offline,
     on: facts.online === null ? null : on,
   });
