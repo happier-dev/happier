@@ -12,6 +12,7 @@ import type { WorkflowMaterializedLeafV1 } from './workflowDefinitionV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import type { WorkflowStepExecutionSelection, WorkflowStepSelectionV1, WorkflowLeafExecutionTargetV1 } from './workflowV1.js';
 import type { ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
+import { replaceProviderModelCredentialBinding } from '../teams/credentials/sessionBindingIntentV1.js';
 export { WorkflowLeafExecutionTargetV1Schema, WorkflowStepSelectionV1Schema,
   type WorkflowLeafExecutionTargetV1, type WorkflowStepSelectionV1 } from './workflowV1.js';
 
@@ -98,7 +99,7 @@ function replacesInheritedEngineV1(defaults: WorkflowResolvedStepSelectionV1, st
 
 /** Drop the Agent, model and effort another engine choice decides; other config options stay. */
 function withoutWorkflowEngineFieldsV1<T extends WorkflowResolvedStepSelectionV1>(selection: T): T {
-  const { agentTarget: _agentTarget, modelSelection: _modelSelection, ...rest } = selection;
+  const { agentTarget: _agentTarget, modelSelection: _modelSelection, ...rest } = withoutWorkflowModelBinding(selection);
   const config = rest.sessionConfigOptionOverrides;
   if (config?.overrides.reasoning_effort === undefined) return rest as T;
   const { reasoning_effort: _effort, ...overrides } = config.overrides;
@@ -107,6 +108,14 @@ function withoutWorkflowEngineFieldsV1<T extends WorkflowResolvedStepSelectionV1
     return withoutConfig as T;
   }
   return { ...rest, sessionConfigOptionOverrides: { ...config, overrides } } as T;
+}
+
+function withoutWorkflowModelBinding<T extends WorkflowResolvedStepSelectionV1>(selection: T): T {
+  const bindings = selection.teamCredentialBindings;
+  if (!bindings?.some(binding => binding.slot.kind === 'provider_model')) return selection;
+  const { teamCredentialBindings: _bindings, ...rest } = selection;
+  const retained = replaceProviderModelCredentialBinding(bindings, null);
+  return (retained.length ? { ...rest, teamCredentialBindings: retained } : rest) as T;
 }
 
 /** Resolve a lexical engine before opening the selected Role's Account sources. */
@@ -183,9 +192,11 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
   for (const key of Object.keys(step) as (keyof typeof step)[]) {
     if (step[key] === undefined) delete step[key];
   }
+  const inherited = replacesInheritedEngineV1(defaults, input.step) ? withoutWorkflowEngineFieldsV1(defaults)
+    : step.modelSelection !== undefined ? withoutWorkflowModelBinding(defaults) : defaults;
   let selection: WorkflowResolvedStepSelectionV1 = input.step === undefined && engine === undefined && participant === undefined && defaultTarget === undefined
     ? input.defaults
-    : { ...(replacesInheritedEngineV1(defaults, input.step) ? withoutWorkflowEngineFieldsV1(defaults) : defaults), ...step };
+    : { ...inherited, ...step };
   let role: ResolvedRoleV1 | undefined;
 
   if (engine !== undefined) {
@@ -227,7 +238,7 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
       const selected = raw === undefined ? undefined : readWorkflowValuePathV1(raw, participant.path ?? []);
       if (!normalizeExecutableParticipantSelectionV1(selected)) throw new WorkflowStepSelectionErrorV1({ code: 'invalid_input' });
     }
-    selection = { ...selection };
+    selection = { ...withoutWorkflowModelBinding(selection) };
     delete selection.agentTarget;
     delete selection.modelSelection;
   }

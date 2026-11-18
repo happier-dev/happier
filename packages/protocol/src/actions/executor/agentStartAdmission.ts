@@ -21,6 +21,7 @@ import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } fr
 import { SpawnConfigOptionValueSchema } from '../sessionSpawnConfigOptions.js';
 import { resolveExecutionBackendTargetSelectionForValue } from '../resolveActionBackendTargetSelection.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
+import { readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
 import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
@@ -75,7 +76,7 @@ const RunStartConfigOptionsSchema = z.record(z.string(), SpawnConfigOptionValueS
 // body. The native Session owner still validates the complete effective input.
 const spawnPolicyFields = lazyZodSchema(() => z.object(z.pick(SessionSpawnNewInputV2BaseSchema, {
     executionTarget: true, directory: true, agentTarget: true, roleId: true,
-    modelSelection: true, permissionMode: true, agentModeId: true, configuration: true,
+    modelSelection: true, teamCredentialBindings: true, permissionMode: true, agentModeId: true, configuration: true,
     profileId: true, environmentVariables: true, connectedServices: true, capabilitySelection: true, transcriptStorage: true,
 }).shape));
 type SpawnStartFactsInput = {
@@ -526,13 +527,20 @@ export function spawnStartFactsV1(input: Readonly<SpawnStartFactsInput>): AgentS
     const configuration = isUnresolvedStartFact(input.configuration) ? undefined : input.configuration;
     const configurationUnresolved = isUnresolvedStartFact(input.configuration);
     const target = input.agentTarget ?? unresolved;
+    const modelSelection = isUnresolvedStartFact(input.modelSelection) || isUnresolvedStartFact(input.teamCredentialBindings)
+        ? unresolved
+        : readAuthoredSessionModelSelection({
+            agentTarget: target.kind === 'unresolved' ? undefined : target,
+            modelSelection: input.modelSelection,
+            teamCredentialBindings: input.teamCredentialBindings,
+        });
     return {
         machineId: input.executionTarget && !isUnresolvedStartFact(input.executionTarget) ? input.executionTarget.machineId : unresolved,
         directory: input.directory && !isUnresolvedStartFact(input.directory)
             ? input.directory.kind === 'path' ? input.directory.path : input.directory
             : unresolved,
         agentTarget: target,
-        modelSelection: input.modelSelection ?? (configurationUnresolved ? unresolved : configuration?.model.value ? target.kind === 'unresolved' ? unresolved : {
+        modelSelection: modelSelection ?? (configurationUnresolved ? unresolved : configuration?.model.value ? target.kind === 'unresolved' ? unresolved : {
             agentTargetKey: buildBackendTargetKeyV2(target), providerConnectionId: null, modelId: configuration.model.value,
         } : undefined),
         permissionMode: input.permissionMode ?? (configurationUnresolved ? unresolved : configuration?.permissionIntent.value ?? undefined),

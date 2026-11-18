@@ -487,6 +487,10 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     if (!replay.ok) throw new Error(replay.error.code);
     expect(replay.snapshot.materializedLeaves[0]?.selection.modelSelection).toEqual(source === 'native' ? modelSelection : null);
     expect(replay.snapshot.materializedLeaves[0]?.selection.teamCredentialBindings).toEqual(teamCredentialBindings);
+    expect(replay.agentStartLeaves[0]).toMatchObject({
+      engine: { modelId: 'model-a' },
+      facts: { modelSelection: { v: 2, ref: modelSelection.ref } },
+    });
   });
 
   it('rebinds edited inputs and only one explicit Agent override while rechecking current policy', async () => {

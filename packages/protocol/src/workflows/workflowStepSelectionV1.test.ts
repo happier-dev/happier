@@ -5,6 +5,7 @@ import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { sessionModelSelectionV2TeamBindingIntent } from '../providers/selection/v2.js';
 
 const agent = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
 const otherAgent = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
@@ -12,6 +13,20 @@ const model = { v: 1 as const, ref: { agentTargetKey: 'happier.agent.claude/clau
 const effort = (value: string) => ({ v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value, updatedAt: 0 } } });
 
 describe('workflow step selection', () => {
+  it('drops the inherited Team model slot when an input-bound engine replaces it', () => {
+    const binding = sessionModelSelectionV2TeamBindingIntent({ v: 2, updatedAt: 0, ref: {
+      source: 'team_resource', agentTargetKey: buildBackendTargetKeyV2(otherAgent), modelId: 'team-model',
+      teamId: 'team', resourceId: 'resource', expectedResourceRevision: 1, deliveryMode: 'brokered',
+    } });
+    const defaults = { agentTarget: otherAgent, modelSelection: null, teamCredentialBindings: [binding] };
+    const choice = { agentTarget: agent, modelSelection: null };
+    const step = { engine: { kind: 'input' as const, name: 'choice' } };
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step, inputs: { choice } }).selection)
+      .toEqual(choice);
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { agentTarget: agent, modelSelection: model } }).selection)
+      .toEqual({ agentTarget: agent, modelSelection: model });
+  });
+
   it.each(['profile', 'connected'] as const)('omits absent inherited fields when only %s is supplied to a stored selection', field => {
     const connectedServices = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
       'external.auth/subscription': { source: 'connected', selection: 'profile', profileId: 'origin-account' },

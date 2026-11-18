@@ -11,6 +11,7 @@ import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
 import { resolveRoleSelectionV1 } from '../prompts/roles/resolveRoleSelectionV1.js';
 import { roleEngineModelFieldsV1 } from '../prompts/roles/roleArtifactV1.js';
+import { readAuthoredSessionModelSelection } from '../teams/credentials/sessionBindingIntentV1.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1, type WorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, WorkflowRoleOverridesV1Schema, WorkflowReplayAgentOverrideV1Schema, deriveWorkflowAcceptedPermissionCeilingV1,
@@ -194,23 +195,24 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
     return { sourceKey: leaf.sourceKey, blockId: leaf.blockId, kind: 'session',
       ...(launch.roleId ? { roleId: launch.roleId } : {}),
       engine: { agentTargetKey: buildBackendTargetKeyV2(launch.agentTarget),
-        ...(launch.modelSelection ? { modelId: launch.modelSelection.ref.modelId } : {}) },
+        ...roleEngineModelFieldsV1(readAuthoredSessionModelSelection(launch)?.ref) },
       runsAs: { kind: 'session' }, workspaceWrites: leaf.role?.workspaceWrites ?? 'allow',
       facts: start.facts };
   }
   const agentTargetKey = buildBackendTargetKeyV2(selection.agentTarget!);
   const effort = selection.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value;
+  const modelSelection = readAuthoredSessionModelSelection(selection);
   return {
     sourceKey: leaf.sourceKey, blockId: leaf.blockId, kind: leaf.executionTarget.kind,
     ...(leaf.role ? { roleId: leaf.role.roleId } : {}),
-    engine: { agentTargetKey, ...roleEngineModelFieldsV1(selection.modelSelection?.ref),
+    engine: { agentTargetKey, ...roleEngineModelFieldsV1(modelSelection?.ref),
       ...(typeof effort === 'string' ? { effort } : {}) },
     runsAs: leaf.executionTarget.kind === 'session' ? { kind: 'session' }
       : { kind: 'background_run', intent: leaf.role?.runsAs.kind === 'background_run' ? leaf.role.runsAs.intent : 'delegate' },
     workspaceWrites: leaf.role?.workspaceWrites ?? 'allow',
     facts: {
       machineId: snapshot.machineId, directory: snapshot.workspaceTarget.project.directory,
-      agentTarget: selection.agentTarget!, ...(selection.modelSelection !== undefined ? { modelSelection: selection.modelSelection } : {}),
+      agentTarget: selection.agentTarget!, ...(modelSelection !== undefined ? { modelSelection } : {}),
       permissionMode: parseAgentPermissionIntentV1Alias(selection.permissionMode ?? 'default') ?? { kind: 'unresolved' },
       ...(selection.acpSessionModeId === undefined ? {} : { agentModeId: selection.acpSessionModeId }),
       ...(selection.profileId === undefined ? {} : { profileId: selection.profileId }),

@@ -1,6 +1,6 @@
 import { AcpConfigOptionOverridesV1Schema, type AcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1.js';
 import type { SessionServerStartSpawnDraftV1 } from '../sessions/creation/sessionSpawnNewInputV2.js';
-import type { WorkflowSessionAuthoringSelection } from './workflowV1.js';
+import type { WorkflowStepExecutionSelection } from './workflowV1.js';
 
 /** Projects the canonical Session configuration onto its portable option selection. */
 export function buildSessionConfigOptionOverridesFromServerStart(
@@ -21,13 +21,14 @@ export function buildSessionConfigOptionOverridesFromServerStart(
 /** The portable selection shared by Workflow authoring and legacy conversion. */
 export function buildWorkflowSelectionFromServerStartSpawnDraftV1(
   spawn: SessionServerStartSpawnDraftV1,
-): WorkflowSessionAuthoringSelection {
+): WorkflowStepExecutionSelection {
   const windows = spawn.terminal?.windows;
   const overrides = spawn.configuration === undefined
     ? null : buildSessionConfigOptionOverridesFromServerStart(spawn.configuration);
   return {
     agentTarget: spawn.agentTarget,
     ...(spawn.modelSelection === undefined ? {} : { modelSelection: spawn.modelSelection }),
+    ...(spawn.teamCredentialBindings === undefined ? {} : { teamCredentialBindings: spawn.teamCredentialBindings }),
     ...(spawn.profileId === undefined ? {} : { profileId: spawn.profileId }),
     ...(spawn.approvalProfileId === undefined ? {} : { approvalProfileId: spawn.approvalProfileId }),
     ...(spawn.permissionMode === undefined ? {} : { permissionMode: spawn.permissionMode }),
