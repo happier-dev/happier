@@ -26,17 +26,17 @@ export function StoreAppDefinitionEntries(): React.ReactNode {
   return scope ? <StoreAppDefinitionEntriesFor scope={scope} /> : null;
 }
 
-/** The entries for one Account scope; `onNavigate` lets a host that sits over the page (New app) step aside first. */
-export function StoreAppDefinitionEntriesFor({ scope, onNavigate }: Readonly<{ scope: ServerAccountScope; onNavigate?: () => void }>): React.ReactNode {
+/** The entries for one Account scope. */
+export function StoreAppDefinitionEntriesFor({ scope }: Readonly<{ scope: ServerAccountScope }>): React.ReactNode {
   return (
     <>
-      <DefinitionEntry scope={scope} kind="compose" testID="store.kind.app.pasteCompose" title={t('capabilities.store.pasteCompose')} onNavigate={onNavigate} />
-      <DefinitionEntry scope={scope} kind="image" testID="store.kind.app.runImage" title={t('capabilities.store.runImage')} onNavigate={onNavigate} />
+      <DefinitionEntry scope={scope} kind="compose" testID="store.kind.app.pasteCompose" title={t('capabilities.store.pasteCompose')} />
+      <DefinitionEntry scope={scope} kind="image" testID="store.kind.app.runImage" title={t('capabilities.store.runImage')} />
     </>
   );
 }
 
-function DefinitionEntry(props: Readonly<{ scope: ServerAccountScope; kind: DeploymentNewDefinitionKind; testID: string; title: string; onNavigate?: () => void }>) {
+function DefinitionEntry(props: Readonly<{ scope: ServerAccountScope; kind: DeploymentNewDefinitionKind; testID: string; title: string }>) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   // Demand is sticky once opened, so reopening shows the held list instead of a fresh wait.
@@ -70,7 +70,6 @@ function DefinitionEntry(props: Readonly<{ scope: ServerAccountScope; kind: Depl
       searchPlaceholder={t('capabilities.store.appPage.projectTitle')}
       onSelect={id => {
         setOpen(false);
-        props.onNavigate?.();
         router.push(buildDeploymentNewDefinitionHref({ serverId: props.scope.serverId, ...(id === DEPLOYMENT_NEW_PROJECT_CHOICE_ID ? {} : { projectSourceId: id }), kind: props.kind }) as never);
       }}
       trigger={({ toggle }) => (
