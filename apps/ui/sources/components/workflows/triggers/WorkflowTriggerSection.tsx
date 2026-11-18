@@ -17,7 +17,8 @@ import { WorkflowProjectTargetControl } from '@/components/workflows/editor/Work
 import { WorkflowFieldPair } from '@/components/workflows/editor/WorkflowStepDataEditor';
 import { workflowEditorStyles } from '@/components/workflows/editor/workflowEditorStyles';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
-import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { useHappierFieldValueDraft } from '@happier-dev/plugin-ui/presentation';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -549,11 +550,10 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
     return (
         <>
             {props.inputs.map((input) => (
-                <FieldValueItem
+                <WorkflowTriggerInputRow
                     key={input.name}
                     testID={`${props.testIDPrefix}-trigger-input-${input.name}`}
-                    title={input.name}
-                    subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
+                    name={input.name}
                     value={formatWorkflowInputValue(constantInputs[input.name] ?? input.default)}
                     allowEmpty={!input.required}
                     onCommit={(text) => {
@@ -587,6 +587,37 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
                             subtitle={visibilityDescription} items={visibility.teams.map(team => ({ id: team.id, title: team.name ?? team.id }))}
                             selectedId={selectedTeamId} onSelect={visibility.onChange} />}
         </>
+    );
+}
+
+/**
+ * A workflow input the trigger set gives every run, on the card's label track like the trigger's own rows (WF-ACCEPT-1118
+ * item 5): its name in the label column, its value where the card's values start, "Same for all triggers" beneath.
+ */
+function WorkflowTriggerInputRow(props: Readonly<{
+    testID: string;
+    name: string;
+    value: string;
+    allowEmpty: boolean;
+    onCommit: (text: string) => void;
+}>): React.ReactElement {
+    const field = useHappierFieldValueDraft({ value: props.value, onCommit: props.onCommit, kind: 'text', allowEmpty: props.allowEmpty });
+    return (
+        <View style={workflowEditorStyles.actionFieldRow} testID={props.testID}>
+            <WorkflowFieldPair label={props.name} trackKey={`trigger-input-${props.name}`}>
+                <FieldTextInput
+                    testID={`${props.testID}-field`}
+                    value={field.draft}
+                    onChangeText={field.change}
+                    accessibilityLabel={props.name}
+                    accessibilityHint={t('workflows.triggers.editor.sameForAllTriggers')}
+                    onBlur={field.commit}
+                    onSubmitEditing={field.commit}
+                    onKeyPress={(event) => { if (event.nativeEvent.key === 'Escape') field.cancel(); }}
+                />
+                <Text style={workflowEditorStyles.metaText}>{t('workflows.triggers.editor.sameForAllTriggers')}</Text>
+            </WorkflowFieldPair>
+        </View>
     );
 }
 
