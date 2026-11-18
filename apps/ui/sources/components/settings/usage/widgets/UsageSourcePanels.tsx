@@ -53,28 +53,28 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
 }
 
 /**
- * One capture is read per machine, so a fleet repeats the same source: one row per source with its count, and when its
- * captures differ in status, each status said once with its own count ("Measured · coverage unknown ×35; Measured ·
- * partial history ×43"), never the same source title on several rows (sweep 1110 N8).
+ * Coverage shows one row per recognizable source. Several capture paths can share a title and a Machine.
  */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][]) {
-  const groups = new Map<string, { title: string; kinds: Set<string | null>; status: CoverageStatus; count: number }>();
+  const groups = new Map<string, { title: string; kinds: Set<keyof typeof captureKeys | null>; status: CoverageStatus; machines: Set<string>; unbound: boolean }>();
   for (const source of sources) {
     // A source's own title can be a mid-sentence fragment ("usage"); a row opens with a capital.
-    const named = usageSourceTitle(source.source);
+    const named = usageSourceTitle(source.source, undefined, 'coverage');
     const title = `${named.charAt(0).toLocaleUpperCase()}${named.slice(1)}`;
     const status = sourceCoverageStatus(source);
-    const group = groups.get(title) ?? { title, kinds: new Set<string | null>(), status, count: 0 };
-    group.count += 1;
+    const group = groups.get(title) ?? { title, kinds: new Set<keyof typeof captureKeys | null>(), status, machines: new Set<string>(), unbound: false };
+    if (source.machineId) group.machines.add(source.machineId);
+    else group.unbound = true;
     group.kinds.add(source.captureKind ?? null);
     if (COVERAGE_STATUS_RANK.indexOf(status) < COVERAGE_STATUS_RANK.indexOf(group.status)) group.status = status;
     groups.set(title, group);
   }
   // One status per row, the most limiting one; how it is captured only when every machine captures it the same way.
-  return [...groups.values()].map(({ title, kinds, status, count }) => {
+  return [...groups.values()].map(({ title, kinds, status, machines, unbound }) => {
     const kind = kinds.size === 1 ? [...kinds][0] : null;
-    return { title, label: [count > 1 ? t('usage.board.page.machinesCount', { count }) : null,
-      kind ? t(captureKeys[kind as keyof typeof captureKeys]) : null, t(statusKeys[status])].filter(Boolean).join(' · ') };
+    const capture = kind && (kind !== 'measured' || status === 'available') ? t(captureKeys[kind]) : null;
+    return { title, label: [!unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
+      capture, t(statusKeys[status])].filter(Boolean).join(' · ') };
   });
 }
 

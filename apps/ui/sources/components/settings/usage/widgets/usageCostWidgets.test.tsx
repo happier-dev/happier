@@ -468,13 +468,24 @@ describe('one selected money basis across Usage bodies', () => {
       accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'partial' as const,
         reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const twins = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
-      slice={coverageOf([...Array.from({ length: 30 }, () => ({ ...source, source: 'claude-assistant-usage' })), { ...source, source: 'codex-token-count' }])} />);
+      slice={coverageOf([...Array.from({ length: 30 }, (_, index) => ({ ...source, source: 'claude-assistant-usage', machineId: `machine-${index}` })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
     expect(twins.getTextContent()).toContain('30');
+    expect(twins.getTextContent()).not.toContain(t('usage.board.page.sourceKindMeasured'));
+    const runtime = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
+      slice={coverageOf([
+        { ...source, source: 'runtime:codex', machineId: 'codex-machine' },
+        { ...source, source: 'codex-native-accounting', machineId: 'codex-machine' },
+        { ...source, source: 'acp-prompt-usage' },
+      ])} />);
+    const runtimeRows = runtime.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    expect(runtimeRows.filter(([title]) => title === 'Codex')).toHaveLength(1);
+    expect(runtimeRows.find(([title]) => title === 'Codex')?.[1]).toBe(t('usage.board.sources.coverageUnknown'));
+    expect(runtime.getTextContent()).not.toContain(t('usage.board.page.sourceAgentPromptUsage'));
     // One source across machines whose captures differ in status is still one row, its statuses counted in it (N8).
     const mixed = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
-      slice={coverageOf([...Array.from({ length: 3 }, () => ({ ...source, source: 'claude-assistant-usage' })),
-        ...Array.from({ length: 2 }, () => ({ ...source, source: 'claude-assistant-usage', status: 'partial' as const }))])} />);
+      slice={coverageOf([...Array.from({ length: 3 }, (_, index) => ({ ...source, source: 'claude-assistant-usage', machineId: `available-${index}` })),
+        ...Array.from({ length: 2 }, (_, index) => ({ ...source, source: 'claude-assistant-usage', machineId: `partial-${index}`, status: 'partial' as const }))])} />);
     const mixedRows = mixed.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
     expect(mixedRows).toHaveLength(1);
     // A human row: the source's name, then one status (the most limiting one) and how many machines report it,

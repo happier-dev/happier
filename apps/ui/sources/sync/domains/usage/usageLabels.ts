@@ -44,18 +44,26 @@ export function usageSourceAgentId(source: string): string | null {
     return colon > 0 ? source.slice(colon + 1) : null;
 }
 
-export function usageSourceTitle(source: string, fallback?: string): string {
+export function usageSourceTitle(source: string, fallback?: string, presentation?: 'coverage'): string {
     const display = fallback?.trim();
     // A humanized ingestion id is still an ingestion id, not a contributed title.
     const providedTitle = display && display.toLowerCase() !== source.toLowerCase()
         && display.toLowerCase() !== formatUsageDimensionLabel('source', source).toLowerCase() ? display : undefined;
     const key = SOURCE_LABEL_KEYS[source as keyof typeof SOURCE_LABEL_KEYS];
-    if (key) return providedTitle ?? t(key);
+    if (key) {
+        if (providedTitle) return providedTitle;
+        if (presentation === 'coverage') {
+            if (key === 'usage.board.page.sourceAccounting') return t('usage.board.page.sourceAgentSessionUsage');
+            if (key === 'usage.board.page.sourceAgentPromptUsage') return t('usage.board.page.sourceAgentUsageUpdates');
+        }
+        return t(key);
+    }
     const declared = readDeclaredAccountingSource(source);
     if (declared) {
         if (providedTitle) return providedTitle;
         const { title, translatedTitle } = declared.declaration;
         if (typeof title === 'string') return title;
+        if (presentation === 'coverage' && title.key === 'usage.board.page.sourceAccountingAgent') return usageAgentTitle(declared.agentId);
         if (translatedTitle) return resolvePluginLocalizedStringV2Text(title, translatedTitle);
         const translation = getTranslationValue(title.key);
         return resolvePluginLocalizedStringV2Text(title, typeof translation === 'string' ? translation : undefined);
@@ -65,7 +73,7 @@ export function usageSourceTitle(source: string, fallback?: string): string {
     if (colon > 0) {
         const agentId = source.slice(colon + 1);
         const agent = usageAgentTitle(agentId);
-        if (agent !== agentId) return `${usageSourceTitle(source.slice(0, colon))} · ${agent}`;
+        if (agent !== agentId) return presentation === 'coverage' ? agent : `${usageSourceTitle(source.slice(0, colon))} · ${agent}`;
     }
     return formatUsageDimensionLabel('source', source, fallback ?? source.replace(/^[a-z]/, letter => letter.toUpperCase()));
 }
