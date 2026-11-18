@@ -1,4 +1,5 @@
 import type { HomeAdministrationEventV1, HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
@@ -74,6 +75,35 @@ export function applyHomeActivityObservation(
     if (!lifetime.isCurrent()) return;
     if (rows === null) activityObservations.delete(key);
     else activityObservations.set(key, { lifetime: readServerAccountScopeOwnerLifetime(lifetime), rows });
+}
+
+type ManagedIdentityProviderObservation = Readonly<{
+    items: readonly ManagedIdentityProviderV1[];
+    unreadableCount: number;
+}>;
+
+const managedIdentityProviderObservations = new Map<string, Readonly<{
+    lifetime: ServerAccountScopeLifetime;
+    data: ManagedIdentityProviderObservation;
+}>>();
+
+export function managedIdentityProviderQueryKey(scope: ServerAccountScope, teamId: string | null): string {
+    return JSON.stringify([scope.serverId, scope.accountId, teamId]);
+}
+
+export function getManagedIdentityProviderObservation(key: string): ManagedIdentityProviderObservation | undefined {
+    const observed = managedIdentityProviderObservations.get(key);
+    return observed?.lifetime.isCurrent() ? observed.data : undefined;
+}
+
+export function applyManagedIdentityProviderObservation(
+    key: string,
+    lifetime: ServerAccountScopeLifetime,
+    data: ManagedIdentityProviderObservation | null,
+): void {
+    if (!lifetime.isCurrent()) return;
+    if (data === null) managedIdentityProviderObservations.delete(key);
+    else managedIdentityProviderObservations.set(key, { lifetime: readServerAccountScopeOwnerLifetime(lifetime), data });
 }
 
 function notify(): void {
@@ -223,6 +253,9 @@ export function clearHomeGovernanceSnapshotsForServer(serverIdRaw: string): void
         snapshots.delete(key);
         changed = true;
     }
+    for (const [key, observation] of managedIdentityProviderObservations) {
+        if (observation.lifetime.scope.serverId === serverId) managedIdentityProviderObservations.delete(key);
+    }
     for (const [key, observation] of activityObservations) {
         if (observation.lifetime.scope.serverId === serverId) activityObservations.delete(key);
     }
@@ -233,5 +266,6 @@ export function clearHomeGovernanceSnapshotsForServer(serverIdRaw: string): void
 export function resetHomeGovernanceSnapshotsForTests(): void {
     snapshots.clear();
     activityObservations.clear();
+    managedIdentityProviderObservations.clear();
     listeners.clear();
 }

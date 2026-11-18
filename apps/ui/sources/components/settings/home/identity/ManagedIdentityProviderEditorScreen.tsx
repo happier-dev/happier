@@ -510,7 +510,7 @@ const HomeManagedOidcProviderEditorAdapter = React.memo(function HomeManagedOidc
     providerId?: string;
 }>) {
     const router = useRouter();
-    const providers = useManagedIdentityProviders(props.context.scope, { kind: 'home' }, props.context.requestApproval);
+    const providers = useManagedIdentityProviders(props.context.scope, { kind: 'home' }, props.context.requestApproval, props.providerId);
     const onSaved = React.useCallback((saved: ManagedIdentityProviderV1) => {
         router.replace(homeAdministrationIdentityProviderPath(props.context.scope.serverId, saved.id));
         return { kind: 'completed' } as const;

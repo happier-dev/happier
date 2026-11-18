@@ -69,6 +69,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
         props.context.scope,
         { kind: 'home' },
         reportApprovalPending,
+        props.providerId,
     );
     // The shared OAuth route has already consumed the one-time server handle.
     // Its process-local handoff is claimed only by this exact Home, Account,

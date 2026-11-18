@@ -35,7 +35,7 @@ export function settleManagedIdentityProviderRefresh(
 ): ManagedIdentityProviderState {
     if (result.kind !== 'succeeded') {
         const failure = result.failure;
-        return state.kind === 'ready'
+        return state.kind === 'ready' && !failure.withdrawsObservation
             ? Object.freeze({ ...state, refreshing: false, stale: true, failure })
             : Object.freeze({ kind: 'unavailable' as const, failure });
     }

@@ -137,7 +137,7 @@ const TeamManagedOidcProviderEditorAdapter = React.memo(function TeamManagedOidc
 }>) {
     const router = useRouter();
     const owner = React.useMemo(() => ({ kind: 'team' as const, teamId: props.address.teamId }), [props.address.teamId]);
-    const providers = useManagedIdentityProviders(props.scope, owner, props.requestApproval);
+    const providers = useManagedIdentityProviders(props.scope, owner, props.requestApproval, props.providerId);
     const provider = providers.state.kind === 'ready'
         ? providers.state.items.find((item) => item.id === props.providerId) ?? null
         : null;

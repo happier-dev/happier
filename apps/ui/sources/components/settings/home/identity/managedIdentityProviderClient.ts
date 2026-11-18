@@ -4,6 +4,7 @@ import { type ManagedIdentityProviderActionIdV1, ManagedIdentityProviderCreateIn
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
@@ -49,7 +50,7 @@ export type ManagedIdentityProviderActionOutput<TActionId extends ManagedIdentit
 export type ManagedIdentityProviderActionResult<TValue> =
     | Readonly<{ kind: 'succeeded'; value: TValue }>
     | Readonly<{ kind: 'approval_pending'; artifactId: string; approval: ActionApprovalContinuation }>
-    | Readonly<{ kind: 'failed'; failure: Readonly<{ code: string; retryable: boolean }> }>;
+    | Readonly<{ kind: 'failed'; failure: Readonly<{ code: string; retryable: boolean; withdrawsObservation?: true }> }>;
 
 export type ManagedIdentityProviderExecuteOptions<TValue> = Readonly<{
     signal?: AbortSignal;
@@ -97,6 +98,7 @@ export function createManagedIdentityProviderClient(scope: ServerAccountScope): 
                     failure: {
                         code,
                         retryable: resolveIdentityAdministrationFailureRetryable(outcome.failure, code),
+                        ...(isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind) ? { withdrawsObservation: true } : {}),
                     },
                 };
             }
@@ -153,7 +155,14 @@ export function executeManagedIdentityProviderRead<TValue>(
         succeeded: (value) => ({ kind: 'succeeded', value }),
         failed: (code, actionFailure) => {
             const failure = resolveApprovalSettledReadFailure(code, actionFailure);
-            return { kind: 'failed', failure: { code: failure.code, retryable: failure.retryable } };
+            return {
+                kind: 'failed',
+                failure: {
+                    code: failure.code, retryable: failure.retryable,
+                    ...(failure.domainFailure && isAuthoritativeScopedSnapshotRefusalKind(failure.domainFailure.kind)
+                        ? { withdrawsObservation: true } : {}),
+                },
+            };
         },
         aborted: () => ({ kind: 'failed', failure: { code: 'aborted', retryable: false } }),
         ...(options.signal ? { signal: options.signal } : {}),

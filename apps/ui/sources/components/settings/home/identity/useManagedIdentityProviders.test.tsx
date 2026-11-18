@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -66,8 +67,58 @@ describe('useManagedIdentityProviders AccountChange freshness through the real r
         harness.answer(scope.serverId, LIST_PATH, { body: { items: [], unreadableCount: 1 } });
         await act(async () => { publishHomeAccountChange(scope.serverId, ['home-governance']); });
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(requestsBeforeWake);
-        const second = await renderHook(() => useManagedIdentityProviders(scope));
+        let allowResponse!: () => void;
+        const respondAfter = new Promise<void>(resolve => { allowResponse = resolve; });
+        harness.answer(scope.serverId, LIST_PATH, { body: { items: [], unreadableCount: 1 }, respondAfter });
+        const frames: Array<ReturnType<typeof useManagedIdentityProviders>['state']> = [];
+        const second = await renderHook(() => {
+            const result = useManagedIdentityProviders(scope);
+            useLayoutEffect(() => { frames.push(result.state); });
+            return result;
+        });
+        expect(frames[0]).toMatchObject({ kind: 'ready', unreadableCount: 0, refreshing: true });
+        expect(second.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 0, refreshing: true });
+        await act(async () => allowResponse());
         await waitForHomeGovernance(() => expect(second.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 1 }));
         await second.unmount();
+    });
+
+    it('withdraws the retained provider observation after the Home refuses access', async () => {
+        const scope = await home();
+        const first = await renderHook(() => useManagedIdentityProviders(scope));
+        await waitForHomeGovernance(() => expect(first.getCurrent().state.kind).toBe('ready'));
+        await first.unmount();
+
+        harness.answer(scope.serverId, LIST_PATH, { status: 403 });
+        const declined = await renderHook(() => useManagedIdentityProviders(scope));
+        await waitForHomeGovernance(() => expect(declined.getCurrent().state.kind).toBe('unavailable'));
+        await declined.unmount();
+
+        harness.answer(scope.serverId, LIST_PATH, {
+            body: { items: [], unreadableCount: 1 }, respondAfter: new Promise<void>(() => {}),
+        });
+        const again = await renderHook(() => useManagedIdentityProviders(scope));
+        expect(again.getCurrent().state.kind).toBe('loading');
+        await again.unmount();
+    });
+
+    it('waits for a current answer before reporting a missing provider on a detail route', async () => {
+        const scope = await home();
+        const list = await renderHook(() => useManagedIdentityProviders(scope));
+        await waitForHomeGovernance(() => expect(list.getCurrent().state.kind).toBe('ready'));
+        await list.unmount();
+
+        let releaseResponse!: () => void;
+        const respondAfter = new Promise<void>(resolve => { releaseResponse = resolve; });
+        harness.answer(scope.serverId, LIST_PATH, { body: { items: [], unreadableCount: 0 }, respondAfter });
+        const detail = await renderHook(() => useManagedIdentityProviders(
+            scope, { kind: 'home' }, undefined, 'new-provider',
+        ));
+        expect(detail.getCurrent().state.kind).toBe('loading');
+        await act(async () => { releaseResponse(); });
+        await waitForHomeGovernance(() => expect(detail.getCurrent().state).toMatchObject({
+            kind: 'ready', items: [], refreshing: false,
+        }));
+        await detail.unmount();
     });
 });
