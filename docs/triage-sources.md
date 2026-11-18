@@ -996,6 +996,25 @@ unavailable login, account kind and association facts remain unknown, so the
 ordinary workflow approval hold applies. GitLab's existing push and completed
 merge Events retain their separate meanings.
 
+
+Bitbucket Cloud supplies opened,
+code-pushed, merged and declined PR occurrences through HMAC-verified repository
+webhooks. Configure Created, Pushed, Merged and Declined against the returned URL
+and generated secret; generic Updated is ignored. The live
+[Bitbucket hook-event catalog](https://api.bitbucket.org/2.0/hook_events/repository)
+declares `pullrequest:push`; declined PRs
+[cannot reopen in Bitbucket Cloud](https://support.atlassian.com/bitbucket-cloud/docs/review-a-pull-request/).
+[Azure DevOps service hooks](https://learn.microsoft.com/en-us/azure/devops/service-hooks/events?view=azure-devops)
+use full-resource deliveries to capability URLs, with
+the selected repository, deployment and native notification filter bound into the
+source identity. Configure Created plus Updated filtered to pushed changes for
+the code source (`PushNotification`), and Updated filtered to status changes
+(`StatusUpdateNotification`) for the status source;
+an active status occurrence represents reopening. The setup choices state the
+required native hook configuration. Both adapters preserve the PR author and
+pinned source head; missing author association remains unknown and uses the
+ordinary approval hold. These lifecycle sources are unreleased 0.3 behavior.
+
 Authentication/import and provider writes retain their existing placement and
 approval contracts. This placement change does not authorize a fallback from a
 failed Account credential to a machine's login.

@@ -226,9 +226,20 @@ The closed SCM lifecycle payload carries `authorAssociation` as `internal`,
 `external` or `unknown`. The provider normalizer owns that fact; actor kind and
 repository equality do not establish membership. GitHub maps its delivered
 association once for webhook and repository-history observations. Missing or
-unrecognized values, retained occurrences without the field, and GitLab's
-merge-only event explicitly resolve to `unknown`. Bitbucket and Azure DevOps
-currently publish no pull-request lifecycle Event to extend.
+unrecognized values and retained occurrences without the field resolve to
+`unknown`. GitLab, Bitbucket and Azure DevOps lifecycle payloads preserve the
+provider's PR author independently of the webhook actor, with unknown association
+when native evidence is absent. Author IDs are nonempty provider IDs (including
+GUIDs and opaque Account IDs); an unavailable login is `null`.
+
+Bitbucket adds the host-owned `bitbucket_hmac_sha256_v1` verifier and its selected
+`x-event-key` header. The forward verifier-check migration retains existing
+GitHub, Sentry, GitLab and capability-URL rows while admitting Bitbucket routes
+and deliveries. Matching server, Protocol and plugin SDK versions are required;
+an older closed host cannot interpret this new verifier. Azure reuses existing
+capability-URL handler delivery and records its native subscription-filter choice
+in source configuration rather than treating every PR metadata update as a code
+change.
 
 This is an unpublished development-contract extension. Matching Protocol,
 plugin SDK and event consumers reload together; an older closed reader rejects
