@@ -42,3 +42,21 @@ index 5b5ed3170b..68085aaa41 100644
      if (cache.has(path)) {
        return cache.get(path)!;
      }
+diff --git a/src/winter/fetch/FetchResponse.ts b/src/winter/fetch/FetchResponse.ts
+index 647d803..c9de4dd 100644
+--- a/src/winter/fetch/FetchResponse.ts
++++ b/src/winter/fetch/FetchResponse.ts
+@@ -42,8 +42,11 @@ export class FetchResponse extends ConcreteNativeResponse implements Response {
+           });
+ 
+           response.addListener('didComplete', () => {
+-            controller.close();
+-            isControllerClosed = true;
++            // A native completion event may already be queued when JS cancels the stream.
++            if (!isControllerClosed) {
++              controller.close();
++              isControllerClosed = true;
++            }
+           });
+ 
+           response.addListener('didFailWithError', (error: string) => {
