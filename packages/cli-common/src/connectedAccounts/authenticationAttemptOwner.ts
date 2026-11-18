@@ -40,6 +40,10 @@ type PluginConnectedAccountRef = Extract<
     PluginConnectedAccountAuthenticationContext['attempt'],
     { kind: 'reconnect' }
 >['account'];
+
+export type ConnectedAccountAttemptSettlementResult =
+    | Readonly<{ status: 'connected'; account: PluginConnectedAccountRef }>
+    | Readonly<{ status: 'conflict' | 'rejected' | 'unavailable'; code: string; diagnostic?: PluginDiagnosticData }>;
 export type ConnectedAccountOAuthCallbackCompletion = Readonly<Pick<
     PluginConnectedAccountOAuthCompletion,
     'code' | 'callbackUrl' | 'state'
@@ -607,20 +611,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }>): Promise<ProviderResult>;
     }>;
     settlement: Readonly<{
-        settle(request: ConnectedAccountAttemptSettlementRequest): Promise<Readonly<{
-            status: 'connected';
-            account: PluginConnectedAccountRef;
-        }> | Readonly<{
-            status: 'conflict' | 'rejected' | 'unavailable';
-            code: string;
-        }>>;
-        reconcile?(request: ConnectedAccountAttemptSettlementRequest): Promise<Readonly<{
-            status: 'connected';
-            account: PluginConnectedAccountRef;
-        }> | Readonly<{
-            status: 'conflict' | 'rejected' | 'unavailable';
-            code: string;
-        }>>;
+        settle(request: ConnectedAccountAttemptSettlementRequest): Promise<ConnectedAccountAttemptSettlementResult>;
+        reconcile?(request: ConnectedAccountAttemptSettlementRequest): Promise<ConnectedAccountAttemptSettlementResult>;
     }>;
 }>): Readonly<{
     selectResumableAttempts(attempts: readonly PendingConnectedAccountAttemptTransaction[]): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
@@ -1880,21 +1872,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 && settlement.code !== 'connected_account_authentication_reconciliation_unavailable') {
                 attempt.phase = 'outcomeUnknown';
                 const response: AttemptResponse = { status: 'outcomeUnknown', attemptId: attempt.id,
-                    diagnostic: { code: settlement.code } };
+                    diagnostic: settlement.diagnostic ?? { code: settlement.code } };
                 attempt.lastResponse = response;
                 return response;
             }
-            const response: AttemptResponse = reconciliationOnly
-                ? {
-                    status: 'reconnectRequired',
-                    attemptId: attempt.id,
-                    code: settlement.code,
-                }
-                : {
-                    status: settlement.status,
-                    attemptId: attempt.id,
-                    code: settlement.code,
-                };
+            const response: AttemptResponse = {
+                status: reconciliationOnly ? 'reconnectRequired' : settlement.status,
+                attemptId: attempt.id,
+                code: settlement.code,
+                ...(settlement.diagnostic === undefined ? {} : { diagnostic: settlement.diagnostic }),
+            };
             attempt.lastResponse = response;
             if (reconciliationOnly) {
                 attempt.phase = 'reconnectRequired';

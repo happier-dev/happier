@@ -4,13 +4,13 @@ import { QualifiedConnectedAccountCredentialPayloadV1Schema } from '@happier-dev
 import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
-import type { ConnectedAccountAttemptSettlementRequest } from './authenticationAttemptOwner.js';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ConnectedAccountAttemptSettlementRequest, ConnectedAccountAttemptSettlementResult } from './authenticationAttemptOwner.js';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 type AccountMode = 'plain' | 'e2ee';
-type SettlementResult = Readonly<{ status: 'connected'; account: QualifiedConnectedAccountRef }>
-    | Readonly<{ status: 'conflict' | 'rejected' | 'unavailable'; code: string }>;
+type SettlementResult = ConnectedAccountAttemptSettlementResult;
 type SettledAccount = Readonly<{ account: QualifiedConnectedAccountRef; accountMode: AccountMode;
     credentialRevision: string; configurationRevision: string | null;
     completionObservation?: ConnectedAccountAttemptSettlementRequest['completionObservation'] }>;
@@ -230,7 +230,13 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                     : 'connected_account_settlement_conflict' };
             }
             if (failedStage === 'committed_payload') throw error;
-            if (failedStage === 'held_credential_read') return { status: 'unavailable', code: 'connected_account_credential_persistence_unavailable' };
+            if (failedStage === 'held_credential_read') {
+                const code = 'connected_account_credential_persistence_unavailable';
+                return { status: 'unavailable', code, diagnostic: {
+                    code, severity: 'error',
+                    details: { failureCause: { ...projectActionFailureCauseV1(error, 'connected_account.credential.held_credential_read') } },
+                } };
+            }
             if (failedStage === 'credential_health') {
                 params.onUnknown?.({ account, reconciliation, failedStage, recoveryStage: 'health_update_not_replayed', error, recoveryError: error });
                 throw error;

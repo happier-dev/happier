@@ -126,7 +126,7 @@ describe('Connected Account credential settlement', () => {
         expect(credential.health?.status).toBe(outcome === 'health-conflict' ? 'needs_reauth' : 'connected');
         expect(published).toBe(outcome !== 'health-conflict');
     });
-    it.each(['applied', 'outcome_unknown', 'revision_conflict', 'unavailable'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
+    it.each(['applied', 'outcome_unknown', 'revision_conflict', 'unavailable', 'read_failed'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
         const service = { pluginId: 'acme.cloud', localId: 'api' };
         const account = { service, accountId: 'held' };
         const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -145,13 +145,17 @@ describe('Connected Account credential settlement', () => {
             mutateCredentialHealth: async () => {},
             rotateCredentialSecrets: async ({ secrets }: Readonly<{ secrets: readonly Readonly<{ resourceId: string; value: string }>[] }>) => {
                 rotations.push(secrets);
-                if (status === 'revision_conflict') throw Object.assign(new Error(status), { code: status });
+                if (status === 'revision_conflict' || status === 'read_failed') throw Object.assign(new Error(status), { code: status });
                 return status;
             },
             promoteCredentialSecrets: async () => { throw new Error('held_resource_replaced'); },
             mutateCredential: async mutation => { writes.push(mutation); return { success: true,
                 credentialRevision: 'csr_123456789ABCDEFGHJKMNPQRST', configurationRevision: null }; },
-            readCredential: async () => held, readConfiguration: async () => null,
+            readCredential: async () => {
+                if (status === 'read_failed') throw new TypeError('private credential read detail');
+                return held;
+            },
+            readConfiguration: async () => null,
             readHttpStatus: () => null, readFailureCode: error => error && typeof error === 'object' && 'code' in error
                 && typeof error.code === 'string' ? error.code : null,
         });
@@ -170,6 +174,14 @@ describe('Connected Account credential settlement', () => {
             await expect(owner.settle(request)).rejects.toThrow('connected_account_settlement_outcome_unknown');
             expect(await owner.reconcile(request)).toMatchObject({ status: 'unavailable' });
             expect(writes).toEqual([]);
+        } else if (status === 'read_failed') {
+            const result = await owner.settle(request);
+            expect(result).toMatchObject({ status: 'unavailable', code: 'connected_account_credential_persistence_unavailable',
+                diagnostic: { details: { failureCause: { phase: 'connected_account.credential.held_credential_read', errorClass: 'TypeError' } } } });
+            expect(JSON.stringify(result)).not.toContain('private credential read detail');
+            expect(writes).toEqual([]);
+            expect(rotations).toEqual([]);
+            return;
         } else {
             expect(await owner.settle(request)).toEqual(status === 'unavailable'
                 ? { status: 'unavailable', code: 'connected_account_credential_secret_rotation_unavailable' }
