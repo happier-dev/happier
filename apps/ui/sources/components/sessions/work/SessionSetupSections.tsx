@@ -155,6 +155,7 @@ type SessionHabitsSectionProps = Readonly<{
     sessionId: string;
     serverId: string;
     onOpenAllAutomations?: () => void;
+    offlineStatedAbove?: boolean;
     /** The Work tab's "+" › Add a trigger… opens the section's popover from outside it. */
     actionsRef?: React.Ref<SubjectTriggersSectionActions>;
 }>;
@@ -227,6 +228,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
           <SubjectTriggersSectionContent subject={subject} subjectName={title ?? ''} automations={combined}
             actionsRef={props.actionsRef} exactTurnPrefill={exactTurnPrefill}
+            offlineStatedAbove={props.offlineStatedAbove}
             {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
             hasRetainedContent={scheduledRows.length > 0 || destination.runIds.length > 0}>
             {props.onOpenAllAutomations ? (

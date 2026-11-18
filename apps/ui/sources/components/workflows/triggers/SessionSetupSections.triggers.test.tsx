@@ -33,6 +33,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
@@ -77,9 +78,10 @@ const { SessionHabitsSection, SessionSetupSections } =
   await import('@/components/sessions/work/SessionSetupSections');
 
 /** The Session's Info host of its Setup and Habits sections (lab csinfo I2). */
-function SessionInfoSetup(props: Readonly<{ sessionId: string; onHabitRender?: React.ProfilerOnRenderCallback }>) {
+function SessionInfoSetup(props: Readonly<{ sessionId: string; onHabitRender?: React.ProfilerOnRenderCallback; offlineStatedAbove?: boolean }>) {
   const session = useSessionViewShellSession(props.sessionId, home.serverId);
-  const habits = session ? <SessionHabitsSection sessionId={session.id} serverId={home.serverId} /> : null;
+  const habits = session ? <SessionHabitsSection sessionId={session.id} serverId={home.serverId}
+    {...(props.offlineStatedAbove ? { offlineStatedAbove: true } : {})} /> : null;
   return <InjectedAuthProvider credentials={workflowHttp?.credentials ?? null}><UniversalSearchRuntimeProvider value={searchRuntime}>
     <AppPaneProvider><ItemList>{session ? <SessionSetupSections session={session} serverId={home.serverId} /> : null}
       {props.onHabitRender ? <React.Profiler id="habits-arrival" onRender={props.onHabitRender}>{habits}</React.Profiler> : habits}
@@ -291,6 +293,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await standardCleanup();
+  installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
   resetTriggerSets();
   await workflowHttp?.dispose();
   await home.dispose();
@@ -619,6 +622,31 @@ describe('the Session Info page Automations section', () => {
     function failReads() {
       failAutomationReads = true;
     }
+
+    it('retains Automation rows without repeating the unavailable starts notice below the Machine notice', async () => {
+      const { installSessionActionRpcBoundary } = await import('@/dev/testkit/harness/sessionActionRpcBoundary');
+      const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+      const { RPC_ERROR_CODES, RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+      await disconnectActiveServerConnection();
+      installSessionActionRpcBoundary(request => {
+        if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
+          throw new Error(`Unexpected fixture RPC ${request.method}`);
+        }
+        return null;
+      }, { transformAcknowledgement: () => ({ ok: false, error: 'Machine unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }) });
+      await restoreConnectionToActiveServer(workflowHttp.credentials);
+      await seedSessionMachine(false);
+      answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
+      const host = (offlineStatedAbove = false) => <PluginSurfaceFocusEligibilityProvider active>
+        <SessionInfoSetup sessionId="session-1" offlineStatedAbove={offlineStatedAbove} />
+      </PluginSurfaceFocusEligibilityProvider>;
+      const screen = await renderScreen(host());
+      await settle();
+      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-starts-unavailable'), screen.getTextContent()).not.toBeNull());
+      await screen.update(host(true));
+      expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true);
+      expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+    });
 
     it('keeps a settled Habit read failure and its retry visible even when the Machine is offline', async () => {
       await seedSessionMachine(false);

@@ -665,7 +665,8 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     {/* The session's Triggers live with its work (07 S16, lab W9); "+" and rows open popovers in place. */}
                     {sessionServerId ? (
                         <View collapsable={false} onLayout={onTriggersLayout} style={styles.paneEdgeSection}>
-                            <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId} actionsRef={triggersActionsRef} />
+                            <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId}
+                                actionsRef={triggersActionsRef} offlineStatedAbove={machineNotices.offline} />
                         </View>
                     ) : null}
                     </>)}
