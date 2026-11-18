@@ -15,6 +15,7 @@ export const ReviewPublicationEvidenceSchema = lazyZodSchema(() => z.object({
   reviewedFingerprint: z.optional(z.nullable(z.string())),
   commentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   materialization: z.optional(ReviewPublicationMaterializationSchema),
+  reviewOutcome: ReviewReviewerOutcomeV1Schema.shape.reviewOutcome,
 }));
 export type ReviewPublicationEvidence = z.infer<typeof ReviewPublicationEvidenceSchema>;
 

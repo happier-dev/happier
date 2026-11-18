@@ -193,7 +193,10 @@ describe('canonical review Run comments', () => {
     ] });
     expect({ creates, updates }).toEqual({ creates: 1, updates: 1 });
   }));
-  it('does not certify a native Review when model output is complete but finding publication failed', async () => {
+  it.each([
+    { reviewOutcome: 'complete', materialization: { kind: 'failed', errorCode: 'artifact_content_unavailable' }, expected: 'failed' },
+    { reviewOutcome: 'partial', materialization: { kind: 'complete' }, expected: 'partial' },
+  ] as const)('settles native $reviewOutcome output and $materialization.kind publication as $expected coverage', async ({ reviewOutcome, materialization, expected }) => {
     let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
     const records = createReviewRecordPortV1({ read: async () => row,
       create: async input => { row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
@@ -204,8 +207,8 @@ describe('canonical review Run comments', () => {
     const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
     await comments.settleRound({ ...run(), status: 'succeeded', intentInput: {
       reviewRound, reviewRoundSettlement: 'execution', reviewReviewerId: 'first',
-    }, latestToolResult: { reviewOutcome: 'complete', materialization: { kind: 'failed', errorCode: 'artifact_content_unavailable' } } });
-    expect((await records.read(reviewRound.reviewId))?.rounds[0]?.state).toBe('failed');
+    }, latestToolResult: { reviewOutcome, materialization } });
+    expect((await records.read(reviewRound.reviewId))?.rounds[0]?.state).toBe(expected);
   });
   it('surfaces the Artifact content failure when a bound round cannot be published', async () => {
     const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport() });
