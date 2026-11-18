@@ -1,7 +1,15 @@
+import { randomBytes } from 'node:crypto';
+import tweetnacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
+
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 
 import {
     applyHomeRemoteAlertPreparedContextMutation,
+    buildHomeRemoteAlertPreparedCredential,
     parseHomeRemoteAlertPreparedContextEnvelope,
     type HomeRemoteAlertPreparedContextV1,
 } from './homeRemoteAlertPreparedContext';
@@ -95,5 +103,28 @@ describe('native remote-alert exact-Home prepared context', () => {
         }))?.homes[0]?.credential).toEqual({
             token: 'token', encryptionMode: 'legacy_e2ee', machineKey: 'legacy-seed',
         });
+    });
+
+    it('hands native the Account content key that opens Session data keys for both credential forms', () => {
+        const bytes = (length: number) => new Uint8Array(randomBytes(length));
+        const recoverySecret = bytes(32);
+        const dataKeyPair = tweetnacl.box.keyPair();
+        const cases = [
+            { credentials: { token: 'token', secret: encodeBase64(recoverySecret, 'base64url') },
+                contentPublicKey: tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(recoverySecret)).publicKey },
+            { credentials: { token: 'token', encryption: {
+                publicKey: encodeBase64(dataKeyPair.publicKey), machineKey: encodeBase64(dataKeyPair.secretKey) } },
+                contentPublicKey: dataKeyPair.publicKey },
+        ];
+        for (const { credentials, contentPublicKey } of cases) {
+            const sessionDataKey = bytes(32);
+            // The Home seals the viewer's Session data key to the Account content public key.
+            const envelope = sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionDataKey, recipientPublicKey: contentPublicKey, randomBytes: bytes });
+            const credential = buildHomeRemoteAlertPreparedCredential(credentials, 'e2ee');
+            if (!credential || credential.encryptionMode === 'plain') throw new Error('expected encrypted credential');
+            // Native opens with the canonical envelope codec from standard base64.
+            expect(openEncryptedDataKeyEnvelopeV1({ envelope, recipientSecretKeyOrSeed: decodeBase64(credential.machineKey, 'base64') }))
+                .toEqual(sessionDataKey);
+        }
     });
 });

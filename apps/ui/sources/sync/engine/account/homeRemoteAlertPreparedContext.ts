@@ -1,4 +1,8 @@
+import { resolveAccountContentSecretKey, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+
 import { subscribeHomeCredentialMutations, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { encodeBase64 } from '@/encryption/base64';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
 import { subscribeLocalAttentionSettingsMutations } from '@/sync/domains/state/settingsPersistence';
 import { subscribeAccountEncryptionModeCacheInvalidation } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -141,13 +145,16 @@ export function buildHomeRemoteAlertPreparedCredential(
     accountEncryptionMode: 'plain' | 'e2ee',
 ): HomeRemoteAlertPreparedContextV1['credential'] | null {
     if (accountEncryptionMode === 'plain') return { token: credentials.token, encryptionMode: 'plain' };
-    if ('encryption' in credentials) {
-        return { token: credentials.token, encryptionMode: 'e2ee', machineKey: credentials.encryption.machineKey };
+    if (!('encryption' in credentials) && !('secret' in credentials)) return null;
+    let material: AccountScopedCryptoMaterial;
+    try {
+        material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
+    } catch {
+        return null;
     }
-    if ('secret' in credentials) {
-        return { token: credentials.token, encryptionMode: 'legacy_e2ee', machineKey: credentials.secret };
-    }
-    return null;
+    // Native opens Session data-key envelopes sealed to the Account content public key.
+    const machineKey = encodeBase64(resolveAccountContentSecretKey(material), 'base64');
+    return { token: credentials.token, encryptionMode: material.type === 'legacy' ? 'legacy_e2ee' : 'e2ee', machineKey };
 }
 
 // Credential mutation is the canonical revocation/rotation choke point. Any
