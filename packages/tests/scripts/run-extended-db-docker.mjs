@@ -37,6 +37,8 @@ export function resolveExtendedDbCommandTimeoutMs(raw, fallbackMs) {
 }
 
 export function resolveExtendedDbStepTimeoutMs(env) {
+  // An explicitly unbounded admitted step waits for its own completion/cancel.
+  if (String(env?.HAPPIER_E2E_EXTENDED_DB_STEP_TIMEOUT_MS ?? '').trim() === '0') return 0;
   return resolveExtendedDbCommandTimeoutMs(env?.HAPPIER_E2E_EXTENDED_DB_STEP_TIMEOUT_MS, 3_600_000);
 }
 
@@ -46,13 +48,8 @@ function formatCommand(cmd, args) {
   return `${cmd} ${args.join(' ')}`.trim();
 }
 
-function normalizeTimeout(timeoutMs, fallbackMs) {
-  return resolveExtendedDbCommandTimeoutMs(timeoutMs, fallbackMs);
-}
-
 function runOrThrow(cmd, args, opts = {}) {
-  const { timeoutMs: rawTimeoutMs, ...spawnOptions } = opts;
-  const timeoutMs = normalizeTimeout(rawTimeoutMs, 120_000);
+  const { timeoutMs = 120_000, ...spawnOptions } = opts;
   const res = spawnSync(cmd, args, { stdio: 'inherit', timeout: timeoutMs, ...spawnOptions });
   if (res.error) {
     if (res.error.code === 'ETIMEDOUT') {
@@ -69,8 +66,7 @@ function runOrThrow(cmd, args, opts = {}) {
 }
 
 function runCapture(cmd, args, opts = {}) {
-  const { timeoutMs: rawTimeoutMs, ...spawnOptions } = opts;
-  const timeoutMs = normalizeTimeout(rawTimeoutMs, 120_000);
+  const { timeoutMs = 120_000, ...spawnOptions } = opts;
   const res = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutMs, ...spawnOptions });
   if (res.error) {
     if (res.error.code === 'ETIMEDOUT') {
