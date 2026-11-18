@@ -748,6 +748,9 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             rowRole={rowRole}
             titleLines={1}
             subtitle={props.subtitle}
+            // A column row keeps its description to one line at every surface (DESIGN "in a column … name and
+            // description one line each"): a page-surface rail row (an Environments column) must not wrap it to three.
+            subtitleLines={1}
             subtitleLeading={props.needsYouStatus ? <WorkStatusRowMark status={props.needsYouStatus}
                 testIDSuffix={props.testID} needsYouHighlight={needsYouFacts} /> : props.subtitleLeading}
             titleAccessory={props.titleAccessory}

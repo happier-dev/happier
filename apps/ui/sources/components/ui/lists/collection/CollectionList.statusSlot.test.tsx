@@ -15,33 +15,40 @@ afterEach(standardCleanup);
 
 const { CollectionNavigationRow } = await import('./CollectionList');
 const { InlineStatus } = await import('@/components/ui/status/InlineStatus');
+const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
 
-describe("a column row's trailing status (UI refinements 2026-11-16: the name tells rows apart)", () => {
-  it("draws only the status dot in the row's end, keeping its words as the accessible name, so the name takes the rest", async () => {
-    const screen = await renderScreen(
-      <CollectionNavigationRow
-        testID="row"
-        title="grant-u4-147-withdrawal"
-        status={
-          <InlineStatus
-            testID="row:end"
-            tone="warning"
-            label="Running, not verified"
-          />
-        }
-        selected={false}
-        onPress={() => {}}
-      />,
-    );
+describe("a column row's trailing status (UI refinements 2026-11-16, revised 2026-11-18 10:40Z)", () => {
+  const row = (status: React.ReactNode) => (
+    <CollectionNavigationRow testID="row" title="grant-u4-147-withdrawal" status={status} selected={false} onPress={() => {}} />
+  );
+  const endOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root.findAll(
+    (node) => node.props.testID === 'row:end' && typeof node.type === 'string',
+  )[0];
+
+  it("says an attention state with its dot and words in the row's end ('● Deploy failed', as the lab draws)", async () => {
+    const screen = await renderScreen(row(<InlineStatus testID="row:end" tone="danger" label="Deploy failed" />));
     expect(screen.getTextContent()).toContain('grant-u4-147-withdrawal');
-    expect(screen.getTextContent()).not.toContain('Running, not verified');
-    const end = screen.root.findAll(
-      (node) =>
-        node.props.testID === 'row:end' && typeof node.type === 'string',
-    )[0];
-    expect(end?.props['aria-label'] ?? end?.props.accessibilityLabel).toBe(
-      'Running, not verified',
+    expect(screen.getTextContent()).toContain('Deploy failed');
+  });
+
+  it("keeps a neutral state to its dot, its words the accessible name, so the name takes the rest", async () => {
+    const screen = await renderScreen(row(<InlineStatus testID="row:end" tone="muted" label="Deployed" />));
+    expect(screen.getTextContent()).toContain('grant-u4-147-withdrawal');
+    expect(screen.getTextContent()).not.toContain('Deployed');
+    const end = endOf(screen);
+    expect(end?.props['aria-label'] ?? end?.props.accessibilityLabel).toBe('Deployed');
+  });
+
+  it("keeps a page-surface column row's description to one line (LABPARITY-ACCEPT-B fix 4: Environments rail wrapped to three)", async () => {
+    const line = 'NLDW3-5-36-33 · eadc · Compose · ff91a03 deployed by you 4 days ago with a long commit subject';
+    const screen = await renderScreen(
+      <ListPresentationProvider value="page">
+        <CollectionNavigationRow testID="rail" surface="page" title="grant-u4-150-withdrawal" subtitle={line} selected={false} onPress={() => {}} />
+      </ListPresentationProvider>,
     );
+    const texts = screen.root.findAll((node) => typeof node.type === 'string' && node.props.children === line);
+    expect(texts.length).toBeGreaterThan(0);
+    expect(texts.every((node) => node.props.numberOfLines === 1)).toBe(true);
   });
 
   it("keeps the words where a status stands on its own, outside a row's end", async () => {

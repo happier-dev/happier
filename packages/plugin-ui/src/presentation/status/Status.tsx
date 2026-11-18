@@ -59,11 +59,15 @@ function textStyle(role: HappierPortableStyle, color: string): HappierPortableSt
 }
 
 /**
- * A row's end asks for the compact status (UI refinements 2026-11-16): a column row's name is what tells rows apart, so
- * an inline status in its trailing slot draws only its tone dot and keeps its words as its accessible name. The slot's
- * owner provides it (core `CollectionNavigationRow`); a status standing on its own keeps its words.
+ * A row's end asks for the compact status (UI refinements 2026-11-16, revised 2026-11-18 10:40Z): a column row's name is
+ * what tells rows apart, so a neutral inline status in its trailing slot draws only its tone dot and keeps its words as
+ * its accessible name, while a state that needs the person keeps its words beside the dot ("● Deploy failed", as the
+ * labs draw). The slot's owner provides it (core `CollectionNavigationRow`); a status standing on its own keeps its words.
  */
 export const HappierStatusCompactContext = createContext(false);
+
+/** The tones a state needs the person in: they keep their words in a compact row end. */
+const COMPACT_SPEAKING_TONES: ReadonlySet<HappierStatusProps['tone']> = new Set(['danger', 'warning', 'attention']);
 
 /**
  * The shared semantic status row for executable Plugin UI and declarative
@@ -74,7 +78,7 @@ export const HappierStatusCompactContext = createContext(false);
 export function HappierStatus(props: HappierStatusProps) {
   const environmentAccessibility = useOptionalHappierUiAccessibility();
   const inline = props.presentation === 'inline';
-  const compact = useContext(HappierStatusCompactContext) && inline;
+  const compact = useContext(HappierStatusCompactContext) && inline && !COMPACT_SPEAKING_TONES.has(props.tone);
   const accessibilityLiveRegion = props.accessibilityLiveRegion ?? 'polite';
   const ariaLive = accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion;
   const highContrast = (props.contrast ?? environmentAccessibility?.contrast) === 'high';
