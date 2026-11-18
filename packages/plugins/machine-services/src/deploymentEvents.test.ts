@@ -19,7 +19,7 @@ const receipt = { v: 1, id: 'receipt-a', environmentId: config.environmentId, ta
     actionOperationId: 'operation-a', contentArtifactId: 'artifact-a', contentHeaderVersion: 1, contentBodyVersion: 1,
     requestedAtMs: 1000, startedAtMs: 1001 } as const;
 
-function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = false, targetKind = 'vercel') {
+function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = false, targetKind = 'vercel', omitFailureSummary = false) {
     let current: Omit<typeof receipt, 'id' | 'state' | 'revision' | 'operation' | 'targetLinkId' | 'environmentId'> & {
         id: string;
         state: 'running' | 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown'; revision: number; settledAtMs?: number;
@@ -62,7 +62,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         if (id === 'deployments.receipts.get') {
             reads.push(String(input.deploymentId));
             return input.deploymentId === current.id ? { ok: true, deployment: current,
-                ...(current.state === 'failed' ? { failureSummary: { phase: 'build', code: 'build_failed' } } : {}) }
+                ...(current.state === 'failed' && !omitFailureSummary ? { failureSummary: { phase: 'build', code: 'build_failed' } } : {}) }
                 : { ok: false, error: 'deployment_unavailable' };
         }
         if (id === 'deployments.receipts.observe') {
@@ -147,6 +147,15 @@ it('wakes a configured receipt source before native completion admission settles
         h.controller.abort();
         await running;
     }
+});
+
+it('publishes a failed Event when the receipt has no failure summary', async () => {
+    const h = fixture(undefined, 'deployment-failed', false, 'vercel', true); h.settle();
+    const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200);
+    const source = adapter.decode(h.definition)!;
+    const result = await adapter.observe({ context: h.context, definition: h.definition, source });
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toMatchObject({ payload: { state: 'failed', phase: null, failureCode: null } });
 });
 
 it('sets up any deployment kind without a resource census and follows addressed remote receipts', async () => {

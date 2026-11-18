@@ -325,9 +325,6 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({
                             code: 'ok' in result ? result.error : 'deployment_unavailable',
                         }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: result });
-                        if (result.failureSummary === undefined) throw new PluginError({
-                            code: 'deployment_content_unavailable', message: 'Deployment failure detail is unavailable.',
-                        });
                         observedReceipt = { ...receipt, failureSummary: result.failureSummary };
                     }
                     observations.push(projectReceiptObservation({ receipt: observedReceipt, event, serverId: source.serverId,
