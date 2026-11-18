@@ -16,17 +16,26 @@ import { normalizeSessionListFilterV1 } from "@happier-dev/protocol/sessions/lis
 import { encodeAccountScopedKvJson } from "@/app/kv/accountScopedKv";
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
+import { countScopedTeamSessionsInTx } from "./service";
 
 interface PlanNode {
     "Node Type": string;
     "Relation Name"?: string;
     "Actual Loops": number;
+    "Actual Rows": number;
+    "Rows Removed by Filter"?: number;
     Plans?: PlanNode[];
 }
 
 function relationLoops(plan: PlanNode, relation: string): number {
     return (plan["Relation Name"] === relation ? plan["Actual Loops"] : 0)
         + (plan.Plans ?? []).reduce((sum, child) => sum + relationLoops(child, relation), 0);
+}
+
+function relationRowsVisited(plan: PlanNode, relation: string): number {
+    const rows = plan["Relation Name"] === relation
+        ? (plan["Actual Rows"] + (plan["Rows Removed by Filter"] ?? 0)) * plan["Actual Loops"] : 0;
+    return rows + (plan.Plans ?? []).reduce((sum, child) => sum + relationRowsVisited(child, relation), 0);
 }
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session listing PostgreSQL query work", () => {
@@ -57,6 +66,56 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         await client.$connect();
     });
     afterAll(async () => { await client.$disconnect(); await shutdownDbClient(); });
+
+    it("counts selected-Team Sessions without visiting the viewer's unrelated Session inventory", async () => {
+        const [member, custodian] = await Promise.all([
+            client.account.create({ data: { encryptionMode: "plain" } }),
+            client.account.create({ data: { encryptionMode: "plain" } }),
+        ]);
+        const team = await client.team.create({ data: { name: "Sparse Team Session audience" } });
+        const tag = randomUUID();
+        const unrelatedSessionCount = 1_000;
+        try {
+            await client.teamMembership.createMany({ data: [member, custodian].map(account => ({
+                accountId: account.id, teamId: team.id, role: "member",
+            })) });
+            const shared = await client.session.create({ data: {
+                accountId: custodian.id, tag, metadata: "{}", currentStorageState: "hosted", encryptionMode: "plain",
+            } });
+            await client.sessionGrant.create({ data: {
+                sessionId: shared.id, principalKind: "team", teamId: team.id,
+                createdByAccountId: custodian.id, effectiveAt: new Date(), accessLevel: "view",
+            } });
+            await client.session.createMany({ data: Array.from({ length: unrelatedSessionCount }, (_, index) => ({
+                accountId: member.id, tag: `${tag}-unrelated-${index}`, metadata: "{}", currentStorageState: "hosted", encryptionMode: "plain",
+            })) });
+            await client.$executeRawUnsafe('ANALYZE "Session"');
+            await drainQueryEvents();
+            queries.length = 0;
+
+            const result = await client.$transaction(tx => countScopedTeamSessionsInTx(tx, {
+                actorAccountId: member.id, sharedWithTeamId: team.id,
+                authentication: createPresentUserSessionAccessAuthentication(),
+            }), { isolationLevel: "RepeatableRead" });
+            expect(result).toEqual({ ok: true, count: 1 });
+
+            await drainQueryEvents();
+            const countQueries = queries.filter(query => /COUNT\(/u.test(query.query)
+                && /FROM "public"\."Session"/u.test(query.query));
+            expect(countQueries).toHaveLength(1);
+            const countQuery = countQueries[0]!;
+            const [explanation] = await client.$queryRawUnsafe<{ "QUERY PLAN": { Plan: PlanNode }[] }[]>(
+                `EXPLAIN (ANALYZE, FORMAT JSON) ${countQuery.query}`, ...JSON.parse(countQuery.params),
+            );
+            const visited = relationRowsVisited(explanation!["QUERY PLAN"][0]!.Plan, "Session");
+            expect(visited, `Session rows visited with ${unrelatedSessionCount} unrelated Sessions`).toBe(1);
+        } finally {
+            await client.team.delete({ where: { id: team.id } });
+            const accountIds = [member.id, custodian.id];
+            await client.session.deleteMany({ where: { accountId: { in: accountIds } } });
+            await client.account.deleteMany({ where: { id: { in: accountIds } } });
+        }
+    });
 
     it("batches personal rule boundaries by distinct inception rather than Session or rule", async () => {
         const accountId = `rule-boundaries-${randomUUID()}`;

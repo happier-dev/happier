@@ -436,12 +436,12 @@ export async function createApplicableAudienceWhere(input: {
     const manage = await buildSessionAccessWhere({ ...accessInput, capability: "manageAccess" });
     const applicable = async (
         scope: CollectiveScope,
-        topology: Prisma.SessionWhereInput[],
+        topology: Prisma.SessionWhereInput = {},
     ): Promise<Prisma.SessionWhereInput> => {
         if (!isSessionCollaborationEnabled()) return { id: { in: [] } };
         const collective = await buildCollectiveAccessBranches(accessInput, scope);
         return { OR: [
-            { AND: [manage, { OR: topology }] },
+            { AND: [manage, topology] },
             ...(collective.length > 0 ? [{ AND: [createSessionTranscriptShareableWhere(), { OR: collective }] }] : []),
         ] };
     };
@@ -459,10 +459,10 @@ export async function createApplicableAudienceWhere(input: {
             groupIdsByTeamId.set(audience.teamId, groupIds);
         }
     }
-    const allTopology: Prisma.SessionWhereInput[] = [
+    const allTopology: Prisma.SessionWhereInput = { OR: [
         { grants: { some: { principalKind: 'team', team: { archivedAt: null } } } },
         { grants: { some: { principalKind: 'group', teamGroup: { archivedAt: null, team: { archivedAt: null } } } } },
-    ];
+    ] };
     const branches: Prisma.SessionWhereInput[] = [];
     if (includesOutsideTeams) branches.push({ NOT: await applicable({}, allTopology) });
     if (teamIds.size > 0 || groupIdsByTeamId.size > 0) {
@@ -485,13 +485,19 @@ export async function createApplicableAudienceWhere(input: {
                 teamGroup: { archivedAt: null, team: { archivedAt: null } },
             }] : []),
         ];
-        const selectedTopology: Prisma.SessionWhereInput[] = [
-            ...(teamIds.size > 0 ? [{ grants: { some: { principalKind: 'team',
+        const selectedGrants: Prisma.SessionGrantWhereInput[] = [
+            ...(teamIds.size > 0 ? [{ principalKind: 'team',
                 teamId: { in: [...teamIds] }, team: { archivedAt: null },
-            } } }] : []),
-            ...(groupTopology.length > 0 ? [{ grants: { some: { principalKind: 'group', OR: groupTopology } } }] : []),
+            }] : []),
+            ...(groupTopology.length > 0 ? [{ principalKind: 'group', OR: groupTopology }] : []),
         ];
-        branches.push(await applicable({ audience: { teamIds, groupIdsByTeamId } }, selectedTopology));
+        // Factor the selected grant relation out of the permission alternatives.
+        // The database can start at the scoped grants instead of filtering the
+        // viewer's unrelated Session inventory through correlated OR branches.
+        branches.push({ AND: [
+            { grants: { some: { OR: selectedGrants } } },
+            await applicable({ audience: { teamIds, groupIdsByTeamId } }),
+        ] });
     }
     return { OR: branches };
 }
