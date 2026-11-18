@@ -200,7 +200,7 @@ describe('Machine Run get through the shared registered handler', () => {
         rpc.onSocketDisconnect();
     });
 
-    it('redacts registered host secrets from every Run output read before it leaves the hosting process', async () => {
+    it('redacts registered host secrets from a Workflow Action execution.run.get read before it leaves the hosting process', async () => {
         const secret = 'live-host-bearer-secret';
         const unregister = registerTranscriptSecret(secret);
         try {
@@ -228,7 +228,16 @@ describe('Machine Run get through the shared registered handler', () => {
             // The registered daemon handler, dispatch, Action executor and retained store run for real.
             const call = (method: string, params: unknown) => rpc.handleRequest({ method: `machine:${method}`, params,
                 callerAuthority: 'present_user', machineAdmission: admission });
+            const workflowActionRead = await rpc.handleRequest(
+                { method: `machine:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`,
+                    params: { runId: run.runId, includeStructured: true }, callerAuthority: 'present_user', machineAdmission: admission },
+                undefined, 'local_session_channel', {
+                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                    actionRequestId: 'workflow-action-read', executionRunWorkflowRunId: 'workflow-run-secret',
+                });
+            expect(workflowActionRead).toMatchObject({ run: { runId: run.runId }, latestToolResult: { answer: 'echoed [redacted]' } });
             const reads = [
+                workflowActionRead,
                 await call(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: run.runId, includeStructured: true }),
                 await call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {}),
                 await call(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, { runId: run.runId, timeoutSeconds: 1 }),
