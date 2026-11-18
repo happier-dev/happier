@@ -7,12 +7,14 @@ import {
 } from './reviewArtifactV1.js';
 
 /** Replace only Artifact persistence; Review admission, content and settlement stay real. */
-export function createInMemoryReviewRecordPortV1(): ReviewRecordPortV1 {
+export function createInMemoryReviewRecordPortV1(): ReviewRecordPortV1 & Readonly<{
+  readMetadata(reviewId: string): ReviewMetadataV1 | null;
+}> {
   type Row = NonNullable<Awaited<ReturnType<ReviewArtifactTransportV1['read']>>> & {
     reviewMetadata: ReviewMetadataV1;
   };
   const rows = new Map<string, Row>();
-  return createReviewRecordPortV1({
+  const records = createReviewRecordPortV1({
     read: async (artifactId, options) => {
       options?.signal?.throwIfAborted();
       return rows.get(artifactId) ?? null;
@@ -40,4 +42,5 @@ export function createInMemoryReviewRecordPortV1(): ReviewRecordPortV1 {
       return { ok: true, revision };
     },
   });
+  return { ...records, readMetadata: reviewId => rows.get(reviewId)?.reviewMetadata ?? null };
 }

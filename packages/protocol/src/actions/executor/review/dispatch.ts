@@ -277,6 +277,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         const reviewInput = data as ReviewStartInput;
+        const subjectKind = reviewInput.scmPullRequestReviewScope ? 'pull_request'
+          : reviewInput.comparisonId ? 'comparison' : 'repository';
         const selectedSource = ScmComparisonSourceSchema.safeParse(reviewInput.source);
         const comparisonCwd = reviewInput.cwd ?? ctx.agentStartContext?.baseline.directory;
         const comparisonTarget = reviewInput.comparisonId
@@ -291,7 +293,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
-            subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
+            subjectKind,
             sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
@@ -466,7 +468,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewRecords = deps.reviewRecords?.(ctx);
         if (!reviewInput.reviewRound && !reviewRecords) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
         const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
-          subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
+          subjectKind,
           sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),

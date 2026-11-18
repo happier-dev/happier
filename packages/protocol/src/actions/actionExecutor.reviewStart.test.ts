@@ -46,6 +46,40 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each([false, true])('records the selected pull request subject through admission (composed: %s)', async composed => {
+    const records = createInMemoryReviewRecordPortV1();
+    let binding: unknown;
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, input) => {
+        // The Machine transport receives the real canonical admission binding.
+        binding = (input.intentInput as Readonly<Record<string, unknown>>).reviewRound;
+        return { runId: 'pr-review-run', callId: 'call', sidechainId: 'call' };
+      },
+      workflowAction: async invocation => {
+        if (invocation.actionId !== 'workflow.run.start') throw new Error('Unexpected Workflow operation');
+        binding = WorkflowRunStartRequestV1Schema.parse(invocation.input).inputs?.reviewRound;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', {
+      sessionId: 's1', instructions: 'Review the selected pull request.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' },
+        ...(composed ? [{ kind: 'engine', engineId: 'codex', modelId: 'second-model' }] : [])],
+      ...(composed ? { comparisonId: 'prepared-comparison' } : {}),
+      scmPullRequestReviewScope: {
+        kind: 'scm_pull_request_review_scope.v1',
+        account: { service: { pluginId: 'happier.scm-github', localId: 'github' }, accountId: 'account-7' },
+        pullRequest: { number: 42 },
+        observed: { baseSha: '1'.repeat(40), headSha: '2'.repeat(40), nativeRevision: 'pr-42', observedAtMs: 1_700_000_000_000 },
+      },
+    }, { surface: 'ui' });
+    expect(result).toMatchObject(composed ? { ok: false, errorCode: 'content_unavailable' } : { ok: true });
+    const round = ReviewRoundBindingV1Schema.parse(binding);
+    expect(records.readMetadata(round.reviewId)).toMatchObject({ subjectKind: 'pull_request' });
+    expect((await records.read(round.reviewId))?.rounds[0]?.comparisonId).toBe(composed ? 'prepared-comparison' : undefined);
+  });
   it.each(['roster', 'steps', 'people-only'] as const)('refuses an unavailable human request from %s before starting executable reviewers', async selectionSource => {
     let workflowStarts = 0;
     const records = createInMemoryReviewRecordPortV1();
