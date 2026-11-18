@@ -33,7 +33,7 @@ import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, parseProfileActionRequestV1 } from '.
 import { SessionCapabilitySelectionAuthoringV1Schema, SessionSkillSelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { actionInputIssueFailure } from './actionInputValidation.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
-import { decodeLegacyReviewStartInput, ReviewEngineReviewerSelectionV1Schema, ReviewReviewerSelectionV1Schema, type ReviewReviewerSelectionV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
+import { decodeLegacyReviewStartInput, ReviewEngineReviewerSelectionV1Schema, ReviewReviewerSelectionV1Schema, type ReviewReviewerSelectionInputV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
 
 /** Native Workflow leaves already admitted by materialization retain that host-stamped depth. */
 export function readAdmittedWorkflowLeafStartDepthV1(actionId: string, context: ActionExecutorContext): number | undefined {
@@ -326,7 +326,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         const roster = z.array(z.unknown()).safeParse(selectedInput.reviewers);
         if (!roster.success) return { ok: false, errorCode: 'invalid_parameters' };
         const requests: AgentStartRequestV1[] = [];
-        const reviewers: ReviewReviewerSelectionV1[] = [];
+        const reviewers: ReviewReviewerSelectionInputV1[] = [];
         let deferredTarget: Extract<ReturnType<typeof resolveActionAgentStartRequestsV1>, { ok: false }> | undefined;
         for (const value of roster.data) {
             // Accepted historical loops defer their item-bound engine until execution.

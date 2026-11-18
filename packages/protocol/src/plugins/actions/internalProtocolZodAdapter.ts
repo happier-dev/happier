@@ -8,6 +8,12 @@ import type {
   ProtocolSchemaSafeParseResult,
 } from './jsonSchemaValidation.js';
 
+// Keep the native container kind when JSON admission narrows its contents.
+// Intersecting an object union with primitive JSON arms defeats TS object spreads.
+type ProtocolJsonOutput<T> = T extends readonly unknown[] ? T & readonly ProtocolJsonValue[]
+  : T extends object ? T & { readonly [key: string]: ProtocolJsonValue }
+    : T & ProtocolJsonValue;
+
 /**
  * Projects an incumbent parser; domain validation and JSON derivation stay with
  * that owner. Successful output also passed the composable owner's strict JSON
@@ -15,7 +21,7 @@ import type {
  */
 export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
   schema: TSchema,
-): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema> & ProtocolJsonValue>;
+): ProtocolComposableSchema<mini.input<TSchema>, ProtocolJsonOutput<mini.output<TSchema>>>;
 export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
   schema: TSchema,
 ): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> {

@@ -101,6 +101,8 @@ export const ReviewReviewerSelectionV1Schema = lazyZodSchema(() => asProtocolZod
   z.strictObject({ kind: z.literal('person'), ...ReviewRequestedReviewerInputV1Schema.shape }),
 ]))));
 export type ReviewReviewerSelectionV1 = z.infer<typeof ReviewReviewerSelectionV1Schema>;
+/** Native launch drafts before the existing JSON transport admission. */
+export type ReviewReviewerSelectionInputV1 = z.input<typeof ReviewReviewerSelectionV1Schema>;
 
 export const ReviewStepV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['review', 'verify']),

@@ -417,7 +417,7 @@ import { ProviderConnectionIdSchema } from '../providers/ids.js';
 import { BackendTargetKeySchema } from '../backends/targets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { SessionRollbackTarget } from '../sessions/rollback.js';
-import { requiresReviewWorkflowCompositionV1, ReviewEngineReviewerSelectionV1Schema, type ReviewStartInput } from '../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, ReviewEngineReviewerSelectionV1Schema, type ReviewReviewerSelectionInputV1, type ReviewStartInput } from '../reviews/reviewStart.js';
 import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../reviews/reviewNarration.js';
 import { resolveReviewNarratorPolicy } from '../reviews/reviewEngines.js';
 import type { ReviewEnginesListInputSchema } from './specs/reviews.js';
@@ -2967,7 +2967,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ok: false, errorCode: starts.errorCode, error: starts.errorCode,
           ...(starts.details === undefined ? {} : { details: starts.details }),
         });
-        const reviewRoster = actionId === 'review.start' ? [...(starts.effectiveInput as ReviewStartInput).reviewers] : null;
+        const reviewRoster: ReviewReviewerSelectionInputV1[] | null = actionId === 'review.start' ? [...(starts.effectiveInput as ReviewStartInput).reviewers] : null;
         const reviewPositions = reviewRoster?.flatMap((reviewer, index) => reviewer.kind === 'person' ? [] : [index]);
         const reviewReviewerLaunchInputs: Record<number, NonNullable<ActionExecutorContext['reviewReviewerLaunchInputs']>[number]> = {};
         if (reviewRoster) admittedInput = starts.effectiveInput;
