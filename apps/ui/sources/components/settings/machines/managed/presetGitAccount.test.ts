@@ -10,13 +10,14 @@ import {
 const host = (
   localId: string,
   authService: ScmProjectedHostingProvider['authService'],
+  kind = 'git',
 ): ScmProjectedHostingProvider => ({
   id: `forge.${localId}/${localId}`,
   localId,
   pluginId: `forge.${localId}`,
   title: localId,
   description: '',
-  kind: 'git',
+  kind,
   authService,
   connectedServiceId: null,
   capabilities: {},
@@ -27,13 +28,13 @@ const gitlabAuth = { pluginId: 'forge.gitlab', localId: 'gitlab-account' };
 describe('a Git clone preset’s account', () => {
   it('keeps a stored account on its own host, then the host the row chose, then a host already connected', () => {
     const providers = [host('azure', { pluginId: 'forge.azure', localId: 'azure-account' }), host('plain', null),
-      host('github', githubAuth), host('gitlab', gitlabAuth)];
+      host('github', githubAuth, 'github'), host('gitlab', gitlabAuth)];
     const none = () => false;
     const githubConnected = (service: { localId: string }) => service.localId === 'github-account';
     expect(selectPresetGitHostingProvider(providers, { service: gitlabAuth, accountId: 'mine' }, 'forge.github/github', none)?.localId).toBe('gitlab');
     expect(selectPresetGitHostingProvider(providers, undefined, 'forge.gitlab/gitlab', githubConnected)?.localId).toBe('gitlab');
     expect(selectPresetGitHostingProvider(providers, undefined, null, githubConnected)?.localId).toBe('github');
-    expect(selectPresetGitHostingProvider(providers, undefined, null, none)?.localId).toBe('azure');
+    expect(selectPresetGitHostingProvider(providers, undefined, null, none)?.localId).toBe('github');
     expect(selectPresetGitHostingProvider([host('plain', null)], undefined, null, none)).toBeNull();
   });
 

@@ -25,7 +25,7 @@ export function presetGitHostingProviders(
 
 /**
  * The Git host a clone's account belongs to (lab F4). A stored account keeps its own host; otherwise the host the
- * row chose, else one the person already has an account for, else the first offered.
+ * row chose, else one the person already has an account for, else the canonical GitHub host, else the first offered.
  */
 export function selectPresetGitHostingProvider(
   providers: readonly ScmProjectedHostingProvider[],
@@ -38,6 +38,8 @@ export function selectPresetGitHostingProvider(
   return stored
     ?? hosts.find((host) => host.id === chosenHostId)
     ?? hosts.find((host) => hasAccount(host.authService))
+    // Provider kind is the canonical contribution fact; catalog order is not a product default.
+    ?? hosts.find((host) => host.kind === 'github')
     ?? hosts[0]
     ?? null;
 }
