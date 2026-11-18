@@ -41,7 +41,7 @@ export async function prepareTriagePullRequestReviewContinuationV1(
             const selected = await host.selectActionInput({
                 hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
                 sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
-                draft: { engineIds: [...choice.engineIds], instructions: pending.instructions },
+                draft: { reviewers: choice.engineIds.map((engineId) => ({ kind: 'engine', engineId })), instructions: pending.instructions },
             }, cancellation);
             if (!current() || selected.kind === 'cancelled') return { kind: 'cancelled' };
             if (selected.kind !== 'executionRunLaunch') return { kind: 'unavailable' };

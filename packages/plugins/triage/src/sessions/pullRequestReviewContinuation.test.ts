@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { prepareTriagePullRequestReviewContinuationV1, continueTriagePullRequestReviewV1 } from './pullRequestReviewContinuation.js';
 import type { TriageActionV1 } from '../settings/actions.js';
@@ -12,6 +12,21 @@ const pending: TriagePendingPullRequestReviewV1 = { actionId: reviewAction.actio
     instance: testkitConfiguredInstance(), entryRef: testkitEntryRef(), lastKnownLocator: TESTKIT_LINK_DISPLAY.locator,
     observed: TESTKIT_OBSERVED_REVISION, workspace: TESTKIT_SELECTED_WORKSPACE, repositoryPath: '/repo', pullRequest: { number: 17 },
 } };
+it('seeds the host Review selector with the canonical ordered reviewer roster', async () => {
+    const selectActionInput = vi.fn(async () => ({ kind: 'cancelled' } as const));
+    const host = { executeAction: async () => null, selectActionInput };
+    await expect(prepareTriagePullRequestReviewContinuationV1(host, pending, { engineIds: ['engine-a', 'engine-b'] }))
+        .resolves.toEqual({ kind: 'cancelled' });
+    expect(selectActionInput).toHaveBeenCalledWith({
+        hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+        sessionId: pending.sessionId,
+        serverId: pending.review.workspace.serverId,
+        draft: {
+            reviewers: [{ kind: 'engine', engineId: 'engine-a' }, { kind: 'engine', engineId: 'engine-b' }],
+            instructions: pending.instructions,
+        },
+    }, undefined);
+});
 it('retains selection refusal diagnostics and keeps cancellation quiet', async () => {
     const error = new PluginError({ code: 'unavailable', details: { requestId: 'review-select-17' } });
     const host = { executeAction: async () => null, selectActionInput: async (): Promise<never> => { throw error; } };

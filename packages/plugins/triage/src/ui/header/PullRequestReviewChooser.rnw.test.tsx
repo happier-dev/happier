@@ -243,7 +243,7 @@ describe('the mounted selected-PR review chooser', () => {
     expect(selections).toEqual([{
       hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
       sessionId: PENDING.sessionId, serverId: PENDING.review.workspace.serverId,
-      draft: { engineIds: ['codex'], instructions: PENDING.instructions },
+      draft: { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: PENDING.instructions },
     }]);
     await act(async () => { finishAdmission({ kind: 'executionRunLaunch', input: credentials }); await press; });
     await settle();
