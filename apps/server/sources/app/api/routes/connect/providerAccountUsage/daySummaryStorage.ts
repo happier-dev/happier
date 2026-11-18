@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { getDbProviderFromEnv, prismaRuntime, type TransactionClient } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, StoredProviderAccountUsageDaySummaryV1Schema,
+    PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING,
     type StoredProviderAccountUsageDaySummaryV1,
     type ProviderAccountUsageDaySummaryReadV1Schema, type ProviderAccountUsageDaySummaryResponseV1Schema,
     type ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
@@ -60,18 +61,26 @@ async function readMissingCoverage(params: Readonly<{ accountId: string; recordI
     return rows.sort((left, right) => left.dayStartAtMs - right.dayStartAtMs);
 }
 
-/** Backfill legacy clock proofs by key, without loading completed ciphertext bodies. */
-async function readLegacyClockSummaryDays(params: Readonly<{ accountId: string; recordId: string; range?: { startAtMs: number; endAtMs: number } }>, storage: SummaryStorage) {
+/** Select legacy proofs/encodings by key, without loading completed ciphertext bodies. */
+async function readLegacySummaryDays(params: Readonly<{ accountId: string; recordId: string; range?: { startAtMs: number; endAtMs: number };
+    requireClockBounds?: boolean; requireCompact?: boolean }>, storage: SummaryStorage) {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const payload = name('payload');
     const version = provider === 'sqlite' ? prismaRuntime.sql`CAST(json_extract(${payload}, '$.clockBoundsVersion') AS TEXT)`
         : provider === 'mysql' ? prismaRuntime.sql`JSON_UNQUOTE(JSON_EXTRACT(${payload}, '$.clockBoundsVersion'))`
             : prismaRuntime.sql`${payload} ->> 'clockBoundsVersion'`;
+    const encoding = provider === 'sqlite' ? prismaRuntime.sql`json_extract(${payload}, '$.encoding')`
+        : provider === 'mysql' ? prismaRuntime.sql`JSON_UNQUOTE(JSON_EXTRACT(${payload}, '$.encoding'))`
+            : prismaRuntime.sql`${payload} ->> 'encoding'`;
+    const conditions = [
+        ...(params.requireClockBounds ? [prismaRuntime.sql`COALESCE(${version}, '') <> '1'`] : []),
+        ...(params.requireCompact ? [prismaRuntime.sql`COALESCE(${encoding}, '') <> ${PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING}`] : []),
+    ];
     const range = params.range ? prismaRuntime.sql`AND ${name('dayStartAt')} >= ${timestamp(params.range.startAtMs)} AND ${name('dayStartAt')} < ${timestamp(params.range.endAtMs)}` : prismaRuntime.empty;
     const rows = await storage.$queryRaw<Array<{ dayStartAt: Date | number | bigint }>>(prismaRuntime.sql`
         SELECT ${name('dayStartAt')} FROM ${name('ProviderAccountUsageDaySummary')}
         WHERE ${name('accountId')} = ${params.accountId} AND ${name('recordId')} = ${params.recordId}
-            ${range} AND COALESCE(${version}, '') <> '1' ORDER BY ${name('dayStartAt')}`);
+            ${range} AND (${prismaRuntime.join(conditions, ' OR ')}) ORDER BY ${name('dayStartAt')}`);
     return rows.map(row => atMs(row.dayStartAt));
 }
 
@@ -88,8 +97,8 @@ export async function readProviderAccountUsageDaySummaries(params: Readonly<{ ac
     if (params.includeMissingDays || params.includeCoverage) {
         const pending = await readProviderAccountUsagePendingDays(params, storage)
             ?? await readProviderAccountUsageLegacyPendingDays({ ...params, range }, storage);
-        const legacy = params.includeMissingDays && params.requireClockBounds
-            ? await readLegacyClockSummaryDays({ ...params, range }, storage) : [];
+        const legacy = params.includeMissingDays && (params.requireClockBounds || params.requireCompact)
+            ? await readLegacySummaryDays({ ...params, range }, storage) : [];
         const days = legacy.length ? [...new Set([...pending, ...legacy])] : pending;
         const intervals = days.filter(day => !range || day >= range.startAtMs && day < range.endAtMs)
             .map(day => ({ startAtMs: day, endAtMs: day + PROVIDER_ACCOUNT_USAGE_DAY_MS }));
@@ -100,6 +109,10 @@ export async function readProviderAccountUsageDaySummaries(params: Readonly<{ ac
                 dayStartAtMs, coverage: { observationCount: 0, frontier: null },
             })));
             missingDays.sort((left, right) => left.dayStartAtMs - right.dayStartAtMs);
+            if (params.requireCompact) {
+                const pendingDays = new Set(pending);
+                for (const day of missingDays) if (!pendingDays.has(day.dayStartAtMs)) day.rewriteOnly = true;
+            }
         }
     }
     if (!params.includeMissingDays) {

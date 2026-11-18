@@ -1,4 +1,5 @@
 import { buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1,
+  packProviderAccountUsageDaySummaryV1, PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING,
   PROVIDER_ACCOUNT_USAGE_DAY_MS, type ProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { openProviderAccountUsageHistoryPageV4 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -14,7 +15,7 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
   | Readonly<{ status: 'unavailable'; days: number; reason: 'authority_unavailable' | 'write_failed' }>
   | Readonly<{ status: 'partial'; days: number; unavailableDays: readonly Readonly<{ dayStartAtMs: number; reason: 'content_unavailable' }>[] }>> {
   const range = { startAtMs: 0, endAtMs: Math.max(1, input.nowMs + 1) };
-  const read = await readQualifiedProviderAccountUsageDaySummariesV4({ ...input, query: { recordId: input.recordId, range, includeMissingDays: true, requireClockBounds: true }, requestPurpose: 'connected-accounts:usage-persistence' });
+  const read = await readQualifiedProviderAccountUsageDaySummariesV4({ ...input, query: { recordId: input.recordId, range, includeMissingDays: true, requireClockBounds: true, requireCompact: true }, requestPurpose: 'connected-accounts:usage-persistence' });
   if (!read) return { status: 'unsupported', days: 0 };
   const existingByDay = new Map(read.summaries.map(summary => [summary.dayStartAtMs, summary]));
   let completedPredecessor: ProviderAccountUsageDaySummaryV1 | undefined;
@@ -34,9 +35,10 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
           { dayStartAtMs: missing.precedingSummary.dayStartAtMs, reason: 'content_unavailable' }); }
       }
       const snapshots: ProviderAccountUsageDaySummaryV1['lastSnapshot'][] = [];
+      const rewrite = missing.rewriteOnly && previous?.observedAtRange ? previous : undefined;
       let cursor: Readonly<{ id: string; observedAtMs: number }> | undefined;
       const pageSize = 100; // Existing exact-history transport page size, not a backfill limit.
-      do {
+      if (!rewrite) do {
         const page = await readQualifiedProviderAccountUsageHistoryV4({ ...input, query: { recordId: input.recordId,
           // Accepted rows can arrive behind the retained last snapshot. Read the
           // selected day's remaining basis before publishing its coverage proof.
@@ -51,13 +53,13 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
       } while (cursor);
       input.signal?.throwIfAborted();
       if (!snapshots.length && !previous) continue; // A simultaneous covered sweep may already have removed this day.
-      const summary = buildProviderAccountUsageDaySummaryV1({ recordId: input.recordId, dayStartAtMs: missing.dayStartAtMs,
+      const summary = rewrite ?? buildProviderAccountUsageDaySummaryV1({ recordId: input.recordId, dayStartAtMs: missing.dayStartAtMs,
         snapshots, previous, precedingSnapshot: preceding?.lastSnapshot, completeDayHistory: true });
       if (input.accountMode === 'e2ee' && (!input.material || !input.randomBytes)) throw new Error('provider_account_usage_summary_material_unavailable');
-      const content = input.accountMode === 'plain' ? { t: 'plain' as const, v: summary }
+      const content = input.accountMode === 'plain' ? { t: 'plain' as const, v: packProviderAccountUsageDaySummaryV1(summary) }
         : sealProviderAccountUsageDaySummaryV1({ summary, material: input.material!, randomBytes: input.randomBytes! });
       const status = await writeQualifiedProviderAccountUsageDaySummaryV4({ ...input, write: { recordId: input.recordId,
-        dayStartAtMs: missing.dayStartAtMs, payload: { v: 1, coverage: missing.coverage, content,
+        dayStartAtMs: missing.dayStartAtMs, payload: { v: 1, coverage: missing.coverage, content, encoding: PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING,
           ...(summary.observedAtRange ? { clockBoundsVersion: 1 as const } : {}) } } });
       if (status !== 'written') return { status, days };
       completedPredecessor = summary;

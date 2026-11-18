@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
-import { buildProviderAccountUsageDaySummaryV1, deriveProviderAccountUsageDayQuotaHistoryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
+import { buildProviderAccountUsageDaySummaryV1, deriveProviderAccountUsageDayQuotaHistoryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, packProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import { projectProviderAccountUsageQuotaReadV1 } from './providerAccountUsageHistory.js';
 
 const day = 86_400_000;
@@ -13,6 +13,40 @@ function sample(at: number, used: number, resetAtMs: number): ProviderAccountUsa
       resetsAt: resetAtMs, windowDurationMs: 1000, unit: 'requests', status: 'ok', details: {} }] };
 }
 describe('provider quota daily summary', () => {
+  it('losslessly encodes the Claude 13-day shape within its distinct-fact budget despite reset-clock revisions', () => {
+    // Loaded census: 4,211 seven_day entries / 2,486 exact clocks. Each
+    // revision remains distinct; neither second rounding nor a window cap is valid.
+    const snapshots = Array.from({ length: 4211 }, (_, index) => {
+      const at = day * (1 + Math.floor(index / 324)) + (index % 324 + 1) * 100;
+      const clock = index % 2486;
+      const reset = 10 * day + Math.floor(clock / 829) * 7 * day + clock % 829;
+      const value = sample(at, 50, reset);
+      value.meters[0] = { ...value.meters[0]!, meterId: 'seven_day', label: 'Weekly', windowDurationMs: 7 * day };
+      value.diagnostics = [{ kind: 'provider_http', status: 200, observedAtMs: at }];
+      return value;
+    });
+    const summaries = deriveProviderAccountUsageDayQuotaHistoryV1({ recordId, snapshots });
+    expect(summaries).toHaveLength(13);
+    expect(summaries.reduce((count, summary) => count + summary.windows.length, 0)).toBe(4211);
+    expect(new Set(summaries.flatMap(summary => summary.windows.map(window => window.resetAtMs))).size).toBe(2486);
+    const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    // Budget from distinct facts, independent of encoding: each distinct meter,
+    // each exact clock pair/diagnostic, each window's scalar facts, daily context.
+    const distinctMeters = new Set(snapshots.map(value => JSON.stringify(value.meters[0])));
+    const budget = [...distinctMeters].reduce((bytes, value) => bytes + size(JSON.parse(value)), 0)
+      + snapshots.reduce((bytes, value, index) => bytes + size([String(index), value.fetchedAtMs, value.observedAtMs]) + size(value.diagnostics), 0)
+      + summaries.reduce((bytes, summary) => bytes + size(summary.lastSnapshot)
+        + summary.windows.reduce((total, window) => total + size([window.meterId, window.windowStartAtMs, window.resetAtMs,
+          window.peakUsed, window.firstObservedAtMs, window.lastObservedAtMs, window.resets]), 0), 0);
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    const contents = summaries.map(summary => sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: n => new Uint8Array(n).fill(3) }));
+    contents.forEach((content, index) => expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: summaries[index]!.dayStartAtMs,
+      accountMode: 'e2ee', material, content })).toEqual(summaries[index]));
+    const encodedBytes = contents.reduce((bytes, content) => bytes + size(content), 0);
+    console.info(JSON.stringify({ fixture: 'claude-reset-revisions', days: summaries.length, windows: 4211, distinctClocks: 2486,
+      decodedBytes: size(summaries), encodedBytes, distinctFactBudget: budget }));
+    expect(encodedBytes).toBeLessThanOrEqual(Math.ceil(budget * 4 / 3) + summaries.length * 128);
+  });
   it('uses the accepted history clock when provider timestamps move backwards', () => {
     const first = { ...sample(day + 100, 20, day + 1000), observedAtMs: day + 800 };
     const last = { ...sample(day + 900, 60, day + 1000), observedAtMs: day + 200 };
@@ -110,10 +144,17 @@ describe('provider quota daily summary', () => {
   it.each(['plain', 'e2ee'] as const)('round trips %s summaries and rejects mode or record substitutions', accountMode => {
     const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [sample(day + 100, 20, day + 1000)] });
     const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
-    const content = accountMode === 'plain' ? { t: 'plain' as const, v: summary }
+    const content = accountMode === 'plain' ? { t: 'plain' as const, v: packProviderAccountUsageDaySummaryV1(summary) }
       : sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: n => new Uint8Array(n).fill(3) });
     expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, accountMode, material, content })).toEqual(summary);
     expect(() => openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, accountMode, material, content })).toThrow();
     expect(() => openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, accountMode: accountMode === 'plain' ? 'e2ee' : 'plain', material, content })).toThrow();
+  });
+  it('rejects compact references that have no corresponding snapshot or diagnostic', () => {
+    const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [sample(day + 100, 20, day + 1000)] });
+    const packed = packProviderAccountUsageDaySummaryV1(summary);
+    for (const invalid of [{ ...packed, lastSnapshot: packed.diagnosticRefs.length }, { ...packed, diagnosticRefs: [0] }]) {
+      expect(() => openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, accountMode: 'plain', content: { t: 'plain', v: invalid } })).toThrow();
+    }
   });
 });

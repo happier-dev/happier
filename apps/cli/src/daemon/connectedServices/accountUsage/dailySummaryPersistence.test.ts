@@ -2,9 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from '@/api/client/credentialAxios';
 import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { maintainProviderAccountUsageDaySummaries } from './dailySummaryPersistence';
-import { buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { persistProviderAccountUsageWithDaySummaries } from './persistence';
 import { logger } from '@/ui/logger';
+
+function openPlainWrite(value: unknown) {
+  const write = ProviderAccountUsageDaySummaryWriteV1Schema.parse(value);
+  return openProviderAccountUsageDaySummaryV1({ recordId: write.recordId, dayStartAtMs: write.dayStartAtMs,
+    accountMode: 'plain', content: write.payload.content });
+}
 
 describe('key-holding quota summary maintenance', () => {
   describe('producer clock extrema upgrades', () => {
@@ -20,6 +26,31 @@ describe('key-holding quota summary maintenance', () => {
       const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots });
       return { v: summary.v, recordId, dayStartAtMs: 0, lastSnapshot: summary.lastSnapshot, windows: summary.windows };
     };
+
+    it.each(['plain', 'e2ee'] as const)('rewrites a covered %s legacy encoding without rereading exact history', async accountMode => {
+      const previous = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: [sample(100, 100)] });
+      const coverage = { observationCount: 1, frontier: { id: '100', observedAtMs: 100 } };
+      const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+      const randomBytes = (n: number) => new Uint8Array(n).fill(3);
+      const { sealAccountScopedBlobCiphertext } = await import('@happier-dev/protocol/crypto/accountScopedCipher');
+      const content = accountMode === 'plain' ? { t: 'plain' as const, v: previous }
+        : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'provider_account_usage_day_summary', material, payload: previous, randomBytes }) };
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const query = JSON.parse(new URL(String(url)).searchParams.get('query')!);
+        expect(query).toMatchObject({ includeMissingDays: true, requireClockBounds: true, requireCompact: true });
+        if (!String(url).includes('/day-summaries')) throw new Error('covered_encoding_upgrade_must_not_read_history');
+        return { status: 200, data: { summaries: [{ dayStartAtMs: 0, payload: { v: 1, clockBoundsVersion: 1, coverage, content } }],
+          missingDays: [{ dayStartAtMs: 0, coverage, rewriteOnly: true }] } };
+      });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode, material, randomBytes, nowMs: 200 }))
+          .toEqual({ status: 'written', days: 1 });
+        const write = put.mock.calls[0]![1] as { payload: { encoding: string; content: typeof content } };
+        expect(write.payload.encoding).toBe('snapshot_table_v1');
+        expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, accountMode, material, content: write.payload.content })).toEqual(previous);
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
 
     it.each(['plain', 'e2ee'] as const)('upgrades %s legacy days from all remaining rows despite backwards provider clocks', async accountMode => {
       const observations = [sample(100, 9100, 80), sample(200, 50)];
@@ -76,11 +107,12 @@ describe('key-holding quota summary maintenance', () => {
       const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
       try {
         expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
-        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1, content: { t: 'plain', v: {
+        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1 } });
+        expect(openPlainWrite(put.mock.calls[0]?.[1])).toMatchObject({
           observedAtRange: { startAtMs: empty ? 100 : 10, endAtMs: 9101 }, lastSnapshot: previous.lastSnapshot,
           windows: expect.arrayContaining(previous.windows.map(window => expect.objectContaining({ peakUsed: window.peakUsed,
             firstObservedAtMs: window.firstObservedAtMs, resets: window.resets }))),
-        } } } });
+        });
       } finally { get.mockRestore(); put.mockRestore(); }
     });
 
@@ -101,9 +133,10 @@ describe('key-holding quota summary maintenance', () => {
       const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
       try {
         expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
-        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1, content: { t: 'plain', v: {
+        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1 } });
+        expect(openPlainWrite(put.mock.calls[0]?.[1])).toMatchObject({
           observedAtRange: { startAtMs: 100, endAtMs: 9101 }, windows: [{ peakUsed: 90, firstObservedAtMs: 50 }],
-        } } } });
+        });
       } finally { get.mockRestore(); put.mockRestore(); }
     });
 
@@ -215,7 +248,7 @@ describe('key-holding quota summary maintenance', () => {
     try {
       expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
       expect(transferred).toBe(102);
-      expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { content: { t: 'plain', v: { lastSnapshot: observations.at(-1) } } } });
+      expect(openPlainWrite(put.mock.calls[0]?.[1])).toMatchObject({ lastSnapshot: observations.at(-1) });
     } finally { get.mockRestore(); put.mockRestore(); }
   });
   it('does no detail transfer or sealing when discovery reports no missing days', async () => {
@@ -327,7 +360,8 @@ describe('key-holding quota summary maintenance', () => {
     try {
       expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 200 })).toEqual({ status: 'written', days: 1 });
       expect(pageSizes).toEqual([100, 100]);
-      expect(put.mock.calls[0]?.[1]).toMatchObject({ recordId, dayStartAtMs: 0, payload: { content: { t: 'plain', v: { lastSnapshot: { ...snapshot, observedAtMs: 200, fetchedAtMs: 200 } } }, coverage: { observationCount: 2 } } });
+      expect(put.mock.calls[0]?.[1]).toMatchObject({ recordId, dayStartAtMs: 0, payload: { coverage: { observationCount: 2 } } });
+      expect(openPlainWrite(put.mock.calls[0]?.[1])).toMatchObject({ lastSnapshot: { ...snapshot, observedAtMs: 200, fetchedAtMs: 200 } });
     } finally { get.mockRestore(); put.mockRestore(); }
   });
 });

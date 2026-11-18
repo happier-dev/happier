@@ -1383,6 +1383,22 @@ for older curves at day granularity while retaining resets within a day. Quota
 and capacity readings are nonadditive: this is not a token/cost ledger and does
 not promise conserved consumption totals.
 
+Current development writers encode these same facts as `snapshot_table_v1`
+inside the existing plain/encrypted summary envelope. Window tuples reference
+distinct snapshots, whose meter definitions/readings reuse the existing quota
+projection codec. Diagnostics are interned separately because that projection
+normally omits them. Opening restores the complete original summary, including
+every exact reset clock, snapshot, diagnostic and reset witness. Clock revisions
+remain separate windows; this encoding introduces no rounding or history cap.
+Readers also open retained full-body summaries. The outer `encoding` hint lets
+normal maintenance select an old encoding once with `requireCompact:true`.
+For a selected day without pending observations, the server marks `rewriteOnly`;
+the key-holding writer reuses its opened summary when clock bounds are proven,
+then seals and publishes through the existing coverage CAS without rereading
+raw history. Pending days and unproven clock bounds keep the complete-day path.
+Matching development Protocol, server and daemon sources deploy together;
+the recent exact-history NDJSON wire and pace semantics are unchanged.
+
 The existing server retention registry owns `providerAccountUsageHistory` and
 the `HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE` / `__DAYS`
 keys. Their configured defaults are `delete_older_than` and 90 days; the global

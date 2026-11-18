@@ -12,7 +12,7 @@ import { createUsageSnapshot } from '../providerAccountUsageTestkit';
 import { createProviderAccountUsageRecord, retainProviderAccountUsageHistory } from './recordStorage';
 import { readProviderAccountUsageDaySummaries, writeProviderAccountUsageDaySummary,
     readExpiredProviderAccountUsageSummaryDays, pruneProviderAccountUsageSummaryDetail } from './daySummaryStorage';
-import { buildProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { buildProviderAccountUsageDaySummaryV1, packProviderAccountUsageDaySummaryV1, PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 
 describe('usage day summaries PostgreSQL storage', () => {
     const originalEnv = snapshotEnv();
@@ -63,6 +63,12 @@ describe('usage day summaries PostgreSQL storage', () => {
             expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: { recordId: first.recordId, dayStartAtMs,
                 payload: { ...payload, clockBoundsVersion: 1 } } }, tx)).toBe(true);
             expect(await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx)).toEqual({ summaries: [], missingDays: [] });
+            const compact = await readProviderAccountUsageDaySummaries({ ...query, requireCompact: true }, tx);
+            expect(compact.missingDays).toEqual([{ dayStartAtMs, coverage: payload.coverage, rewriteOnly: true }]);
+            expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: { recordId: first.recordId, dayStartAtMs,
+                payload: { ...payload, clockBoundsVersion: 1, encoding: PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING,
+                    content: { t: 'plain', v: packProviderAccountUsageDaySummaryV1(payload.content.v) } } } }, tx)).toBe(true);
+            expect(await readProviderAccountUsageDaySummaries({ ...query, requireCompact: true }, tx)).toEqual({ summaries: [], missingDays: [] });
         });
         await inTx(tx => retainProviderAccountUsageHistory(write(later), tx));
         await inTx(async tx => {
