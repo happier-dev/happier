@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ApiClient } from '../../../../apps/cli/src/api/api';
@@ -30,7 +31,7 @@ describe('composed Machine content-key conversion', () => {
     let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
     let beforeTransition: (() => Promise<void>) | undefined;
     try {
-      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres',
+      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', guestReachableHome: { host: '127.0.0.1' },
         beforeHttpRequest: async request => {
           if (request.method === 'POST' && request.path.endsWith('/content-key/transition')) await beforeTransition?.();
         }, serverEnv: {
@@ -42,7 +43,13 @@ describe('composed Machine content-key conversion', () => {
       if (!accountId) throw new Error('Account fixture token did not identify its owner');
       const credentialMaterial = account.credentials.encryption;
       if (!credentialMaterial) throw new Error('Encrypted Account fixture did not retain its key material');
-      ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
+      const features = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/features/authenticated`, {
+        headers: { Authorization: `Bearer ${account.auth.token}` },
+      });
+      const home = FeaturesResponseSchema.parse(features.data).homeConnectionDescriptor;
+      if (!home || home.homeServerIdentityId !== fixture.serverId) throw new Error('Conversion Home descriptor unavailable');
+      // Both direct and Action-scoped requests must reach the same observed ingress.
+      ui = await connectUiActionClient({ serverUrl: home.canonicalServerUrl,
         credentials: buildTestAccountCliAuthCredentials({ auth: account.auth, mode: 'legacy' }) });
       await waitFor(() => ui!.isAccountReady(), { context: 'conversion Account ready' });
       const machine = await fixture.enrollDaemon(account);
@@ -107,6 +114,7 @@ describe('composed Machine content-key conversion', () => {
       await seed({ metadata: encodePredecessor(metadata), daemonState: encodePredecessor(daemonState),
         metadataVersion: initial.metadataVersion + 1, daemonStateVersion: initial.daemonStateVersion + 1 });
       const legacy = await read();
+      expect(legacy).toMatchObject({ dataEncryptionKey: null, metadataVersion: initial.metadataVersion + 1 });
       socket = createUserScopedSocketCollector(fixture.server.baseUrl, account.auth.token);
       socket.connect();
       await waitFor(() => socket!.isConnected(), { context: 'concurrent owner editor connected' });
@@ -125,7 +133,7 @@ describe('composed Machine content-key conversion', () => {
       };
       const options = { request, serverHttpBaseUrl: fixture.server.baseUrl };
       const conflicted = await prepareThroughAction();
-      expect(conflicted, JSON.stringify(conflicted)).toMatchObject({ ok: true,
+      expect(conflicted, JSON.stringify({ conflicted, editRan: beforeTransition === undefined })).toMatchObject({ ok: true,
         result: { kind: 'unavailable', code: 'machine_unavailable' } });
       const winner = await read();
       expect(winner).toMatchObject({ dataEncryptionKey: null, daemonState: legacy.daemonState,
@@ -144,6 +152,15 @@ describe('composed Machine content-key conversion', () => {
       expect(converted.encryptionKey).not.toEqual(account.auth.accountSigningSeed);
       expect(decrypt(converted.encryptionKey, 'dataKey', decodeBase64(committed.metadata!))).toEqual(editedMetadata);
       expect(decrypt(converted.encryptionKey, 'dataKey', decodeBase64(committed.daemonState!))).toEqual(daemonState);
+      // The editor that was connected before conversion can learn the new
+      // version without learning the new key. That version cannot authorize an
+      // update encrypted with the predecessor key.
+      const staleWrite = await socket.emitWithAck<{ result: string }>('machine-update-metadata', {
+        machineId, metadata: encodePredecessor({ ...editedMetadata, displayName: 'Stale editor write' }),
+        expectedVersion: committed.metadataVersion, expectedDataEncryptionKey: null,
+      });
+      expect(staleWrite.result).toBe('key-mismatch');
+      expect(await read()).toEqual(committed);
       const restartedReader = await ApiClient.create(structuredClone(predecessorCredentials));
       expect(await restartedReader.prepareMachineContentKey(machineId, options)).toMatchObject({ encryptionKey: converted.encryptionKey });
 
@@ -164,9 +181,16 @@ describe('composed Machine content-key conversion', () => {
       await machine.restart();
       await assertDaemonControl();
       await machine.daemon.stop();
+      const restarted = await read();
+      // Exercise the disclosure guard with the opaque publication, even when
+      // normal daemon metadata updates have published a different projection.
+      await seed({ ...committed, metadata: committed.metadata!,
+        metadataVersion: restarted.metadataVersion + 1, daemonStateVersion: restarted.daemonStateVersion + 1 });
       const beforePlain = await read();
       const beforePlainMetadata = decrypt(converted.encryptionKey, 'dataKey', decodeBase64(beforePlain.metadata!));
       const beforePlainDaemonState = decrypt(converted.encryptionKey, 'dataKey', decodeBase64(beforePlain.daemonState!));
+      expect(beforePlainMetadata).toEqual(editedMetadata);
+      expect(beforePlainDaemonState).toEqual(daemonState);
       const beforePlainPersisted = await readPersistedContent();
 
       // Seed the persisted state produced by fae505bdc691's predecessor PATCH:
@@ -186,14 +210,13 @@ describe('composed Machine content-key conversion', () => {
       // Reconnect with the credentials produced by the person's explicit Keeper
       // confirmation. The gesture itself is outside this conversion journey.
       await ui.close();
-      ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
+      ui = await connectUiActionClient({ serverUrl: home.canonicalServerUrl,
         credentials: { ...buildTestAccountCliAuthCredentials({ auth: account.auth, mode: 'legacy' }), custody: 'historical' } });
       await waitFor(() => ui!.isAccountReady(), { context: 'historical-custody conversion Account ready' });
       const plainPreparation = await prepareThroughAction();
       const afterPlainPreparation = await read();
-      expect(plainPreparation, JSON.stringify({ plainPreparation, storageMode: afterPlainPreparation.storageMode,
-        failedHttp: fixture.takeRequestObservations().filter(request => request.statusCode !== null && request.statusCode >= 400),
-      })).toMatchObject({ ok: true, result: { kind: 'unavailable', code: 'content_unpublished' } });
+      expect(plainPreparation, JSON.stringify({ plainPreparation, storageMode: afterPlainPreparation.storageMode }))
+        .toMatchObject({ ok: true, result: { kind: 'unavailable', code: 'content_unpublished' } });
       expect(afterPlainPreparation).toMatchObject({ storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
       expect(decodePlainMachineStoredContent(afterPlainPreparation.metadata!)).toEqual(beforePlainMetadata);
       expect(decodePlainMachineStoredContent(afterPlainPreparation.daemonState!)).toEqual(beforePlainDaemonState);
