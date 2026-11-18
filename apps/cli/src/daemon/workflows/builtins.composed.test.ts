@@ -832,7 +832,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   });
   it.each(['keep-going', 'review-and-converge'])('refuses %s without an origin before native effects', async (id) => {
     const h = harness();
-    await expect(h.run(builtin(id), { engines: [engine] }, false)).rejects.toThrow('invalid_input');
+    await expect(h.run(builtin(id), { reviewers: [{ kind: 'engine', engineId: engine }] }, false)).rejects.toThrow('invalid_input');
     expect(h.launches).toEqual([]); expect(h.goals).toEqual([]);
   });
   // REVIEWS-1117 plan 03 U2: new authored starts are one pass. Accepted
