@@ -25,6 +25,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from './composeMachineSetup';
+import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
@@ -132,7 +133,8 @@ describe('Combined Machine setup child settlement', () => {
     } });
     expect(result).toMatchObject({ preview: { kind: 'machineSetup' } });
     expect(nestedContext?.externalActionExecutionAuthorization).toMatchObject({ token: 'admitted' });
-    expect(nestedContext?.externalActionExecutionAuthorization?.requesterAccountProjection).toBeUndefined();
+    expect(nestedContext?.externalActionExecutionAuthorization?.requesterAccountProjection)
+      .toBe(authorization.requesterAccountProjection);
   });
   it('settles an interrupted Setup from its exact retained terminal native failure without parent attention', async () => {
     const child = { version: 1, operationId: 'native-child', revision: 5,
