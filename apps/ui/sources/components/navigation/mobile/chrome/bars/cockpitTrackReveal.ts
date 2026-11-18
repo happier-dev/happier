@@ -20,11 +20,14 @@ export function resolveCockpitTrackRevealTarget(tabIds: readonly string[], activ
 }
 
 /**
- * How wide a scrolling phone bar's visible track is: a whole number of tabs at their own width, so its edge falls
- * between two tabs (no glyph stub of a half-shown tab at rest, PHONE-ROWS-HUNT) and its tabs keep the spacing of every
- * other bar (owner 11-15, MOBILE-FIX-1115 H1); the capsule takes back the remainder. Null until the room is measured.
+ * How wide a scrolling phone bar's visible track is: whole tabs at their own width (the spacing of every other bar,
+ * owner 11-15 MOBILE-FIX-1115 H1) plus the leading half of the next tab, so the overflow visibly peeks instead of
+ * ending at a hard edge or a sliver (owner 11-18). With no room for a peek beside one tab, one whole tab. The capsule
+ * takes back the remainder. Null until the room is measured.
  */
 export function resolveCockpitTrackViewportWidth(input: Readonly<{ room: number; minWidth: number }>): number | null {
     if (!(input.room > 0) || !(input.minWidth > 0)) return null;
-    return Math.min(input.room, Math.max(1, Math.floor(input.room / input.minWidth)) * input.minWidth);
+    const peek = input.minWidth / 2;
+    const whole = Math.floor((input.room - peek) / input.minWidth);
+    return whole >= 1 ? whole * input.minWidth + peek : Math.min(input.room, input.minWidth);
 }

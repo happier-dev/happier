@@ -197,6 +197,7 @@ describe('runAppBootSequence', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'info').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -347,7 +348,10 @@ describe('runAppBootSequence', () => {
         transport.reject(new Error('carrier unreachable'));
         await flushMicrotasks();
         expect(ready).toEqual([{ credentials: CREDENTIALS }]);
-        expect(console.error).toHaveBeenCalledWith(
+        // A handled failure that startup continues past is a developer diagnostic, not a person's error: Expo turns
+        // console.error into a raw on-screen toast, which drew under the phone tab bar (LABPARITY-ACCEPT-D-1118).
+        expect(console.error).not.toHaveBeenCalled();
+        expect(console.info).toHaveBeenCalledWith(
             'Failed to restore sync during init, continuing startup:',
             expect.any(Error),
         );

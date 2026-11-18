@@ -59,7 +59,9 @@ function start<T>(operation: () => Promise<T>): Promise<T> {
 function startSyncRestore(sequence: AppBootSequence, credentials: AuthCredentials): void {
     if (!sequence.restoreSync) return;
     start(() => sequence.restoreSync!(credentials)).catch((error: unknown) => {
-        console.error('Failed to restore sync during init, continuing startup:', error);
+        // A developer diagnostic: startup continues and sync recovers through its own owner. Expo turns console.error
+        // into a raw on-screen toast, which is never a person's error state (the fireAndForget rule).
+        console.info('Failed to restore sync during init, continuing startup:', error);
     });
 }
 

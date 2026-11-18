@@ -31,14 +31,16 @@ describe('what a scrolling phone bar brings into view', () => {
 });
 
 describe('a scrolling phone bar shows whole tabs at rest', () => {
-    // MOBILE-FIX-1115 H1 (owner 11-15): a scrolling bar spaces its tabs like every other bar. The track shows a whole
-    // number of tabs at their own width and gives the remainder back to the capsule, instead of widening each tab.
-    it('narrows the visible track to a whole number of tabs at their own width (no glyph stub at its edge)', () => {
-        // 320 wide: 119 px of track for 50 px tabs held two whole tabs and a 19 px stub of the third.
-        expect(resolveCockpitTrackViewportWidth({ room: 119, minWidth: 50 })).toBe(100);
-        expect(resolveCockpitTrackViewportWidth({ room: 300, minWidth: 50 })).toBe(300);
+    // MOBILE-FIX-1115 H1 (owner 11-15): a scrolling bar spaces its tabs like every other bar, at their own width; the
+    // capsule takes back the remainder. Owner 11-18: the next tab visibly peeks, never a hard edge or a sliver.
+    it('shows whole tabs plus the leading half of the next one, so the overflow visibly peeks (owner 11-18)', () => {
+        // 390 wide with a pinned Bot: about 190 px of track for 50 px tabs held three whole tabs and hid the fourth.
+        expect(resolveCockpitTrackViewportWidth({ room: 190, minWidth: 50 })).toBe(175);
+        // 320 wide: 119 px of track showed two whole tabs and a 19 px stub; now one whole tab and a half-tab peek.
+        expect(resolveCockpitTrackViewportWidth({ room: 119, minWidth: 50 })).toBe(75);
+        expect(resolveCockpitTrackViewportWidth({ room: 125, minWidth: 50 })).toBe(125);
     });
-    it('keeps one whole tab when the track is narrower than two', () => {
+    it('keeps one whole tab when the track has no room for a peek beside it', () => {
         expect(resolveCockpitTrackViewportWidth({ room: 70, minWidth: 50 })).toBe(50);
     });
     it('leaves the track at its own width until it is measured', () => {

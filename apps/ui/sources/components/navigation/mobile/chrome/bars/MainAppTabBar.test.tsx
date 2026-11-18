@@ -235,6 +235,9 @@ describe('MainAppTabBar', () => {
         expect(tracks(narrow)[0]!.findAll((node) => node.props.testID === 'tabbar-tab-bots').length).toBeGreaterThan(0);
         expect(tracks(narrow)[0]!.findAllByType('MoreAction' as never)).toHaveLength(0);
         expect(narrow.tree.root.findAllByType('MoreAction' as never)).toHaveLength(1);
+        // The track visibly ends before More (UI refinements 12:50Z): its peeking last tab reads as more track, never as an
+        // icon tucked under the fixed control. The same divider the fixed first tab draws, on the track's other end.
+        expect(narrow.findHostByTestId('main-app-tabbar:track-end')).not.toBeNull();
         await act(async () => { narrow.findHostByTestId('tabbar-tab-bots')?.props.onPress(); });
         await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         expect(pressed).toEqual(['bots']);
@@ -244,6 +247,7 @@ describe('MainAppTabBar', () => {
         const wide = await renderTabBar(bar());
         for (const id of ['sessions', ...pinned]) expect(wide.findHostByTestId(`tabbar-tab-${id}`), id).not.toBeNull();
         expect(tracks(wide)).toHaveLength(0);
+        expect(wide.findHostByTestId('main-app-tabbar:track-end')).toBeNull();
         await wide.unmount();
     });
 

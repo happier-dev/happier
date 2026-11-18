@@ -276,9 +276,16 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                         </>
                     ) : props.tabs.map(tab => renderTab(tab))}
                 </View>
-                {/* More stands outside the track (owner 11-10): no scroll position hides it. */}
+                {/* More stands outside the track (owner 11-10): no scroll position hides it. The track visibly ends before
+                    it, with the divider the fixed first tab draws, so the peeking next tab reads as more track and never as
+                    an icon under ⋯ (UI refinements 12:50Z). */}
                 {scrolls
-                    ? props.trailing ? <View style={styles.trackTrailing}>{props.trailing}</View> : null
+                    ? props.trailing ? (
+                        <View style={styles.trackTrailing}>
+                            <View testID={`${props.barTestId}:track-end`} style={styles.trackDivider} />
+                            {props.trailing}
+                        </View>
+                    ) : null
                     : props.trailing}
             </Animated.View>
         </FloatingTabBarSurface>
