@@ -39,4 +39,42 @@ describe('Workflow document Action draft projection', () => {
     expect(rejected.draft).toBe(currentDraft);
     expect(home.artifacts(serverId).list()).toEqual([]);
   });
+
+  it('names each envelope failure with its own copy and keeps current work by identity', async () => {
+    const currentDraft = createWorkflowEditorDraft({ draftId: 'current', name: 'Open work', blocks: [] });
+    const definition = { version: 1, inputs: [], defaults: {}, blocks: [] };
+    const results = await Promise.all([
+      '{ "kind": "happier.workflow", ',
+      JSON.stringify({ kind: 'happier.workflow', version: 2, definition }),
+      JSON.stringify({ kind: 'other.tool.pipeline', version: 1, definition }),
+    ].map(source => importWorkflowDocumentViaAction({ source, currentDraft, draftId: 'imported' })));
+    expect(results.map(result => result.ok ? null : [result.code, result.messageKey])).toEqual([
+      ['invalid_json', 'workflows.interchange.importFailedInvalidJson'],
+      ['unsupported_version', 'workflows.interchange.importFailedUnsupportedVersion'],
+      ['invalid_document', 'workflows.interchange.importFailedInvalidDocument'],
+    ]);
+    for (const result of results) expect(result.draft).toBe(currentDraft);
+  });
+
+  it('offers a repair draft only for a normalized definition with canonical issues', async () => {
+    const currentDraft = createWorkflowEditorDraft({ draftId: 'current', name: 'Open work', blocks: [] });
+    const wait = (id: string, extra: Record<string, unknown> = {}) => ({ kind: 'wait', id,
+      document: { text: 'Continue', references: [], attachments: [] }, ...extra });
+    const document = (blocks: readonly unknown[]) => JSON.stringify({ kind: 'happier.workflow', version: 1,
+      definition: { version: 1, inputs: [], defaults: {}, blocks } });
+    const dangling = await importWorkflowDocumentViaAction({ currentDraft, draftId: 'repair',
+      source: document([wait('first'), wait('first')]) });
+    expect(dangling).toMatchObject({ ok: false, code: 'invalid_definition', messageKey: null });
+    if (dangling.ok) throw new Error('Expected invalid definition');
+    expect(dangling.issues.length).toBeGreaterThan(0);
+    expect(dangling.draft).toBe(currentDraft);
+    expect(dangling.repairDraft?.draftId).toBe('repair');
+    const structural = await importWorkflowDocumentViaAction({ currentDraft, draftId: 'repair',
+      source: document([wait('first', { unsupported: true })]) });
+    expect(structural).toMatchObject({ ok: false, code: 'invalid_definition' });
+    if (structural.ok) throw new Error('Expected invalid definition');
+    expect(structural.issues.map(issue => issue.code)).toContain('unknown_field');
+    expect(structural.repairDraft).toBeUndefined();
+    expect(structural.draft).toBe(currentDraft);
+  });
 });
