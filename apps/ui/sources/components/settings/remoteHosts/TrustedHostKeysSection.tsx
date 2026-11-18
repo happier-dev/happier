@@ -9,6 +9,7 @@ import { getRemoteHostTrustedHostKeyStore } from '@/sync/domains/remoteHosts/hos
 import { SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
@@ -35,13 +36,25 @@ export const TrustedHostKeysSection = React.memo(function TrustedHostKeysSection
     const remove = async (input: { key: { host: string; port: number; algorithm: string; fingerprintSha256: string } } | { keys: { host: string; port: number; algorithm: string; fingerprintSha256: string }[] }) => {
         try {
             const id = 'key' in input ? 'remote_hosts.trusted_keys.remove' : 'remote_hosts.trusted_keys.clear';
-            const result = await execution.execute(id, input);
-            if (!result.ok) throw new Error(result.errorCode);
+            const result = await execution.executeForPresentation(id, input);
+            if (!result) return;
+            if (!result.ok) {
+                Modal.alert(t('common.error'), resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'));
+                return;
+            }
             const receipt = REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1[id].parse(result.result);
-            if (receipt.status !== 'removed') throw new Error(receipt.status === 'unavailable' ? receipt.reason : receipt.status);
-            if (execution.isCurrent()) refresh();
+            if (receipt.status === 'removed') {
+                refresh();
+            } else if (receipt.status === 'conflict' || (receipt.status === 'unavailable'
+                && (receipt.reason === 'trusted_host_key_changed' || receipt.reason === 'trusted_host_keys_changed'))) {
+                refresh();
+                Modal.alert(t('common.error'), t('approvals.conflictFailure'));
+            } else {
+                const code = receipt.status === 'unavailable' ? receipt.reason : receipt.status;
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage({ code }, t('common.requestFailed')));
+            }
         } catch (error) {
-            if (execution.isCurrent()) Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+            if (execution.isCurrent()) Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
         }
     };
     const keyInput = (record: RemoteHostTrustedHostKeyRecord) => ({ host: record.hostLower, port: record.port,

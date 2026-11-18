@@ -497,6 +497,31 @@ await import('./collection/RemoteHostPage');
 await import('./collection/remoteHostsCollectionController');
 
 	describe('RemoteHosts collection', () => {
+    it('explains when reviewed trusted host keys changed and shows the current keys', async () => {
+        await loadRemoteHostsScreen();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        storage.setState(state => ({ settings: settingsParse({ ...state.settings, actionsSettingsV1: {
+            v: 1, approvalWaivedSurfaces: { 'remote_hosts.trusted_keys.clear': ['ui'] },
+        } }) }));
+        const { getRemoteHostTrustedHostKeyStore } = await import('@/sync/domains/remoteHosts/hostKeys/trustedHostKeyStore');
+        const { TrustedHostKeysSection } = await import('./TrustedHostKeysSection');
+        const store = getRemoteHostTrustedHostKeyStore();
+        store.clear();
+        store.trust({ host: 'reviewed.example', port: 22, algorithm: 'ssh-ed25519', fingerprintSha256: 'SHA256:reviewed' });
+        const screen = await renderScreen(<TrustedHostKeysSection />);
+        try {
+            store.trust({ host: 'new.example', port: 22, algorithm: 'ssh-ed25519', fingerprintSha256: 'SHA256:new' });
+            await screen.pressByTestIdAsync('settings.remoteHosts.trustedHostKeys.clear');
+            await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'approvals.conflictFailure'));
+            expect(store.readAll()).toHaveLength(2);
+            expect(screen.findAllByProps({ title: 'new.example:22' }).length).toBeGreaterThan(0);
+        } finally {
+            await screen.unmount();
+            store.clear();
+        }
+    });
+
 	    it('renders a desktop-only notice when not running on desktop', async () => {
 	        setTauriDesktop(false);
 	        const { RemoteHostsScreen } = await loadRemoteHostsScreen();
