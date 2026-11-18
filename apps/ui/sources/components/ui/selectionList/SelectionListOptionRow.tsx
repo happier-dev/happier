@@ -33,6 +33,7 @@ import { activateSelectionListRow } from './SelectionListRowActivation';
 import { SelectionListActivationCommandContext } from './SelectionListCommandHost';
 import {
   SelectionListOptionPresentationContext,
+  SelectionListSelectedFillContext,
   SelectionListSelectedMarkContext,
 } from './SelectionListOptionPresentationContext';
 import { SelectionListOptionTabBehaviorContext } from './SelectionListOptionTabBehaviorContext';
@@ -215,6 +216,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
 ): React.ReactElement {
   // Current by the list's selection, or because the option's owner says so (one choice per group).
   const isSelected = props.isSelected || props.option.selected === true;
+  // A multiple-choice list marks its choices with the check alone; the fill stays its one highlight.
+  const selectionTakesFill = React.useContext(SelectionListSelectedFillContext);
+  const fillsSelected = isSelected && selectionTakesFill;
   const { theme } = useUnistyles();
   const paintColor = useHappierMaterialColorResolver();
   const optionLabel = props.option.renderLabel?.() ?? props.option.label;
@@ -603,6 +607,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
             !isCard && rightAccessoryOutsidePressable
           }
           selected={isSelected}
+          selectedFill={selectionTakesFill}
           focused={paintsFocus}
           disabled={props.option.disabled === true}
           loading={props.option.loading === true}
@@ -620,7 +625,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       </View>
     );
   }
-  const selectedOrFocused = isSelected || props.isFocused;
+  const selectedOrFocused = fillsSelected || props.isFocused;
   // A disabled custom body with nothing of its own to open or select is a static note (a trust
   // disclosure at the head of a sheet), not an unavailable choice: it reads at full strength and
   // takes no hover. A disabled choice still dims.
@@ -710,6 +715,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         }}
         onPress={handlePress}
         selected={isSelected}
+        selectedFill={selectionTakesFill}
         // A selected card owns the fill over its row AND its expanded controls; the row's own selected fill on top
         // stacked a darker band over the title (owner 11-15 C6), so inside a selected card the row paints none.
         pressableStyle={[isCard && isSelected ? cardStyles.selectedRowFill : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? rowSurface : undefined)]}

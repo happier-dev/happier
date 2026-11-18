@@ -50,7 +50,7 @@ import {
 } from './buildSelectionListOptionA11yProps';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { buildSelectionListGridRowModel } from './selectionListGridRowModel';
-import { SelectionListOptionPresentationContext, SelectionListSelectedMarkContext } from './SelectionListOptionPresentationContext';
+import { SelectionListOptionPresentationContext, SelectionListSelectedFillContext, SelectionListSelectedMarkContext } from './SelectionListOptionPresentationContext';
 import {
     flattenRenderPlanForVirtualizedList,
     groupVirtualizedItemsIntoColumnRows,
@@ -209,7 +209,9 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
                         ? null
                         : props.selectionMark === 'enter' ? 'enter' : 'check'}
                 >
-                    <SelectionListBodyContent {...props} />
+                    <SelectionListSelectedFillContext.Provider value={props.multiselectable !== true}>
+                        <SelectionListBodyContent {...props} />
+                    </SelectionListSelectedFillContext.Provider>
                 </SelectionListSelectedMarkContext.Provider>
             </SelectionListOptionPresentationContext.Provider>
         </SelectionListA11yPatternContext.Provider>

@@ -33,3 +33,11 @@ export const SelectionListOptionPresentationContext =
  */
 export type SelectionListRowMark = 'check' | 'enter' | null;
 export const SelectionListSelectedMarkContext = React.createContext<SelectionListRowMark>(null);
+
+/**
+ * Whether a current choice also takes the selected fill, published beside the mark by `SelectionListBody`. The one
+ * choice of a single-choice list is filled (picker anatomy: fill + check). A multiple-choice list marks its choices
+ * with the check alone, so the fill stays the list's ONE highlight (the focused or pointed row) and two or three
+ * chosen rows never read as several highlights at once. A row outside a body keeps the fill.
+ */
+export const SelectionListSelectedFillContext = React.createContext(true);

@@ -276,6 +276,12 @@ export interface ItemProps {
      * stationary pointer would read as a second selected row.
      */
     hoverFill?: boolean;
+    /**
+     * Whether a selected row paints the selected fill (default true). A multiple-choice list marks its choices with a
+     * check and keeps the fill for its one focused row, so several chosen rows never read as several highlights. The
+     * row stays `selected` for its semantics either way.
+     */
+    selectedFill?: boolean;
     destructive?: boolean;
     /**
      * A row that is there but not active (turned off, offline, expired). Its title, subtitle and meta
@@ -889,6 +895,7 @@ function ItemRow(props: ItemProps) {
         selected,
         focused,
         hoverFill = true,
+        selectedFill = true,
         destructive,
         dimmed = false,
         density,
@@ -1154,7 +1161,7 @@ function ItemRow(props: ItemProps) {
     const showAccessory = !isInfoMode
         && Boolean(onPress || onDoublePress)
         && sharedItemBehavior.navigationAccessoryVisible;
-    const showSelectedBackground = sharedItemBehavior.selectionVisible;
+    const showSelectedBackground = sharedItemBehavior.selectionVisible && (selectedFill || focused === true);
 
     // A selected column row carries its state in its title's weight too, as the column's navigation rows do.
     const titleColorBase = destructive ? styles.titleDestructive

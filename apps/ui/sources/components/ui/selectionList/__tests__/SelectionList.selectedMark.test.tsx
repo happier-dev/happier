@@ -104,6 +104,32 @@ describe('SelectionList current-choice mark', () => {
         expect(screen.findByTestId('sl:root:option-selected-mark:macbook')).toBeTruthy();
         expect(screen.findByTestId('sl:root:option-selected-mark:nas')).toBeTruthy();
         expect(screen.findByTestId('sl:root:option-selected-mark:devbox')).toBeFalsy();
+        // The check marks the choices; the fill stays the list's one highlight (the focused row), never every choice.
+        const filledRows = screen.tree.root.findAll((node) => (
+            typeof node.type !== 'string' && typeof node.props?.title === 'string'
+            && ((node.props?.selected === true && node.props?.selectedFill !== false) || node.props?.focused === true)
+        )).map((node) => node.props.title as string);
+        // A row's composite owners repeat its props; the set is the rows.
+        expect(new Set(filledRows)).toEqual(new Set(['MacBook Pro']));
+    });
+
+    it('fills the one current choice of a single-choice list', async () => {
+        const screen = await renderScreen(
+            <SelectionList
+                rootStep={rootStep}
+                selectedOptionId="macbook"
+                onSelect={vi.fn()}
+                onRequestClose={vi.fn()}
+                disableTransitions
+                testID="sl"
+            />,
+        );
+        const filledRows = screen.tree.root.findAll((node) => (
+            typeof node.type !== 'string' && typeof node.props?.title === 'string'
+            && ((node.props?.selected === true && node.props?.selectedFill !== false) || node.props?.focused === true)
+        )).map((node) => node.props.title as string);
+        // A row's composite owners repeat its props; the set is the rows.
+        expect(new Set(filledRows)).toEqual(new Set(['MacBook Pro']));
     });
 
     it('leaves lists whose rows draw their own selection state unmarked', async () => {
