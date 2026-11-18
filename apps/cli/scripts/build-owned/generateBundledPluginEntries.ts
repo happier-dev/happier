@@ -2939,12 +2939,12 @@ async function collectBundledPluginSourcePackages(
         : await normalizeBundledSourceManifest({ packageRoot,
           manifest: await loadPluginManifest(params.repoRoot, pluginPackageId, dependencies,
             reuseAuthorRuntimeGraph), dependencies });
-      // Package publication materializes its declarations. The existing strict
-      // CI/package check also covers present serialized outputs (including
-      // tracked plugin.json files), without requiring ignored artifacts in a
-      // clean source checkout. Source writes derive and leave those peers alone.
-      if (params.mode === 'check' && (params.synchronizeSerializedManifest
-        || existsSync(resolve(packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH)))) {
+      // Package publication materializes its declarations, and its package
+      // check compares them. The serialized .happier-plugin/plugin.json is an
+      // ignored, derived package output (revision trees and replicas derive it,
+      // de2e8086641), so a stale local copy is not declaration drift: other
+      // checks leave present copies to their producers (P03-TOOLING-4).
+      if (params.mode === 'check' && params.synchronizeSerializedManifest) {
         await synchronizeSerializedPluginManifest({
           packageRoot,
           packageName,

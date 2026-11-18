@@ -161,13 +161,24 @@ it('derives isolated source daemon projections while keeping committed-output ch
     mkdirSync(dirname(locator), { recursive: true });
     const locatorOutput = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
     writeFileSync(locator, locatorOutput);
-    const [asset] = renderCliBundledPluginManifestAssets({ pluginPackages });
+    // The committed daemon publication is the manifest plus its derived summary and
+    // schema assets, and the help facts derived from the same bundled membership.
+    const assets = renderCliBundledPluginManifestAssets({ pluginPackages });
+    const [asset] = assets;
     if (!asset) throw new Error('Fixture must produce its declaration asset');
     const assetPath = join(happyCliDir, asset.relativePath);
-    mkdirSync(dirname(assetPath), { recursive: true });
-    writeFileSync(assetPath, asset.out);
+    for (const published of [...assets, ...renderCliBundledActionCliHelpAssets({ pluginPackages })]) {
+      mkdirSync(dirname(join(happyCliDir, published.relativePath)), { recursive: true });
+      writeFileSync(join(happyCliDir, published.relativePath), published.out);
+    }
 
     const check = () => main(['--root', repoRoot, '--mode', 'check', '--daemon-projections']);
+    await check();
+    // The packaged .happier-plugin/plugin.json is an ignored, derived package
+    // output (trees and replicas regenerate it). A stale local copy is not
+    // declaration drift, so the projection check does not compare it.
+    mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+    writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), '{"id":"stale.packaged.copy"}\n');
     await check();
     const { entries } = await readCliSourceEntries({ repoDir: repoRoot, manifest: {}, transform });
     expect(entries['packages/plugins/fixture/dist/index']).toBe(join(packageRoot, 'src/index.ts'));
