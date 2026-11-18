@@ -7,6 +7,8 @@ import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } f
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { createConnectServiceOptionId } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { t } from '@/text';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -31,7 +33,7 @@ const installed: MachineAgentInventoryItem = {
 afterEach(async () => { standardCleanup(); for (const connection of connections.splice(0).reverse()) await connection.dispose(); storage.setState(before, true); });
 
 describe('Machine agent Connect handoff', () => {
-    it.each([false, true])('keeps the originating Home, Account and Machine (other Home active: %s)', async (switchHome) => {
+    it.each(['connect', 'connect after focusing another Home', 'refused native sign-in selection'] as const)('%s on the originating Home and Machine', async (path) => {
         await homes.reset();
         const original = await homes.addHome({ name: 'Original', serverUrl: 'https://agent-connect-original.test', accountId: 'original-account', currentAccount: true });
         const other = await homes.addHome({ name: 'Other', serverUrl: 'https://agent-connect-other.test', accountId: 'other-account' });
@@ -39,6 +41,9 @@ describe('Machine agent Connect handoff', () => {
         connections.push(await restoreServerAccountForTest({ serverUrl: 'https://agent-connect-original.test',
             accountId: 'original-account', configureSocket: configureConnectedServerSocketBoundary,
             additionalRequestOrigins: ['https://agent-connect-other.test'], request: homes.request }));
+        if (path === 'refused native sign-in selection') {
+            await homes.setActionPolicy(original, 'connectedServices.accounts.purposeDefault.set', 'ui', 'off');
+        }
         const scope = { serverId: original, accountId: 'original-account' };
         const machine = createMachineFixture({ id: 'chosen-machine', active: false, activeAt: 1 });
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [original]: [machine] } });
@@ -46,15 +51,32 @@ describe('Machine agent Connect handoff', () => {
         await vi.waitFor(() => expect(binding.getCurrent().binding?.scope).toEqual(scope));
         const screen = await renderScreen(<AgentSetupForm serverId={original} machineId={machine.id}
             machineName="Chosen" agentId="codex" layout="full" testID="agent-connect" />);
+        const serviceId = path === 'refused native sign-in selection'
+            ? buildQualifiedPluginContributionKey(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID['openai-codex'].service)
+            : 'openai-codex';
         await act(async () => { machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
             status: 'ready', items: [installed], lastCheckedAt: 1,
-            connectedServicesByAgentId: { codex: [{ serviceId: 'openai-codex', title: 'ChatGPT', connected: false, healthy: false, profileLabel: null }] },
+            connectedServicesByAgentId: { codex: [{ serviceId, title: 'ChatGPT', connected: false, healthy: false, profileLabel: null }] },
         }); });
+        if (path === 'refused native sign-in selection') {
+            await vi.waitFor(() => expect(screen.findByTestId('agent-connect.openTerminal'), screen.getTextContent()).not.toBeNull());
+            vi.mocked(Modal.alert).mockClear();
+            vi.mocked(Modal.show).mockClear();
+            try {
+                await screen.pressByTestIdAsync('agent-connect.openTerminal');
+                await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), t('actionConfirmations.turnedOffUnnamedMessage')));
+                expect(Modal.show).not.toHaveBeenCalled();
+            } finally {
+                await screen.unmount();
+                await binding.unmount();
+            }
+            return;
+        }
         const connectChoiceId = `agent-connect.way.${createConnectServiceOptionId('openai-codex')}`;
         await vi.waitFor(() => expect(screen.findByTestId(connectChoiceId), screen.getTextContent()).not.toBeNull());
         await screen.pressByTestIdAsync(connectChoiceId);
         // A retained form keeps its own operand while navigation focuses a different Home.
-        if (switchHome) await act(async () => {
+        if (path === 'connect after focusing another Home') await act(async () => {
             await setActiveServerId(other);
             connections.push(await restoreServerAccountForTest({ serverUrl: 'https://agent-connect-other.test',
                 accountId: 'other-account', configureSocket: configureConnectedServerSocketBoundary,
@@ -71,7 +93,7 @@ describe('Machine agent Connect handoff', () => {
         if (!modal.component) throw new Error('Expected the connected account sheet');
         const sheet = await renderScreen(React.createElement(modal.component,
             { ...modal.props, onClose: () => modal.onRequestClose?.() }));
-        if (switchHome) {
+        if (path === 'connect after focusing another Home') {
             expect(sheet.findHostByTestId('connect-sheet:unavailable')).not.toBeNull();
             expect(sheet.root.findAll(node => node.props.diagnosticCode === 'account_scope_mismatch')).not.toHaveLength(0);
         } else {

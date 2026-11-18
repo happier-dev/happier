@@ -15,6 +15,7 @@ import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverP
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
@@ -69,9 +70,10 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         }
         return execution.isCurrent();
     }, [execution.isCurrent, mutateDefaults, props.machineId]);
-    const credentialFailure = React.useCallback(() => {
-        Modal.alert(t('common.error'), t('errors.operationFailed'));
-    }, []);
+    const credentialFailure = React.useCallback((error: unknown) => {
+        if (!execution.isCurrent()) return;
+        Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('errors.operationFailed')));
+    }, [execution.isCurrent]);
 
     const install = React.useCallback((intent: 'install' | 'update' | 'uninstall') => {
         const current = agentRef.current;
