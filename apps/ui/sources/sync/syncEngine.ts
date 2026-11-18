@@ -44,7 +44,6 @@ import { bindAccountEncryptionObservation, readAccountEncryptionObservationBindi
 import { getConcurrentAccountEncryptionObservationBinding } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { createConfiguredSocketRequest } from '@/sync/engine/socket/configuredSocketTransport';
 import { emitSessionReadCursorUpdateWithServerScope, type SessionReadCursorUpdateAck } from '@/sync/api/session/emitSessionReadCursorUpdateWithServerScope';
-import { isDemoModeActive, isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 import { ensureSessionRuntimeForPendingInput } from '@/sync/ops';
 import {
     TokenStorage,
@@ -1037,7 +1036,6 @@ function createDefaultMessageTransport(): SyncMessageTransport {
 }
 
 function shouldRetrySyncInvalidation(error: unknown): boolean {
-    if (isDemoModeActive()) return false;
     if (error instanceof ExternalSessionTranscriptRpcError && !error.retryable) return false;
     return shouldRetryError(error);
 }
@@ -1754,9 +1752,7 @@ class Sync {
             },
         });
         subscribeSessionTranscriptConsumerReleases(() => {
-            if (!isDemoModeActive()) {
-                this.sessionTranscriptRetention.scheduleSweep();
-            }
+            this.sessionTranscriptRetention.scheduleSweep();
         });
         fireAndForget(Promise.resolve().then(() => {
             if (isEmbedWindowContext()) return;
@@ -3909,7 +3905,7 @@ class Sync {
          * A transcript already in memory is left to the visibility path.
          */
         onSessionOpenRequested = (sessionId: string) => {
-            if (this.embedSessionScope || isDemoModeActive()) return;
+            if (this.embedSessionScope) return;
             if (storage.getState().sessionMessages[sessionId]?.isLoaded === true) return;
             this.ensureInitialSessionMessages(sessionId);
         };
@@ -3917,7 +3913,6 @@ class Sync {
         onSessionVisible = (sessionId: string) => {
             if (this.embedSessionScope && (sessionId !== this.embedSessionScope.scope.sessionId || !this.embedSessionScope.isCurrent())) return;
             for (const repository of this.sessionSystemRecordRepositories.values()) repository.refreshObserved();
-            if (isDemoModeActive()) return;
             // Entering a Session presents its current state, not the state one frame behind.
             socketApplyFrame.flushNow();
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
@@ -3955,7 +3950,7 @@ class Sync {
             /** `held`: the Session is shown again; the replica this runtime read is current. */
             demand: 'read' | 'held' = 'read',
         ): Promise<void> => {
-            if (isDemoModeActive() || !accountLifetime.isCurrent()) return;
+            if (!accountLifetime.isCurrent()) return;
             const capturedDraftScope = accountLifetime.scope;
             await materializeVisibleExistingSessionDraft({
                 sessionId,
@@ -6547,7 +6542,6 @@ class Sync {
         recipient?: PendingMessage['recipient'],
         options?: Readonly<{ invalidateSnapshot: boolean }>,
     ): Promise<void> {
-        if (isDemoModeActive()) return;
         if (
             expectedOutboxScope
             && !areServerAccountScopesEqual(this.embedSessionScope ? this.getAppliedTransportAccountScope() : getActiveServerAccountScope(), expectedOutboxScope)
@@ -10946,12 +10940,6 @@ class Sync {
         if (!initialSession) {
             return;
         }
-        if (isDemoModeActive()) {
-            if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
-                storage.getState().applyMessagesLoaded(sessionId);
-            }
-            return;
-        }
         return await this.withSessionTranscriptRead(sessionId, async read => {
         if (!read.pageOptions.isCurrent()) return;
         let session: Session | null = initialSession;
@@ -12505,9 +12493,6 @@ class Sync {
           const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
           if (!normalizedSessionId || !normalizedSidechainId) return 'not_ready';
 
-          if (isSeededDemoHome(storage.getState().sessions[normalizedSessionId]?.serverId ?? '')
-              && storage.getState().sessionMessagesHistoryStartLoaded[normalizedSessionId] === true) return 'loaded';
-
           if (this.isLiveAgentTranscriptSession(normalizedSessionId)) {
               return await this.ensureLiveAgentSidechainRowsLoaded(normalizedSessionId, normalizedSidechainId);
           }
@@ -12592,11 +12577,6 @@ class Sync {
           const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
           if (!normalizedSessionId || !normalizedSidechainId) {
               return { loaded: 0, hasMore: true, status: 'not_ready' };
-          }
-
-          if (isSeededDemoHome(storage.getState().sessions[normalizedSessionId]?.serverId ?? '')
-              && storage.getState().sessionMessagesHistoryStartLoaded[normalizedSessionId] === true) {
-              return { loaded: 0, hasMore: false, status: 'no_more' };
           }
 
           // Older sidechain history for a live Agent IS older global history; there is no

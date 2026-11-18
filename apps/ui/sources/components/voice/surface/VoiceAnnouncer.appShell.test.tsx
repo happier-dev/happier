@@ -225,11 +225,10 @@ function readSource(relativePath: string): string {
 /**
  * The announcer is only the app's announcer if the app mounts it, and *where* it
  * mounts is the whole decision: `AuthenticatedAppRuntimeMountsGate` returns null
- * while the onboarding journey is active (`app/(app)/_layout.tsx:61-67`) while
- * `JourneyVoiceStageSurface.tsx` still renders a Voice surface. Mounting inside
- * the gate makes onboarding silent on every platform, and no runtime assertion in
- * this package can see that, so the mount site is pinned as source structure —
- * the way `voiceEnergyAppMount.test.ts` pins the energy provider.
+ * for secondary realms and the terminal-connect route, so mounting inside it would
+ * silence those surfaces. No runtime assertion in this package can see that, so the
+ * mount site is pinned as source structure — the way `voiceEnergyAppMount.test.ts`
+ * pins the energy provider.
  */
 describe('Voice announcer app mount', () => {
     it('mounts once in the app layout', () => {
@@ -238,7 +237,7 @@ describe('Voice announcer app mount', () => {
         expect(layout.match(/<VoiceAnnouncer\s*\/>/g)).toHaveLength(1);
     });
 
-    it('mounts outside the runtime gate that onboarding switches off', () => {
+    it('mounts outside the authenticated runtime gate', () => {
         const runtimeMounts = readSource('components/appShell/runtime/AuthenticatedAppRuntimeMounts.tsx');
         expect(runtimeMounts).not.toContain('VoiceAnnouncer');
     });
@@ -253,13 +252,5 @@ describe('Voice announcer app mount', () => {
         ]) {
             expect(readSource(presentation)).not.toContain('accessibilityLiveRegion');
         }
-    });
-
-    it('marks every seeded onboarding transcript row non-announcing', () => {
-        const fixture = readSource(
-            'components/onboarding/tour/stage/surfaces/JourneyVoiceStageSurface.tsx',
-        );
-        expect(fixture.match(/announce:\s*false/g)).toHaveLength(3);
-        expect(fixture).not.toMatch(/announce:\s*true/);
     });
 });

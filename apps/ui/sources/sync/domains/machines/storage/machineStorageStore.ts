@@ -1,4 +1,3 @@
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { HappierStorageSummaryV1, MachineStorageCategoryListResultV1, MachineStoragePileResultV1, StorageItemRefV1, MachineStorageScanGetResultV1, DiskScanStateV1,
     MachineStorageItemsListResultV1, PileApplyResultV1, PileReviewV1, TrashEmptyResultV1, TrashRestoreResultV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { MachineResourcesPolicyMutationResultV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
@@ -450,7 +449,7 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
         return response;
     }
     return {
-        getState: (input: MachineStorageKey) => getDemoMachineRead(input)?.storage ?? summaries.getState(input), observe: summaries.observe, getCategory: categories.getState, observeCategory: categories.observe,
+        getState: (input: MachineStorageKey) => summaries.getState(input), observe: summaries.observe, getCategory: categories.getState, observeCategory: categories.observe,
         demand(input: MachineStorageKey, listener: () => void = () => {}) { return summaries.subscribe(input, listener); },
         demandCategory(input: MachineStorageCategoryInput, listener: () => void = () => {}) {
             const releaseSummary = summaries.subscribe(input, () => {});

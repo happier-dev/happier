@@ -1,8 +1,6 @@
 import * as React from 'react';
-import { retryableLazy } from '@/components/ui/performance/retryableLazy';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
     useAuth,
@@ -21,11 +19,9 @@ import { useIsLandscape } from '@/utils/platform/responsive';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
 import { trackAccountCreated } from '@/track';
 import { t } from '@/text';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { OnboardingWizardSurfacePresentation } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
@@ -39,12 +35,6 @@ import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShell
 import { resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
 import { getWizardStepDefinition } from '@/components/onboarding/state/wizardStepRegistry';
 import type { WizardStepId } from '@/components/onboarding/state/wizardTypes';
-import { type JourneyBeatId, type JourneySurface } from '@/components/onboarding/tour/state/journeyBeats';
-import { readJourneyReplayBeatId, readWebQueryParam } from '@/components/onboarding/tour/state/journeyReplayIntent';
-import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { Text } from '@/components/ui/text/Text';
-import { useHasCompletedAuthOnce } from '@/sync/domains/state/onboardingUiState';
 import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthentication';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { completeEmailPasswordAuthentication } from '@/components/account/auth/emailPassword/completeEmailPasswordAuthentication';
@@ -54,96 +44,6 @@ import {
 } from '@/components/settings/account/openAccountSecurityForHome';
 import { readWebServerEntry } from '@/sync/domains/server/serverProfiles';
 import { consumeWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
-import { useOpenPersonalize } from '@/components/onboarding/personalize/useOpenPersonalize';
-import type { JourneyCompletion } from '@/components/onboarding/tour/state/useJourneyProgress';
-
-type OnboardingJourneyHostModule = typeof import('@/components/onboarding/tour/OnboardingJourneyHost');
-let onboardingJourneyHostModulePromise: Promise<OnboardingJourneyHostModule> | null = null;
-
-function loadOnboardingJourneyHostModule(): Promise<OnboardingJourneyHostModule> {
-    onboardingJourneyHostModulePromise ??= import('@/components/onboarding/tour/OnboardingJourneyHost').catch((error: unknown) => {
-        onboardingJourneyHostModulePromise = null;
-        throw error;
-    });
-    return onboardingJourneyHostModulePromise;
-}
-
-export function preloadOnboardingJourneyHost(): void {
-    void loadOnboardingJourneyHostModule().catch(() => undefined);
-}
-
-const LazyOnboardingJourneyHost = retryableLazy(async () => {
-    const module = await loadOnboardingJourneyHostModule();
-    return { default: module.OnboardingJourneyHost };
-});
-
-const journeyLoadingStylesheet = StyleSheet.create((theme) => ({
-    root: {
-        flex: 1,
-        minHeight: 0,
-        backgroundColor: theme.colors.background.canvas,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: theme.space.s12,
-        paddingHorizontal: theme.space.s24,
-    },
-    label: {
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-    },
-}));
-
-function OnboardingJourneyLoadingSurface(): React.ReactElement {
-    const { theme } = useUnistyles();
-    const loadingLabel = t('common.loading');
-
-    return (
-        <View
-            testID="onboarding-journey-loading"
-            accessible
-            accessibilityLabel={loadingLabel}
-            accessibilityRole="progressbar"
-            accessibilityLiveRegion="polite"
-            role="status"
-            aria-live="polite"
-            style={journeyLoadingStylesheet.root}
-        >
-            <ActivitySpinner
-                testID="onboarding-journey-loading-spinner"
-                color={theme.colors.text.secondary}
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-            />
-            <Text testID="onboarding-journey-loading-label" style={journeyLoadingStylesheet.label}>
-                {loadingLabel}
-            </Text>
-        </View>
-    );
-}
-
-type JourneyHostErrorBoundaryProps = Readonly<{
-    children: React.ReactNode;
-    fallback: React.ReactNode;
-}>;
-
-type JourneyHostErrorBoundaryState = Readonly<{
-    didCatch: boolean;
-}>;
-
-class JourneyHostErrorBoundary extends React.Component<JourneyHostErrorBoundaryProps, JourneyHostErrorBoundaryState> {
-    state: JourneyHostErrorBoundaryState = { didCatch: false };
-
-    static getDerivedStateFromError(): JourneyHostErrorBoundaryState {
-        return { didCatch: true };
-    }
-
-    render(): React.ReactNode {
-        if (this.state.didCatch) {
-            return this.props.fallback;
-        }
-        return this.props.children;
-    }
-}
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -162,13 +62,17 @@ function resolveUnauthShellRouteTestId(stepId: WizardStepId): string {
 }
 
 function readDebugWebQueryParam(name: string): string {
-    if (!process.env.EXPO_PUBLIC_DEBUG) return '';
-    return readWebQueryParam(name);
-}
-
-function resolveJourneySurface(params: Readonly<{ isDesktopShell: boolean; platformOs: string }>): JourneySurface {
-    if (params.isDesktopShell) return 'desktop';
-    return params.platformOs === 'web' ? 'web' : 'native';
+    if (!process.env.EXPO_PUBLIC_DEBUG || Platform.OS !== 'web') return '';
+    const location =
+        typeof window !== 'undefined'
+            ? window.location
+            : (globalThis as unknown as { location?: { href?: unknown; search?: unknown } }).location;
+    const search = typeof location?.search === 'string' ? location.search : '';
+    const href = typeof location?.href === 'string' ? location.href : '';
+    const query = search || (href.includes('?') ? href.slice(href.indexOf('?')) : '');
+    if (!query) return '';
+    const value = new URLSearchParams(query).get(name);
+    return typeof value === 'string' ? value.trim() : '';
 }
 
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
@@ -176,30 +80,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const router = useRouter();
     const { step } = useLocalSearchParams<{ step?: string | string[] }>();
     const homeStepRequested = (Array.isArray(step) ? step[0] : step) === 'home';
-    const openPersonalize = useOpenPersonalize();
     const suppliedHomeAddress = React.useMemo(() => readWebServerEntry(), []);
     const clearSuppliedHomeAddress = React.useCallback(() => {
         if (suppliedHomeAddress) consumeWebServerUrlOverrideFromLocation({ serverUrl: suppliedHomeAddress.serverUrl, retainSelection: true });
     }, [suppliedHomeAddress]);
-    const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
-    const onboardingTourEnabled = onboardingTourDecision?.state === 'enabled';
-    const onboardingTourResolving = onboardingTourDecision == null;
-    // The journey is a FIRST-RUN experience (D21). `hasCompletedAuthOnce` survives
-    // logout by design, so returning users get the preserved classic welcome shell.
-    const hasCompletedAuthOnce = useHasCompletedAuthOnce();
-    // Sticky: once a journey session is live it OWNS the viewport until it ends.
-    // This flag flips true when the host mounts and stays true across the auth hinge
-    // (login sets `hasCompletedAuthOnce`), so a first-run journey is never torn down
-    // mid-setup — the root cause of the S4-beside-the-live-shell composition defect.
-    const journeySessionActive = useOnboardingJourneySessionActive();
-    // A persisted setup-intent continuation for an authed user means the journey's
-    // setup act was interrupted (e.g. reload lost the in-memory session latch). The
-    // journey re-latches at the setup act instead of ever exposing the shell (D21/P1).
-    const routeGatePendingSetupIntent = usePendingSetupIntent();
-    const hasAuthedSetupContinuation =
-        auth.isAuthenticated
-        && routeGatePendingSetupIntent?.branch !== 'askHappier'
-        && (routeGatePendingSetupIntent?.phase === 'awaiting_auth' || routeGatePendingSetupIntent?.phase === 'post_auth');
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isDesktopHost(), []);
     const authEntryOptions = useAuthEntryOptions();
@@ -364,16 +248,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [homeStepRequested, props.initialStepId, suppliedHomeAddress]);
 
-    const resolvedInitialBeatId = React.useMemo((): JourneyBeatId | undefined => (
-        readJourneyReplayBeatId()
-    ), []);
-    const handleJourneyExit = React.useCallback((completion?: JourneyCompletion) => {
-        if (!auth.isAuthenticated) return;
-        // A replay URL is a continuing viewport intent; retire it before the phone sheet opens.
-        if (resolvedInitialBeatId) router.replace('/');
-        if (completion) openPersonalize();
-    }, [auth.isAuthenticated, openPersonalize, resolvedInitialBeatId, router]);
-
     // Window controls stay in the top-left chrome where the platform puts them; the Updates entry is the
     // workflow pane's bottom-right footer control (end of the welcome help row, same corner on later steps).
     const shellChrome = shellChromeHost === 'unauth-shell' ? (
@@ -412,11 +286,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             controller={controller}
         />
     );
-    const journeyLoadingFallback = <OnboardingJourneyLoadingSurface />;
-    const journeySurface = resolveJourneySurface({
-        isDesktopShell,
-        platformOs: Platform.OS,
-    });
     const shellTestID = props.testID ?? resolveUnauthShellRouteTestId(controller.stepId);
     const renderClassicShell = (children: React.ReactNode) => (
         <UnauthenticatedSplitShell
@@ -440,44 +309,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             {children}
         </UnauthenticatedSplitShell>
     );
-
-    if (onboardingTourResolving && !suppliedHomeAddress && !homeStepRequested) {
-        return journeyLoadingFallback;
-    }
-
-    // Explicit replay intent (deep-link into a specific journey beat) reaches the
-    // journey regardless of returning-user status; replay is an intent, not the default.
-    const hasExplicitJourneyReplayIntent = resolvedInitialBeatId != null;
-    const shouldRenderJourney =
-        onboardingTourEnabled
-        && !suppliedHomeAddress
-        && !homeStepRequested
-        && (journeySessionActive || hasAuthedSetupContinuation || !hasCompletedAuthOnce || hasExplicitJourneyReplayIntent);
-    // Re-latch case: authed setup continuation without a live journey session mounts
-    // the host directly at the first setup-act beat (S3) instead of the journey start.
-    const journeyInitialBeatId = resolvedInitialBeatId
-        ?? (hasAuthedSetupContinuation && !journeySessionActive ? 'S3' as JourneyBeatId : undefined);
-
-    if (shouldRenderJourney) {
-        preloadOnboardingJourneyHost();
-        const fallback = renderClassicShell(wizardFallback);
-        return (
-            <JourneyHostErrorBoundary fallback={fallback}>
-                <React.Suspense fallback={journeyLoadingFallback}>
-                    <LazyOnboardingJourneyHost
-                        testID={props.testID ?? 'onboarding-journey'}
-                        surface={journeySurface}
-                        isDesktopShell={isDesktopShell}
-                        initialBeatId={journeyInitialBeatId}
-                        retentionDisclosure={authEntryOptions.retentionDisclosure}
-                        preAuthController={controller}
-                        wizardSurfaceProps={wizardSurfaceProps}
-                        onExit={handleJourneyExit}
-                    />
-                </React.Suspense>
-            </JourneyHostErrorBoundary>
-        );
-    }
 
     return renderClassicShell(wizardFallback);
 });

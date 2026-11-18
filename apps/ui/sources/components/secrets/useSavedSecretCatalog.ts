@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
-import { getDemoSavedSecretMetadata } from '@/demoMode/runtime/demoSettingsReadProjection';
 import { useShallow } from 'zustand/react/shallow';
 import {
   type SavedSecretCatalogCorruptEntryV1,
@@ -378,7 +377,7 @@ export function useSavedSecretCatalog(
     () => (catalogEnabled ? getSavedSecretCatalogSnapshot(scope) : null),
   );
 
-  const sharedEntries = snapshot?.data ?? (!scope && !includeMaterial ? getDemoSavedSecretMetadata() : null) ?? EMPTY_SHARED_ENTRIES;
+  const sharedEntries = snapshot?.data ?? EMPTY_SHARED_ENTRIES;
   const corruptEntries = snapshot?.corruptEntries ?? EMPTY_CORRUPT_ENTRIES;
   const entries = sharedEntries;
 

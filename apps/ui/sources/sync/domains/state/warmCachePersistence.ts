@@ -35,7 +35,6 @@ import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storage
 import { prepareWarmCacheEncryptionKey, readResolvedWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
 import { SESSION_CONTENT_AVAILABILITIES } from '@/sync/domains/session/encryptedContentAvailability';
 import { MachineLockedReasonSchema } from './storageTypes';
-import { isServerProfilePersistenceSuspendedForDemo } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { normalizePluginUiProjection, resolvePluginUiProjectionPlatform, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { preparePluginUiProjectionOrigins } from '@/sync/domains/plugins/ui/projectionOrigins';
@@ -815,7 +814,6 @@ function forgetScopedRecord(key: string): void {
 }
 
 function saveScopedRecord<T extends Record<string, unknown>>(key: string | null, value: T, serialize?: (value: T) => string): void {
-    if (isServerProfilePersistenceSuspendedForDemo()) return;
     persistScopedRecord(key, value, serialize);
 }
 
@@ -996,7 +994,7 @@ export function savePluginUiProjectionWarmCacheEntries(
     entries: Record<string, PluginUiProjectionCacheEntryV1>,
 ): void {
     const key = buildScopedKey(PLUGIN_UI_PROJECTION_WARM_CACHE_PREFIX, serverId, accountId);
-    if (!key || isEmbedWindowContext() || isServerProfilePersistenceSuspendedForDemo()) return;
+    if (!key || isEmbedWindowContext()) return;
     // A pending/unavailable keystore has not admitted retained custody. Do not
     // derive a presentation that the existing persistence owner cannot publish.
     if (!getWarmCacheStorage() && !warmCacheStorageUnopenable) return;
@@ -1023,7 +1021,6 @@ export function scheduleMachineDisplayWarmCacheEntriesSave(
     accountIdRaw: string | null | undefined,
     entries: Record<string, MachineDisplayCacheEntryV1>,
 ): void {
-    if (isServerProfilePersistenceSuspendedForDemo()) return;
     const serverId = normalizeScopePart(serverIdRaw);
     const accountId = normalizeScopePart(accountIdRaw);
     if (!serverId || !accountId) return;

@@ -28,10 +28,6 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import {
-    doesOnboardingJourneyOwnTransientDemoServer,
-    useOnboardingJourneySessionActive,
-} from '@/components/onboarding/tour/state/journeySession';
 
 class HomeConnectRequiresDraft extends Error {}
 
@@ -135,23 +131,14 @@ export function WebServerOverrideGate({ children, serverUrlOverride }: Readonly<
     const { refreshFromActiveServer: refreshAuth } = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
     const bootstrappedServerUrlRef = React.useRef(activeServerSnapshot.serverUrl ?? null);
-    const onboardingJourneyActive = useOnboardingJourneySessionActive();
-    const onboardingJourneyOwnsTransientDemoServer = doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
     const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
-        !onboardingJourneyOwnsTransientDemoServer
-        && resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: bootstrappedServerUrlRef.current, serverUrlOverride }).kind === 'switch_server',
+        resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: bootstrappedServerUrlRef.current, serverUrlOverride }).kind === 'switch_server',
     );
     const webServerOverrideHandledRef = React.useRef(false);
     const [draftHref, setDraftHref] = React.useState<string | null>(null);
     const consumeDraft = React.useCallback(() => { setDraftHref(null); }, []);
     const navigation = React.useMemo(() => ({ draftHref, consumeDraft }), [draftHref, consumeDraft]);
     React.useEffect(() => {
-        if (onboardingJourneyOwnsTransientDemoServer) {
-            // The journey's seeded relay is presentation-only. Keep both the override
-            // action and the root hold pending until that temporary ownership ends.
-            setIsApplyingWebServerOverride(false);
-            return;
-        }
         if (webServerOverrideHandledRef.current) return;
         const overrideAction = resolveWebServerUrlOverrideAction({
             bootstrappedServerUrl:
@@ -162,8 +149,7 @@ export function WebServerOverrideGate({ children, serverUrlOverride }: Readonly<
             setIsApplyingWebServerOverride(false);
             return;
         }
-        // Same-server refresh/URL cleanup must not unmount a still-live journey after
-        // its demo act tears down. Only a real cross-server switch owns a root hold.
+        // Same-server refresh/URL cleanup holds nothing. Only a real cross-server switch owns a root hold.
         setIsApplyingWebServerOverride(overrideAction.kind === 'switch_server');
         const suppliedNewHome = overrideAction.kind === 'switch_server'
             && !resolveUniqueServerProfileByUrl(overrideAction.serverUrl);
@@ -238,9 +224,9 @@ export function WebServerOverrideGate({ children, serverUrlOverride }: Readonly<
             }
         })(), { tag: 'WebServerOverrideGate' });
         return () => { cancelled = true; controller.abort(); };
-    }, [onboardingJourneyOwnsTransientDemoServer, refreshAuth, serverUrlOverride]);
+    }, [refreshAuth, serverUrlOverride]);
 
-    if (isApplyingWebServerOverride && !onboardingJourneyOwnsTransientDemoServer) {
+    if (isApplyingWebServerOverride) {
         return null;
     }
 

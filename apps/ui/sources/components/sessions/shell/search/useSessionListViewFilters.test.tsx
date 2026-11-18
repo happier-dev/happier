@@ -9,7 +9,6 @@ import {
     type SessionListViewContext,
 } from './sessionListViewFilters';
 import { reduceSessionListFilterEditorSelection } from './sessionListFilterEditorModel';
-import { enterDemoMode, exitDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 
 import {
     clearSessionListViewFilterRetentionForTests,
@@ -27,30 +26,11 @@ function boundAccountScopes(
 }
 
 afterEach(() => {
-    resetDemoModeDepthForTests();
     clearSessionListViewFilterRetentionForTests();
     standardCleanup();
 });
 
 describe('useSessionListViewFilters', () => {
-    it('shows the seeded Session corpus without borrowing real retained Run filters', async () => {
-        const readDefaults = () => resolveSessionListViewContextDefaults({ kind: 'global' }, ['demo-home'], 'all');
-        const hook = await renderHook(() => useSessionListViewFilters({ ...readDefaults(), accountScopeResolutions: new Map() }));
-        await act(async () => hook.getCurrent().setSearchQuery('my retained work'));
-        expect(hook.getCurrent().filters.show).toBe('both');
-        enterDemoMode('demo-home');
-        await hook.rerender();
-        expect(hook.getCurrent().filters).toMatchObject({ show: 'sessions', searchQuery: '' });
-        // The header compares against this same default: demo setup is not a removable filter.
-        expect(hook.getCurrent().filters).toEqual(readDefaults().defaults);
-        await act(async () => hook.getCurrent().setSearchQuery('demo refinement'));
-        await act(async () => hook.getCurrent().resetFilters());
-        expect(hook.getCurrent().filters).toMatchObject({ show: 'sessions', searchQuery: '' });
-        expect(hook.getCurrent().filters).toEqual(readDefaults().defaults);
-        exitDemoMode();
-        await hook.rerender();
-        expect(hook.getCurrent().filters).toMatchObject({ show: 'both', searchQuery: 'my retained work' });
-    });
     it('keeps the saved lens separate from temporary narrowing and resets that narrowing', async () => {
         const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
         const savedSpace = { accountScopeKey: 'account-a', id: 'smart', filter: { ...defaults, source: 'persisted' as const } };

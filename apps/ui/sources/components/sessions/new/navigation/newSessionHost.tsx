@@ -14,7 +14,6 @@ import type { ModelOption } from '@/sync/domains/models/modelOptions';
 import type { PermissionMode } from '@/constants/PermissionModes';
 import type { SessionSpawnNewActionExecutor } from '@/sync/ops/actions/sessionSpawnNewAction';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { SessionInstrumentStripConnectionStatus } from '@/components/sessions/agentInput/instrumentStrip/SessionInstrumentStrip';
 
 /**
  * Where the one New Session surface lives.
@@ -64,8 +63,6 @@ export type NewSessionEmbeddedHost = Readonly<{
      * close capsule).
      */
     statusTrailingActions?: React.ReactNode;
-    /** Replaces the empty composer's line; `null` hides it while empty and not creating. */
-    emptyComposerStatus?: SessionInstrumentStripConnectionStatus | null;
     /** Receives the composer card's host view, so Docked seats its band on the card rather than its header. */
     composerPanelRef?: React.RefObject<View | null>;
     /**

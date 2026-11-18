@@ -22,7 +22,6 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import { projectSessionListFilterHomeQueriesV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 import {
     canSessionListOrdinaryPageAnswerQuery,
     type SessionListOrdinaryPageAdapter,
@@ -113,8 +112,6 @@ export function resolveSessionListViewContextDefaults(
         defaults: createSessionListViewFilterDefaults({
             scope: 'my_work',
             homeServerIds: mountedHomeServerIds,
-            // The seeded world has Sessions, without a credentialed Workflow Run collection.
-            ...(getDemoModeServerId() ? { show: 'sessions' as const } : {}),
             source,
         }),
     };

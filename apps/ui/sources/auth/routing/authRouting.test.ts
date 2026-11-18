@@ -110,7 +110,6 @@ describe('isPublicRouteForUnauthenticated', () => {
     it('allows credential-free QA routes before auth only in dev or debug-export builds', () => {
         withDevBuild(true, () => {
             withDebugRouteEnv(undefined, () => {
-                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'agent-setup'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
@@ -150,14 +149,12 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'session-defaults'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'team-shared'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'model-picker-states'])).toBe(false);
-                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });
         });
 
         withDevBuild(false, () => {
             withDebugRouteEnv('1', () => {
-                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(true);

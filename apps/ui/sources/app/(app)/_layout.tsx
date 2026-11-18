@@ -32,7 +32,6 @@ import {
 } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
 import { renderRootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
-import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 import { VoiceAnnouncer } from '@/components/voice/surface/VoiceAnnouncer';
 import { buildUniversalSearchRouteScreenOptions } from '@/components/appShell/search/universalSearchRouteScreenOptions';
 import { buildSessionRouteScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
@@ -70,8 +69,7 @@ const sessionRouteScreenOptions = ({ route }: { route: RouteProp<ParamListBase, 
 );
 
 /**
- * Keeps authenticated runtimes outside the full-viewport onboarding journey and
- * preserves the desktop-overlay/terminal-connect route exclusions.
+ * Preserves the desktop-overlay/terminal-connect route exclusions for authenticated runtimes.
  *
  * Keeping these subscriptions in this leaf prevents their updates from reaching
  * the Stack subtree.
@@ -86,9 +84,6 @@ function AuthenticatedAppRuntimeMountsGate({
     isDesktopShell: boolean;
 }>): React.ReactElement | null {
     const pathname = useCurrentRoutePathname();
-    const onboardingJourneyActive = useOnboardingJourneySessionActive();
-    if (onboardingJourneyActive) return null;
-
     if (!primaryRealm || isTerminalConnectWebPathname(pathname)) {
         return null;
     }
@@ -102,8 +97,6 @@ function AuthenticatedAppRuntimeMountsGate({
 }
 
 function MobileBottomChromeMountGate(): React.ReactElement | null {
-    const onboardingJourneyActive = useOnboardingJourneySessionActive();
-    if (onboardingJourneyActive) return null;
     // The retained navigator is hidden while the workspace owns the visible session.
     // Keep its single bottom-chrome host visible and in the same React registry.
     const chrome = <MobileBottomChromeHost />;
@@ -231,20 +224,9 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     return (
             <>
             {/*
-              * The one automatic Voice announcer for the whole app (§5.4a). It sits
-              * OUTSIDE `AuthenticatedAppRuntimeMountsGate` on purpose: that gate returns
-              * null while the onboarding journey is active, and the journey still renders
-              * a Voice surface — mounting inside it would make onboarding silent on every
-              * platform. Horizon, the orb and the composer planet expose labels and states
-              * only; two live regions do not coalesce.
-              */}
-            {/*
-              * The one automatic Voice announcer for the whole app (§5.4a). It sits
-              * OUTSIDE `AuthenticatedAppRuntimeMountsGate` on purpose: that gate returns
-              * null while the onboarding journey is active, and the journey still renders
-              * a Voice surface — mounting inside it would make onboarding silent on every
-              * platform. Horizon, the orb and the composer planet expose labels and states
-              * only; two live regions do not coalesce.
+              * The one automatic Voice announcer for the whole app (§5.4a). Horizon, the orb
+              * and the composer planet expose labels and states only; two live regions do
+              * not coalesce.
               */}
             {windowContext.role === 'primary' ? <VoiceAnnouncer /> : null}
             {/* The main window's tray and Quit handoff, outside the onboarding gate (R13C-F3). */}

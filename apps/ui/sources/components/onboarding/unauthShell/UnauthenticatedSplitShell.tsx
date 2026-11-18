@@ -132,7 +132,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
             testID={props.testID ?? (isSplit ? 'unauth-shell-split' : 'unauth-shell-mobile-workflow')}
             style={isSplit ? styles.splitRoot : styles.mobileOnlyRoot}
         >
-            {isSplit ? <StagePane mode="brand" /> : null}
+            {isSplit ? <StagePane /> : null}
             <WorkflowPanel
                 variant={isSplit ? 'desktop' : 'mobile'}
                 isWelcomeStep={props.isWelcomeStep}

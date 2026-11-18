@@ -10,7 +10,6 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { serveExternalSessionBrowseHome } from '@/dev/testkit/harness/externalSessionBrowseHome';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { enterDemoMode, isDemoModeActive, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -172,7 +171,7 @@ async function publishAcceptedCursor() {
 }
 
 async function settleMountedRuntime(enabled: boolean) {
-  if (!enabled || signedOut || isDemoModeActive()) return;
+  if (!enabled || signedOut) return;
   // The outer test deadline owns this genuine transport observation; add no shorter polling deadline.
   await waitForHomeGovernance(() => expect(firstAttachRequestObserved).toBe(true));
   await flushHookEffects();
@@ -366,7 +365,6 @@ describe('useExternalSessionRuntime', () => {
     await servedHome?.dispose();
     servedHome = null;
     storage.setState(previousState, true);
-    resetDemoModeDepthForTests();
     vi.clearAllMocks();
   });
 
@@ -470,30 +468,6 @@ describe('useExternalSessionRuntime', () => {
     } finally {
       await hook.unmount();
     }
-  });
-
-  it('keeps linked demo sessions inert while preserving their canonical link', async () => {
-    enterDemoMode();
-
-    const harness = await renderHarness();
-
-    expect(harness.getCurrent().externalSessionLink).toEqual(expect.objectContaining({
-      machineId: 'machine-1',
-      remoteSessionId: 'remote-1',
-    }));
-    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
-    expect(machineExternalSessionAttachSpy).not.toHaveBeenCalled();
-    expect(appStateListeners).toEqual(appStateBaseline);
-    expect(documentListeners).toEqual(documentBaseline);
-    expect(preferredServerListeners).toHaveLength(0);
-    expect(acceptedTailCursorState.listeners).toHaveLength(0);
-    expect(replaceExternalSessionStatusDemandViewportSpy).not.toHaveBeenCalled();
-    await expect(harness.getCurrent().refreshNow()).resolves.toBeNull();
-    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
-
-    await harness.unmount();
-
-    expect(machineExternalSessionDetachSpy).not.toHaveBeenCalled();
   });
 
   it('installs no runtime subscriptions while disabled and subscribes exactly once when enabled', async () => {

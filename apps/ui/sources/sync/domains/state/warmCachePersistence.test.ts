@@ -52,7 +52,6 @@ import { SkillFoundListResultV1Schema } from '@happier-dev/protocol/prompts/libr
 import { DaemonMcpServersDetectResponseSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { prepareWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
 import * as warmCache from './warmCachePersistence';
-import { suspendServerProfilePersistenceForDemo, resumeServerProfilePersistenceForDemo } from '@/sync/domains/server/serverProfiles';
 import { projectSessionDisplayV1,
     sealSessionOwnerDisplayEnvelopeV1, openSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions';
 import { SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -560,34 +559,6 @@ describe('warmCachePersistence', () => {
                 m1: expect.objectContaining({ updatedAt: 2, activeAt: 2 }),
             });
         } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('preserves admitted machine snapshots while declining demo writes and delayed demo captures', async () => {
-        vi.useFakeTimers();
-        const entries = (updatedAt: number) => ({ m1: { machineId: 'm1', metadataVersion: 1,
-            updatedAt, active: true, activeAt: updatedAt, revokedAt: null } });
-        let suspended = false;
-        try {
-            saveMachineDisplayWarmCacheEntries('server-a', 'account-a', entries(1));
-            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual(entries(1));
-            scheduleMachineDisplayWarmCacheEntriesSave('server-a', 'account-a', entries(2));
-            suspendServerProfilePersistenceForDemo();
-            suspended = true;
-            saveMachineDisplayWarmCacheEntries('server-a', 'account-a', entries(99));
-            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual(entries(1));
-            await vi.runAllTimersAsync();
-            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual(entries(2));
-            scheduleMachineDisplayWarmCacheEntriesSave('server-a', 'account-a', entries(99));
-            resumeServerProfilePersistenceForDemo();
-            suspended = false;
-            await vi.runAllTimersAsync();
-            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual(entries(2));
-            saveMachineDisplayWarmCacheEntries('server-a', 'account-a', entries(3));
-            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual(entries(3));
-        } finally {
-            if (suspended) resumeServerProfilePersistenceForDemo();
             vi.useRealTimers();
         }
     });

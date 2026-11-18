@@ -1,4 +1,3 @@
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { MachineVitalsSnapshotV1, MachineVitalsWatchResultV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import type { MachineVitalsHistoryV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { MachineVitalsHostFactsV1, MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
@@ -310,8 +309,6 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
         applySnapshot: (state, history) => retainState(state, { status: 'ready', history: retainDeep(state.history, history) }),
     });
     function getHeldState(input: MachineResourceStoreInput): MachineResourceState {
-        const demo = getDemoMachineRead(input);
-        if (demo) return demo.resources;
         return store.getState(input);
     }
     async function readForView(input: MachineResourceStoreInput, retry = false): Promise<void> {

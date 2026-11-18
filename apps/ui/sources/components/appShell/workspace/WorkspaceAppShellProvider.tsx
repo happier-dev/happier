@@ -43,7 +43,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;
     if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog}>{props.children}</AppWindowWorkspace>;
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
-        entry={presentation === 'entry'} deferred={presentation === 'deferred' || pendingFirstAccount} catalog={catalog}>
+        entry={presentation === 'entry'} deferred={pendingFirstAccount} catalog={catalog}>
         {props.children}
     </WorkspaceProvider>;
 }

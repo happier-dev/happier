@@ -1,4 +1,3 @@
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { MachineGuardActivityListV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import type { MachineGuardViewV1 } from '@happier-dev/protocol/machines/guard/guardRpcV1';
 
@@ -137,11 +136,11 @@ export function createMachineGuardStore(clients: MachineGuardClients) {
         failWatch: state => ({ ...state, status: 'error' }),
     });
     return {
-        getView: (input: MachineDaemonReadKey) => getDemoMachineRead(input)?.guard ?? views.getState(normalize(input)),
+        getView: (input: MachineDaemonReadKey) => views.getState(normalize(input)),
         observeView: (input: MachineDaemonReadKey, listener: () => void) => views.observe(normalize(input), listener),
         demandView: (input: MachineDaemonReadKey) => views.subscribe(normalize(input), () => {}),
         retryView: (input: MachineDaemonReadKey) => { views.invalidate(normalize(input)); },
-        getActivity: (input: MachineGuardActivityKey) => getDemoMachineRead(input)?.activity ?? activities.getState(normalize(input)),
+        getActivity: (input: MachineGuardActivityKey) => activities.getState(normalize(input)),
         observeActivity: (input: MachineGuardActivityKey, listener: () => void) => activities.observe(normalize(input), listener),
         readActivityOnce: (input: MachineGuardActivityKey) => activities.readOnce(normalize(input)),
         isActivityRefreshing: (input: MachineGuardActivityKey) => activities.isRefreshing(normalize(input)),

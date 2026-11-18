@@ -678,7 +678,6 @@ test('sync consumers and lazy presence never pull the sync implementation into t
             'sources/sync/domains/session/humanPresence/sessionHumanPresenceRuntime.ts',
             'sources/voice/tools/currentUiContextToolPort.ts',
             'sources/components/appShell/workspace/workspaceRouteBodies.ts',
-            'sources/components/onboarding/tour/stage/StageAppShell.tsx',
             'sources/app/(app)/settings/index.tsx',
         ]) {
             await server.build({

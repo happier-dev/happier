@@ -16,7 +16,6 @@ import {
 import type { SessionTeamCredentialBindingMetadataPatchV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageTimingV1';
 
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 
 export type UpdateMetadataAck = {
     result:
@@ -191,10 +190,6 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
     const exactInitial = params.initialSnapshot ?? await acquireTupleSnapshot();
     if (params.teamCredentialBinding && exactInitial.mode !== 'owner') {
         throw createMetadataPrivacyUpgradeRequiredError('Team credential binding requires Session owner metadata layout v1');
-    }
-    if (isDemoModeActive()) {
-        params.onMetadataCommitted?.(exactInitial.metadataVersion);
-        return;
     }
     const mutateLegacy = async (
         request: SessionMetadataLegacyOwnerMutationRequestV1<M, A>,

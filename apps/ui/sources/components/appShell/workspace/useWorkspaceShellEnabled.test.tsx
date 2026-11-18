@@ -17,10 +17,9 @@ vi.mock('react-native', async () => {
 });
 
 const { useWorkspacePresentation, useWorkspaceShellEnabled } = await import('./useWorkspaceShellEnabled');
-const { beginOnboardingJourneySession, endOnboardingJourneySession } = await import('@/components/onboarding/tour/state/journeySession');
 
 afterEach(() => {
-    standardCleanup(); endOnboardingJourneySession();
+    standardCleanup();
     vi.unstubAllGlobals();
     boundary.authenticated = true; boundary.pathname = '/settings/server/add'; boundary.width = 1440;
 });
@@ -59,10 +58,4 @@ describe('workspace route presentation owner', () => {
             const hook = await renderHook(useWorkspacePresentation);
             expect(hook.getCurrent()).toBe('entry');
         });
-
-    it('lets the active onboarding journey retain the Homes viewport until teardown', async () => {
-        beginOnboardingJourneySession();
-        const hook = await renderHook(useWorkspacePresentation);
-        expect(hook.getCurrent()).toBe('deferred');
-    });
 });

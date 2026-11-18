@@ -297,7 +297,6 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
         const { useWorkspacePresentation } = await import('@/components/appShell/workspace/useWorkspaceShellEnabled');
-        const { beginOnboardingJourneySession, endOnboardingJourneySession } = await import('@/components/onboarding/tour/state/journeySession');
         const { workspaceLayoutScopeKey, serializeWorkspaceLayout } = await import('@/components/appShell/workspace/workspacePersistence');
         const param = kind === 'new-session' ? 'newSessionDraftSeedId' : 'triggerWorkflowSeedId';
         const seed = (text: string) => {
@@ -354,7 +353,6 @@ describe('editor workflow composer', () => {
             } });
         }
         if (admission === 'shell' || admission === 'route') {
-            if (admission === 'shell') beginOnboardingJourneySession();
             routeBoundary.platform = 'web';
             const url = new URL(admission === 'route' ? '/new' : `/workflows/new?${param}=${first}`, 'https://happier.invalid');
             const location = { pathname: url.pathname, search: url.search, hash: '' };
@@ -382,6 +380,8 @@ describe('editor workflow composer', () => {
             return <WorkflowEditorHostScreen source={{ kind: 'new', [param]: params[param] }} />;
         }
         let openExpoEntry: (() => void) | undefined;
+        // `shell` admission starts deferred: the workspace claims routes without hosting them.
+        let releaseDeferred: (() => void) | undefined;
         function ExpoScene() {
             const [open, setOpen] = React.useState(admission !== 'route');
             openExpoEntry = () => setOpen(true);
@@ -389,8 +389,10 @@ describe('editor workflow composer', () => {
         }
         function Host() {
             const presentation = useWorkspacePresentation();
-            return <AppPaneProvider><WorkspaceProvider enabled={admission !== 'shell' || presentation === 'shell'}
-                deferred={presentation === 'deferred'} catalog={catalog}>{navigation => {
+            const [deferred, setDeferred] = React.useState(admission === 'shell');
+            releaseDeferred = () => setDeferred(false);
+            return <AppPaneProvider><WorkspaceProvider enabled={admission !== 'shell' || (!deferred && presentation === 'shell')}
+                deferred={deferred} catalog={catalog}>{navigation => {
             workspace = navigation;
             return <>
                 <ExpoScene />
@@ -413,7 +415,7 @@ describe('editor workflow composer', () => {
         expect(kind === 'new-session' ? readNewSessionAutomationHandoffSeed(first) : readTriggerWorkflowSeed(first)).not.toBeNull();
         await act(async () => {
             if (admission === 'route') window.history.pushState({}, '', `/workflows/new?${param}=${first}`);
-            endOnboardingJourneySession();
+            releaseDeferred?.();
             getStorage().setState({ isDataReady: true });
         });
         expect(screen.root.findByType(AgentInput).props.value).toBe('FIRST');
@@ -692,7 +694,6 @@ describe('editor workflow composer', () => {
         await seedSavedDefinition('00000000-0000-4000-8000-000000000001');
     });
     afterEach(async () => {
-        (await import('@/components/onboarding/tour/state/journeySession')).endOnboardingJourneySession();
         clearActiveUnsavedChangesGuard();
         await standardCleanup();
         await accountConnection?.dispose(); accountConnection = null;

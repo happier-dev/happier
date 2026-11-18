@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { getDemoMachinePresets } from '@/demoMode/runtime/demoMachineReadProjection';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { MachinePresetUpdateDraftInput } from '@/sync/domains/machines/presets/machinePresetEditDraft';
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
@@ -40,7 +39,6 @@ import { openActionOperationDetail } from '@/components/inbox/actionOperations/o
 
 const EMPTY_PREPARATION_STEPS: readonly ActionOperationProgressStepV1[] = [];
 const NO_PREPARATION_APPROVAL_REFRESH = () => {};
-const EMPTY_TEAM_DEMO_PRESETS: readonly ManagedMachinePresetListEntryV1[] = [];
 
 /** Last-reported private preparation and the canonical admitted Action lifecycle, without freshness inference. */
 export function useMachinePresetPreparation(input: Readonly<{
@@ -354,13 +352,11 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
     const readSnapshot = React.useCallback(() => {
         const next: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>> = {};
         for (const serverId of requestedIds) {
-            const demo = getDemoMachinePresets(serverId);
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
             const scope = accountScopes.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
             const resolution = scope?.resolution;
             let entry: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
-            if (demo) entry = { value: sharedWithTeamId === undefined ? demo : EMPTY_TEAM_DEMO_PRESETS, loading: false, error: null };
-            else if (!homeId) entry = { value: null, loading: false, error: 'server_identity_unavailable' };
+            if (!homeId) entry = { value: null, loading: false, error: 'server_identity_unavailable' };
             else if (resolution && resolution.kind !== 'bound' && resolution.kind !== 'resolving') {
                 entry = { value: null, loading: false, error: resolution.kind };
             } else entry = readMachinePresetsSnapshot(serverId, homeId,
@@ -378,7 +374,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         const releases: Array<() => void> = [];
         for (const [serverId, scope] of accountScopes) {
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
-            if (scope.binding?.isCurrent() && homeId && !getDemoMachinePresets(serverId)) {
+            if (scope.binding?.isCurrent() && homeId) {
                 releases.push(retainMachinePresets(scope.binding, homeId, approval => approvalRef.current?.(approval, serverId), { sharedWithTeamId }));
             }
         }

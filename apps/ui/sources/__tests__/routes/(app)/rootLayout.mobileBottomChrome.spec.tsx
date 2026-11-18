@@ -2,7 +2,6 @@ import React from 'react';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
-import { beginOnboardingJourneySession, endOnboardingJourneySession } from '@/components/onboarding/tour/state/journeySession';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -57,7 +56,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    endOnboardingJourneySession();
     vi.unstubAllGlobals();
     hoistedState.desktopHost = false;
     desktopSecureStorage.values.clear();
@@ -65,7 +63,6 @@ afterEach(() => {
 
 describe('RootLayout mobile bottom chrome wiring', () => {
     it('renders the mobile bottom chrome host after the stack so only its capsule wins pointer hit-testing', async () => {
-        endOnboardingJourneySession();
         const RootLayout = (await import('@/app/(app)/_layout')).default;
         const screen = await renderRootLayoutRoute(RootLayout);
 
@@ -88,15 +85,6 @@ describe('RootLayout mobile bottom chrome wiring', () => {
         ]);
     });
 
-    it('keeps app-only auxiliary mounts out of the full-viewport onboarding journey', async () => {
-        beginOnboardingJourneySession();
-        const RootLayout = (await import('@/app/(app)/_layout')).default;
-        const screen = await renderRootLayoutRoute(RootLayout);
-
-        expect(screen.tree.findAllByType(MobileBottomChromeHost.type)).toHaveLength(0);
-        expect(screen.tree.findAllByType(AuthenticatedAppRuntimeMounts.type)).toHaveLength(0);
-    });
-
     it('keeps app-owned runtimes out of dedicated desktop overlay presenters', async () => {
         hoistedState.desktopHost = true;
         vi.stubGlobal('window', { location: { href: 'https://app.example.test/desktop/activity-overlay' } });
@@ -107,13 +95,11 @@ describe('RootLayout mobile bottom chrome wiring', () => {
         expect(screen.tree.findAllByType('Stack' as never)).toHaveLength(1);
     });
 
-    it('keeps the desktop main window\'s tray and Quit handoff mounted through the onboarding journey, never in an overlay window (R13C-F3)', async () => {
+    it('keeps the desktop main window\'s tray and Quit handoff mounted in the main window, never in an overlay window (R13C-F3)', async () => {
         hoistedState.desktopHost = true;
-        beginOnboardingJourneySession();
         const RootLayout = (await import('@/app/(app)/_layout')).default;
         const screen = await renderRootLayoutRoute(RootLayout);
         expect(screen.tree.findAllByType(DesktopMainWindowRuntimes)).toHaveLength(1);
-        expect(screen.tree.findAllByType(AuthenticatedAppRuntimeMounts.type)).toHaveLength(0);
 
         await screen.unmount();
         hoistedState.desktopHost = true;

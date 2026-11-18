@@ -1,5 +1,4 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { isDemoMachineWidgetRead } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputFieldOptionsConstraint, readInputFieldSelectedValues, validateInputFieldSchema, validateInputFieldValue } from '@happier-dev/protocol/inputs/runtime';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -171,7 +170,7 @@ function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions, re
             ...(selectedIdentityMatches && selectedSession ? { sessionLabel: getSessionName(selectedSession, requested.serverId) } : {}),
         });
     if (input.enabled === false) return { status: 'unavailable', reasonCode: 'widget_inactive' };
-    if (!currentViewer && !isDemoMachineWidgetRead(input.scope, input.instance.definition))
+    if (!currentViewer)
         return { status: 'denied', reasonCode: 'widget_viewer_scope_mismatch' };
     if (!currentDefinition) return { status: 'unavailable', reasonCode: 'widget_type_unavailable' };
     if (needsPurposeCatalog && purposeCatalog.status === 'loading')

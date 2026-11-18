@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { isDemoMachinesSurfaceRead } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { Platform, View } from 'react-native';
@@ -260,9 +259,8 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     const canOrganize = canAdd && (hasGroup || (ready?.placements.length ?? 0) > 1 && (Platform.OS !== 'web' || coarsePrimaryPointer));
     const viewer = useActiveServerAccountScope();
     const focused = useIsFocused();
-    const current = ready !== null && focused && (isDemoMachinesSurfaceRead(ready.surface)
-        || !!viewer && areServerProfileIdentifiersEquivalent(viewer.serverId, ready.surface.serverId)
-        && (viewer.accountId === ready.surface.accountId || ready.admittedViewer?.serverId === viewer.serverId && ready.admittedViewer.accountId === viewer.accountId));
+    const current = ready !== null && focused && !!viewer && areServerProfileIdentifiersEquivalent(viewer.serverId, ready.surface.serverId)
+        && (viewer.accountId === ready.surface.accountId || ready.admittedViewer?.serverId === viewer.serverId && ready.admittedViewer.accountId === viewer.accountId);
     const movement = useWidgetMovementAdmission(current ? ready?.surface ?? null : null, ready?.placements, props.port.movement);
     const drop = useSessionSurfaceEntityDrag(current && ready ? {
         scope: ready.surface, title: props.surfaceName, getItem: () => null, isCurrent: () => current,

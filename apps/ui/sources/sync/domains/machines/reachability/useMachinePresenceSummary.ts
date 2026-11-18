@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { CliUpdateFacts } from '@happier-dev/protocol/machines/cliUpdateFacts';
 
 import { getStorage } from '@/sync/domains/state/storage';
@@ -99,8 +98,7 @@ export function useMachinePresenceSummaries(
             const name = machine ? getMachineDisplayName(machine).trim() || null : null;
             const sentenceName = machine ? getMachineSentenceName(machine, name ?? undefined) : null;
             const homeDir = machine?.metadata?.homeDir?.trim() || null;
-            const reachability = machine && getDemoMachineRead({ serverId: targetServerId, machineId: machine.id }) ? 'reachable'
-                : machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
+            const reachability = machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
             const machineIsKnown = Boolean(machine);
             const activeAt = machine ? readMachineActivity(machine).activeAt : null;
             const nativeState = machine?.managedInputRuntime?.state ?? null;

@@ -343,23 +343,6 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     }
   });
 
-  it('preserves the navigator while onboarding owns and releases the viewport', async () => {
-    const { SidebarNavigator } = await import('./SidebarNavigator');
-    const { Stack } = await import('expo-router');
-    const { beginOnboardingJourneySession, endOnboardingJourneySession } = await import('@/components/onboarding/tour/state/journeySession');
-    const screen = await renderScreen(<SidebarNavigator />);
-    const navigator = screen.tree.findByType(Stack);
-    try {
-      await act(async () => { beginOnboardingJourneySession(); });
-      expect(screen.tree.findAllByProps({ testID: 'navigation-sidebar' })).toHaveLength(0);
-      expect(screen.tree.findByType(Stack) === navigator).toBe(true);
-    } finally {
-      await act(async () => { endOnboardingJourneySession(); });
-    }
-    expect(screen.findByTestId('navigation-sidebar')).toBeTruthy();
-    expect(screen.tree.findByType(Stack) === navigator).toBe(true);
-  });
-
   it('keeps public setup routes free of sidebar chrome', async () => {
     hoistedState.mockPathname = '/setup';
     hoistedState.mockSegments = ['(app)', 'setup'];

@@ -9,7 +9,6 @@ import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scop
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveMachineSetupSatisfied } from '@/components/machines/add/machineAddPaths';
-import { isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 
 export { computeMachinesSummary, type MachinesSummary } from './computeMachinesSummary';
 
@@ -179,8 +178,7 @@ function resolveGettingStartedMachines(
     }, resolveScopeId);
     // A Home that is not answering never holds the decision: it is reported, and the Homes that
     // answer (or the active Home) decide.
-    const credentialUnavailable = (serverId: string) => !isSeededDemoHome(serverId)
-        && isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(serverId));
+    const credentialUnavailable = (serverId: string) => isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(serverId));
     const unavailableServerIds = input.selection.allowedServerIds.filter((serverId) => (
         credentialUnavailable(serverId)
         || (!machinesFor(serverId) && isHomeUnavailable(input.machineListStatusByServerId?.[serverId]))

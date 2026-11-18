@@ -110,12 +110,6 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // operation they offer runs in the main window, so they never wait on this webview's auth state.
   if (first === 'desktop' && (normalized[1] === 'capture' || normalized[1] === 'capture-selection') && normalized.length === 2) return true;
 
-  // The stage performance route must be reachable without credentials because its demo seed
-  // guard intentionally refuses to run when real credentials are present. Keep it closed in
-  // ordinary production builds because it seeds local demo data.
-  if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'stage-dperf')
-    return true;
-
   // Loaded native terminal acceptance must work from a clean embedded QA build. The screen is
   // still dev-only and exposes deterministic local bytes, not credentials or PTY controls.
   if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'terminal-qa')

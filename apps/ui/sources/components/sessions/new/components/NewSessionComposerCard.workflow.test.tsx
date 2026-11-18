@@ -254,34 +254,6 @@ describe('New workflow entry', () => {
             await screen.unmount();
         }
     });
-    it('lets an empty embedded composer hide its status without hiding the next draft or launch status', async () => {
-        const props = { ...panelProps(), promptStore: createNewSessionPromptStore(''),
-            connectionStatus: { text: 'Machine unavailable', color: 'red', dotColor: 'red' } };
-        const host: NewSessionEmbeddedHost = {
-            params: {}, setParams: () => {}, openDraft: () => {}, onHandedOff: () => {}, demanded: false,
-        };
-        const element = (emptyComposerStatus: NewSessionEmbeddedHost['emptyComposerStatus'], isCreating = false) => (
-            <NewSessionEmbeddedHostProvider host={{ ...host, emptyComposerStatus }}>
-                <NewSessionComposerCard panelProps={{ ...props, isCreating }} layout="embedded" attachments={false} voiceAffordance="none" />
-            </NewSessionEmbeddedHostProvider>
-        );
-        const screen = await renderScreen(element(undefined));
-        try {
-            expect(screen.findByTestId('agent-input-connection-status-text')).not.toBeNull();
-            await screen.update(element({ text: 'Session started', color: 'green', dotColor: 'green' }));
-            expect(screen.getTextContent()).toContain('Session started');
-            await screen.update(element(null));
-            expect(screen.findByTestId('agent-input-connection-status-text')).toBeNull();
-            await act(async () => { props.promptStore.setPrompt('Start a session'); });
-            expect(screen.findByTestId('agent-input-connection-status-text')).not.toBeNull();
-            await act(async () => { props.promptStore.setPrompt(''); });
-            expect(screen.findByTestId('agent-input-connection-status-text')).toBeNull();
-            await screen.update(element(null, true));
-            expect(screen.findByTestId('agent-input-connection-status-text')).not.toBeNull();
-        } finally {
-            await screen.unmount();
-        }
-    });
     it('keeps ordinary Machine and Agent controls without a second prompt or Send in a creation form', async () => {
         const screen = await renderScreen(<NewSessionComposerCard panelProps={{ ...panelProps(), machineName: 'Workstation', machinePopover: { renderContent: null } }}
             layout="embedded" inputPresentation="controlsOnly" attachments={false} voiceAffordance="none" />);

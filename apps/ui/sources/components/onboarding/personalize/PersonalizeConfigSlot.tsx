@@ -9,19 +9,19 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { stageVisualTokens } from '../stage/stageVisualTokens';
+import { personalizeLayoutTokens } from './personalizeLayoutTokens';
 
-export type JourneyConfigAction = () => void | Promise<void>;
+export type PersonalizeConfigAction = () => void | Promise<void>;
 
-export type JourneyConfigControllerSurface = Readonly<{
+export type PersonalizeConfigControllerSurface = Readonly<{
     body: React.ReactNode;
-    onPrimary?: JourneyConfigAction | null;
+    onPrimary?: PersonalizeConfigAction | null;
     primaryLabel: React.ReactNode;
     primaryDisabled?: boolean | null;
-    onBack?: JourneyConfigAction | null;
+    onBack?: PersonalizeConfigAction | null;
     backLabel?: React.ReactNode;
     showBack?: boolean | null;
-    onSkip?: JourneyConfigAction | null;
+    onSkip?: PersonalizeConfigAction | null;
     skipLabel?: React.ReactNode | null;
     skipDisabled?: boolean | null;
     showSkip?: boolean | null;
@@ -38,11 +38,11 @@ export type JourneyConfigControllerSurface = Readonly<{
  *   footer + actions to the bottom, and the per-step skip is an inline quiet
  *   secondary rather than a floating trailing row.
  */
-export type JourneyConfigSlotLayout = 'scroll' | 'flow';
+export type PersonalizeConfigSlotLayout = 'scroll' | 'flow';
 
-export type JourneyConfigSlotProps = Readonly<{
-    controller: JourneyConfigControllerSurface;
-    layout?: JourneyConfigSlotLayout;
+export type PersonalizeConfigSlotProps = Readonly<{
+    controller: PersonalizeConfigControllerSurface;
+    layout?: PersonalizeConfigSlotLayout;
     /** Scroll layout on a phone sheet: its actions take the shared phone footer (`HappierModalCardFooterActions`). */
     primarySizing?: 'content' | 'fill';
     testID?: string;
@@ -99,14 +99,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     actionButton: {
         alignItems: 'center',
-        borderRadius: stageVisualTokens.narration.primaryRadius,
+        borderRadius: personalizeLayoutTokens.action.primaryRadius,
         borderCurve: 'continuous',
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.elevated,
-        height: stageVisualTokens.narration.primaryHeight,
+        height: personalizeLayoutTokens.action.primaryHeight,
         justifyContent: 'center',
-        paddingHorizontal: stageVisualTokens.narration.primaryPaddingHorizontal,
+        paddingHorizontal: personalizeLayoutTokens.action.primaryPaddingHorizontal,
     },
     actionButtonDisabled: {
         opacity: 0.35,
@@ -130,7 +130,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     actionLabel: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
-        fontSize: stageVisualTokens.narration.primaryFontSize,
+        fontSize: personalizeLayoutTokens.action.primaryFontSize,
         lineHeight: 18,
     },
     primaryActionLabel: {
@@ -150,7 +150,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'flex-end',
         marginTop: theme.space.s10,
         minHeight: 18,
-        width: stageVisualTokens.narration.trailingRailWidth,
+        width: personalizeLayoutTokens.action.trailingRailWidth,
     },
     skipLabel: {
         color: theme.colors.text.tertiary,
@@ -177,7 +177,7 @@ type WebKeyboardEvent = Readonly<{
 
 function ConfigActionButton(props: Readonly<{
     label: React.ReactNode;
-    onPress: JourneyConfigAction;
+    onPress: PersonalizeConfigAction;
     disabled?: boolean | null;
     primary?: boolean;
     fill?: boolean;
@@ -197,7 +197,7 @@ function ConfigActionButton(props: Readonly<{
 
         // The controlled web runtime supplies the Enter key path without its
         // usual native-button click. Keep activation owned by this common
-        // Journey action boundary, and consume the key so a browser that does
+        // action boundary, and consume the key so a browser that does
         // synthesize the click cannot advance twice.
         event.preventDefault?.();
         event.stopPropagation?.();
@@ -256,12 +256,12 @@ function ConfigFooterHint(props: Readonly<{
     );
 }
 
-export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactElement {
+export function PersonalizeConfigSlot(props: PersonalizeConfigSlotProps): React.ReactElement {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const testID = props.testID ?? 'journey-config-slot';
+    const testID = props.testID ?? 'personalize-config-slot';
     const controller = props.controller;
-    const layout: JourneyConfigSlotLayout = props.layout ?? 'scroll';
+    const layout: PersonalizeConfigSlotLayout = props.layout ?? 'scroll';
     const showBack = controller.showBack !== false && Boolean(controller.onBack);
     const showSkip = controller.showSkip !== false && Boolean(controller.onSkip);
     const showPrimary = Boolean(controller.onPrimary);

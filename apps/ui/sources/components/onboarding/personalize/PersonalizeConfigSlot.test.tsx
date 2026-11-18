@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Text } from '@/components/ui/text/Text';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { stageVisualTokens } from '../stage/stageVisualTokens';
-import type { OnboardingWizardController } from '../../surfaces/useOnboardingWizardController';
-import type { JourneyConfigControllerSurface } from './JourneyConfigSlot';
+import { personalizeLayoutTokens } from './personalizeLayoutTokens';
+import type { OnboardingWizardController } from '../surfaces/useOnboardingWizardController';
+import type { PersonalizeConfigControllerSurface } from './PersonalizeConfigSlot';
 
-import { JourneyConfigSlot } from './JourneyConfigSlot';
+import { PersonalizeConfigSlot } from './PersonalizeConfigSlot';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -50,10 +50,10 @@ function actionGroup(node: ReactTestInstance) {
     return parent;
 }
 
-describe('JourneyConfigSlot', () => {
+describe('PersonalizeConfigSlot', () => {
     it('fills the phone action rail without putting the primary inside the scrolling body', async () => {
         const onPrimary = vi.fn();
-        const screen = await renderScreen(<JourneyConfigSlot
+        const screen = await renderScreen(<PersonalizeConfigSlot
             primarySizing="fill"
             controller={{ body: <Text>Long configuration body</Text>, primaryLabel: 'Next', onPrimary,
                 onSkip: vi.fn(), showSkip: true }} testID="phone-config"
@@ -69,7 +69,7 @@ describe('JourneyConfigSlot', () => {
 
     it('leads the phone action rail with a quiet Skip beside a primary that takes the rest (lab pphone-P1)', async () => {
         const onSkip = vi.fn();
-        const screen = await renderScreen(<JourneyConfigSlot
+        const screen = await renderScreen(<PersonalizeConfigSlot
             primarySizing="fill"
             controller={{ body: <Text>Body</Text>, primaryLabel: 'Next', onPrimary: vi.fn(), onSkip, showSkip: true }}
             testID="phone-config"
@@ -124,15 +124,15 @@ describe('JourneyConfigSlot', () => {
         >;
 
         const screen = await renderScreen(
-            <JourneyConfigSlot controller={controller} testID="journey-config" />,
+            <PersonalizeConfigSlot controller={controller} testID="personalize-config" />,
         );
 
         expect(screen.getTextContent()).toContain('Relay selection body');
         expect(screen.getTextContent()).toContain('Footer hint');
 
-        screen.pressByTestId('journey-config-back');
-        screen.pressByTestId('journey-config-primary');
-        screen.pressByTestId('journey-config-skip');
+        screen.pressByTestId('personalize-config-back');
+        screen.pressByTestId('personalize-config-primary');
+        screen.pressByTestId('personalize-config-skip');
 
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(onPrimary).toHaveBeenCalledTimes(1);
@@ -141,7 +141,7 @@ describe('JourneyConfigSlot', () => {
 
     it('uses the fixed action baseline visual treatment', async () => {
         const scene = () => (
-            <JourneyConfigSlot
+            <PersonalizeConfigSlot
                 controller={{
                     body: <Text>Configuration body</Text>,
                     onPrimary: vi.fn(),
@@ -152,21 +152,21 @@ describe('JourneyConfigSlot', () => {
                     skipLabel: 'Skip setup',
                     showSkip: true,
                 }}
-                testID="journey-config"
+                testID="personalize-config"
             />
         );
         const screen = await renderScreen(scene());
 
-        const primary = screen.findByTestId('journey-config-primary');
-        const back = screen.findByTestId('journey-config-back');
+        const primary = screen.findByTestId('personalize-config-primary');
+        const back = screen.findByTestId('personalize-config-back');
         expect(primary).not.toBeNull();
         expect(back).not.toBeNull();
-        expect(screen.findByTestId('journey-config-skip-row')).not.toBeNull();
+        expect(screen.findByTestId('personalize-config-skip-row')).not.toBeNull();
 
         expect(actionChromeStyle(primary!)).toMatchObject({
-            height: stageVisualTokens.narration.primaryHeight,
-            borderRadius: stageVisualTokens.narration.primaryRadius,
-            paddingHorizontal: stageVisualTokens.narration.primaryPaddingHorizontal,
+            height: personalizeLayoutTokens.action.primaryHeight,
+            borderRadius: personalizeLayoutTokens.action.primaryRadius,
+            paddingHorizontal: personalizeLayoutTokens.action.primaryPaddingHorizontal,
         });
         expect(actionChromeStyle(back!)).toMatchObject({
             backgroundColor: 'transparent',
@@ -176,20 +176,20 @@ describe('JourneyConfigSlot', () => {
             primary!.props.onPressIn();
         });
         await screen.update(scene());
-        expect(actionChromeStyle(screen.findByTestId('journey-config-primary')!)).toMatchObject({
+        expect(actionChromeStyle(screen.findByTestId('personalize-config-primary')!)).toMatchObject({
             transform: [{ scale: motionTokens.press.scale }],
         });
-        expect(flattenStyle(screen.findByTestId('journey-config-skip-row')?.props.style)).toMatchObject({
+        expect(flattenStyle(screen.findByTestId('personalize-config-skip-row')?.props.style)).toMatchObject({
             alignItems: 'center',
             alignSelf: 'flex-end',
-            width: stageVisualTokens.narration.trailingRailWidth,
+            width: personalizeLayoutTokens.action.trailingRailWidth,
         });
     });
 
     it('flows the body, footer, and inline skip inside a single scroll (no inner scroller, no floating skip row)', async () => {
         const onSkip = vi.fn();
         const screen = await renderScreen(
-            <JourneyConfigSlot
+            <PersonalizeConfigSlot
                 layout="flow"
                 controller={{
                     body: <Text>Command card body</Text>,
@@ -202,31 +202,31 @@ describe('JourneyConfigSlot', () => {
                     showSkip: true,
                     footerHint: <Text>Active Relay pill</Text>,
                 }}
-                testID="journey-config"
+                testID="personalize-config"
             />,
         );
 
         // Body is a plain in-flow View (natural height), not an inner ScrollView
         // that would clip the command card / relay rows (F-W12-3).
-        const body = screen.findByTestId('journey-config-body');
+        const body = screen.findByTestId('personalize-config-body');
         expect(body).not.toBeNull();
         expect(body?.type).toBe('View');
         expect(flattenStyle(body?.props.style).flex).toBeUndefined();
 
         // Footer chrome (Active-Relay pill) is in-flow, never overlaid (F-W12-1).
-        expect(screen.findByTestId('journey-config-footer')).not.toBeNull();
+        expect(screen.findByTestId('personalize-config-footer')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Active Relay pill');
 
         // Skip is an inline quiet secondary inside the action bar — no floating
         // trailing skip row (the ghost affordance owner is killed, F-W12-2).
-        expect(screen.findByTestId('journey-config-skip-row')).toBeNull();
-        expect(screen.findByTestId('journey-config-skip')).not.toBeNull();
+        expect(screen.findByTestId('personalize-config-skip-row')).toBeNull();
+        expect(screen.findByTestId('personalize-config-skip')).not.toBeNull();
         // Back is the secondary companion to Continue; Skip stays on the opposite side.
-        const back = screen.findByTestId('journey-config-back')!;
-        expect(actionGroup(back) === actionGroup(screen.findByTestId('journey-config-primary')!)).toBe(true);
-        expect(actionGroup(back) === actionGroup(screen.findByTestId('journey-config-skip')!)).toBe(false);
+        const back = screen.findByTestId('personalize-config-back')!;
+        expect(actionGroup(back) === actionGroup(screen.findByTestId('personalize-config-primary')!)).toBe(true);
+        expect(actionGroup(back) === actionGroup(screen.findByTestId('personalize-config-skip')!)).toBe(false);
         expect(actionChromeStyle(back).borderColor).not.toBe('transparent');
-        screen.pressByTestId('journey-config-skip');
+        screen.pressByTestId('personalize-config-skip');
         expect(onSkip).toHaveBeenCalledTimes(1);
     });
 
@@ -246,7 +246,7 @@ describe('JourneyConfigSlot', () => {
             showSkip: false,
             footerHint: 'Setup footer',
         } satisfies Pick<
-            JourneyConfigControllerSurface,
+            PersonalizeConfigControllerSurface,
             | 'body'
             | 'onPrimary'
             | 'primaryLabel'
@@ -262,17 +262,17 @@ describe('JourneyConfigSlot', () => {
         >;
 
         const screen = await renderScreen(
-            <JourneyConfigSlot controller={controller} testID="journey-config" />,
+            <PersonalizeConfigSlot controller={controller} testID="personalize-config" />,
         );
 
         expect(screen.getTextContent()).toContain('Machine setup body');
         expect(screen.getTextContent()).toContain('Setup footer');
-        expect(screen.findByTestId('journey-config-back')).toBeNull();
-        expect(screen.findByTestId('journey-config-skip')).toBeNull();
-        expect(screen.findByTestId('journey-config-primary')?.props.accessibilityState).toMatchObject({
+        expect(screen.findByTestId('personalize-config-back')).toBeNull();
+        expect(screen.findByTestId('personalize-config-skip')).toBeNull();
+        expect(screen.findByTestId('personalize-config-primary')?.props.accessibilityState).toMatchObject({
             disabled: true,
         });
         // Parent opacity must survive the press hook's idle opacity under reduced motion.
-        expect(flattenStyle(screen.findByTestId('journey-config-primary')?.props.style)?.opacity).toBe(0.35);
+        expect(flattenStyle(screen.findByTestId('personalize-config-primary')?.props.style)?.opacity).toBe(0.35);
     });
 });

@@ -24,10 +24,6 @@ import {
     type NativeSyntheticEvent,
 } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
-import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
-import {
-    useSpotlightTarget,
-} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import { useComposerKeyboardLayout as useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { useReportComposerOverlayOpen } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
@@ -2028,7 +2024,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const composerDropBounds = React.useCallback(() => readWindowBounds(composerDropMeasurable()) ?? composerDropNativeBounds.current, [composerDropMeasurable]);
     // The composer's whole block (status row, attachments and panel): a carried card keeps clear of it.
     const composerBlockBounds = React.useCallback((): WindowBounds | null => {
-        const element = stageSpotlightRef.current as unknown as { getBoundingClientRect?: () => DOMRect } | null;
+        const element = composerBlockRef.current as unknown as { getBoundingClientRect?: () => DOMRect } | null;
         return element?.getBoundingClientRect ? readWindowBounds({ getBoundingClientRectFn: () => element.getBoundingClientRect!() }) : null;
     }, []);
     const measureComposerDrop = React.useCallback(() => {
@@ -2586,16 +2582,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
-    const stageSpotlightRef = React.useRef<View>(null);
-    const stageSpotlightProps = useSpotlightTarget(
-        stageSpotlightRef,
-        props.sessionId ? STAGE_SPOTLIGHT_TARGET_IDS.composerQueue : null,
-    );
-    const stageSpotlightLayout = stageSpotlightProps.onLayout;
+    const composerBlockRef = React.useRef<View>(null);
     const handleComposerBlockLayout = React.useCallback((event: LayoutChangeEvent) => {
-        stageSpotlightLayout?.(event);
         updateNullableLayoutHeight(setComposerBlockHeightPx, event.nativeEvent.layout.height);
-    }, [stageSpotlightLayout]);
+    }, []);
 
     const {
         commandMenuOpen,
@@ -4205,7 +4195,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // Reading never searches the live catalog or rebinds a frozen reference.
         return (
             <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
-            <AgentInputPopoverClearanceContext.Provider value={documentPanel ? undefined : stageSpotlightRef}>
+            <AgentInputPopoverClearanceContext.Provider value={documentPanel ? undefined : composerBlockRef}>
             <AgentInputPopoverColumnContext.Provider value={overlayAnchorRef}>
             <AgentInputDocumentPanelContext.Provider value={documentPanel}>
             <AgentInputTextSync textSource={textSource} onText={onControlledText} />
@@ -4364,22 +4354,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     return (
         <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
-        <AgentInputPopoverClearanceContext.Provider value={documentPanel ? undefined : stageSpotlightRef}>
+        <AgentInputPopoverClearanceContext.Provider value={documentPanel ? undefined : composerBlockRef}>
         <AgentInputPopoverColumnContext.Provider value={overlayAnchorRef}>
         <AgentInputDocumentPanelContext.Provider value={documentPanel}>
         <AgentInputTextSync textSource={textSource} onText={onControlledText} />
         <SyncPerformanceReactProfiler id="sessions.agentInput">
             <View
                 testID="agent-input-composer"
-                ref={stageSpotlightRef}
-                // Measured by the composer's pickers (their clearance) and by the stage spotlight.
+                ref={composerBlockRef}
+                // Measured by the composer's pickers (their clearance).
                 collapsable={false}
                 onLayout={handleComposerBlockLayout}
                 pointerEvents={Platform.OS === 'web' ? 'auto' : undefined}
                 style={[
                     styles.container,
                     documentPanel ? styles.containerDocument : null,
-                    stageSpotlightProps.style,
                     { paddingHorizontal: column.paddingHorizontal },
                 ]}
             >

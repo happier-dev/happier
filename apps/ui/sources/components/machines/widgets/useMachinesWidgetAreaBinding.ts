@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { createDemoMachinesWidgetBinding } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 
 import { useCorePageWidgetAreaBinding } from '@/components/widgets/area/useCorePageWidgetAreaBinding';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -46,5 +45,5 @@ export function useMachinesWidgetAreaBinding(
     presets,
     context: MACHINES_PAGE_CONTEXT,
   });
-  return React.useMemo(() => ({ ...binding, ...(!binding.port ? createDemoMachinesWidgetBinding(presets) : null), presets }), [binding, presets]);
+  return React.useMemo(() => ({ ...binding, presets }), [binding, presets]);
 }

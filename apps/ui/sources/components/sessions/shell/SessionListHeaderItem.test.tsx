@@ -1,24 +1,10 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
 import { SessionListHeaderItem } from './sessionListHeaderItem';
-
-const spotlightTestState = vi.hoisted(() => ({
-    active: false,
-    mounts: 0,
-    unmounts: 0,
-}));
-
-vi.mock('@/components/onboarding/tour/stage/useSpotlightTarget', () => ({
-    useSpotlightTarget: () => ({
-        active: spotlightTestState.active,
-        onLayout: vi.fn(),
-        style: spotlightTestState.active ? { zIndex: 1 } : undefined,
-    }),
-}));
 
 vi.mock('react-native-gesture-handler', async () => {
     const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
@@ -36,15 +22,7 @@ vi.mock('react-native-worklets', () => ({
 
 vi.mock('./sessionListChrome', async () => {
     const ReactModule = await import('react');
-    const CollapsibleSectionHeader = ReactModule.forwardRef((props: any, ref) => {
-        ReactModule.useEffect(() => {
-            spotlightTestState.mounts += 1;
-            return () => {
-                spotlightTestState.unmounts += 1;
-            };
-        }, []);
-        return ReactModule.createElement('CollapsibleSectionHeader', { ...props, ref });
-    });
+    const CollapsibleSectionHeader = ReactModule.forwardRef((props: any, ref) => ReactModule.createElement('CollapsibleSectionHeader', { ...props, ref }));
     return {
         ProjectGroupHeader: (props: any) => ReactModule.createElement('ProjectGroupHeader', props),
         SessionSectionHeader: (props: any) => ReactModule.createElement('SessionSectionHeader', props),
@@ -53,46 +31,6 @@ vi.mock('./sessionListChrome', async () => {
 });
 
 describe('SessionListHeaderItem', () => {
-    beforeEach(() => {
-        spotlightTestState.active = false;
-        spotlightTestState.mounts = 0;
-        spotlightTestState.unmounts = 0;
-    });
-
-
-    it('keeps the attention header mounted when its spotlight registration activates', async () => {
-        const item = {
-            type: 'header',
-            title: 'Needs attention',
-            headerKind: 'attention',
-            groupKey: 'attention',
-        } as const;
-        const commonProps = {
-            collapsedKeys: {},
-            projectHeaderViewModelByGroupKey: new Map(),
-            onOpenProject: vi.fn(),
-            onCreateSessionFromWorkspaceScope: vi.fn(),
-            onAddFolderToWorkspace: vi.fn(),
-            onRenameWorkspace: vi.fn(),
-            onResetWorkspaceName: vi.fn(),
-            onToggleCollapse: vi.fn(),
-        };
-        const screen = await renderScreen(
-            <SessionListHeaderItem item={item as any} {...commonProps} />,
-        );
-
-        expect(spotlightTestState.mounts).toBe(1);
-        expect(spotlightTestState.unmounts).toBe(0);
-
-        spotlightTestState.active = true;
-        await act(async () => {
-            await screen.update(<SessionListHeaderItem item={{ ...item } as any} {...commonProps} />);
-        });
-
-        expect(spotlightTestState.mounts).toBe(1);
-        expect(spotlightTestState.unmounts).toBe(0);
-    });
-
     it('reuses the same project-header callbacks when rerendered with identical inputs', async () => {
         const item = {
             type: 'header',

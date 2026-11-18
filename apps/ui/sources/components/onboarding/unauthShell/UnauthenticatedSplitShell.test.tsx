@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Text, TextInput } from 'react-native';
+import { Text, TextInput } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,7 +8,6 @@ import { standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 
-import { stageVisualTokens } from '../tour/stage/stageVisualTokens';
 import { StagePane } from './StagePane';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 import type { UnauthShellLayout } from './useUnauthShellLayout';
@@ -452,100 +451,10 @@ describe('StagePane', () => {
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     });
 
-    it('renders the existing brand panel in brand mode', async () => {
-        const screen = await renderScreen(<StagePane mode="brand" />);
+    it('renders the brand panel', async () => {
+        const screen = await renderScreen(<StagePane />);
 
         expect(screen.findByTestId('unauth-shell-stage-pane')).toBeTruthy();
         expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
-    });
-
-    it('renders stage children over the receded planet wallpaper without mounting the brand panel in stage mode', async () => {
-        const screen = await renderScreen(
-            <StagePane
-                mode="stage"
-                accentHue="#FFB14A"
-                planetOpacity={0.58}
-                planetScale={0.9}
-            >
-                <Text testID="future-demo-stage">demo stage</Text>
-            </StagePane>,
-        );
-
-        expect(screen.findByTestId('unauth-shell-stage-pane')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-stage-sky')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-stage-atmosphere')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-stage-bloom')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-stage-noise')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-stage-wallpaper-host')).toBeTruthy();
-        expect(screen.findByTestId('planet-background-desktop')).toBeTruthy();
-        expect(screen.findByTestId('future-demo-stage')).toBeTruthy();
-        expect(screen.findAllByTestId('unauth-shell-brand-pane')).toEqual([]);
-        expect(screen.findByTestId('unauth-shell-stage-wallpaper-wash')).toBeNull();
-
-        const skyStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-sky')?.props.style);
-        expect(skyStyle.backgroundColor).toBe(stageVisualTokens.horizon.light.backgroundColor);
-        expect(skyStyle.backgroundImage).toBe(stageVisualTokens.horizon.light.skyGradient);
-
-        const atmosphereStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-atmosphere')?.props.style);
-        const bloomStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-bloom')?.props.style);
-        const noiseStyle = flattenStyle(screen.findByTestId('unauth-shell-stage-noise')?.props.style);
-        expect(atmosphereStyle.backgroundColor).toBe(
-            Platform.OS === 'web' ? 'transparent' : stageVisualTokens.horizon.light.atmosphereColor,
-        );
-        expect(bloomStyle.backgroundColor).toBe(
-            Platform.OS === 'web' ? 'transparent' : stageVisualTokens.horizon.light.bloomColor,
-        );
-        if (Platform.OS === 'web') {
-            expect(noiseStyle.backgroundImage).toContain(stageVisualTokens.horizon.noiseTileDataUri);
-            expect(noiseStyle.backgroundRepeat).toBe('repeat');
-        }
-
-        // ONE planet framing recipe (spec §1). The stage used to select its own
-        // `desktopComposition="horizon"` crop ('50%' / '86%'), which anchored the
-        // disc centred and read as a floating ball cut off at the narration
-        // divider; it now makes the same `PlanetBackground` call the welcome
-        // brand pane makes. Asserting parity against a real brand-mode render —
-        // rather than restating a literal — is what this file is uniquely placed
-        // to check: it fails if either pane grows its own framing again.
-        const brandPane = await renderScreen(<StagePane mode="brand" />);
-        const brandPlanet = brandPane.findByTestId('planet-background-desktop');
-        const planet = screen.findByTestId('planet-background-desktop');
-        expect(brandPlanet).not.toBeNull();
-        expect(planet).not.toBeNull();
-        if (Platform.OS === 'web') {
-            const brandFraming = flattenStyle(brandPlanet?.props.style);
-            const framing = flattenStyle(planet?.props.style);
-            expect(brandFraming.backgroundImage).toEqual(expect.any(String));
-            expect(brandFraming.backgroundSize).toBe('cover');
-            expect(framing.backgroundImage).toBe(brandFraming.backgroundImage);
-            expect(framing.backgroundSize).toBe(brandFraming.backgroundSize);
-            expect(framing.backgroundPosition).toBe(brandFraming.backgroundPosition);
-        } else {
-            expect(brandPlanet?.props.contentPosition).toBeTruthy();
-            expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
-            expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
-        }
-        expect(planet?.props.accessible).toBe(false);
-        expect(planet?.props.pointerEvents).toBe('none');
-
-        const wallpaperHost = screen.findByTestId('unauth-shell-stage-wallpaper-host');
-        const style = flattenStyle(wallpaperHost?.props.style);
-        expect(style.opacity).toBe(0.58);
-        expect(style.transform).toEqual([{ scale: 0.9 }]);
-    });
-
-    it('applies the planet recede opacity and scale to brand mode', async () => {
-        const screen = await renderScreen(
-            <StagePane
-                mode="brand"
-                planetOpacity={0.42}
-                planetScale={0.94}
-            />,
-        );
-
-        const brandHost = screen.findByTestId('unauth-shell-stage-brand-host');
-        const style = flattenStyle(brandHost?.props.style);
-        expect(style.opacity).toBe(0.42);
-        expect(style.transform).toEqual([{ scale: 0.94 }]);
     });
 });

@@ -449,18 +449,6 @@ function getPersistedStateStorage(): PersistedStateStorage {
     return persistedStateStorage;
 }
 
-// Demo-scoped persistence firewall. While demo mode is active the onboarding
-// journey seeds a demo relay server into the active-server state; those writes
-// must never reach durable storage, or a hard exit (tab close / crash / mid-seed
-// navigation) would strand the real profile pointed at the dead demo server on the
-// next boot. This mirrors the runtimeFetch demo firewall: on suspend we swap the
-// live backend for an in-memory scratch seeded with the current durable value so
-// reads stay coherent for the demo world while every write is redirected away from
-// the real store; on resume we restore the untouched durable backend. Graceful
-// teardown behavior is unchanged (the real store was already correct).
-let demoPersistenceSuspendDepth = 0;
-let durablePersistedStateStorageDuringDemo: PersistedStateStorage | null = null;
-
 function createInMemoryPersistedStateStorage(seed: string | undefined): PersistedStateStorage {
     const values = new Map<string, string>();
     if (seed !== undefined) values.set(STATE_KEY, seed);
@@ -471,37 +459,6 @@ function createInMemoryPersistedStateStorage(seed: string | undefined): Persiste
             return true;
         },
     };
-}
-
-export function suspendServerProfilePersistenceForDemo(): void {
-    demoPersistenceSuspendDepth += 1;
-    if (demoPersistenceSuspendDepth !== 1) return;
-    const durable = getPersistedStateStorage();
-    durablePersistedStateStorageDuringDemo = durable;
-    persistedStateStorage = createInMemoryPersistedStateStorage(durable.getString(STATE_KEY));
-    persistedStateParseCache = null;
-}
-
-export function resumeServerProfilePersistenceForDemo(): void {
-    if (demoPersistenceSuspendDepth === 0) return;
-    demoPersistenceSuspendDepth -= 1;
-    if (demoPersistenceSuspendDepth !== 0) return;
-    persistedStateStorage = durablePersistedStateStorageDuringDemo;
-    durablePersistedStateStorageDuringDemo = null;
-    persistedStateParseCache = null;
-}
-
-export function isServerProfilePersistenceSuspendedForDemo(): boolean {
-    return demoPersistenceSuspendDepth > 0;
-}
-
-export function resetServerProfilePersistenceSuspendForTests(): void {
-    if (demoPersistenceSuspendDepth > 0 && durablePersistedStateStorageDuringDemo) {
-        persistedStateStorage = durablePersistedStateStorageDuringDemo;
-        persistedStateParseCache = null;
-    }
-    demoPersistenceSuspendDepth = 0;
-    durablePersistedStateStorageDuringDemo = null;
 }
 
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
@@ -3071,9 +3028,7 @@ export function resetServerProfilesRuntimeForTests(options?: Readonly<{ preserve
     admittedWebServerEntry = null;
     persistedStateStorage = null;
     persistedStateParseCache = null;
-    demoPersistenceSuspendDepth = 0;
     homeViewStateProjectionCache = null;
-    durablePersistedStateStorageDuringDemo = null;
     activeServerListeners.clear();
     runtimeOriginListeners.clear();
     serverProfilesListeners.clear();

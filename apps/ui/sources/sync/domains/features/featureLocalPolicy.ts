@@ -18,9 +18,6 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'app.ui.storeReviewPrompts': () => true,
     'app.ui.sessionGettingStartedGuidance': () => true,
     'app.ui.changelog': () => true,
-    // The unfinished demo journey is intentionally paused. Keep its implementation available for
-    // future work, but do not let legacy rollout configuration mount or load it in pre-auth flows.
-    'app.ui.onboardingTour': () => false,
     bugReports: () => true,
     'terminal.renderer.native': () => true,
     'terminal.renderer.iosGhostty': () => true,

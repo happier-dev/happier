@@ -43,7 +43,6 @@ import {
     resolveCommittedTranscriptSeqHighWaterMark,
 } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema, normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1, readParticipantRecipientRoutingIdentityV1, type ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -2106,13 +2105,6 @@ async function fetchAndApplyPendingMessagesV2Owned(
         return isScopeCurrent && isRefreshTokenAuthoritative();
     };
     try {
-    if (isDemoModeActive()) {
-        storage.getState().applyPendingSnapshot(sessionId, {
-            messages: storage.getState().sessionPending[sessionId]?.messages ?? [],
-            discarded: [],
-        });
-        return;
-    }
     const sessionEncryption = await refreshToken.sessionEncryptionAtCapture ?? null;
     if (!await isRefreshScopeCurrent()) return;
     if (!params.recipient) storage.getState().setPendingReadState(sessionId, 'loading');

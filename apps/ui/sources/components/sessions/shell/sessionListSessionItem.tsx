@@ -6,7 +6,7 @@ import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionL
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
-import { SessionListRow, type SessionListRowProps } from './sessionListRow';
+import { SessionListRow } from './sessionListRow';
 import type {
     UseSessionInlineDragStart,
     UseSessionInlineDragCancelEvent,
@@ -60,7 +60,6 @@ type SessionListSessionItemProps = Readonly<{
     onDeleteDraft?: () => void | Promise<void>;
     draftPreview?: SessionItemProps['draftPreview'];
     onSetReportsCollapsed?: SessionItemProps['onSetReportsCollapsed'];
-    measurementTarget?: SessionListRowProps['measurementTarget'];
 }>;
 
 export function SessionListSessionItem(props: SessionListSessionItemProps) {
@@ -104,7 +103,6 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             overlayShared={props.overlayShared}
             onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
             onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
-            measurementTarget={props.measurementTarget}
             rowViewModel={rowViewModel}
             agentSwitchingEnabled={props.agentSwitchingEnabled}
             session={session}

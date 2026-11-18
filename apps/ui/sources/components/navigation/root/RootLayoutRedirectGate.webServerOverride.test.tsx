@@ -293,33 +293,6 @@ describe('supplied Home admission before shell mount', () => {
         }
     });
 
-    it('defers supplied Home admission while a journey owns the demo and keeps a same-Home teardown mounted', async () => {
-        const address = 'https://journey-home.example.test';
-        const demo = await import('@/demoMode/runtime/enterExitDemoMode');
-        const journey = await import('@/components/onboarding/tour/state/journeySession');
-        demo.enterDemoMode();
-        journey.beginOnboardingJourneySession();
-        const mountedHomes: string[] = [];
-        const { screen, replaceRelativeUrl } = await mountFor(address, (serverUrl) => { mountedHomes.push(serverUrl); });
-        try {
-            expect(mountedHomes).toEqual(['']);
-            expect(runtimeFetch).not.toHaveBeenCalled();
-            const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-            await act(async () => {
-                await upsertAndActivateServer({ serverUrl: address, source: 'manual', scope: 'device' });
-                demo.exitDemoMode();
-            });
-            await vi.waitFor(() => expect(replaceRelativeUrl).toHaveBeenCalledWith(null, '', '/?tab=work'));
-            expect(mountedHomes).toHaveLength(1);
-        } finally {
-            await act(async () => {
-                demo.exitDemoMode();
-                journey.endOnboardingJourneySession();
-            });
-            await screen.unmount();
-        }
-    });
-
     it('keeps an explicitly dismissed Home draft ahead of session auth-recovery navigation', async () => {
         navigation.pathname = '/session/session-cancel/settings';
         navigation.params = { id: 'session-cancel' };

@@ -17,7 +17,6 @@ import {
     machineExternalSessionDetach,
     machineExternalSessionStatusGet,
 } from '@/sync/ops/machineExternalSessions';
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import {
@@ -80,7 +79,7 @@ const RUNTIME_ACTIVE_SIGNAL = Object.freeze({
 });
 
 export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParams): UseExternalSessionRuntimeResult {
-    const runtimeEnabled = params.enabled !== false && !isDemoModeActive();
+    const runtimeEnabled = params.enabled !== false;
     const presentation = useLayoutPresentationSignal();
     const hostActive = params.active ?? ALWAYS_ACTIVE;
     const activity = React.useMemo(() => allSignals(hostActive, presentation, RUNTIME_ACTIVE_SIGNAL),

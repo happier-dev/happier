@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Platform, Image as ReactNativeImage, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import { View, Platform, Image as ReactNativeImage } from 'react-native';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
@@ -647,14 +647,8 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     /** The column's first group sits closer to the header. */
     first?: boolean;
     testID?: string;
-    rootMeasurement?: Readonly<{
-        active: boolean;
-        ref: React.Ref<View>;
-        onLayout: NonNullable<ViewProps['onLayout']>;
-        style?: StyleProp<ViewStyle>;
-    }>;
 }>) {
-    const label = (
+    return (
         <CollectionListGroupLabel
             title={props.title}
             count={props.count}
@@ -672,17 +666,6 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                 } : {}),
             }}
         />
-    );
-    if (!props.rootMeasurement) return label;
-    return (
-        <View
-            ref={props.rootMeasurement.ref}
-            collapsable={props.rootMeasurement.active ? false : undefined}
-            style={props.rootMeasurement.style}
-            onLayout={props.rootMeasurement.onLayout}
-        >
-            {label}
-        </View>
     );
 });
 

@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { startBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
-import { BrowserSessionContextSeed } from '@/components/onboarding/tour/stage/surfaces/BrowserSessionContextSeed';
+import { BrowserContextCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
+import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control/reducer';
+import { attachActiveBrowserPageReference, createBrowserContextState } from '@/sync/domains/browser/context';
 import { createBrowserContextActionChip } from '@/components/sessions/agentInput/definitions/createBrowserContextActionChip';
 import {
     SessionBrowserContextRuntimeProvider,
@@ -91,13 +94,64 @@ function RuntimeProbe(): React.ReactElement {
     );
 }
 
+/** A browser page attached the way the Session's browser pane attaches it. */
+function buildAttachedBrowserPageState() {
+    const url = 'https://storefront.example.test/checkout';
+    const state = applyBrowserControlEvent(applyBrowserControlEvent(createBrowserControlState(), {
+        kind: 'sessionCreated', eventId: 'browser-session-created',
+        browserSessionId: 'browser-session', profileId: 'browser-profile', occurredAt: 1_000,
+    }), {
+        kind: 'viewOpened', eventId: 'browser-page-opened',
+        browserSessionId: 'browser-session', viewId: 'browser-page',
+        target: { kind: 'externalUrl', targetId: 'storefront', url,
+            display: { title: 'Storefront · Checkout', addressLabel: 'Storefront preview' } },
+        platform: 'web', adapterKind: 'externalUrl', engineKind: 'webIframe', currentUrl: url,
+        adapterCapabilities: buildBrowserAdapterCapabilities({
+            adapterKind: 'externalUrl', supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['webIframe'],
+        }),
+        occurredAt: 1_000,
+    });
+    return attachActiveBrowserPageReference({
+        state: createBrowserContextState(),
+        browserContextEnabled: true,
+        contextCapabilities: BrowserContextCapabilitiesSchema.parse({
+            enabled: true, available: true,
+            supportedContextKinds: ['browserPageReference'], supportedAdapterKinds: ['externalUrl'],
+        }),
+        view: state.viewsById['browser-page'] ?? null,
+        capturedAtMs: 1_000,
+    }).state;
+}
+
+/** Attaches one page after the Session's own mount-time reset, like the browser pane does. */
+function AttachedBrowserPage(): null {
+    const runtime = useSessionBrowserContextRuntimeContext();
+    const [contextState] = React.useState(buildAttachedBrowserPageState);
+    const onStateChange = runtime?.browserShellContext.onStateChange;
+    const onAttachPageReferenceChange = runtime?.browserShellContext.onAttachPageReferenceChange;
+    React.useEffect(() => {
+        if (!onStateChange || !onAttachPageReferenceChange) return;
+        let mounted = true;
+        void Promise.resolve().then(() => {
+            if (!mounted) return;
+            onStateChange(contextState);
+            onAttachPageReferenceChange(() => onStateChange(contextState));
+        });
+        return () => {
+            mounted = false;
+            onAttachPageReferenceChange(null);
+        };
+    }, [contextState, onAttachPageReferenceChange, onStateChange]);
+    return null;
+}
+
 describe('session browser context runtime', () => {
     it('stages a real attached browser page through the mounted runtime and removes it through the composer', async () => {
         function StageProbe() {
             const runtime = useSessionBrowserContextRuntime({ enabled: true });
             const presentation = runtime ? createBrowserContextActionChip(runtime.composerContext) : null;
             return <SessionBrowserContextRuntimeProvider runtime={runtime}>
-                <BrowserSessionContextSeed />
+                <AttachedBrowserPage />
                 <Text testID="staged-browser-page">{presentation?.attachmentRowItem?.label ?? ''}</Text>
                 <Pressable testID="remove-staged-page" onPress={presentation?.attachmentRowItem?.onRemove} />
             </SessionBrowserContextRuntimeProvider>;

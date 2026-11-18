@@ -3,8 +3,6 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import net from 'node:net';
-import { setTimeout as delay } from 'node:timers/promises';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(path.join(root, 'package.json'));
@@ -13,8 +11,8 @@ const { loadMetroConfigAsync } = require(path.join(cli, 'build/src/start/server/
 const { getConfig } = require('@expo/config');
 const Server = require('metro/private/Server').default;
 const mode = process.argv[2] ?? 'lazy';
-if (!['lazy', 'single', 'navigate-lazy', 'navigate-single', 'rebuild-lazy', 'rebuild-single'].includes(mode)) {
-    throw new Error('Expected lazy|single|navigate-lazy|navigate-single|rebuild-lazy|rebuild-single');
+if (!['lazy', 'single', 'rebuild-lazy', 'rebuild-single'].includes(mode)) {
+    throw new Error('Expected lazy|single|rebuild-lazy|rebuild-single');
 }
 const cache = path.join(os.tmpdir(), 'happier-metro-lazy-measure-20261005');
 let server;
@@ -42,103 +40,8 @@ function pathsTo(graph) {
     return found;
 }
 
-async function navigate() {
-    // Scratch-only Expo instance: no Stack, server, daemon, Account or database.
-    // Use Expo's own startup/resolver/middleware rather than plain Metro, which
-    // cannot resolve the Node builtins used by Expo's web winter runtime.
-    const minutes = Number(process.argv[3] ?? 31);
-    if (!Number.isFinite(minutes) || minutes < 0) throw new Error('Invalid measurement duration');
-    // Exercise the app's canonical request rewrite in the corrected run rather
-    // than making Expo disable lazy graphs through a diagnostic-only override.
-    if (mode === 'navigate-single') delete process.env.EXPO_NO_METRO_LAZY;
-    else process.env.EXPO_NO_METRO_LAZY = '0';
-    process.env.EXPO_NO_TELEMETRY = '1';
-    const config = require(path.join(root, 'metro.config.js'));
-    config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(cache, 'transforms') })];
-    config.fileMapCacheDirectory = path.join(cache, 'filemap');
-    mkdirSync(config.fileMapCacheDirectory, { recursive: true });
-    const portProbe = net.createServer();
-    await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
-    const port = portProbe.address().port;
-    await new Promise(resolve => portProbe.close(resolve));
-    const { MetroBundlerDevServer } = require(path.join(cli, 'build/src/start/server/metro/MetroBundlerDevServer.js'));
-    const expo = new MetroBundlerDevServer(root, { web: 'metro' }, { isDevClient: true });
-    let instance;
-    let browser;
-    try {
-        instance = await expo.startImplementationAsync({ port, maxWorkers: 2, mode: 'development', location: { hostType: 'localhost' } });
-        expo.setInstance(instance);
-        server = expo.metro;
-        log({ phase: 'scratch-ready', port, webRequest: server._config.server.rewriteRequestUrl(
-            '/apps/ui/index.bundle?platform=web&dev=true&lazy=true'), ...stats() });
-        const { chromium } = require('playwright');
-        browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-        const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-        const page = await context.newPage();
-        const errors = [];
-        const bundles = [];
-        page.on('pageerror', error => {
-            errors.push(String(error));
-            log({ phase: 'page-error', error: error.stack || String(error) });
-            if (String(error).includes('import.meta')) {
-                for (const graph of server.getBundler().getDeltaBundler()._deltaCalculators.keys()) {
-                    for (const module of graph.dependencies.values()) {
-                        for (const output of module.output) {
-                            const code = output.data.code ?? '';
-                            const index = code.indexOf('import.meta');
-                            if (index >= 0) log({ phase: 'untransformed-import-meta', path: module.path,
-                                code: code.slice(Math.max(0, index - 100), index + 200) });
-                        }
-                    }
-                }
-            }
-        });
-        page.on('response', response => {
-            if (response.url().includes('.bundle?')) bundles.push({ path: new URL(response.url()).pathname, status: response.status() });
-        });
-        const frames = ['sessions-list.hero', 'session-view.hero', 'relay-settings.hero', 'machines-settings.hero',
-            'subagents.hero', 'source-control.hero', 'mcp-servers.hero', 'connected-services.hero', 'theme-profiles.hero'];
-        const started = performance.now();
-        let firstContentAt;
-        let cycle = 0;
-        do {
-            for (const frame of frames) {
-                const start = performance.now();
-                await page.goto(`http://127.0.0.1:${port}/dev/stage-dperf?frame=${frame}&happier_hmr=0`, {
-                    // Cold compilation on a shared worker is outside the loaded
-                    // navigation interval. Its duration is measured, not capped.
-                    waitUntil: 'domcontentloaded', timeout: 0,
-                });
-                await page.waitForSelector(`[data-testid="demo-stage-frame-${frame}-content"]`, { timeout: 60 * 1000 });
-                if (cycle === 0 && frame === frames[0]) {
-                    const welcomeSkip = page.getByTestId('onboarding-showcase-story-skip');
-                    await welcomeSkip.waitFor({ state: 'visible', timeout: 30 * 1000 });
-                    await welcomeSkip.click();
-                    await welcomeSkip.waitFor({ state: 'hidden' });
-                    log({ phase: 'welcome-dismissed' });
-                }
-                firstContentAt ??= performance.now();
-                log({ phase: 'navigation', cycle, frame, ms: performance.now() - start,
-                    content: (await page.locator('body').innerText()).slice(0, 220), bundles: bundles.splice(0), ...stats() });
-                if (cycle === 0) await page.screenshot({ path: path.join(cache, `${mode}-${frame}.png`) });
-            }
-            cycle++;
-            if (performance.now() - firstContentAt < minutes * 60 * 1000) await delay(60 * 1000);
-        } while (performance.now() - firstContentAt < minutes * 60 * 1000);
-        log({ phase: 'navigation-complete', ms: performance.now() - started, loadedNavigationMs: performance.now() - firstContentAt,
-            cycles: cycle, errors, ...stats(), artifacts: cache });
-    } finally {
-        if (browser) await browser.close();
-        if (instance) await new Promise(resolve => instance.server.close(resolve));
-        server = null;
-    }
-}
 try {
     log({ phase: 'identity', host: os.hostname(), node: process.version, pid: process.pid, cwd: process.cwd(), metro: require('metro/package.json').version });
-    if (mode.startsWith('navigate-')) {
-        await navigate();
-        process.exit(0);
-    }
     const { config } = await loadMetroConfigAsync(root, { maxWorkers: 2, resetCache: false }, {
         exp: getConfig(root).exp, isExporting: false, getMetroBundler: () => server.getBundler().getBundler(),
     });

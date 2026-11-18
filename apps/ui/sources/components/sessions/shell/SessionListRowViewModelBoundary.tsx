@@ -5,7 +5,6 @@ import { useActiveGatedExternalStore } from '@/utils/react/activeGatedExternalSt
 import { resolveSessionListRowStoreScopeKey } from './row/sessionListVisibleRowStoreScopes';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import * as React from 'react';
-import type { View } from 'react-native';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
@@ -42,10 +41,6 @@ import type {
 } from './SessionListHeaderFrame';
 import { deleteSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { useSessionListRowExistingDraft } from './useSessionListRowExistingDraft';
-import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
-import {
-    useSpotlightTarget,
-} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import type { SessionItemProps } from './SessionItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEffectiveSessionAppearanceColor } from '@/hooks/session/useSessionAppearance';
@@ -108,11 +103,6 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
 export const SessionListRowViewModelBoundary = React.memo(function SessionListRowViewModelBoundary(
     props: SessionListRowViewModelBoundaryProps,
 ) {
-    const stageSpotlightRef = React.useRef<View>(null);
-    const stageSpotlightProps = useSpotlightTarget(
-        stageSpotlightRef,
-        props.item.groupKind === 'attention' ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup : null,
-    );
     const rowItems = React.useMemo(() => [props.item], [props.item]);
     // The surface's data demand reaches each source, not the row: a cover or a Back renders a row only
     // when what it shows changed. A row first rendered behind a cover reads its sources once.
@@ -270,11 +260,6 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             onDeleteDraft={onDeleteDraft}
             draftPreview={draftPreview}
             onSetReportsCollapsed={props.onSetReportsCollapsed}
-            measurementTarget={props.item.groupKind === 'attention' ? {
-                ref: stageSpotlightRef,
-                onLayout: stageSpotlightProps.onLayout,
-                style: stageSpotlightProps.style,
-            } : undefined}
         />
     );
     return sessionItem;

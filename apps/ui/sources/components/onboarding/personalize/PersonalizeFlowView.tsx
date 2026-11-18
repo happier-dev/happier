@@ -3,8 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
-import { JourneyConfigSlot, type JourneyConfigControllerSurface } from '@/components/onboarding/tour/config/JourneyConfigSlot';
-import { SplitStageFrame } from '@/components/onboarding/tour/desktop/SplitStageLayout';
+import { PersonalizeConfigSlot, type PersonalizeConfigControllerSurface } from './PersonalizeConfigSlot';
+import { PersonalizeSplitFrame } from './PersonalizeSplitFrame';
 import { Icon } from '@/components/ui/icons/Icon';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -43,7 +43,7 @@ function pageHeading(flow: PersonalizeFlow): Readonly<{ eyebrow: string; title: 
 }
 
 /** Skip · Back · Next for a page, on the tour's config slot (its one action bar). */
-function buildController(flow: PersonalizeFlow, body: React.ReactNode, phone: boolean): JourneyConfigControllerSurface {
+function buildController(flow: PersonalizeFlow, body: React.ReactNode, phone: boolean): PersonalizeConfigControllerSurface {
     const failed = flow.status === 'failed';
     const step = isPersonalizeStep(flow.page);
     return {
@@ -124,11 +124,11 @@ function PersonalizeDesktopPresentation(props: Readonly<{ flow: PersonalizeFlow;
                 ) : null}
             </View>
             <PersonalizeProgress done={resolveProgress(flow.page)} testID={`${testID}-progress`} />
-            <JourneyConfigSlot controller={buildController(flow, body, false)} layout="flow" testID={`${testID}-config`} />
+            <PersonalizeConfigSlot controller={buildController(flow, body, false)} layout="flow" testID={`${testID}-config`} />
         </>
     );
     return (
-        <SplitStageFrame
+        <PersonalizeSplitFrame
             testID={testID}
             orientation="narration-left"
             narration={narration}
@@ -204,7 +204,7 @@ function PersonalizePhonePresentation(props: Readonly<{ flow: PersonalizeFlow; t
                 </HappierPressable>
             </View>
             <PersonalizeProgress done={progress} testID={`${testID}-progress`} />
-            <JourneyConfigSlot controller={buildController(flow, body, true)} layout="scroll" primarySizing="fill" testID={`${testID}-config`} />
+            <PersonalizeConfigSlot controller={buildController(flow, body, true)} layout="scroll" primarySizing="fill" testID={`${testID}-config`} />
         </View>
     );
 }

@@ -8,9 +8,6 @@ import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupInte
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
-import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
-import { readJourneyReplayBeatId } from '@/components/onboarding/tour/state/journeyReplayIntent';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authenticatedRootDeepLinkRedirectAllowed';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -34,23 +31,12 @@ const stylesheet = StyleSheet.create({
 export function Home() {
     const auth = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
-    const onboardingJourneyActive = useOnboardingJourneySessionActive();
-    const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
     const personalHomeBootstrapActive = usePersonalHomeBootstrapActive();
-    // Explicit replay and a live journey own the viewport; a persisted machine-add
-    // continuation routes to its draft instead of relaunching the setup journey.
-    const hasExplicitJourneyReplayIntent =
-        onboardingTourDecision?.state === 'enabled'
-        && readJourneyReplayBeatId() != null;
     const keepDesktopPersonalHomeShell = shouldKeepDesktopPersonalHomeShell({
         isAuthenticated: auth.isAuthenticated,
         isPersonalHomeBootstrapActive: personalHomeBootstrapActive,
     });
-    if (
-        (!auth.isAuthenticated && !keepDesktopPersonalHomeShell)
-        || onboardingJourneyActive
-        || hasExplicitJourneyReplayIntent
-    ) {
+    if (!auth.isAuthenticated && !keepDesktopPersonalHomeShell) {
         // Only the active provider owns bootstrap/adoption recovery in the shell. An explicit
         // existing Home bypasses that provider and needs real pre-auth, not Account-only loading.
         return <PreAuthOnboardingWizardEntry />;

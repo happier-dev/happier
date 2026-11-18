@@ -34,7 +34,6 @@ import {
 } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 import {
-    canSessionListOrdinaryPageAnswerQuery,
     createSessionListQueryHomeController,
     type SessionListOrdinaryPageAdapter,
     type SessionListPageSelection,
@@ -57,9 +56,6 @@ import { resolveSessionListHomeKey, type SessionListRowStateByServerId } from '.
 import { subscribeSessionListQueryHomeInvalidation } from './sessionListQueryInvalidation';
 import { isSessionListQueryHomeCoverageComplete } from './sessionListHomeObservation';
 import { createSessionListRowSelection, type SessionListRowPredicate } from './sessionListRowSelection';
-import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
-import { buildDemoSessionListQueryState } from '@/demoMode/runtime/demoSessionListReadProjection';
-import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 export type SessionListQueryHomeInput = Readonly<{
     serverId: string;
@@ -378,8 +374,8 @@ function readRetainedAddresses(membership: SessionListQueryMembership): readonly
 
 /**
  * The query corpora's lifecycle: controllers, per-Home state, coverage, paging and refresh. It reads
- * no remote rows, machines or list settings. The seeded demo derives the same membership projection
- * locally; content-only changes retain it, so membership consumers are not re-rendered.
+ * no remote rows, machines or list settings. Content-only changes retain the membership projection,
+ * so membership consumers are not re-rendered.
  */
 export function useSessionListQueryHomeStates(input: SessionListQueryInput): SessionListQueryHomeStatesState {
     const layer = useSessionListQueryHomeStatesLayer(input);
@@ -397,24 +393,6 @@ export function useSessionListQueryHomeStates(input: SessionListQueryInput): Ses
 function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): SessionListQueryHomeStatesLayer {
     const homes = React.useMemo(() => normalizeHomes(input.homes), [input.homes]);
     const homeServerIds = React.useMemo(() => homes.map((home) => home.serverId), [homes]);
-    const demoServerId = getDemoModeServerId();
-    const demoHomes = React.useMemo(() => homes.filter(home => home.serverId === demoServerId
-        && !canSessionListOrdinaryPageAnswerQuery(home.query)), [demoServerId, homes]);
-    const demoHomeIds = React.useMemo(() => demoHomes.map(home => home.serverId), [demoHomes]);
-    const selectDemoStates = React.useMemo(() => {
-        let previous: Readonly<Record<string, SessionListQueryHomeState>> = {};
-        return (rows: SessionListRowStateByServerId) => {
-            const next: Record<string, SessionListQueryHomeState> = {};
-            for (const home of demoHomes) {
-                next[home.serverId] = buildDemoSessionListQueryState({ serverId: home.serverId, queryKey: home.queryKey,
-                    query: home.query, rows: rows[home.serverId] ?? {}, enabled: input.enabled, previous: previous[home.serverId] });
-            }
-            previous = retainShallow(previous, next);
-            return previous;
-        };
-    }, [demoHomes, input.enabled]);
-    const demoStates = useSessionListRowsByServerId(demoHomeIds, selectDemoStates);
-    const remoteHomeIds = React.useMemo(() => homeServerIds.filter(serverId => serverId !== demoServerId), [demoServerId, homeServerIds]);
     const queriesByServerId = React.useMemo(() => new Map(homes.map(home => [home.serverId, home.query])), [homes]);
     const supportByServerId = useSessionListQueryHomeSupportByServerId(homeServerIds, input.enabled, queriesByServerId);
     const followingHomeServerIds = React.useMemo(
@@ -431,18 +409,17 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
     const queryMembershipByKey = useSessionListQueryMembershipByKey();
     const machineStatusesByServerId = useMachineListStatusByServerId();
     const appliedSocketOnline = useAppliedSessionListQuerySocketOnline();
-    const accountScopesByServerId = useServerCredentialAccountScopes(remoteHomeIds);
-    // Homes whose corpus an incumbent runtime already owns — the local demo,
-    // Sync for the applied Home, the concurrent cache for every other managed Home. Their
+    const accountScopesByServerId = useServerCredentialAccountScopes(homeServerIds);
+    // Homes whose corpus an incumbent runtime already owns — Sync for the applied Home, the concurrent cache for every other managed Home. Their
     // bootstrap/reconnect replace, append continuation and cursors are the only
     // ones for `/v2/sessions` on that Home, so the filter reads that frontier here
     // instead of mounting a controller that would paginate and replace the same
     // membership — two owners that could orphan each other's pages.
     const managedOrdinaryHomeKey = homes
         .filter((home) => (
-            home.serverId === demoServerId || (!home.selectSession && home.ordinaryAdapter?.membership === 'ordinary'
+            !home.selectSession && home.ordinaryAdapter?.membership === 'ordinary'
             && supportByServerId[home.serverId] === false
-            && resolveOrdinarySessionListHomeOwner(home.serverId) !== null)
+            && resolveOrdinarySessionListHomeOwner(home.serverId) !== null
         ))
         .map((home) => home.serverId)
         .join('\u0000');
@@ -571,7 +548,6 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
     }, [disposeController]);
 
     const readHomeState = React.useCallback((home: NormalizedQueryHome): SessionListQueryHomeState | undefined => {
-        if (demoStates[home.serverId]) return demoStates[home.serverId];
         if (!managedOrdinaryHomes.has(home.serverId)) {
             return controllersRef.current.get(home.serverId)?.getSnapshot();
         }
@@ -581,7 +557,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
             requestedQueryKey: home.queryKey,
             online: availability === 'pending' ? null : availability === 'online',
         });
-    }, [demoStates, managedOrdinaryHomes]);
+    }, [managedOrdinaryHomes]);
     const loadNext = React.useCallback(async () => {
         await Promise.all(homes.map((home) => (
             managedOrdinaryHomes.has(home.serverId)

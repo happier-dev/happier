@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
@@ -40,10 +39,6 @@ import {
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
-import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
-import {
-    useSpotlightTarget,
-} from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import { Platform } from 'react-native';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
@@ -128,13 +123,6 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
         ? props.projectHeaderViewModelByGroupKey.get(props.item.groupKey ?? '') : undefined;
     const faviconSource = headerViewModel ? headerViewModel.scopeHint : undefined;
     const faviconSourceReachable = useWorkspaceFaviconSourceReachable(faviconSource, props.workspaceFaviconsEnabled === true);
-    const stageSpotlightRef = React.useRef<View>(null);
-    const stageSpotlightProps = useSpotlightTarget(
-        stageSpotlightRef,
-        props.item.headerKind === 'attention'
-            ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup
-            : null,
-    );
 
     const headerViewState = props.item.headerKind === 'folder' ? null : resolveSessionListHeaderViewState({
         item: props.item,
@@ -305,12 +293,6 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
             count={props.item.headerKind === 'attention' || props.item.headerKind === 'working' ? props.item.eligibleCount : undefined}
             first={props.first}
             testID={headerTestIdKey ? `session-list-header:${headerTestIdKey}` : undefined}
-            rootMeasurement={props.item.headerKind === 'attention' ? {
-                active: stageSpotlightProps.active,
-                ref: stageSpotlightRef,
-                onLayout: stageSpotlightProps.onLayout,
-                style: stageSpotlightProps.style,
-            } : undefined}
         />
     );
     return header;

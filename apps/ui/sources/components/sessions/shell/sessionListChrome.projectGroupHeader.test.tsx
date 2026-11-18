@@ -450,40 +450,6 @@ describe('ProjectGroupHeader menu items', () => {
         expect(trigger()?.props.expanded).toBe(true);
     });
 
-    it('keeps the real collapsible header root mounted when measurement activates', async () => {
-        const measurementRef = React.createRef<any>();
-        const onLayout = vi.fn();
-        const screen = await renderScreen(
-            <CollapsibleSectionHeader
-                title="Needs attention"
-                collapsed={false}
-                onPress={vi.fn()}
-                rootMeasurement={{
-                    active: false,
-                    ref: measurementRef,
-                    onLayout,
-                }}
-            />,
-        );
-        const rootBeforeActivation = screen.findByType('Pressable');
-
-        await screen.update(
-            <CollapsibleSectionHeader
-                title="Needs attention"
-                collapsed={false}
-                onPress={vi.fn()}
-                rootMeasurement={{
-                    active: true,
-                    ref: measurementRef,
-                    onLayout,
-                    style: { zIndex: 1 },
-                }}
-            />,
-        );
-
-        expect(screen.findByType('Pressable') === rootBeforeActivation).toBe(true);
-    });
-
     it('offers what the list shows and where Needs you and Working sit, written through the shared writer', async () => {
         const { SessionListViewOptionsButton } = await import('./sessionListChrome');
 

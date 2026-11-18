@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { projectDemoHomesController } from '@/demoMode/runtime/demoSettingsReadProjection';
 import { Platform } from 'react-native';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
@@ -55,8 +54,7 @@ const HomesCollectionContext = React.createContext<HomesCollectionContextValue |
  * groups and actions), shared by the rail and every page beside it so they read the same answer.
  */
 export function HomesCollectionProvider(props: Readonly<{ children: React.ReactNode }>) {
-    const sourceController = useServerSettingsScreenController();
-    const controller = React.useMemo(() => projectDemoHomesController(sourceController), [sourceController]);
+    const controller = useServerSettingsScreenController();
     const collection = React.useMemo(() => buildHomeCollection({
         servers: controller.servers,
         groups: controller.serverGroups,

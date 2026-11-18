@@ -222,7 +222,6 @@ import type { PauseController } from '@/utils/timing/pauseController';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import type { SessionListRenderableSession } from './domains/session/listing/sessionListRenderable';
 import type { NormalizedMessage, RawRecord } from "@happier-dev/session-core/raw";
-import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 import {
     computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
@@ -584,7 +583,6 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
-        resetDemoModeDepthForTests();
         resetSessionSurfaceVisibilityForTests();
         vi.useRealTimers();
         vi.clearAllMocks();
@@ -3419,18 +3417,6 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const ownerPendingCall = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`);
         expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.text)).toEqual(['queued remotely']);
-    });
-
-    it('does not fetch pending messages or require a server-account scope in demo mode', async () => {
-        const sessionId = 'demo_external_session';
-        storage.getState().applySessions([createExternalSession(sessionId)]);
-        enterDemoMode();
-
-        const { sync } = await import('./sync');
-
-        await expect((sync as any).fetchPendingMessages(sessionId)).resolves.toBeUndefined();
-        expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
     it.each([undefined, { kind: 'execution_run' as const, runId: 'run-a' }])('enqueues pending messages through the preferred or explicit owner server with recipient %j', async (recipient) => {

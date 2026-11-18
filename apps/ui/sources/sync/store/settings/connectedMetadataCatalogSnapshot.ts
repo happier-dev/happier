@@ -4,7 +4,6 @@ import { connectedAcknowledgementSubjectKeyV1, projectConnectedPresentationLabel
     type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { canPublishCatalogReceipt, retainCatalogRevision } from './wholeCatalogReceiptOrdering';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
@@ -19,7 +18,6 @@ export type ConnectedMetadataCatalogSnapshot = ConnectedMetadataCatalogV1 & Read
 type StoredSnapshot = Readonly<{ scope: ServerAccountScope; snapshot: ConnectedMetadataCatalogSnapshot }>;
 const snapshots = new Map<string, StoredSnapshot>();
 const listeners = new Set<() => void>();
-let demoProjection: ConnectedMetadataCatalogSnapshot | null = null;
 const emptyLabels: Readonly<Record<string, string>> = Object.freeze({});
 const emptyAcknowledgements: Readonly<Record<string, boolean>> = Object.freeze({});
 const loading: ConnectedMetadataCatalogSnapshot = Object.freeze({
@@ -35,7 +33,7 @@ export function subscribeConnectedMetadataCatalog(listener: () => void): () => v
 }
 export function getConnectedMetadataCatalog(scope: ServerAccountScope | null | undefined): ConnectedMetadataCatalogSnapshot {
     if (scope) return snapshots.get(serverAccountScopeKeySuffix(scope))?.snapshot ?? loading;
-    return isDemoModeActive() ? demoProjection ?? loading : loading;
+    return loading;
 }
 function withdraws(reason: string): boolean {
     return isAuthoritativeScopedSnapshotRefusalKind(reason)
@@ -78,13 +76,6 @@ export function applyAcknowledgedConnectedMetadata(scope: ServerAccountScope,
         ...(acknowledged.kind === 'presentation' ? { presentationStale: true } : { acknowledgementsStale: true }) };
     if (sameStrictJsonValue(previous, snapshot)) return;
     snapshots.set(serverAccountScopeKeySuffix(scope), { scope, snapshot });
-    for (const listener of [...listeners]) listener();
-}
-/** Seed-owned display fixture only. Real Account scopes and mutation admission never use it. */
-export function setDemoConnectedMetadataCatalogProjection(projection: ConnectedMetadataCatalogV1 | null): void {
-    if (projection && !isDemoModeActive()) throw new Error('Demo catalog projection requires the seeded demo lifetime');
-    if (!projection && !demoProjection) return;
-    demoProjection = projection ? projectSnapshot(projection, loading) : null;
     for (const listener of [...listeners]) listener();
 }
 export function applyConnectedMetadataCatalogSnapshot(scope: ServerAccountScope, projection: ConnectedMetadataCatalogV1, current: boolean): void {

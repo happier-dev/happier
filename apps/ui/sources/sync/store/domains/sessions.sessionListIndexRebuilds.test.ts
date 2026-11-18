@@ -31,7 +31,10 @@ import type { SessionListIndexItem } from '../../domains/sessionList/sessionList
 import { getSessionStorageKind } from '../../domains/session/sessionStorageKind';
 import { readExternalSessionLink } from '../../domains/session/external/readExternalSessionLink';
 import type { ScmStatus, ScmWorkingSnapshot, Session } from '../../domains/state/storageTypes';
-import { createDemoOpenCodeSessionFixture } from '@/demoMode/world/sessions';
+import {
+    buildLinkedExternalSessionMetadataV1,
+    buildLinkedExternalSessionQualifiedIdentityV1,
+} from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
@@ -128,6 +131,21 @@ function readSessionListIndexSessionIds(
     return (index ?? [])
         .filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => item.type === 'session')
         .map((item) => item.sessionId);
+}
+
+
+/** A linked OpenCode Session with a qualified identity, as a linked-session import stores it. */
+function createLinkedOpenCodeSession(serverId: string): Session {
+    const source = { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: '/repo' } as const;
+    const runtimeDescriptorV1 = { v: 1, agentId: 'opencode', agent: { backendMode: 'server' } } as const;
+    const metadata = buildLinkedExternalSessionMetadataV1({ path: '/repo', host: 'box' }, {
+        v: 1, agentId: 'opencode', machineId: 'machine-1', remoteSessionId: 'opencode-session-1', source,
+        qualifiedIdentity: buildLinkedExternalSessionQualifiedIdentityV1({
+            agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, sourceKind: source.kind,
+        }),
+        linkData: { runtimeDescriptorV1 }, linkedAtMs: 1, runtimeDescriptorV1,
+    });
+    return createSessionFixture({ id: 'linked-opencode', serverId, metadata });
 }
 
 describe('sessions domain: unchanged writes', () => {
@@ -444,7 +462,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     });
 
     it('keeps linked-session storage and qualified identity through compact row and index projection', () => {
-        const session = createDemoOpenCodeSessionFixture({ serverId: 'srv_active' });
+        const session = createLinkedOpenCodeSession('srv_active');
         const link = readExternalSessionLink(session.metadata);
         if (!session.metadata || !link?.qualifiedIdentity) throw new Error('Expected a qualified linked-session fixture');
         const row = buildSessionListRenderableFromSession(session);
@@ -2565,7 +2583,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     machineId: 'm1',
                     path: '/home/u/repo',
                     homeDir: '/home/u',
-                    externalSessionV1: createDemoOpenCodeSessionFixture({ serverId: 'srv_active' }).metadata?.externalSessionV1,
+                    externalSessionV1: createLinkedOpenCodeSession('srv_active').metadata?.externalSessionV1,
                 },
                 metadataVersion: 2,
                 agentState: null,

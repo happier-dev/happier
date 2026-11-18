@@ -146,12 +146,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     }),
 }));
 
-vi.mock('@/components/onboarding/tour/state/journeySession', () => ({
-    useOnboardingJourneySessionActive: () => false,
-}));
-vi.mock('@/components/onboarding/state/usePendingSetupIntent', () => ({
-    usePendingSetupIntent: () => null,
-}));
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => null,
     clearPendingSetupIntent: () => {},
@@ -415,7 +409,7 @@ describe('PreAuthOnboardingWizardEntry — Account Service welcome sign-in', () 
         expect(getAccountServiceEndpointSnapshot()).not.toHaveProperty('serverIdentityId');
     });
 
-    it('does not open a late Account Service OAuth URL after the journey cancels', async () => {
+    it('does not open a late Account Service OAuth URL after the step cancels', async () => {
         let resolveOAuth!: (result: typeof accountDirectoryStartResult) => void;
         startOAuthMock.mockImplementation(() => new Promise<typeof accountDirectoryStartResult>((resolve) => {
             resolveOAuth = resolve;

@@ -5,7 +5,6 @@ import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/dom
 import { canPublishCatalogReceipt, retainCatalogRevision } from './wholeCatalogReceiptOrdering';
 import { admitCatalogBrandMark } from '@/components/ui/media/catalogBrandMark';
 import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 
 export type McpServerCatalogValueSnapshot = Readonly<{
     status: 'loading' | 'ready' | 'partial' | 'unavailable'; value: McpServerCatalogV1 | null;
@@ -17,7 +16,6 @@ const loading: McpServerCatalogValueSnapshot = Object.freeze({ status: 'loading'
     revision: 'absent', authority: 'inactive', stale: true, diagnostics: [] });
 const snapshots = new Map<string, Readonly<{ scope: ServerAccountScope; value: McpServerCatalogValueSnapshot }>>();
 const listeners = new Set<() => void>();
-let demoProjection: McpServerCatalogValueSnapshot | null = null;
 
 function reconcileRows<T extends { id: string }>(previous: T[], incoming: T[]): T[] {
     return retainKeyedRows(previous, incoming, row => row.id, { freeze: false }) as T[];
@@ -54,19 +52,9 @@ export function subscribeMcpServerCatalogSnapshots(listener: () => void): () => 
 }
 export function getMcpServerCatalogSnapshot(scope: ServerAccountScope | null | undefined): McpServerCatalogValueSnapshot {
     if (scope) return snapshots.get(serverAccountScopeKeySuffix(scope))?.value ?? loading;
-    return isDemoModeActive() ? demoProjection ?? loading : loading;
+    return loading;
 }
 
-/** Display-only demo catalog. Real Account scopes and mutation admission never use it. */
-export function setDemoMcpServerCatalogProjection(catalog: McpServerCatalogV1 | null): void {
-    if (catalog && !isDemoModeActive()) throw new Error('Demo catalog projection requires the seeded demo lifetime');
-    if (!catalog && !demoProjection) return;
-    const next = catalog ? projectMcpServerCatalogSnapshot({ status: 'ready', catalog,
-        authority: 'inactive', revision: 'absent', diagnostics: [] }, demoProjection ?? undefined) : null;
-    if (next === demoProjection) return;
-    demoProjection = next;
-    for (const listener of [...listeners]) listener();
-}
 export function applyAcknowledgedMcpServerCatalog(scope: ServerAccountScope, catalog: McpServerCatalogV1, revision: number, current: boolean): void {
     const previous = getMcpServerCatalogSnapshot(scope);
     if (!canPublishCatalogReceipt({ current, revision, retainedRevision: previous.revision })) return;
@@ -113,4 +101,4 @@ export function beginMcpServerCatalogLoad(scope: ServerAccountScope): void {
 export function invalidateMcpServerCatalogsForServer(serverId: string): void {
     for (const snapshot of snapshots.values()) if (snapshot.scope.serverId === serverId) beginMcpServerCatalogLoad(snapshot.scope);
 }
-export function resetMcpServerCatalogSnapshotsForTests(): void { snapshots.clear(); listeners.clear(); demoProjection = null; }
+export function resetMcpServerCatalogSnapshotsForTests(): void { snapshots.clear(); listeners.clear(); }

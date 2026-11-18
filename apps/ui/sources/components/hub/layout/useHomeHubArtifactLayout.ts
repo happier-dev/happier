@@ -12,7 +12,7 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
-import { createHomeHubAccountStore, getDemoHomeHubAccountProjection } from './homeHubAccountStore';
+import { createHomeHubAccountStore } from './homeHubAccountStore';
 import { executeHomeHubLayoutIntent } from './homeHubActionWriter';
 import { createActionApprovalContinuationObserver } from '@/components/approvals/actionApprovalContinuation';
 import { observeActionApprovalContinuation } from '@/components/approvals/observeActionApprovalContinuation';
@@ -20,7 +20,6 @@ import { router } from 'expo-router';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { t } from '@/text';
-import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 
 type Store = ReturnType<typeof createHomeHubAccountStore> & { retain(): () => void; isCurrent(): boolean };
 const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredentials, Store>>();
@@ -31,8 +30,8 @@ function useHomeHubAccountStore() {
     const credentials = useOptionalAuth()?.credentials ?? null;
     const lifetime = useActiveServerAccountScopeLifetime();
     const scope = lifetime?.scope ?? null;
-    const server = useActiveServerSnapshot(credentials !== null || getDemoModeServerId() !== null);
-    let store: Store | typeof unavailable = credentials ? unavailable : getDemoHomeHubAccountProjection(server.serverId) ?? unavailable;
+    const server = useActiveServerSnapshot(credentials !== null);
+    let store: Store | typeof unavailable = unavailable;
     let accountId: string | null = null;
     try { if (credentials) accountId = parseToken(credentials.token); } catch { /* Authentication has not established an Account. */ }
     if (credentials && scope && lifetime && accountId === scope.accountId && scope.serverId === server.serverId && server.serverUrl) {

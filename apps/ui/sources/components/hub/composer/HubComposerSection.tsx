@@ -13,8 +13,6 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
-import { getDemoModeServerId, isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
 import { HubComposerSuggestions, type HomeComposerSuggestionFill } from './suggestions/HubComposerSuggestions';
 
@@ -137,14 +135,6 @@ function HubComposerHeld(props: HubComposerSectionProps & Readonly<{ height: num
 
 function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ composerHeight: React.MutableRefObject<number | undefined> }>) {
     const { host, markDemanded } = useNewSessionEmbeddedHostState();
-    const server = useActiveServerSnapshot(getDemoModeServerId() !== null);
-    const demoPreview = isSeededDemoHome(server.serverId);
-    // A local showcase has no launch credentials. Keep the real draft and admission, while its
-    // empty presentation stays neutral rather than claiming this known demo machine is offline.
-    const presentedHost = React.useMemo(() => demoPreview ? {
-        ...host,
-        emptyComposerStatus: null,
-    } : host, [demoPreview, host]);
     const draftId = typeof host.params.draftId === 'string' ? host.params.draftId : 'home-composer';
     const setHostParams = host.setParams;
 
@@ -166,9 +156,9 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
             onPointerEnter={markDemanded}
             onTouchStart={markDemanded}
         >
-            <NewSessionEmbeddedHostProvider host={presentedHost}>
+            <NewSessionEmbeddedHostProvider host={host}>
                 <ComposerBannerCollapseProvider key={draftId}>
-                    <NewSessionScreen presentation="embedded" composerControlPreset={demoPreview ? 'compact' : undefined} />
+                    <NewSessionScreen presentation="embedded" />
                 </ComposerBannerCollapseProvider>
             </NewSessionEmbeddedHostProvider>
         </View>

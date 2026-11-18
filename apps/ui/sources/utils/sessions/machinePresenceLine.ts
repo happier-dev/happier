@@ -1,6 +1,4 @@
 import { t } from '@/text';
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
-import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { resolveMachineReachability, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
@@ -92,8 +90,6 @@ export function describeMachineRuntimePresence(
     scope?: MachineReachabilityScope | null,
     connection?: 'reachable' | 'unreachable' | 'unknown',
 ): MachineRuntimePresence {
-    if (machine.id && getDemoMachineRead({ serverId: scope?.serverId ?? getDemoModeServerId(), machineId: machine.id }))
-        return { online: true, status: 'online', label: t('settingsOverview.machineOnline'), nextAction: null, showStatus: false, nativeWord: null };
     if (machine.presence === null) return { online: false, status: 'unknown', label: '', nextAction: null, showStatus: false, nativeWord: null };
     const activity = readMachineActivity(machine);
     // Keep the admitted row identity so the activity owner's unanswered presence is preserved.

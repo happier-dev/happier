@@ -123,9 +123,8 @@ export function NewSessionComposerCard(input: Readonly<{
         hostNavigation.openDraft({ draftId, draftOrigin: null });
     }, [hostNavigation]);
     const backgroundLaunchStatus = useNewSessionBackgroundLaunchStatus({ openSession: openStartedSession, openDraft: openStartedDraft });
-    const emptyStatus = embeddedHost?.emptyComposerStatus !== undefined ? embeddedHost.emptyComposerStatus : backgroundLaunchStatus;
-    const connectionStatus = emptyStatus !== undefined && composerEmpty && !props.isCreating
-        ? emptyStatus ?? undefined : props.connectionStatus;
+    const connectionStatus = backgroundLaunchStatus !== undefined && composerEmpty && !props.isCreating
+        ? backgroundLaunchStatus : props.connectionStatus;
     // A chosen workflow swaps the composer, not the host: the same status line, inset and width carry over.
     const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup,
         host: { connectionStatus, contentPaddingHorizontal: 0, ...(embedded ? { maxWidthCap: null } : {}) } });

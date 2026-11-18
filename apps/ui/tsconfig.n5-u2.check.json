@@ -24,7 +24,6 @@
     "public/monaco/vs/nls/lang/zh-tw.d.ts",
     "sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures.d.ts",
     "sources/activity/adapters/desktop/ui/shared/desktopActivityOverlaySelectors.d.ts",
-    "sources/components/onboarding/tour/stage/react-native-view-shot-web.d.ts",
     "sources/dev/jsdom.d.ts",
     "sources/dev/why-is-node-running.d.ts",
     "sources/types/fake-indexeddb-auto.d.ts",

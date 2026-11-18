@@ -1,6 +1,4 @@
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
-import { EMPTY_ORDINARY_SESSION_LIST_FRONTIER } from '@/sync/engine/sessions/ordinarySessionListFrontier';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { SocketStatus } from '@/sync/store/domains/realtime';
@@ -40,7 +38,6 @@ export function getSessionListQueryHomeAvailability(
 ): SessionListQueryHomeAvailability {
     const serverId = String(serverIdRaw ?? '').trim();
     if (!serverId) return 'offline';
-    if (isSeededDemoHome(serverId)) return 'online';
     const staged = getActiveServerSnapshot();
     const applied = getAppliedActiveServerSnapshot();
     const runtimeAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -81,13 +78,6 @@ export function isSessionListQueryHomeOnline(serverIdRaw: string): boolean {
  * Reads the incumbent ordinary lifecycle without creating a second pagination owner.
  */
 export function readOrdinarySessionListLifecycle(serverId: string): OrdinarySessionListLifecycle {
-    if (isSeededDemoHome(serverId)) return {
-        serverId,
-        hasFetchedSnapshot: true,
-        fetchInFlight: false,
-        fetchMoreInFlight: false,
-        frontier: EMPTY_ORDINARY_SESSION_LIST_FRONTIER,
-    };
     return resolveOrdinarySessionListHomeOwner(serverId) === 'sync'
         ? sync.readOrdinarySessionListLifecycle()
         : readConcurrentOrdinarySessionListLifecycle(serverId);
@@ -106,7 +96,7 @@ export function isSyncOwnedOrdinarySessionListHome(serverIdRaw: string): boolean
         && areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId);
 }
 
-export type OrdinarySessionListHomeOwner = 'sync' | 'concurrent' | 'demo';
+export type OrdinarySessionListHomeOwner = 'sync' | 'concurrent';
 
 /**
  * Which runtime owns this Home's ordinary `/v2/sessions` corpus, if any.
@@ -121,7 +111,6 @@ export function resolveOrdinarySessionListHomeOwner(
 ): OrdinarySessionListHomeOwner | null {
     const serverId = String(serverIdRaw ?? '').trim();
     if (!serverId) return null;
-    if (isSeededDemoHome(serverId)) return 'demo';
     if (isSyncOwnedOrdinarySessionListHome(serverId)) return 'sync';
     return isConcurrentOrdinarySessionListHome(serverId) ? 'concurrent' : null;
 }
@@ -148,7 +137,6 @@ export function readOrdinarySessionListHomeState(input: Readonly<{
 
 /** Advance this Home's incumbent ordinary frontier. There is no second cursor to advance. */
 export async function loadNextOrdinarySessionListPage(serverIdRaw: string): Promise<void> {
-    if (isSeededDemoHome(serverIdRaw)) return;
     if (resolveOrdinarySessionListHomeOwner(serverIdRaw) === 'sync') {
         await sync.fetchMoreSessions();
         return;
@@ -158,7 +146,6 @@ export async function loadNextOrdinarySessionListPage(serverIdRaw: string): Prom
 
 /** Replace this Home's ordinary corpus from page one. */
 export async function refreshOrdinarySessionList(serverIdRaw: string): Promise<void> {
-    if (isSeededDemoHome(serverIdRaw)) return;
     if (resolveOrdinarySessionListHomeOwner(serverIdRaw) === 'sync') {
         await sync.refreshSessions();
         return;
@@ -271,7 +258,6 @@ async function readSessionListQueryPageForHome(
 export async function retrySessionListQueryHome(serverIdRaw: string): Promise<void> {
     const serverId = String(serverIdRaw ?? '').trim();
     if (!serverId) return;
-    if (isSeededDemoHome(serverId)) return;
     if (isSyncOwnedOrdinarySessionListHome(serverId)) {
         await retryActiveServerConnection();
         return;

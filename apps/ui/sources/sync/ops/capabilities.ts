@@ -18,7 +18,6 @@ import {
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { ScopedRpcSocketConnectionTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
-import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { readRpcRequestDisposition, type RpcRequestDisposition } from '@happier-dev/sync-client';
 import { readCapabilityInvokeFailure, type CapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
@@ -87,9 +86,6 @@ export async function machineCapabilitiesDetect(
     request: CapabilitiesDetectRequest,
     options?: { timeoutMs?: number; serverId?: string | null; accountId?: string | null; signal?: AbortSignal },
 ): Promise<MachineCapabilitiesDetectResult> {
-    if (isDemoModeActive()) {
-        return { supported: false, reason: 'not-supported' };
-    }
     try {
         const result = await machineRpcWithServerScope<unknown, CapabilitiesDetectRequest>({
             machineId,

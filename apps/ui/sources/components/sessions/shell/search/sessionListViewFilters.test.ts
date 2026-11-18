@@ -13,7 +13,6 @@ import {
     resolveTeamSessionsSurfaceState,
 } from './sessionListViewFilters';
 import * as sessionListViewFiltersModule from './sessionListViewFilters';
-import { enterDemoMode, exitDemoMode } from '@/demoMode/runtime/enterExitDemoMode';
 
 type ViewContextDefaultsResolver = (
     viewContext: Readonly<{ kind: 'global' } | { kind: 'team'; team: { serverId: string; teamId: string } }>,
@@ -34,22 +33,6 @@ type TeamHomeSelectionResolver = (input: Readonly<{
 >;
 
 describe('sessionListViewFilters', () => {
-    it('uses the seeded Session corpus as the global demo default without narrowing real or Team lists', () => {
-        const global = () => sessionListViewFiltersModule.resolveSessionListViewContextDefaults(
-            { kind: 'global' }, ['demo-home'], 'all',
-        );
-        expect(global().defaults.show).toBe('both');
-        enterDemoMode('demo-home');
-        try {
-            expect(global().defaults.show).toBe('sessions');
-            expect(sessionListViewFiltersModule.resolveSessionListViewContextDefaults({
-                kind: 'team', team: { serverId: 'demo-home', teamId: 'team-a' },
-            }, ['demo-home'], 'all').defaults.show).toBe('both');
-        } finally {
-            exitDemoMode();
-        }
-        expect(global().defaults.show).toBe('both');
-    });
     it('keeps manual candidates on a Home excluded by the smart lens while fixed Team stays outside the union', () => {
         const outer = createSessionListViewFilterDefaults({ scope: 'all_accessible', homeServerIds: ['home-a'],
             audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'fixed' }] });

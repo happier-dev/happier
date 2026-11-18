@@ -3,8 +3,7 @@
  *
  * Consumers (PreAuthOnboardingWizardEntry in dev/, route files in remote-dev/)
  * import the top-level `UnauthenticatedSplitShell` plus the storage hooks.
- * StagePane is exported as the explicit right-pane host contract for the
- * journey work; other sub-components remain internal to this folder.
+ * Other sub-components remain internal to this folder.
  */
 
 export {
@@ -13,11 +12,6 @@ export {
 } from './UnauthenticatedSplitShell';
 export { UnauthenticatedRouteShell } from './UnauthenticatedRouteShell';
 export { UnauthenticatedStep, UnauthenticatedStepHeading, type UnauthenticatedStepProps } from './UnauthenticatedStep';
-export {
-    StagePane,
-    type StagePanePlanetRecedeProps,
-    type StagePaneProps,
-} from './StagePane';
 
 export { useApplyBrandHeroSeen } from './useApplyBrandHeroSeen';
 export { useBrandHeroSeenAt } from './useBrandHeroSeenAt';

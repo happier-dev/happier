@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { MachineResourceAttentionV1, MachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -79,10 +78,7 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
         return storage.subscribe(report, { machines: true, machineListByServerId: true, machineRecordsByServerId: true });
     }, [input.machineId, key, selectMachine]);
     const online = hasMachine ? presence.reachability === 'reachable' : true;
-    const demo = getDemoMachineRead(input);
     return React.useMemo<MachineResourceAvailability | null>(() => {
-        if (demo) return { kind: 'reporting', summary: demo.resources.summary, freshness: 'live',
-            attention: demo.resources.snapshot?.attention ?? null };
         const observation = readMachineResourceObservation({ ...state, stale }, publication);
         if (!target.accountMatches) return null;
         if (monitoring === 'off') return MONITORING_OFF;
@@ -97,7 +93,7 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
         return { kind: 'reporting', summary: state.summary, freshness,
             ...(readStatus ? { readStatus } : {}),
             attention: publishedAttention ?? state.snapshot?.attention ?? null };
-    }, [demo, monitoring, online, publication, publishedAttention, stale, state, target.accountMatches, viewed]);
+    }, [monitoring, online, publication, publishedAttention, stale, state, target.accountMatches, viewed]);
 }
 
 /** A surface's retained summaries are being revalidated by the same demand owner. */
