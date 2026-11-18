@@ -59,6 +59,7 @@ import {
     projectSessionRunnerLaunchAdmissionFailure,
 } from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
+import { resolveProjectFilesForManagedLaunch } from './projectFilesLaunchSelection';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
@@ -1165,10 +1166,11 @@ export async function executeSpawnSessionRequest(
             const managedPurposes = managedPurposeBindings.map(
                 (binding) => binding.purpose,
             );
-            const projectFiles =
-                effectiveOptionsForSpawn.managedTargetPlacement?.projectFiles
-                ?? launchSessionAttachPayload?.snapshot?.ownerMetadata?.system
-                    ?.sessionCreationCorrespondenceV1?.recipe.projectFiles;
+            const projectFiles = resolveProjectFilesForManagedLaunch({
+                placement: effectiveOptionsForSpawn.managedTargetPlacement?.projectFiles,
+                recipe: launchSessionAttachPayload?.snapshot?.ownerMetadata?.system
+                    ?.sessionCreationCorrespondenceV1?.recipe.projectFiles,
+            });
             const projectFilesGitAccount = projectFiles?.kind === 'git_clone'
                 ? projectFiles.gitAccount
                 : undefined;
@@ -1559,7 +1561,7 @@ export async function executeSpawnSessionRequest(
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
                         workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
-                        projectFiles: { selection: effectiveOptionsForSpawn.managedTargetPlacement.projectFiles,
+                        projectFiles: { selection: projectFiles!,
                             activeServerDir: configuration.activeServerDir,
                             ...(effectiveOptionsForSpawn.projectSetupOperation
                                 ? { onProgress: effectiveOptionsForSpawn.projectSetupOperation.operationProgress.update } : {}),
@@ -1593,7 +1595,7 @@ export async function executeSpawnSessionRequest(
                                         cloneAccountSelection.owner,
                                 }
                                 : appliedPluginRuntimeLease.registry,
-                                includeHostingProviders: effectiveOptionsForSpawn.managedTargetPlacement.projectFiles?.kind === 'git_clone' }) },
+                                includeHostingProviders: projectFiles?.kind === 'git_clone' }) },
                         agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
                     sessionTargetWorkspace = launch.workspace;
