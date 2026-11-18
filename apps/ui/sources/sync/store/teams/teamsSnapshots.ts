@@ -11,7 +11,9 @@ import {
 } from '@happier-dev/protocol/teams';
 import { teamSharedResourceSummaryRowKeyV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
+import type { TeamSharedMachineListItem } from '@/sync/ops/teams/teamSharedMachines';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { CredentialCatalogPublication } from './credentialCatalogPublication';
 import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
@@ -210,6 +212,35 @@ const credentialLists = new Map<string, TeamCredentialResourcesSnapshot>();
 const credentialCatalogs = new CredentialCatalogPublication();
 const credentialResources = new Map<string, TeamCredentialResourceSnapshot>();
 const sharedResourceSummaries = new Map<string, TeamSharedResourcesSummarySnapshot>();
+
+/** Complete Team-filtered lists are separate from the Account inventory. */
+function createTeamSharedMachineObservations<Row>() {
+    const observations = new Map<string, Readonly<{
+        rows: readonly Row[];
+        lifetime: ServerAccountScopeLifetime;
+    }>>();
+    return {
+        get(scope: ServerAccountScope, address: TeamAddress) {
+            const observation = observations.get(serverAccountScopedTeamKey(scope, address));
+            return observation?.lifetime.isCurrent() ? observation.rows : undefined;
+        },
+        apply(address: TeamAddress, lifetime: ServerAccountScopeLifetime, rows: readonly Row[] | null) {
+            if (!lifetime.isCurrent()) return;
+            const key = serverAccountScopedTeamKey(lifetime.scope, address);
+            if (rows === null) observations.delete(key);
+            else observations.set(key, { rows, lifetime: readServerAccountScopeOwnerLifetime(lifetime) });
+        },
+        clearForServer(serverId: string) {
+            for (const [key, observation] of observations) {
+                if (observation.lifetime.scope.serverId === serverId) observations.delete(key);
+            }
+        },
+        clear: () => observations.clear(),
+    };
+}
+
+export const teamSharedMachineObservations = createTeamSharedMachineObservations<TeamSharedMachineListItem>();
+export const teamSharedMachinePoolObservations = createTeamSharedMachineObservations<MachinePoolViewV1>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -1376,6 +1407,8 @@ export function clearTeamsSnapshotsForServer(serverIdRaw: string): void {
         sharedResourceSummaries.delete(key);
         changed = true;
     }
+    teamSharedMachineObservations.clearForServer(serverId);
+    teamSharedMachinePoolObservations.clearForServer(serverId);
     if (changed) notify();
 }
 
@@ -1390,5 +1423,7 @@ export function resetTeamsSnapshotsForTests(): void {
     credentialCatalogs.clear();
     credentialResources.clear();
     sharedResourceSummaries.clear();
+    teamSharedMachineObservations.clear();
+    teamSharedMachinePoolObservations.clear();
     listeners.clear();
 }

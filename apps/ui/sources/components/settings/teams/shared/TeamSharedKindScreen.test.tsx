@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
@@ -119,6 +120,18 @@ describe('Team shared kind list', () => {
     expect(routerPush).toHaveBeenLastCalledWith(
       expect.stringContaining(`/pools/${POOL_ID}?serverId=`),
     );
+    await act(async () => screen.tree.unmount());
+
+    harness.answer(serverId, POOLS, {
+      body: { pools: [] },
+      respondAfter: new Promise<void>(() => {}),
+    });
+    const returned = await renderScreen(
+      <TeamSharedKindScreen serverId={serverId} teamId="team-1" kind="machinePools" />,
+    );
+    await vi.waitFor(() => expect(harness.requestsFor(POOLS)).toHaveLength(2));
+    expect(ids(returned)).toContain(`team-shared-kind-row:${POOL_ID}`);
+    expect(ids(returned)).not.toContain('team-shared-kind-loading');
   });
 
   it('says once when nothing of the kind is shared', async () => {

@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -47,6 +48,41 @@ it('loads selected-Team Machine pages without replacing the Account inventory an
     await act(async () => { await home.switchAccount(serverId, 'replacement-reader'); });
     await waitForHomeGovernance(() => expect(screen.getCurrent().isCurrent).toBe(false));
     expect(screen.getCurrent().rows).toEqual([]);
+});
+
+it('keeps a previously opened Team Machine list visible through a held reread', async () => {
+    const { useTeamSharedMachines } = await import('./useTeamSharedMachines');
+    const serverId = await home.addHome({ name: 'Machine Home', serverUrl: 'https://team-machines-remount.example', accountId: 'reader' });
+    const path = '/v1/machines?sharedWithTeamId=selected-team';
+    const row = { ...createPlainMachineRowFixture({ id: 'team-machine', accountId: 'reader' }), sharedWithTeamScope: 'group' };
+    home.answer(serverId, path, { body: [row] });
+    const read = () => useTeamSharedMachines({ scope: { serverId, accountId: 'reader' },
+        address: { serverId, teamId: 'selected-team' }, enabled: true });
+    const first = await renderHook(read);
+    await waitForHomeGovernance(() => expect(first.getCurrent().isCurrent).toBe(true));
+    await first.unmount();
+
+    let releaseRefusal!: () => void;
+    const respondAfter = new Promise<void>(resolve => { releaseRefusal = resolve; });
+    home.answer(serverId, path, { status: 403, body: { error: 'permission_denied' }, respondAfter });
+    const frames: Array<ReturnType<typeof read>> = [];
+    const returned = await renderHook(() => {
+        const list = read();
+        useLayoutEffect(() => { frames.push(list); });
+        return list;
+    });
+    expect(frames[0]).toMatchObject({ rows: [{ machineId: 'team-machine' }], status: 'refreshing', isCurrent: false });
+    expect(returned.getCurrent().rows.map(machine => machine.machineId)).toEqual(['team-machine']);
+    expect(returned.getCurrent().status).toBe('refreshing');
+    expect(returned.getCurrent().isCurrent).toBe(false);
+    await act(async () => { releaseRefusal(); });
+    await waitForHomeGovernance(() => expect(returned.getCurrent()).toMatchObject({ rows: [], status: 'error' }));
+    await returned.unmount();
+
+    home.answer(serverId, path, { body: [], respondAfter: new Promise<void>(() => {}) });
+    const afterRefusal = await renderHook(read);
+    expect(afterRefusal.getCurrent()).toMatchObject({ rows: [], status: 'loading' });
+    await afterRefusal.unmount();
 });
 
 it('does not send a Team address through another Home credential', async () => {
