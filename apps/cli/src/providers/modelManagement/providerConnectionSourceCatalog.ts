@@ -8,7 +8,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
-import { resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
+import { projectProviderModelLoadCapability, resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { readProviderModelNameCatalog } from '@/providers/registry/contributions';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { readProviderConnectionCatalogPresentation, projectProviderCatalogForPicker } from '@/providers/catalog';
@@ -89,15 +89,13 @@ export function projectProviderConnectionSourceCatalog(input: Readonly<{
   const { context } = input.observation;
   const record = context.connection;
   const facts = resolveProviderSourceFacts(record);
-  const modelLoad = record.source.kind === 'contribution' ? record.source.definition.modelLoad : undefined;
+  const modelLoad = projectProviderModelLoadCapability(record, input.localModelManagementEnabled);
   const groupBase = { connectionId: record.connectionId,
     providerName: record.source.kind === 'contribution' ? record.source.definition.name : record.source.template.name,
     connectionName: record.displayName, connectionRole: record.connection.role, connectionDisplayNameMode: record.connection.displayNameMode,
     connectionRevision: record.connection.revision,
-    modelLoadAction: modelLoad
-      ? input.localModelManagementEnabled ? 'available' as const : 'feature_disabled' as const
-      : 'descriptor_absent' as const,
-    modelLoadPreflightPolicy: modelLoad?.preflightPolicy ?? null,
+    modelLoadAction: modelLoad.action,
+    modelLoadPreflightPolicy: modelLoad.preflightPolicy,
     manualModelPolicy: facts.catalog.manualModelPolicy, supportsFreeformModelIds: false, suppressedConnectedServiceIds: [] };
   if (!record.authorization.authorized) {
     return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: input.request.agentTargetKey,

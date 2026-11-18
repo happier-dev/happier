@@ -46,7 +46,7 @@ import {
 } from './credentials';
 import { mintProviderBindingAuthorizationTicket } from './ticket';
 import type { ProviderProbeAuthorizationRequest } from '../probe/authorization';
-import { resolveProviderSourceFacts, type ResolvedProviderSourceFacts } from '../registry/sourceFacts';
+import { resolveProviderModelLoadTarget, resolveProviderSourceFacts, type ResolvedProviderSourceFacts } from '../registry/sourceFacts';
 import { resolveProviderModelCompatibility } from '../catalog/compatibility';
 import type {
   ResolvedManagedProviderRuntime,
@@ -661,33 +661,19 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
     return { status: 'error', error: providerConnectionResolutionError(resolution, input.request.machineId) };
   }
   const record = resolution.record;
-  if (
-    record.deployment.kind !== 'external'
-    || record.source.kind !== 'contribution'
-    || record.source.definition.kind !== 'local'
-    || !record.source.definition.modelLoad
-  ) {
-    return { status: 'unavailable' };
-  }
+  const target = resolveProviderModelLoadTarget(record);
+  if (!target) return { status: 'unavailable' };
+
   const context = { connectionId: record.connectionId, machineId: input.request.machineId };
   if (!record.authorization.authorized) {
     return { status: 'error', error: createProviderErrorV1(record.authorization.errorCode, context) };
   }
-  const descriptor = record.source.definition.modelLoad;
-  const endpoint = record.endpoints.find((candidate) =>
-    candidate.endpointTemplateId === descriptor.endpointTemplateId);
-  if (!endpoint) return { status: 'unavailable' };
-
-  const credential = record.source.definition.credential;
-  const managementTransports = credential?.transports.filter((transport) =>
-    transport.protocols.includes(endpoint.protocol) && transport.uses.includes('management')) ?? [];
-  if (credential && managementTransports.length !== 1) {
-    return {
-      status: 'error',
-      error: createProviderErrorV1('provider_credential_transport_unavailable', context),
-    };
+  if (target.status === 'endpoint_unavailable') return { status: 'unavailable' };
+  if (target.status === 'credential_transport_unavailable') {
+    return { status: 'error', error: createProviderErrorV1('provider_credential_transport_unavailable', context) };
   }
-  const selectedTransport = managementTransports[0] ?? null;
+
+  const { descriptor, endpoint, credential, selectedTransport } = target;
   const credentialReferenceResult = credential
     ? resolveProviderCredentialReference({
         providerSettings,

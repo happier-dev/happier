@@ -108,7 +108,8 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
         catalog: input.probeCatalog
           ? { source: 'probe', sourceRegistryVersion: 'fixture-registry:v1', manualModelPolicy: 'catalog-only',
-              probes: [{ endpointTemplateId: 'responses', path: '/models', parser: input.modelLoad ? 'lmstudio-native-models' : 'openai-models' }] }
+              probes: [{ endpointTemplateId: 'responses', path: '/models', parser: input.modelLoad ? 'fixture-load-state' : 'openai-models',
+                ...(input.modelLoad ? { reportsModelLoadState: true } : {}) }] }
           : { source: 'static', manualModelPolicy: 'catalog-only', staticModels: input.catalogModels
               ? input.catalogModels.map(model => ({ ...model, name: model.name ?? model.id }))
               : [{ id: 'model-a', name: 'Model A' }] },
@@ -174,6 +175,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       async materialize() { return { kind: 'httpHeaders', headers: {} }; }
     });`).join('\n')}
     ${gateway ? '' : "api.providers.register('gateway', { async start() { throw new Error('Worker must not start a managed Provider'); } });"}
+    ${input.modelLoad ? "api.providers.registerCatalogParser('gateway', 'fixture-load-state', () => ({ models: [] }));" : ''}
     api.agents.register('agent', fixtureAgentRuntimeFactory, {
       sessionRunnerFactory: { module: ${JSON.stringify(input.sessionRunnerFactoryModule ?? './agentRuntime.mjs')}, export: 'fixtureAgentRuntimeFactory', runtimeApiVersion: 1 },
       providerBinding: { v: 1, adapterVersion: 1,

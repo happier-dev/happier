@@ -1,4 +1,4 @@
-import { resolveProviderSourceCatalog } from '../registry/sourceFacts';
+import { projectProviderModelLoadCapability, resolveProviderSourceCatalog } from '../registry/sourceFacts';
 import { projectProviderCatalogGatewaySlots } from '../catalog/assemble';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { randomUUID } from 'node:crypto';
@@ -1529,10 +1529,6 @@ export function createRuntimeProviderServices(input: Readonly<{
     },
   });
 
-  const projectModelLoadAction = (connection: ResolvedProviderConnectionRecord) => connection.source.kind !== 'contribution'
-    || connection.source.definition.modelLoad === undefined ? 'descriptor_absent' as const
-      : input.modelLoadEnabled?.() === true ? 'available' as const : 'feature_disabled' as const;
-
   const projectModelCatalog = (
     identity: RuntimeProviderIdentity,
     context: Extract<RuntimeProviderCatalogContext, { status: 'success' }>,
@@ -1616,7 +1612,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         }),
       } : {}),
       manualModelPolicy: sourceCatalog(context.connection).manualModelPolicy,
-      modelLoadAction: projectModelLoadAction(context.connection),
+      modelLoadAction: projectProviderModelLoadCapability(context.connection, input.modelLoadEnabled?.() === true).action,
       models,
     };
   };

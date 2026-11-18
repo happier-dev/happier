@@ -3484,7 +3484,7 @@ Provider surfaces use the canonical feature system:
 
 - `providers` gates first-class provider settings, registry, and resolution;
 - `providers.localDiscovery` depends on `providers` and `localServices.inventory`;
-- `providers.localModelManagement` depends on `providers`;
+- `providers.localModelManagement` depends on `providers`. Load is available on a Machine when a local Provider contribution's external connection resolves the declared management endpoint and any declared credential has one matching management transport. The catalog and Load admission use this same destination. Managed deployments start and supervise their runtime through the managed Provider lifecycle.
 - `localServices.managed` gates the daemon Local Services UI product (inventory launch actions, previews, and related controls), not Provider managed-runtime start or supervision.
 
 Dependencies are declared in `packages/protocol/src/features/catalog.ts` and applied centrally. Missing or malformed server bits fail closed before settings, secrets, network, or processes are touched. See [Feature gating](./feature-gating.md).

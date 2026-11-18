@@ -81,7 +81,7 @@ import {
 } from '@/providers/operationLifetime';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
 import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
-import { resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
+import { projectProviderModelLoadCapability, resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { projectProviderModelReasoningForAgent, readProviderReasoningEffortOption } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import {
@@ -879,18 +879,9 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
               machineId: request.machineId,
             });
           }
-          const modelLoadDescriptor =
-            context.connection.source.kind === 'contribution'
-              ? context.connection.source.definition.modelLoad
-              : undefined;
-          modelLoadProjectionByConnectionId.set(connection.id, {
-            action: modelLoadDescriptor
-              ? input.featureGate.isEnabled('providers.localModelManagement')
-                ? 'available'
-                : 'feature_disabled'
-              : 'descriptor_absent',
-            preflightPolicy: modelLoadDescriptor?.preflightPolicy ?? null,
-          });
+          modelLoadProjectionByConnectionId.set(connection.id, projectProviderModelLoadCapability(
+            context.connection, input.featureGate.isEnabled('providers.localModelManagement'),
+          ));
           // The recovery-row decision belongs to the catalog assembler, so this
           // first pass carries the same current selection: whatever it retains is
           // exactly what needs compatibility, and nothing re-derives the rule.

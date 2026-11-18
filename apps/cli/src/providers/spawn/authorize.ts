@@ -44,6 +44,7 @@ import {
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
+import { resolveProviderModelLoadTarget } from '../registry/sourceFacts';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
 import { createProviderCatalogAdmissionError, readProviderSettingsForCli } from '../settings/read';
@@ -839,13 +840,11 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       }) });
     if (!authorization.ok) return authorization;
     admittedSnapshot = snapshot;
-    const modelLoadDescriptor =
-      connectionResolution.status === 'resolved'
-      && connectionResolution.record.source.kind === 'contribution'
-        ? connectionResolution.record.source.definition.modelLoad ?? null
-        : null;
+    const modelLoadTarget = connectionResolution.status === 'resolved'
+      ? resolveProviderModelLoadTarget(connectionResolution.record)
+      : null;
     const modelLoadPreflight = evaluateProviderModelLoadPreflight({
-      descriptor: modelLoadDescriptor,
+      descriptor: modelLoadTarget?.status === 'available' ? modelLoadTarget.descriptor : null,
       loadState: runtimeModelObservation?.loadState ?? 'unknown',
     });
     if (modelLoadPreflight.status === 'blocked') {

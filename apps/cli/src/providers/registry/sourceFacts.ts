@@ -14,6 +14,30 @@ export type ResolvedProviderSourceFacts = Readonly<{
   contributionKey: string | null;
 }>;
 
+/** Resolve the management destination shared by catalog presentation and load admission. */
+export function resolveProviderModelLoadTarget(record: ResolvedProviderConnectionRecord) {
+  const source = record.source;
+  if (record.deployment.kind !== 'external' || source.kind !== 'contribution'
+    || source.definition.kind !== 'local' || !source.definition.modelLoad) return null;
+
+  const { credential, modelLoad: descriptor } = source.definition;
+  const endpoint = record.endpoints.find(candidate => candidate.endpointTemplateId === descriptor.endpointTemplateId);
+  if (!endpoint) return { status: 'endpoint_unavailable' as const };
+
+  const transports = credential?.transports.filter(transport =>
+    transport.protocols.includes(endpoint.protocol) && transport.uses.includes('management')) ?? [];
+  if (credential && transports.length !== 1) return { status: 'credential_transport_unavailable' as const };
+
+  return { status: 'available' as const, descriptor, endpoint, credential, selectedTransport: transports[0] ?? null };
+}
+
+export function projectProviderModelLoadCapability(record: ResolvedProviderConnectionRecord, enabled: boolean) {
+  const target = resolveProviderModelLoadTarget(record);
+  if (target?.status !== 'available') return { action: 'descriptor_absent' as const, preflightPolicy: null };
+  return { action: enabled ? 'available' as const : 'feature_disabled' as const,
+    preflightPolicy: target.descriptor.preflightPolicy };
+}
+
 /** Bound family declarations supply cold model facts until the Gateway observes membership. */
 export function resolveProviderSourceCatalog(record: ResolvedProviderConnectionRecord): ResolvedProviderSourceFacts['catalog'] {
   const catalog = record.source.kind === 'contribution' ? record.source.definition.catalog : record.source.template.catalog;

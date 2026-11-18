@@ -188,7 +188,7 @@ it('explicit requester Refresh probes A managed source on B without B Account re
   } finally { await fixture.cleanup(); }
 });
 
-it('source catalog retains declared model-load controls without activating the recipient Agent', async () => {
+it('source catalog agrees with load admission when managed deployment has no external load endpoint', async () => {
   const fixture = await createManagedRunLaunchFixture({ probeCatalog: true, activateAgent: false,
     modelLoad: { endpointTemplateId: 'responses', path: '/load', request: 'json-model-id-v1',
       confirmation: 'refresh-catalog-load-state', preflightPolicy: 'advisory' } });
@@ -203,10 +203,11 @@ it('source catalog retains declared model-load controls without activating the r
       agentTargetKey: fixture.agentTargetKey, sourceCatalog: true, includeDirectMaterialization: true,
       providerConnection: { connectionId: ProviderConnectionIdSchema.parse('run-gateway'),
         expectedConnectionSecurityFingerprint: fixture.connectionSecurityFingerprint }, refreshPolicy: 'current_only' });
+    expect(await services.loadModel({ machineId: fixture.machineId,
+      connectionId: 'run-gateway', modelId: 'example' })).toEqual({ status: 'not_supported', reason: 'descriptor_absent' });
     expect(result, JSON.stringify(result)).toMatchObject({ status: 'success', groups: [{
-      modelLoadAction: 'available', modelLoadPreflightPolicy: 'advisory',
+      modelLoadAction: 'descriptor_absent', modelLoadPreflightPolicy: null,
     }] });
-    expect(fixture.lease.registry.agentRuntimesByAgentId.has(fixture.agentId)).toBe(false);
   } finally { await fixture.cleanup(); }
 });
 
