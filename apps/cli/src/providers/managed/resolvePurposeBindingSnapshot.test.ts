@@ -160,6 +160,7 @@ describe('resolveManagedProviderPurposeBindingSnapshot', () => {
 
 it('retains the Home transport cause behind the classified purpose-binding refusal', () => {
   const result = providerManagedPurposeBindingError(Object.assign(new TypeError('Bearer private-fixture-value'), { code: 'ECONNREFUSED' }), { machineId: 'machine-a' });
-  expect(result).toMatchObject({ code: 'provider_catalog_unavailable', failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } });
+  expect(result).toMatchObject({ code: 'provider_catalog_unavailable', retryable: true,
+    failureCause: { phase: 'providers.purpose_binding.home_read', errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } });
   expect(JSON.stringify(result)).not.toContain('private-fixture-value');
 });

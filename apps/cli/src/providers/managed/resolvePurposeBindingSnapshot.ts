@@ -1,10 +1,10 @@
 import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeV1, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
-import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createProviderErrorV1, providerErrorFromRpcFailure, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ProviderOperationAbandonedError } from '../operationLifetime';
 import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
-import { providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
 
 /** Binding absence requires repair; an unreadable Home cannot establish absence. */
 export function providerManagedPurposeBindingError(error: unknown, context: Readonly<{ connectionId?: string; machineId: string }>): ProviderErrorV1 {
@@ -13,7 +13,11 @@ export function providerManagedPurposeBindingError(error: unknown, context: Read
   const typed = ProviderErrorV1Schema.safeParse(error);
   if (typed.success) return typed.data;
   try { rethrowRequesterHomeReadFailure(error); }
-  catch { return createProviderErrorV1('provider_catalog_unavailable', context, error); }
+  catch {
+    return createProviderErrorV1('provider_catalog_unavailable', { ...context,
+      failureCause: projectActionFailureCauseV1(error, 'providers.purpose_binding.home_read'),
+    });
+  }
   return createProviderErrorV1('provider_connection_invalid', context, error);
 }
 
