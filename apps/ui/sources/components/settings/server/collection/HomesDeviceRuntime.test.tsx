@@ -64,6 +64,8 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
+const personalHomeOperationsModule = await import('../localControl/usePersonalHomeRuntimeOperations');
+
 beforeEach(async () => {
     await home.reset();
     host.commands = [];
@@ -157,6 +159,28 @@ describe('device runtime ownership', () => {
         expect(hook.getCurrent().personalHomeProfile).toBeNull();
         expect(hook.getCurrent().operations.relocation).toBeUndefined();
         expect(hook.getCurrent().operations.repairSearch).toBeUndefined();
+    });
+
+    it('reports why Home search repair is disabled before making a rebuild request', async () => {
+        const url = 'http://127.0.0.1:43123';
+        const serverId = await home.addHome({ name: 'Personal Home', serverUrl: url, accountId: 'owner', currentAccount: true });
+        await home.setActionPolicy(serverId, 'home.search.rebuild', 'ui', 'off');
+        const { usePersonalHomeRuntimeOperations } = personalHomeOperationsModule;
+        const profile = {
+            id: serverId, name: 'Personal Home', serverUrl: url, source: 'desktop-personal-home',
+            serverIdentityId: 'srv_repair_home', personalHomeBootstrapCompleted: true,
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        } satisfies ServerProfile;
+        const hook = await renderHook(() => usePersonalHomeRuntimeOperations({
+            profiles: [profile], actionScope: { serverId, accountId: 'owner' },
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()?.operations.repairSearch).toBeTypeOf('function'));
+            const repair = hook.getCurrent().operations.repairSearch!;
+            const { t } = await import('@/text');
+            await expect(repair()).rejects.toThrow(t('actionConfirmations.turnedOffUnnamedMessage'));
+            expect(home.requests.some(({ path }) => path === '/v1/home/search/rebuild')).toBe(false);
+        } finally { await hook.unmount(); }
     });
 
     it('finds the completed managed Home independently of the Home in use without changing focus', async () => {

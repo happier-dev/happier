@@ -33,6 +33,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { isDesktopHost, invokeDesktopHost } from '@/utils/platform/desktopHost';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -213,7 +214,7 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
                     const result = await searchAction.execute('home.search.rebuild', {});
                     if (!result.ok) {
                         if (isActionApprovalDeclinedErrorCode(result.errorCode)) return false;
-                        throw new Error(result.error);
+                        throw new Error(resolveActionExecutionErrorMessage(result, t('errors.operationFailed')));
                     }
                     if (!getActionSpec('home.search.rebuild').outputSchema?.safeParse(result.result).success) throw new Error(t('errors.operationFailed'));
                     return true;
