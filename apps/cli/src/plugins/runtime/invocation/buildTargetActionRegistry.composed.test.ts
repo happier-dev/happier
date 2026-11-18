@@ -2636,9 +2636,10 @@ describe('buildTargetActionInvocationRegistry', () => {
         });
         selected = false;
 
+        // The canonical form-input revalidation refuses the no-longer-authorized Account first.
         await expect(invoke()).resolves.toMatchObject({
             status: 'unavailable',
-            code: 'plugin_host_access_resource_not_selected',
+            code: 'plugin_action_form_connected_account_options_unavailable',
         });
     });
 
@@ -3263,8 +3264,24 @@ describe('buildTargetActionInvocationRegistry', () => {
         } finally { target.dispose(); }
     });
 
+    it('runs a writesLocal action directly on CLI without a confirmation predicate', async () => {
+        const actionHandler = vi.fn(handler);
+        const target = buildRegistry({
+            contributes: registry({ pluginManifest: manifest({ dangerLevel: 'writesLocal' }) }),
+            targetRegistrations: [{
+                pluginId: 'acme.alpha', occurrenceId: '7',
+                registration: { family: 'actions', localId: 'run', value: actionHandler },
+            }],
+            targetActivationFacts: [fact()],
+        });
+
+        await expect(target.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+        })).resolves.toMatchObject({ status: 'executed' });
+        expect(actionHandler).toHaveBeenCalledOnce();
+    });
+
     it.each([
-        'writesLocal',
         'writesRemote',
         'externalSideEffect',
         'destructive',
@@ -3462,7 +3479,7 @@ describe('buildTargetActionInvocationRegistry', () => {
     it.each([
         ['desired generation', { desiredGeneration: '8' }],
         ['applied generation', { appliedGeneration: '8' }],
-    ] as const)('rechecks %s after present intent before calling the handler', async (_label, changedFacts) => {
+    ] as const)('keeps the admitted %s when it changes during present intent', async (_label, changedFacts) => {
         let facts = authorizationFacts();
         const actionHandler = vi.fn(handler);
         const target = buildRegistry({
@@ -3481,8 +3498,8 @@ describe('buildTargetActionInvocationRegistry', () => {
                 facts = authorizationFacts(changedFacts);
                 return { status: 'approved', fingerprint };
             },
-        })).resolves.toMatchObject({ status: 'unavailable' });
-        expect(actionHandler).not.toHaveBeenCalled();
+        })).resolves.toMatchObject({ status: 'executed' });
+        expect(actionHandler).toHaveBeenCalledOnce();
     });
 
     it.each([

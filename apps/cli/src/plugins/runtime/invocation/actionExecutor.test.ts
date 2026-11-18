@@ -505,8 +505,9 @@ describe('target action executor', () => {
       resolve: () => resolved('destructive'), invoke,
       requestCurrentIntent: async () => { throw new Error('presenter offline'); },
     });
+    // A requester exception is a typed not-started failure, not a missing requester.
     await expect(requesterFailure.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
-      .resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+      .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed' });
     expect(invoke).not.toHaveBeenCalled();
 
     const aborted = new AbortController();
