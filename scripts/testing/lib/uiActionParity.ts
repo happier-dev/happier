@@ -2,6 +2,7 @@ import ts from 'typescript';
 import { SOURCE_PARITY_EXCLUSIONS } from './uiActionParityExclusions.ts';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, posix, resolve as resolvePath } from 'node:path';
+import { THEME_ACTION_IDS } from '../../../packages/protocol/src/actions/themeActionIdsV1.ts';
 
 export type UiParitySource = Readonly<{ filePath: string; content: string }>;
 
@@ -344,11 +345,24 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     else if (spec.cli?.commands?.length && discovery.cliCommandIds && !discovery.cliCommandIds.has(actionId)) finding('cli_command_missing');
   }
 
-  function checkSetting(key: string, scope: string, site: Site, directWriter?: string): void {
+  function checkSetting(key: string, scope: string, site: Site, directWriter?: string, field?: ts.Node): void {
     settings.push({ ...site, key, scope });
     if (exclude(`${scope}:${key}`, site)) return;
     if (directWriter) {
       findings.push({ ...site, code: 'direct_settings_write', operation: directWriter });
+      return;
+    }
+    // The library's selection port is an effect of Apply, Keep, Undo and Store Install.
+    // Its other consumers only list, read, migrate or remove Artifacts.
+    if (scope === 'local' && key === 'themeProfileSelection' && field
+      && site.filePath === 'apps/ui/sources/sync/syncEngine.ts'
+      && ts.findAncestor(field, node => ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)
+        && node.name.text === 'writeSelection')
+      && ts.findAncestor(field, node => ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name)
+        && node.name.text === 'withThemeProfileContext')) {
+      for (const action of [THEME_ACTION_IDS.apply, THEME_ACTION_IDS.keep, THEME_ACTION_IDS.undo, THEME_ACTION_IDS.install]) {
+        checkAction(action, site);
+      }
       return;
     }
     if (scope === 'account' && key === 'preferredLanguage'
@@ -1001,7 +1015,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           if (ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)) {
             const keys = ts.isComputedPropertyName(field.name) ? strings(field.name.expression)
               : [field.name.getText(source).replaceAll(/['"]/g, '')];
-            for (const key of keys) checkSetting(key, scope, location(field), directWriter);
+            for (const key of keys) checkSetting(key, scope, location(field), directWriter, field);
             if (!keys.length) dynamicSetting(field);
           } else if (ts.isSpreadAssignment(field)) {
             const prior = ts.isIdentifier(field.expression) ? lookup(field.expression, field.expression.text) : undefined;

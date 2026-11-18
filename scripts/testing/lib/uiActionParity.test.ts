@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../../packages/protocol/src/actions/settings/builtInSettingsMetadata.ts';
 import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS } from '../../../packages/protocol/src/actions/specs/screenCapture.ts';
+import { THEME_ACTION_IDS } from '../../../packages/protocol/src/actions/themeActionIdsV1.ts';
 import { listActionSpecs } from '../../../packages/protocol/src/actions/actionSpecs.ts';
 import { collectActionDispatchParity, readActionDispatchGraph } from './actionDispatchParity.ts';
 import { collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
@@ -874,6 +875,34 @@ test('exempts machine presentation state and validated Action forwarding only at
       .replace('machineVitalsRangeV1', 'unknownRange').replace('item.actionId', 'other.actionId')
       .replace('command.actionId', 'other.actionId') })), specs, []);
   assert.equal(unknown.findings.length, 4);
+});
+
+test('counts the theme library selection write against its admitted Actions', () => {
+  const filePath = 'apps/ui/sources/sync/syncEngine.ts';
+  const source = { filePath, content: `class Sync {
+    withThemeProfileContext = operation => operation({
+      writeSelection: () => storage.getState().applyLocalSettings({ themeProfileSelection: next }),
+      readSelection: () => storage.getState().applyLocalSettings({ themeProfileSelection: next }),
+    });
+  }` };
+  const ids = [THEME_ACTION_IDS.apply, THEME_ACTION_IDS.keep, THEME_ACTION_IDS.undo, THEME_ACTION_IDS.install];
+  const themeSpecs = ids.map(id => ({ id, surfaces: { ui: true, agent: true } }));
+  const report = collectUiActionParity([source], themeSpecs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ids);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [['setting_unmapped', 'local:themeProfileSelection']]);
+  assert.equal(report.exclusions.length, 0);
+
+  const missing = collectUiActionParity([source], themeSpecs.filter(spec => spec.id !== THEME_ACTION_IDS.install), []);
+  assert.equal(missing.findings.find(site => site.code === 'unregistered_action')?.operation, THEME_ACTION_IDS.install);
+  const bypass = collectUiActionParity([{ ...source, filePath: 'apps/ui/sources/components/ThemeButton.tsx' }], themeSpecs, []);
+  assert.deepEqual(bypass.findings.map(site => site.code), ['direct_settings_write', 'direct_settings_write']);
+
+  const current = collectUiActionParity([{ filePath, content: readFileSync(filePath, 'utf8') }],
+    listActionSpecs(), BUILT_IN_SETTINGS_METADATA_V1, { sourceRoot: process.cwd() });
+  const effect = current.settings.find(site => site.scope === 'local' && site.key === 'themeProfileSelection');
+  assert.ok(effect);
+  assert.deepEqual(current.actions.filter(site => site.line === effect.line).map(site => site.actionId), ids);
+  assert.deepEqual(current.findings.filter(site => site.line === effect.line), []);
 });
 
 test('applies the same device-local exemptions to raw settings writes without exempting neighboring keys or owners', () => {
