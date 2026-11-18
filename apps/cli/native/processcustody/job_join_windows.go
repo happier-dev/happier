@@ -113,6 +113,14 @@ func joinCustodyJob(args []string) error {
 	if limits.BasicLimitInformation.LimitFlags&jobObjectLimitKillOnJobClose != 0 {
 		return fmt.Errorf("owner-held Job must not kill on close")
 	}
+	// A Session holder breaks away from its runner's owner Job (held-launch), as it outlives the
+	// runner on Linux and macOS.
+	if limits.BasicLimitInformation.LimitFlags&jobObjectLimitBreakawayOk == 0 {
+		limits.BasicLimitInformation.LimitFlags |= jobObjectLimitBreakawayOk
+		if result, _, err := procSetInformationJobObject.Call(job, jobObjectExtendedLimitInfoClass, uintptr(unsafe.Pointer(&limits)), unsafe.Sizeof(limits)); result == 0 {
+			return fmt.Errorf("SetInformationJobObject: %v", err)
+		}
+	}
 	if assigned, _, err := procAssignProcessToJobObject.Call(job, uintptr(target)); assigned == 0 {
 		return fmt.Errorf("AssignProcessToJobObject: %v", err)
 	}
