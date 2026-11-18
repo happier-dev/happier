@@ -115,7 +115,7 @@ import { admitDiscussionFollowAddressingInTx, acknowledgeDiscussionFollowInputIn
 import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import type { SessionPendingEnqueueByMachineRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import type { SessionPendingTemplateOnboardingInputV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
-import { admitSessionFollowRuleOccurrenceInTx, resolveSessionFollowInputSelectedDelivery, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx, settleAcceptedSessionFollowInputInTx, type SessionFollowRuleProgressAdmission } from '@/app/session/follow/sessionFollowRuleProgress';
+import { admitSessionFollowRuleOccurrenceInTx, readAdmittedSessionFollowInputInTx, resolveSessionFollowInputSelectedDelivery, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx, settleAcceptedSessionFollowInputInTx, type SessionFollowRuleProgressAdmission } from '@/app/session/follow/sessionFollowRuleProgress';
 import { deriveSessionFollowOriginalOccurrenceKeyV1, deriveSessionFollowInputLocalIdV1, isRunFollowOriginalV1, isSessionFollowQuestionHandlerV1, resolveSessionFollowTurnEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { DiscussionProducerV1Schema } from '@happier-dev/protocol/discussions/content';
 import { markDiscussionReadersChangedInTx } from '@/app/discussions/changes';
@@ -1981,7 +1981,6 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
         holdReason?: 'autonomous_check_in' | 'session_input_target_unavailable' }>
 > {
     // Settlement reads its admitted original, including materialized inputs.
-    // Policy withdrawal applies to the next admission, not this bounded input.
     const original = params.original ?? await params.tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
         sessionId: params.targetSessionId, localId: params.localId,
     } }, select: SETTLEMENT_ORIGINAL_PROJECTION }) ?? await params.tx.sessionMessage.findUnique({ where: { sessionId_localId: {
@@ -1989,6 +1988,16 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     } }, select: SETTLEMENT_ORIGINAL_PROJECTION });
     const originalProgress = SessionMessageReplyProgressV1Schema.safeParse(original?.replyProgress);
     const originalReceipt = SessionInputAdmissionReceiptV1Schema.safeParse(original?.inputAdmissionReceipt);
+    // An unstarted Follow rejoining its transcript custody needs a surviving
+    // delivery reason before it can reach the provider.
+    if (params.settledOriginal && original?.turnStartWitnessId === null && originalReceipt.success
+        && originalReceipt.data.followDeliveryV1 && 'sourceSessionId' in originalReceipt.data.followDeliveryV1.original) {
+        const custody = await readAdmittedSessionFollowInputInTx(params.tx, {
+            accountId: params.accountId, destinationSessionId: params.targetSessionId, localInputId: params.localId,
+            authority: { kind: 'account', authentication: backgroundDeliveryAuthentication() },
+        });
+        if (!custody?.nativeAccepted && !custody?.effectiveDelivery) return { ok: false, rejectionCode: 'session_input_cancelled' };
+    }
     const retainedRoot = params.settledOriginal && !params.validation?.autonomousCheckIn
         && original?.autonomousExchangeRootSessionId && original.autonomousExchangeRootLocalId
         ? { sessionId: original.autonomousExchangeRootSessionId, localId: original.autonomousExchangeRootLocalId }
