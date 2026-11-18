@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -544,4 +544,58 @@ test('queued report-mode commits are drained in landing order by one drainer, ea
   assert.equal(fetched.length, 4, 'parent + 3 commits: every tree once');
   assert.deepEqual(await drainCommitGateReports({ repo, env, remote, post: () => {}, boardPaths: [], log: () => {} }), [], 'the queue is empty');
   assert.equal(readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok/gu).length, 3);
+});
+
+// P03 ORCH 2026-11-18: one queue, two consumers (nl1 and nl3 gate lanes); ~50 package commits/h arrive against ~30/h
+// for one serial lane.
+test('two report consumers split one queue: every commit is checked exactly once, and both consumers take commits', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-split-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const shas = [];
+  for (const value of [31, 32, 33, 34, 35, 36]) {
+    shas.push(await commit('packages/plugins/codex/src/index.ts', `export const value = ${value};\n`));
+    queueCommitGateReport({ repo, env, commit: shas.at(-1) });
+  }
+  const checkedBy = new Map();
+  // The worker boundary: each consumer's remote answers after a tick, so the two drain concurrently.
+  const consumer = worker => async () => drainCommitGateReports({ repo, env, worker, post: () => {}, boardPaths: [], log: () => {},
+    remote: (treeIds, dirs) => {
+      for (const treeId of treeIds) checkedBy.set(treeId, [...(checkedBy.get(treeId) ?? []), worker]);
+      return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))]));
+    } });
+  const [nl1, nl3] = await Promise.all([consumer('nl1')(), consumer('nl3')()]);
+  assert.deepEqual([...nl1, ...nl3].sort(), [...shas].sort(), 'every queued commit once, none twice');
+  assert.ok(nl1.length > 0 && nl3.length > 0, `both consumers took commits: nl1=${nl1.length} nl3=${nl3.length}`);
+  const verdicts = readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok commit=\w+/gu);
+  assert.equal(new Set(verdicts).size, 6);
+  void git;
+});
+
+// A worker whose dispatch returns no rows (nl3's sync stalled 2026-11-18; hstack-exec gives up at its keepalive bound,
+// ~180 s, with exit 255) hands the request to the next worker instead of reporting the trees unjudged.
+test('a worker dispatch that returns no rows falls back to the next worker', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-fallback-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const sha = await commit('packages/plugins/codex/src/index.ts', 'export const value = 41;\n');
+  const treeId = execFileSync('git', ['rev-parse', `${sha}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const dispatched = [];
+  // The SSH/process boundary: tree push and the routed worker command.
+  const transport = {
+    ssh: worker => ({ alias: worker, config: '/dev/null' }),
+    push: () => ({ status: 0, stderr: '' }),
+    listRefs: () => '',
+    dispatch: (worker, args) => {
+      dispatched.push(worker);
+      if (worker === 'nl3') return { status: 255, signal: null, stdout: '' };
+      const tree = args.find(arg => arg.startsWith('--tree=')).slice(7);
+      return { status: 0, signal: null, stdout: `HAPPIER_ROLLING_ROWS ${JSON.stringify({ [tree]: { 'packages/plugins/codex': [] } })}\n` };
+    },
+  };
+  const rows = workerTreeRows({ repo, state, log: () => {}, workers: ['nl3', 'nl1'], lane: 'gate', transport })(treeId, ['packages/plugins/codex'], 'head');
+  assert.deepEqual(dispatched, ['nl3', 'nl1']);
+  assert.deepEqual(rows.get('packages/plugins/codex'), []);
 });

@@ -552,12 +552,13 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
  * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true }) {
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true,
+  workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || GATE_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) {
   const plan = commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
     remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY,
-      workers: (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || GATE_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) });
+      workers }) });
   if (!result.skipped && record) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
@@ -571,13 +572,13 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
  * SHA as one board URGENT. `GATE-REPORT-*` lines in verdicts.log carry the check's wall time, the gate wait it would add
  * at most, which decides when it blocks. Returns null when the commit touches none of those workspaces.
  */
-export async function reportCommitGateTypecheck({ repo, commit, env = process.env, log = message => process.stderr.write(`${message}\n`), remote,
+export async function reportCommitGateTypecheck({ repo, commit, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, workers,
   post = entry => postBoardEntry(repo, entry), boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(board => join(repo, board)) }) {
   const git = gitAt(repo);
   const sha = git(['rev-parse', `${commit}^{commit}`]).trim();
   const base = git(['rev-parse', `${sha}^`]).trim();
   if (!commitGateTypecheckPlan({ repo, base, tree: sha }).blocking.length) return null;
-  const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, record: false });
+  const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
   const red = commitPackageTypecheckRefuses(result);
   if (result.fresh.length) {
     const subject = git(['log', '-1', '--format=%s', sha]).trim();
@@ -599,32 +600,44 @@ export function queueCommitGateReport({ repo, env = process.env, commit }) {
   appendFileSync(gateReportQueuePath(state), `${commit}\n`);
 }
 
+/** Takes the oldest queued commit, or undefined (the claim lock is held only for the read and rewrite). */
+async function takeQueuedCommit(state) {
+  const queue = gateReportQueuePath(state);
+  return await withWorkspaceBundleLock(async () => {
+    if (!existsSync(queue)) return undefined;
+    const [first, ...rest] = [...new Set(readFileSync(queue, 'utf8').split('\n').filter(Boolean))];
+    if (rest.length) {
+      writeFileSync(`${queue}.${process.pid}`, `${rest.join('\n')}\n`);
+      renameSync(`${queue}.${process.pid}`, queue);
+    } else rmSync(queue, { force: true });
+    return first;
+  }, { lockPath: `${queue}.lock`, timeoutMs: null });
+}
+
+/** Report-mode consumers: one per worker (nl1 first, then nl3), all taking from the one queue. */
+export const COMMIT_GATE_REPORT_WORKERS = Object.freeze(['nl1', 'nl3']);
+
 /**
- * Checks every queued commit in landing order, one at a time, then returns the drained SHAs. One drainer per host
- * (lock without waiting; a second one returns []), and the holder re-reads the queue before it lets go. A commit's
- * parent tree is the previous commit's tree, so after the first only the new tree is compiled
- * (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
+ * One report-mode consumer: takes queued commits one at a time, oldest first, and checks each on `worker` (falling back
+ * to the other report workers when it returns no rows), then returns the SHAs it checked. One consumer per worker and
+ * host (its lock, without waiting; a second one returns []), so two consumers split one queue: a serial lane handles
+ * ~30 commits/h and ~50 package commits/h arrived at 21:00Z on 2026-11-18. The holder re-reads the queue before it
+ * lets go (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
  */
-export async function drainCommitGateReports({ repo, env = process.env, ...options }) {
+export async function drainCommitGateReports({ repo, env = process.env, worker = COMMIT_GATE_REPORT_WORKERS[0], ...options }) {
   const state = commitPackageTypecheckStateDir(repo, env);
   mkdirSync(state, { recursive: true });
   const queue = gateReportQueuePath(state);
+  const workers = [worker, ...COMMIT_GATE_REPORT_WORKERS.filter(other => other !== worker)];
   const drained = [];
   for (;;) try {
     await withWorkspaceBundleLock(async () => {
-      for (;;) {
-        if (!existsSync(queue)) return;
-        const taken = `${queue}.${process.pid}`;
-        renameSync(queue, taken);
-        const commits = [...new Set(readFileSync(taken, 'utf8').split('\n').filter(Boolean))];
-        rmSync(taken, { force: true });
-        for (const commit of commits) {
-          await reportCommitGateTypecheck({ repo, env, commit, ...options });
-          drained.push(commit);
-        }
+      for (let commit; (commit = await takeQueuedCommit(state));) {
+        await reportCommitGateTypecheck({ repo, env, commit, workers, ...options });
+        drained.push(commit);
       }
-    }, { lockPath: join(state, 'gate-report.lock'), timeoutMs: null, wait: false });
-    // A commit queued between the holder's last read and its release: its own drainer found the lock busy.
+    }, { lockPath: join(state, `gate-report-${worker}.lock`), timeoutMs: null, wait: false });
+    // A commit queued between the holder's last read and its release: its own kick found this consumer busy.
     if (!existsSync(queue)) return drained;
   } catch (error) {
     if (error?.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
@@ -835,9 +848,28 @@ exit 4`, 'sh', projection, repo, name], { encoding: 'utf8' });
  */
 export function workerTreeRows({ repo, state, env = process.env, log = message => process.stderr.write(`${message}\n`), scope = 'packages',
   workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || ROLLING_WORKERS.join(' ')).split(/\s+/u).filter(Boolean),
-  lane = '', entry = 'scripts/workspaces/commitPackageTypecheck.mjs' }) {
+  lane = '', entry = 'scripts/workspaces/commitPackageTypecheck.mjs', transport }) {
   const slug = basename(state);
   const remoteRepo = `${WORKER_STATE}/${slug}/repo.git`;
+  // The SSH/process boundary: the worker's SSH target, its refs, the tree push and the routed worker command.
+  const sshCommandOf = ssh => `ssh -F '${ssh.config.replaceAll("'", "'\\''")}' -o BatchMode=yes -o ConnectTimeout=20`;
+  const io = transport ?? {
+    ssh: worker => workerSsh(repo, worker, env),
+    listRefs: (ssh, refs) => {
+      const listed = spawnSync('git', ['ls-remote', `${ssh.alias}:${remoteRepo}`, ...refs], { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommandOf(ssh) } });
+      return listed.status === 0 ? listed.stdout : '';
+    },
+    // A worker whose system git sets core.sharedRepository makes init write receive.denyNonFastForwards=true, which
+    // rejected every push after the first (nl3, 2026-11-17 14:18Z onward: ~60 s lost per tree before falling back to nl1).
+    push: (ssh, commit, target) => {
+      const init = spawnSync('sh', ['-c', `${sshCommandOf(ssh)} "$1" "git init --quiet --bare -b rolling '${remoteRepo}' >/dev/null && git -C '${remoteRepo}' config receive.denyNonFastForwards false"`, 'sh', ssh.alias], { encoding: 'utf8' });
+      if (init.status !== 0) return init;
+      return spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:${target}`],
+        { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommandOf(ssh) } });
+    },
+    dispatch: (worker, args) => spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', entry, ...args],
+      { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, stdio: ['ignore', 'pipe', 'inherit'] }),
+  };
   const ref = lane ? `rolling-${lane}` : 'rolling';
   const git = gitAt(repo);
   const commitEnv = { ...gitEnv(), GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
@@ -852,9 +884,8 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
     const unjudged = () => new Map(dirs.map(dir => [dir, undefined]));
     const none = many ? new Map(treeIds.map(id => [id, unjudged()])) : unjudged();
     for (const worker of workers) {
-      const ssh = workerSsh(repo, worker, env);
+      const ssh = io.ssh(worker);
       if (!ssh) { log(`[rolling-head-typecheck] worker ${worker}: no SSH target in this checkout's execution projection`); continue; }
-      const sshCommand = `ssh -F '${ssh.config.replaceAll("'", "'\\''")}' -o BatchMode=yes -o ConnectTimeout=20`;
       // Each tree is pushed as a child of the last commit this worker accepted on the ref. A parentless commit made
       // the push enumerate and send the whole tree (71,501 objects, 155-300 s per tree on 2026-11-18); a child of a
       // commit the worker has sends only the changed objects (14 objects, 3.5 KB, under a second, for 5f6edbb072d).
@@ -865,9 +896,7 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       if (parent && !known(parent)) parent = '';
       if (!parent) {
         // No recorded tip (a new state or lane): any commit the worker's refs already name and this repository holds.
-        const listed = spawnSync('git', ['ls-remote', `${ssh.alias}:${remoteRepo}`, `refs/heads/${ref}`, 'refs/heads/rolling'],
-          { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
-        parent = (listed.status === 0 ? listed.stdout : '').split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
+        parent = io.listRefs(ssh, [`refs/heads/${ref}`, 'refs/heads/rolling']).split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
       }
       // The trees chain in request order, so one push of the last carries them all.
       let commit = parent;
@@ -875,23 +904,20 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
         commit = commit && git(['rev-parse', `${commit}^{tree}`]).trim() === id ? commit
           : git(['commit-tree', id, ...(commit ? ['-p', commit] : []), '-m', `rolling typecheck tree ${id}`], { env: commitEnv }).trim();
       }
-      // A push may replace the ref with an unrelated chain (another controller state). A worker whose system git sets
-      // core.sharedRepository makes init write receive.denyNonFastForwards=true, which rejected every push
-      // after the first (nl3, 2026-11-17 14:18Z onward: ~60 s lost per tree before falling back to nl1).
-      const init = spawnSync('sh', ['-c', `${sshCommand} "$1" "git init --quiet --bare -b rolling '${remoteRepo}' >/dev/null && git -C '${remoteRepo}' config receive.denyNonFastForwards false"`, 'sh', ssh.alias], { encoding: 'utf8' });
-      const push = init.status === 0 && spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:refs/heads/${ref}`],
-        { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
-      if (!push || push.status !== 0) {
-        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${label}: ${((init.status === 0 ? push?.stderr : init.stderr) || '').trim().split('\n').at(-1) ?? ''}`);
+      // A push may replace the ref with an unrelated chain (another controller state).
+      const push = io.push(ssh, commit, `refs/heads/${ref}`);
+      if (push.status !== 0) {
+        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${label}: ${(push.stderr || '').trim().split('\n').at(-1) ?? ''}`);
         continue;
       }
       writeFileSync(`${tipPath}.${process.pid}`, commit);
       renameSync(`${tipPath}.${process.pid}`, tipPath);
-      const run = spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', entry,
-        '--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`, `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`],
-      { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, stdio: ['ignore', 'pipe', 'inherit'] });
+      const run = io.dispatch(worker, ['--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`,
+        `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`]);
       const line = (run.stdout ?? '').split('\n').find(entry => entry.startsWith(WORKER_ROWS));
-      if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (exit ${run.status ?? run.signal})`); return none; }
+      // No rows (a stalled sync or SSH that hstack-exec gave up on at its keepalive bound, exit 255; or a worker-side
+      // failure): the next worker takes the request. Rows that are null (a compile that did not finish) are an answer.
+      if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (exit ${run.status ?? run.signal}); trying the next worker`); continue; }
       const fetched = JSON.parse(line.slice(WORKER_ROWS.length));
       const byTree = new Map(treeIds.map(id => [id, new Map(dirs.map(dir => [dir, Array.isArray(fetched[id]?.[dir]) ? fetched[id][dir] : null]))]));
       return many ? byTree : byTree.get(treeId);
@@ -974,8 +1000,10 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
     queueCommitGateReport({ repo, env, commit });
     const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
     try {
-      spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue'],
-        { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
+      for (const worker of COMMIT_GATE_REPORT_WORKERS) {
+        spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue', `--worker=${worker}`],
+          { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
+      }
     } finally {
       closeSync(reportLog);
     }

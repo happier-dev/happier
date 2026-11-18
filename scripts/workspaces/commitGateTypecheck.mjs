@@ -5,7 +5,7 @@
 //
 //   node scripts/workspaces/commitGateTypecheck.mjs --base=<rev> --tree=<tree-ish>
 //   node scripts/workspaces/commitGateTypecheck.mjs --report --commit=<landed sha>   (report-and-URGENT mode, one commit)
-//   node scripts/workspaces/commitGateTypecheck.mjs --report-queue                   (drain the commits the writers queued)
+//   node scripts/workspaces/commitGateTypecheck.mjs --report-queue --worker=<nl1|nl3> (one consumer of the queued commits)
 //
 // Exit status: 0 no new diagnostics (or nothing to check, or the worker could not judge: printed, never refused),
 // 1 new diagnostics or a candidate compile that did not complete while its parent's did, 2 usage or runtime failure.
@@ -23,7 +23,7 @@ async function main(argv) {
   if (argv.includes('--report-queue')) {
     for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
     const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-    const drained = await drainCommitGateReports({ repo });
+    const drained = await drainCommitGateReports({ repo, ...(option('worker') ? { worker: option('worker') } : {}) });
     console.log(`commit gate typecheck reports: ${drained.length ? drained.map(sha => sha.slice(0, 11)).join(', ') : 'another drainer holds the queue'}`);
     return 0;
   }
