@@ -514,6 +514,14 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         const machineId = 'machine-current-ui';
         const method = machineId + ':' + currentUiContextReadClientRpcMethod();
         const isDesktopShell = realm === 'electron';
+        // This is a returning user's auth transition on the Sessions route.
+        // Keep first-open tours and release cards from stealing its current UI.
+        const { ONBOARDING_SHOWCASE_MANIFEST, setShowcaseSeenVersion } = await import('@/onboarding/showcase');
+        const { getCurrentReleaseId } = await import('@/changelog/releaseNotes/manifestRuntime');
+        const { setLastSeenReleaseId } = await import('@/changelog/releaseNotes/storage');
+        setShowcaseSeenVersion(ONBOARDING_SHOWCASE_MANIFEST.showcaseVersion);
+        const releaseId = getCurrentReleaseId();
+        if (releaseId) setLastSeenReleaseId(releaseId);
         const screen = await mount({ isAuthenticated: false, isDesktopShell }, [machineId]);
         expect(emittedMethods(SOCKET_RPC_EVENTS.REGISTER)).not.toContain(method);
         await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={isDesktopShell} />);
