@@ -43,18 +43,34 @@ describe('AE.P02.F4-shell-check: command input through the real Machine', () => 
         : 'printf partial; cat >&2; exit 7',
       stdin: payload,
     };
-    const cli = (label: string, args: string[]) => runCliJson({ testDir, cliHomeDir: machine.homeDir,
+    const cli = (label: string, args: string[], echoStderrLine?: (line: string) => boolean) => runCliJson({ testDir, cliHomeDir: machine.homeDir,
       serverUrl: fixture!.server.baseUrl, webappUrl: fixture!.server.baseUrl, label,
       env: { ...process.env, NODE_OPTIONS: fixture!.sourceOptions,
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' },
-      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true }, acceptedExitCodes: [1], echoStderrLine,
       args: ['--server-url', fixture!.server.baseUrl, ...args] });
-    const pending = await cli('shell-failure-request', ['actions', 'invoke', 'machines.command.run',
+    // The original CLI keeps custody until the person answers its Inbox Ask.
+    // Progress is on stderr; stdout is reserved for the terminal command result.
+    let artifactId: string | undefined;
+    let decision: ReturnType<typeof account.executeAsPerson> | undefined;
+    const execution = await cli('shell-failure-request', ['actions', 'invoke', 'machines.command.run',
       '--machine-id', machine.target.machineId, '--project-directory', machine.workspaceDir,
-      '--input-json', JSON.stringify(failedInput), '--json']);
-    expect(pending).toMatchObject({ ok: true, kind: 'actions_invoke' });
-    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(pending.data);
-    expect(await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' })).toMatchObject({ ok: true });
+      '--input-json', JSON.stringify(failedInput), '--json'], line => {
+      if (line.startsWith('{')) {
+        const envelope: unknown = JSON.parse(line);
+        const pending = ActionApprovalRequestCreatedResultSchema.safeParse(
+          envelope && typeof envelope === 'object' && 'data' in envelope ? envelope.data : undefined);
+        if (pending.success && !decision) {
+          artifactId = pending.data.artifactId;
+          decision = account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+        }
+      }
+      return false;
+    });
+    if (!artifactId) throw new Error('Original CLI did not publish its live Inbox Ask');
+    expect(await decision).toMatchObject({ ok: true });
+    expect(execution).toMatchObject({ ok: false, error: { code: 'command_failed',
+      details: { exitCode: 7, stdout: 'partial', stderr: JSON.stringify(payload) } } });
     let retained: unknown;
     await waitFor(async () => {
       const read = await account.execute('approval.request.get', { artifactId });

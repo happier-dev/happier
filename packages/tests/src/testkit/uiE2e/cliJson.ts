@@ -113,6 +113,7 @@ export async function runCliJson(params: Readonly<{
   args: string[];
   timeoutMs?: number;
   acceptedExitCodes?: readonly number[];
+  echoStderrLine?: (line: string) => boolean;
   cliLaunchSpec?: CliTestLaunchSpec;
   launchOptions?: Readonly<{
     preferSourceEntrypoint?: boolean;
@@ -165,6 +166,7 @@ export async function runCliJson(params: Readonly<{
       stdoutPath,
       stderrPath,
       timeoutMs: params.timeoutMs,
+      echoStderrLine: params.echoStderrLine,
     });
   } catch (error) {
     const failedProcessOutcome = readLoggedCommandProcessOutcome(error);
