@@ -99,6 +99,22 @@ describe('workflow step selection', () => {
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: otherAgent }, roleSelection }).selection.profileId)
       .toBeUndefined();
   });
+  it.each(['split', 'qualified'] as const)('does not inherit a Connected service over an explicit %s Team model', (form) => {
+    const agentTargetKey = buildBackendTargetKeyV2(agent);
+    const selection = { v: 2 as const, updatedAt: 0, ref: {
+      source: 'team_resource' as const, agentTargetKey, modelId: 'team-model',
+      teamId: 'team', resourceId: 'resource', expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+    } };
+    const defaults = form === 'split'
+      ? { agentTarget: agent, teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent(selection)] }
+      : { agentTarget: agent, modelSelection: selection };
+    const roleSelection = { defaultEngine: { agentTargetKey }, defaultConnectedServices: { v: 2 as const, bindingsByServiceId: {
+      'external.auth/subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'origin' },
+    } } };
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, roleSelection }).selection.connectedServices)
+      .toBeUndefined();
+  });
+
   it.each([
     { kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'review-bot' },
     { kind: 'agent' as const, identity: { pluginId: 'external.review', localId: 'assistant' } },

@@ -623,12 +623,18 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
     const profileField = kind === 'spawn_new' ? 'profileId' : 'launchProfileId';
     const machineId = kind === 'spawn_new' && selected.executionTarget && typeof selected.executionTarget === 'object'
         && 'machineId' in selected.executionTarget ? selected.executionTarget.machineId : selected.machineId;
+    const authoredModel = kind === 'spawn_new' ? readAuthoredSessionModelSelection({
+        agentTarget: target,
+        modelSelection: spawnPolicyFields.shape.modelSelection.safeParse(selected.modelSelection).data,
+        teamCredentialBindings: spawnPolicyFields.shape.teamCredentialBindings.safeParse(selected.teamCredentialBindings).data,
+    }) : undefined;
     try {
         const inherited = resolveAgentStartBaselineSelectionV1({
             targetKey: target ? buildBackendTargetKeyV2(target) : undefined,
             profileId: selected[profileField], connectedServices: selected.connectedServices,
             connectedServicesDefaultServiceIds: selected.connectedServicesDefaultServiceIds,
-            modelSelection: selected.modelSelection, teamCredentialModel: selected.teamCredentialModel, childSelection: selected.childSelection,
+            modelSelection: authoredModel ?? selected.modelSelection,
+            teamCredentialModel: selected.teamCredentialModel, childSelection: selected.childSelection,
         }, machineId !== undefined && machineId !== baseline.machineId ? undefined : baseline.configuration);
         return { ...selected,
             ...(inherited.profileId !== undefined ? { [profileField]: inherited.profileId } : {}),

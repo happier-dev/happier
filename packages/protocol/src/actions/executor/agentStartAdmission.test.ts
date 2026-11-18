@@ -272,6 +272,24 @@ describe('canonical Action agent-start adapter', () => {
       .toThrow(expect.objectContaining({ code: 'execution_run_child_choice_required' }));
   });
 
+  it('honors an explicit split Team model when stamping native Session spawn', () => {
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget,
+        connectedServices: { v: 2, bindingsByServiceId: { 'acme.auth/subscription': {
+          source: 'team_resource', resourceId: 'parent-resource', deliveryMode: 'direct',
+          disclosedMember: { service: { pluginId: 'acme.auth', localId: 'subscription' }, accountId: 'member' },
+        } } },
+      } }, roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    };
+    const input = { agentTarget: nativeTarget, teamCredentialBindings: [{
+      v: 1, slot: { kind: 'provider_model' }, deliveryMode: 'brokered', teamId: 'team',
+      resourceId: 'model-resource', expectedResourceRevision: 1,
+      providerModelSelection: { agentTargetKey: 'agent:native.agent/agent', modelId: 'team-model' },
+    }] };
+    expect(stampAgentStartSelectionV1(input, { workDepth: 1 }, 'spawn_new', context)).toEqual(input);
+  });
+
   it('keeps current-Session start authority narrower than a readable led Session', async () => {
     const agentStartContext: AgentStartContextV1 = {
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },

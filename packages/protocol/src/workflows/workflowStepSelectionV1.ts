@@ -12,7 +12,7 @@ import type { WorkflowMaterializedLeafV1 } from './workflowDefinitionV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import type { WorkflowStepExecutionSelection, WorkflowStepSelectionV1, WorkflowLeafExecutionTargetV1 } from './workflowV1.js';
 import type { ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
-import { replaceProviderModelCredentialBinding } from '../teams/credentials/sessionBindingIntentV1.js';
+import { readAuthoredSessionModelSelection, replaceProviderModelCredentialBinding } from '../teams/credentials/sessionBindingIntentV1.js';
 export { WorkflowLeafExecutionTargetV1Schema, WorkflowStepSelectionV1Schema,
   type WorkflowLeafExecutionTargetV1, type WorkflowStepSelectionV1 } from './workflowV1.js';
 
@@ -251,7 +251,8 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
     try {
       const inherited = resolveAgentStartBaselineSelectionV1({
         targetKey: selection.agentTarget ? buildBackendTargetKeyV2(selection.agentTarget) : undefined,
-        profileId: selection.profileId, connectedServices: selection.connectedServices, modelSelection: selection.modelSelection,
+        profileId: selection.profileId, connectedServices: selection.connectedServices,
+        modelSelection: readAuthoredSessionModelSelection(selection),
       }, {
         ...(parentTarget ? { agentTarget: parseBackendTargetKeyV2(parentTarget) } : {}),
         profileId: input.roleSelection?.defaultProfileId,

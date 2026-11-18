@@ -32,7 +32,10 @@ export function resolveAgentStartBaselineSelectionV1<Profile, Connected>(input: 
     const explicitSource = input.modelSelection === null || input.teamCredentialModel !== undefined
         || input.childSelection === 'agentDefault'
         || (Array.isArray(input.connectedServicesDefaultServiceIds) && input.connectedServicesDefaultServiceIds.length > 0)
-        || (model && typeof model === 'object' && 'providerConnectionId' in model && model.providerConnectionId != null);
+        || (model && typeof model === 'object' && (
+            ('source' in model && model.source === 'team_resource')
+            || ('providerConnectionId' in model && model.providerConnectionId != null)
+        ));
     const connectedServices = resolveConnectedServiceBindingsForChild({ explicitSelection: input.connectedServices,
         resolvedTargetKey: input.targetKey, originTargetKey,
         originBindings: explicitSource ? undefined : parent?.connectedServices });
