@@ -145,6 +145,18 @@ it('signed-in local Reach and Runtime controls obey disabled Actions before nati
     expect(runtime.getCurrent().lastErrorMessage).toBeTruthy();
 });
 
+it.each(['remote', 'local'] as const)('shows the %s Relay Action policy refusal without starting a native task', async target => {
+    const { t } = await import('@/text');
+    const local = target === 'local';
+    const actionId = local ? 'relay.access.status' : 'remote_hosts.relay.access.status';
+    const { relay } = await openRelay({ v: 1, actions: { [actionId]: { enabled: false } } }, undefined, local);
+    try {
+        await act(async () => { expect(await relay.getCurrent().refreshStatus()).toBeNull(); });
+        expect(relay.getCurrent().lastErrorMessage).toBe(t('actionConfirmations.turnedOffUnnamedMessage'));
+        expect(bridge.specs).toEqual([]);
+    } finally { await relay.unmount(); }
+});
+
 it('signed-in device Runtime without a Personal Home receipt obeys active Account policy', async () => {
     const { serverId } = await openRelay({ v: 1, actions: { 'remote_hosts.relay.access.status': { enabled: false },
         'relay.runtime.status': { enabled: false }, 'relay.runtime.start': { enabled: false },
@@ -569,7 +581,8 @@ it('saved-host onboarding completion keeps Relay access behind the bound Home Ac
     await act(async () => { screen.changeTextByTestId('onboarding-wizard-relay-access-prereqs-url', 'https://published-relay.test'); });
     await act(async () => { await controller.current?.onPrimary?.(); });
     expect(bridge.specs.filter(spec => spec.kind.startsWith('relay.access.'))).toEqual([]);
-    expect(screen.getTextContent()).toContain('action_disabled');
+    const { t } = await import('@/text');
+    expect(screen.getTextContent()).toContain(t('actionConfirmations.turnedOffUnnamedMessage'));
     expect(home.artifacts(serverId).list()).toEqual([]);
 });
 

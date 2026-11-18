@@ -20,6 +20,7 @@ import { t } from '@/text';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useLocalRuntimeActionExecution } from '@/components/approvals/useLocalRuntimeActionExecution';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
 
 function readRelayAccessSnapshot(result: SystemTaskResult | null): RelayAccessTaskSnapshot | null {
@@ -161,7 +162,7 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}): 
                 const result = await executor.execute(actionId, input, {
                     surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
                 });
-                if (!result.ok) throw new Error(result.error);
+                if (!result.ok) throw new Error(resolveActionExecutionErrorMessage(result, t('settings.systemTaskStartFailed')));
                 const parsed = REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(result.result);
                 if (!parsed.success || parsed.data.status !== 'task_started') {
                     throw new Error(parsed.success && 'reason' in parsed.data ? parsed.data.reason : t('settings.systemTaskStartFailed'));
