@@ -1492,6 +1492,13 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
+        // Apply's nested native Plan opens the same admitted setup copies.
+        // This grants only that read, under Apply's original credential ceiling.
+        machineSetupPlanRead: binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+            && isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId,
+                method: RPC_METHODS.MACHINE_SETUP_PLAN })
+            && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/machines/setup/resolve'
+            && readReviewedMachineSetupHttpPurpose({ binding, effectActionId, target }, proof) !== null,
         projectSetupSet: binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1 && isProjectSetupSetChildActionIdV1(effectActionId),
     };
     const configureBindings = binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
@@ -1504,14 +1511,14 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
-        || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose
+        || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
@@ -2010,7 +2017,8 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
 }
 
 /** A reviewed Setup spends its root at its original Home and admitted Machines. */
-function readReviewedMachineSetupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+function readReviewedMachineSetupHttpPurpose(verified: Pick<VerifiedExternalActionExecutionRequest,
+    'binding' | 'effectActionId' | 'target' | 'reviewedChildAdmission'>,
     proof: ExternalActionExecutionRequestProof): Readonly<{ machineId?: string }> | null {
     if (isMachineSetupCombinedRunHttpPurpose(verified, proof)) return {};
     // The reviewed Setup's admitted connector grants; the route keeps proof and target access.
@@ -3990,6 +3998,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         const purpose = readReviewedMachineSetupHttpPurpose(verified, proof);
         if (!purpose) return refuse('machine_setup_purpose');
         setupMachineReadId = purpose.machineId;
+    } else if (verified.signedChildPurpose.sibling.machineSetupPlanRead) {
+        // The signed-purpose owner already bound this nested Plan read to
+        // Apply's exact Home and Machine; the resolve route owns its copies.
     } else if (verified.signedChildPurpose.reviewedSessionAgentReadinessChild) {
         // These finite children need the existing requester Machine codec only.
         // Installation permission is consumed at the install RPC admission.

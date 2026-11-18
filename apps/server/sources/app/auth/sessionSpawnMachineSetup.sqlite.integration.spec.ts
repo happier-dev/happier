@@ -50,6 +50,33 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
+    it.each([true, false])('resolves an opaque preset for the nested Plan under its admitted Apply requester (person=%s)', async presentUser => {
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined,
+            { machineReads: true, allowedActionIds: ['machines.setup.apply'] });
+        try {
+            const homeId = await getOrCreateServerIdentityId();
+            const sources = [{ kind: 'accountPresetOpaque' as const, presetId: randomUUID(),
+                presetRevision: 0, setupRevision: 0, contentEncryptionMode: 'e2ee' as const },
+                { kind: 'direct' as const, setup: {} }];
+            const body = { homeId, machineId: f.machine.id, sources };
+            const root = await f.mint('machines.setup.apply', MachineSetupApplyInputV1Schema.parse({
+                homeId, machineId: f.machine.id, targets: [{ ...body, desiredRevision: 0, recipePlans: [], exclusions: [] }],
+            }), presentUser);
+            const request = { method: 'POST', path: '/v1/machines/setup/resolve', body };
+            // Apply itself already owns this Home read; nested Plan must retain that admission.
+            expect(await f.verify(root, request)).not.toBeNull();
+            expect(await f.verify(root, { ...request, body: { ...body, homeId: 'another-home' } }, 'machines.setup.plan')).toBeNull();
+            expect(await f.verify(root, { ...request, body: { ...body, machineId: randomUUID() } }, 'machines.setup.plan')).toBeNull();
+            expect(await f.verify(root, { ...request, method: 'GET' }, 'machines.setup.plan')).toBeNull();
+            expect(await f.verify(root, { ...request, path: '/v1/machines/setup/report' }, 'machines.setup.plan')).toBeNull();
+            expect(await f.verify(root, request, 'machines.agents.install')).toBeNull();
+            expect(await f.verify(root, request, 'machines.setup.plan')).toMatchObject({
+                effectActionId: 'machines.setup.plan', binding: { accountId: f.account.id,
+                    actionId: 'machines.setup.apply', admittedMachineRole: 'manage' },
+            });
+        } finally { await f.app.close(); }
+    });
+
     it.each([true, false])('opens only the reviewed Agent install child codec under combined Setup Manage admission (person=%s)', async presentUser => {
         const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, { machineReads: true,
             ...(presentUser ? {} : { allowedActionIds: ['machines.setup.apply'] }) });
