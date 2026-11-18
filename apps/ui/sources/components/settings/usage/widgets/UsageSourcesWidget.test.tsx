@@ -18,6 +18,7 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSourcesWidget';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageBodySettledReportContext } from './usageBodyHeightMemory';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { act } from 'react-test-renderer';
@@ -224,7 +225,7 @@ describe('Usage Sources body', () => {
         const id = `sources.machine.${machine}.source.${source}.${suffix}`;
         await vi.waitFor(() => expect(screen.findByTestId(id)).toBeTruthy());
         const label = screen.findByTestId(id)!.props.accessibilityLabel;
-        expect(label).toContain(t('agentInput.agent.claude'));
+        expect(label).toContain(usageAgentTitle('claude'));
         expect(label).toContain(folder);
         expect(label).toContain(machineName);
       }

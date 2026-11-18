@@ -909,8 +909,9 @@ describe('Usage page batch', () => {
         if (entry.id === 'usage_recap') {
           const records = entry.style === 'personalRecords';
           const autopsy = !records && (typeof entry.session === 'string' || entry.session?.length === 1);
-          expect(slices[0]?.requestedQuery).toMatchObject({ includeWorkEvidence: autopsy,
-            includeSessionEvidence: records || autopsy, includeTranscriptEvidence: autopsy });
+          expect(slices[0]?.requestedQuery).toMatchObject({ includeWorkEvidence: !records,
+            includeSessionEvidence: true, includeCoach: !records, includeTranscriptEvidence: autopsy,
+            ...(records ? {} : { breakdown: expect.arrayContaining(['agent']) }) });
         }
       }
       await screen.update(view());

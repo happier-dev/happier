@@ -122,6 +122,7 @@ type UsagePrivateSourceProjection = Readonly<{
     steering: Map<number, PreparedUsageSteeringEvidence>;
 }>;
 type UsagePrivateDetailState = {
+    period?: WeakRef<UsageWorkIntervalsInput['period']>;
     intervals: WeakMap<UsageWorkIntervalsInput['period'], ReturnType<typeof prepareUsageWorkIntervals>>;
     prepared: WeakMap<UsageWorkIntervalsInput['period'], UsagePrivateSourceProjection>;
     projections: WeakMap<UsageWorkIntervalsInput['period'], UsagePrivateDetailProjection>;
@@ -212,6 +213,18 @@ export function resolveUsageHowYouWork(input: Readonly<{
     retained?: UsageHowYouWork;
 }>): UsageHowYouWork {
     const detail = input.detail?.status === 'unknown' ? undefined : input.detail;
+    if (detail) {
+        const state = privateDetailState(detail);
+        const period = state.period?.deref();
+        // Sibling queries share the same admitted range even when their output
+        // flags differ. A weak reference reuses its preparation only while a
+        // live result owns the range, without retaining retired rolling views.
+        if (period?.startMs === input.period.startMs && period.endMs === input.period.endMs) {
+            input = { ...input, period };
+        } else {
+            state.period = new WeakRef(input.period);
+        }
+    }
     const retained = input.detail === undefined ? input.retained : undefined;
     const nightHours = input.nightHours ? UsageNightHoursV1Schema.parse(input.nightHours) : undefined;
     let intervals = detail?.facts !== undefined

@@ -6,6 +6,7 @@ import { formatHappierDataValue, UsageRecapBody, type UsageRecapHighlight } from
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { UsageExportFieldSchema, UsageFileResultSchema, type UsageExportInput } from '@happier-dev/protocol/usage/usageExport';
+import { composeUsageRecap } from '@happier-dev/protocol/usage/composeUsageRecap';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { Modal } from '@/modal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -125,9 +126,8 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     }),
     [period, props.query.metric, props.query.costBasis],
   );
-  const sessionId =
-    typeof shownQuery.session === 'string' ? shownQuery.session
-      : shownQuery.session?.length === 1 ? shownQuery.session[0] : undefined;
+  const autopsy = typeof shownQuery.session === 'string' || shownQuery.session?.length === 1
+    ? <UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} /> : null;
   const highlights = React.useMemo(
     () => viewModel === null ? [] : buildUsageRecapCardModels({ viewModel, filters, query: shownQuery })
       .map((highlight): UsageRecapHighlight => {
@@ -164,6 +164,10 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
   }, [shownQuery, props.serverId, Bridge]);
   const playStory = React.useCallback(() => {
     if (!viewModel) return;
+    const recap = composeUsageRecap({ input: {
+      query: shownQuery, style: 'daybreak', format: 'story', sourceSelection: 'whole_usage',
+      selectedFields: ['agentMix', 'work', 'night', 'parallel', 'coach'],
+    }, snapshot: props.slice });
     let modalId: string | null = null;
     const close = () => {
       if (modalId) {
@@ -181,12 +185,12 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
         filters,
         query: shownQuery,
         cacheSavings: viewModel.cacheSavings,
-        sessionId,
+        recap: recap.kind === 'composed' ? recap : undefined,
         onDismiss: close,
         onShare: (invocation: CurrentUiContextCommandInvocation) => { close(); openComposer(invocation); },
       },
     });
-  }, [viewModel, filters, shownQuery, sessionId, openComposer, Bridge]);
+  }, [viewModel, filters, shownQuery, props.slice, openComposer, Bridge]);
   const commands = useCurrentUiContextLocalCommands(viewModel && highlights.length ? [
     { key: 'composer', title: t('usage.board.recap.shareCard'),
       invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => openComposer(invocation) },
@@ -199,7 +203,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     return (
       <UsageRecapBody theme={theme} model={{ highlights }} testID={props.testID}
         state={<UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />}
-        autopsy={<UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />} />
+        autopsy={autopsy} />
     );
   if (highlights.length === 0)
     return (
@@ -210,12 +214,12 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
           title={t('usage.board.recap.noRecapTitle')}
           reason={t('usage.board.recap.noRecapReason')}
         />}
-        autopsy={<UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />} />
+        autopsy={autopsy} />
     );
   return (
     <UsageRecapBody theme={theme} model={{ highlights }} testID={props.testID}
       highlightBorderColor={appTheme.colors.border.subtle} highlightSpacing={appTheme.space}
-      autopsy={<UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />}
+      autopsy={autopsy}
       actions={<>
         {/* The one primary: the private card is what this widget makes (lab urecap/s2card). */}
         <RoundButton

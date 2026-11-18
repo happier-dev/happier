@@ -35,7 +35,7 @@ export type UsageRecapCardVisualModel =
         kind: 'rankBars';
         rows: readonly Readonly<{
             label: string;
-            value: number;
+            value: number | null;
         }>[];
     }>;
 

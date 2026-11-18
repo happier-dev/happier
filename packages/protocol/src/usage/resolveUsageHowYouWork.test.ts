@@ -10,7 +10,7 @@ const fact = (workId: string, startMs: number, endMs: number) => ({
 });
 
 describe('How-you-work admitted projection', () => {
-    it('releases retired private projections across twenty rolling two-scope round trips', async () => {
+    it('reuses equal admitted periods and releases retired private projections across twenty rolling two-scope round trips', async () => {
         const { Session: InspectorSession } = await import('node:inspector');
         const detail: NonNullable<Parameters<typeof resolveUsageHowYouWork>[0]['detail']> = { status: 'available',
             facts: [fact('retained-source', day, day + hour)],
@@ -50,21 +50,31 @@ describe('How-you-work admitted projection', () => {
                 const nowMs = day + 4 * hour + (round * queries.length + index) * 60_000;
                 const period = resolveUsageQueryPeriod(query, nowMs);
                 if (period.startMs === undefined) throw new Error('Expected a finite rolling period');
-                const value = resolveUsageHowYouWork({ period: { startMs: period.startMs, endMs: period.endMs },
+                let value: ReturnType<typeof resolveUsageHowYouWork> | undefined = resolveUsageHowYouWork({ period: { startMs: period.startMs, endMs: period.endMs },
                     timeZoneOffsetMinutes: 0, nowMs, detail, includeAgentCalendar: false });
                 expect(value.intervals?.agentTimeMs).toBe(hour);
                 expect(value.inputs?.acceptedCount).toBe(1);
                 expect(value.runLengths?.sampleCount).toBe(1);
+                let repeated: ReturnType<typeof resolveUsageHowYouWork> | undefined = resolveUsageHowYouWork({ period: { startMs: period.startMs, endMs: period.endMs },
+                    timeZoneOffsetMinutes: 0, nowMs, detail, includeAgentCalendar: false });
+                expect(repeated.intervals, 'equal admitted ranges reuse the folded private intervals').toBe(value.intervals);
                 current[index] = value;
                 if (round === 0 && index === 0) control.value = value;
-                for (const [name, object] of Object.entries(families(value))) references[name as keyof typeof references].push(new WeakRef(object));
+                Object.entries(families(value)).forEach(([name, object]) => {
+                    references[name as keyof typeof references].push(new WeakRef(object));
+                });
+                value = undefined;
+                repeated = undefined;
             }
             await collect();
             const withControl = assertRetained(true);
             control.value = undefined;
             await collect();
             const withoutControl = assertRetained(false);
-            console.info('usage-private-retained-generations', { withControl, current: withoutControl });
+            current.length = 0;
+            await collect();
+            const retired = assertRetained(false);
+            console.info('usage-private-retained-generations', { withControl, current: withoutControl, retired });
             expect(detail.facts).toHaveLength(1); // The admitted Session source intentionally outlives its retired views.
         } finally { inspector.disconnect(); }
     });

@@ -62,8 +62,8 @@ const USAGE_WIDGET_DEMAND = {
   usage_parallel: { includeActivity: true, includeSessionEvidence: true, includeWorkEvidence: false },
   usage_human_loop: { includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: false },
   usage_night_shift: { includeActivity: true, includeSessionEvidence: true, includeWorkEvidence: false },
-  // Recap's highlights and story name the leading Agent/engine/model; other bodies do not read leaders.
-  usage_recap: { includeActivity: true, includeInsights: true, includeLeaders: true, includeSessionEvidence: false, includeWorkEvidence: false },
+  // Recap shares the story's accounting, Work and private activity facts in one admitted slice.
+  usage_recap: { includeActivity: true, includeInsights: true, includeLeaders: true, includeSessionEvidence: true, includeWorkEvidence: true, includeCoach: true },
   usage_footprint: { includeSessionEvidence: false, includeWorkEvidence: false },
   usage_source_coverage: { includeSessionEvidence: false, includeWorkEvidence: false },
   usage_unpriced: { includeSessionEvidence: false, includeWorkEvidence: false },
@@ -347,9 +347,9 @@ function resolveQuery(
         includeTranscriptEvidence: rhythmMetric === 'steering',
       } : {}),
       ...(widgetId === 'usage_parallel' && style === 'timeline' ? { includeActivity: false } : {}),
-      ...(widgetId === 'usage_recap' && style === 'personalRecords' ? {
-        includeInsights: false, includeLeaders: false, includeSessionEvidence: true,
-      } : {}),
+      ...(widgetId === 'usage_recap' ? style === 'personalRecords'
+        ? { includeInsights: false, includeLeaders: false, includeWorkEvidence: false, includeCoach: false }
+        : { breakdown: ['agent'] } : {}),
       ...(widgetId === 'usage_run_length' && style === 'galaxy' ? { includeActivity: true } : {}),
       ...(autopsy ? { includeWorkEvidence: true, includeSessionEvidence: true, includeTranscriptEvidence: true } : {}),
     });

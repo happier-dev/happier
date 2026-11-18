@@ -1161,47 +1161,47 @@ describe('resolveUsagePageAggregation', () => {
     expect(project(read, missingAccount)).toMatchObject({ amountUsd: 4, coverage: 'partial', unknownAccountContributionCount: 1 });
   });
   it('projects window weather and model-specific headroom without ranking unrelated models or inventing account value', () => {
-    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
+    const query = normalizeUsageQuery({ period: { startMs: 100000, endMs: 200000 } });
     const recordKey = { providerId: 'provider', accountSubjectId: 'one', subjectKind: 'account', quotaScope: 'account' } as const;
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const quota = ConnectedServiceQuotaGetResultV1Schema.parse({
       source: { ref: { service: { pluginId: 'test.provider', localId: 'subscription' }, accountId: 'one' }, bindingKind: 'account' },
       current: { v: 1, recordId, recordKey, providerId: 'provider', accountSubject: { kind: 'providerSubject', id: 'one' },
-        observedAtMs: 150, fetchedAtMs: 150, staleAfterMs: 100, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
-        meters: [{ meterId: 'model', label: 'Model allowance', modelId: 'witnessed-model', used: 25, limit: 100, utilizationPct: 25, unit: 'requests', status: 'ok', resetsAt: 200, resetAtMs: 200, windowDurationMs: 100 }] },
-      pace: [{ meterId: 'model', value: { status: 'available', window: { recordId, meterId: 'model', resetAtMs: 200, windowStartAtMs: 100, windowDurationMs: 100 },
+        observedAtMs: 150000, fetchedAtMs: 150000, staleAfterMs: 100000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'model', label: 'Model allowance', modelId: 'witnessed-model', used: 25, limit: 100, utilizationPct: 25, unit: 'requests', status: 'ok', resetsAt: 200000, resetAtMs: 200000, windowDurationMs: 100000 }] },
+      pace: [{ meterId: 'model', value: { status: 'available', window: { recordId, meterId: 'model', resetAtMs: 200000, windowStartAtMs: 100000, windowDurationMs: 100000 },
         usedFraction: 0.25, elapsedFraction: 0.5, evenPaceFraction: 0.5, pace: 0.5, projectedResetUtilizationFraction: 0.5, qualification: 'confirmed', sampleCount: 1 } }],
       targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
-    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: 150000, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice).toMatchObject({ planInsights: { accounts: [{
       value: { status: 'insufficient_basis', reason: 'account_attribution_unavailable' },
       weather: [{ meterId: 'model', status: 'available', outlook: 'within_even_pace', projectedUsedFraction: 0.5, sampleCount: 1, method: 'witnessed_linear_pace' }],
       modelHeadroom: [{ meterId: 'model', modelId: 'witnessed-model', status: 'available', remainingFraction: 0.75, method: 'model_specific_quota_meter' }],
     }] } });
-    const stale = resolveUsagePageAggregation({ queries: [query], nowMs: 250, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
+    const stale = resolveUsagePageAggregation({ queries: [query], nowMs: 250000, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
     expect(stale).toMatchObject({ planInsights: { accounts: [{ weather: [{ status: 'insufficient_basis', reason: 'stale' }],
       modelHeadroom: [{ status: 'insufficient_basis', reason: 'stale' }] }] } });
     const justStarted = ConnectedServiceQuotaGetResultV1Schema.parse({ ...quota,
-      current: { ...quota.current!, meters: [{ ...quota.current!.meters[0]!, resetAtMs: 250, resetsAt: 250 }] },
+      current: { ...quota.current!, meters: [{ ...quota.current!.meters[0]!, resetAtMs: 250000, resetsAt: 250000 }] },
       pace: [{ meterId: 'model', value: { status: 'unavailable', reason: 'zero_elapsed' } }],
     });
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [justStarted] } }, bundledUsageModelPriceCatalog).results[0])
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150000, quota: { status: 'available', value: [justStarted] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ modelHeadroom: [{ status: 'available', modelId: 'witnessed-model', remainingFraction: 0.75 }] }] } });
-    const meter = { ...quota.current!.meters[0]!, resetAtMs: 180, resetsAt: 180, windowDurationMs: 40 };
-    const subscription = { status: 'subscribed', renewal: 'on', observedAtMs: 150, staleAfterMs: 100,
-      currentPeriodStartAtMs: 100, currentPeriodEndAtMs: 200, enteredMonthlyPrice: { amount: 20, currency: 'EUR', enteredAtMs: 100 } };
-    const ended = { ...quota.current!, observedAtMs: 138, fetchedAtMs: 138, subscription, meters: [{ ...meter, resetAtMs: 140, resetsAt: 140 }] };
+    const meter = { ...quota.current!.meters[0]!, resetAtMs: 180000, resetsAt: 180000, windowDurationMs: 40000 };
+    const subscription = { status: 'subscribed', renewal: 'on', observedAtMs: 150000, staleAfterMs: 100000,
+      currentPeriodStartAtMs: 100000, currentPeriodEndAtMs: 200000, enteredMonthlyPrice: { amount: 20, currency: 'EUR', enteredAtMs: 100000 } };
+    const ended = { ...quota.current!, observedAtMs: 138000, fetchedAtMs: 138000, subscription, meters: [{ ...meter, resetAtMs: 140000, resetsAt: 140000 }] };
     const resetRead = ConnectedServiceQuotaGetResultV1Schema.parse({ ...quota, current: { ...quota.current!, meters: [meter],
       subscription },
-      history: { entries: [{ id: 'one', observedAtMs: 138, snapshot: ended }, { id: 'duplicate', observedAtMs: 138, snapshot: ended }], nextCursor: null },
+      history: { entries: [{ id: 'one', observedAtMs: 138000, snapshot: ended }, { id: 'duplicate', observedAtMs: 138000, snapshot: ended }], nextCursor: null },
     });
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [resetRead] } }, bundledUsageModelPriceCatalog).results[0])
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150000, quota: { status: 'available', value: [resetRead] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ pricePerReset: [{ status: 'available', amount: 20, currency: 'EUR', priceKind: 'entered',
         recordedResetCount: 1, coverage: 'recorded_subset', method: 'period_price_divided_by_recorded_resets' }] }] } });
-    const invalidRead = { ...resetRead, history: { entries: [{ id: 'not-recorded', observedAtMs: 150,
-      snapshot: { ...ended, observedAtMs: 150, state: 'not_loaded' as const, meters: [{ ...meter, resetAtMs: 150, resetsAt: 150 }] } }], nextCursor: null } };
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [invalidRead] } }, bundledUsageModelPriceCatalog).results[0])
+    const invalidRead = { ...resetRead, history: { entries: [{ id: 'not-recorded', observedAtMs: 150000,
+      snapshot: { ...ended, observedAtMs: 150000, state: 'not_loaded' as const, meters: [{ ...meter, resetAtMs: 150000, resetsAt: 150000 }] } }], nextCursor: null } };
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150000, quota: { status: 'available', value: [invalidRead] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ pricePerReset: [{ status: 'insufficient_basis', reason: 'recorded_resets_unavailable' }] }] } });
     expect.soft(UsageQueryBatchResultSchema.safeParse({ v: 1, results: [{ ...slice, quota: undefined }] }).success).toBe(false);
   });

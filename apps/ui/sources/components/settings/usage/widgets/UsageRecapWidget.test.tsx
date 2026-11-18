@@ -9,6 +9,8 @@ import { act } from 'react-test-renderer';
 import { normalizeUsageQuery, getUsageQueryKey, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { buildUsageFileResult } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { resolveUsagePageAggregation, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageWorkEvidence } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { installBrowserClipboardBoundary, standardCleanup } from '@/dev/testkit';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
@@ -56,7 +58,7 @@ afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetim
   portal?.restore(); restoreFrames?.(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function mount(denied = false, queryResponse?: () => Response | Promise<Response>, hasAccounting = true, requestedQuery = shownQuery,
-  accountingStatus: 'available' | 'pending' | 'error' = 'available', shownAccounting = accounting) {
+  accountingStatus: 'available' | 'pending' | 'error' = 'available', shownAccounting = accounting, storySlice?: UsageQueryResultSlice) {
   // Load the real lazy Action entry before a short assertion wait; no internal owner is mocked.
   await import('@/sync/ops/actions/defaultActionExecutor');
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://table-export.test', accountId: 'a' }],
@@ -65,14 +67,14 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
   const server = home.homes.a!;
   const authority = { serverId: server.id, accountId: 'a' };
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-  const slice = { key: getUsageQueryKey(shownQuery), requestedQuery: shownQuery, shownQuery, ...(hasAccounting ? { accounting: shownAccounting } : {}),
+  const slice = storySlice ?? { key: getUsageQueryKey(shownQuery), requestedQuery: shownQuery, shownQuery, ...(hasAccounting ? { accounting: shownAccounting } : {}),
     pending: accountingStatus === 'pending', sources: [{ source: 'accounting', status: accountingStatus }] };
   const model: UsageWidgetBodyModel = { requestedQuery: { query: { ...shownQuery, period: { startMs: 1000, endMs: 1900 } }, authority },
       shownQuery: { query: shownQuery, authority }, slice,
       pending: true, error: null, freshness: 'stale', updatingPreviousPeriod: true, refreshing: false, refresh: async () => {} };
   const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice, model };
   function Body() { commandReader = useOptionalCurrentUiContextReader(); return <UsageRecapWidget {...props} />; }
-  return await renderMountedCurrentUiContext(<Body />);
+  return await renderMountedCurrentUiContext(<Body />, { withModalProvider: storySlice !== undefined });
 }
 
 /** The exports live behind the widget's one overflow control. */
@@ -80,6 +82,49 @@ async function pressExport(screen: Awaited<ReturnType<typeof mount>>, id: string
   await screen.pressByTestIdAsync('recap.exports');
   await screen.pressByTestIdAsync(id);
 }
+
+it('plays measured agent mix, linked Work, and recorded night activity from the shown slice', async () => {
+  const value: UsageAnalyticsQueryResponse = { ...accounting,
+    contributions: [{ id: 'observation', observedAtMs: 500, sessionId: 's1', turnId: 'turn', agentId: 'claude', modelId: null,
+      machineId: 'pinned-machine', projectKey: 'opaque-project', workspaceId: 'workspace', source: 'native',
+      tokens: accounting.totals.tokens, cost: accounting.totals.cost }],
+    activity: { calendarDays: [{ date: '1970-01-01', eventCount: 7 }], weekdayHourBuckets: [{ weekday: 4, hour: 2, eventCount: 7 }] },
+  };
+  const witness: UsageWorkEvidence = { sessionId: 's1', turnId: 'turn', repositoryKey: 'fixture-repository', checkpointRef: 'checkpoint',
+    checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+    pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+      nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Private fixture PR',
+      url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'topic', state: 'merged' } };
+  const slice = resolveUsagePageAggregation({ queries: [shownQuery],
+    accounting: [{ query: shownQuery, value, status: 'available' }],
+    work: [{ query: shownQuery, status: 'partial', evidence: [witness] }],
+    howYouWork: [{ query: shownQuery, nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'unknown' } }],
+  }, bundledUsageModelPriceCatalog).results[0]!;
+  expect(slice.work?.outcomes).toHaveLength(1);
+  expect(slice.howYouWork?.nightShift).toMatchObject({ recordedActivityCount: 7, observedBusyMs: null });
+  const screen = await mount(false, undefined, true, shownQuery, 'available', accounting, slice);
+  await screen.pressByTestIdAsync('recap.play');
+  expect(screen.findByTestId('usage-recap-story-slide-usage')).toBeTruthy();
+  for (const id of ['streak', 'model', 'rhythm']) {
+    await screen.pressByTestIdAsync('usage-recap-story-forward');
+    expect(screen.findByTestId(`usage-recap-story-slide-${id}`)).toBeTruthy();
+  }
+  await screen.pressByTestIdAsync('usage-recap-story-forward');
+  expect(screen.findByTestId('usage-recap-story-slide-agentMix')).toBeTruthy();
+  expect(screen.getTextContent()).toContain('Claude');
+  await screen.pressByTestIdAsync('usage-recap-story-forward');
+  expect(screen.findByTestId('usage-recap-story-slide-work')).toBeTruthy();
+  expect(screen.getTextContent()).toContain(t('usage.board.recap.statLinkedOutcomes'));
+  await screen.pressByTestIdAsync('usage-recap-story-forward');
+  expect(screen.findByTestId('usage-recap-story-slide-night')).toBeTruthy();
+  expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.eventCount', { count: 7 }));
+  await screen.pressByTestIdAsync('usage-recap-story-forward');
+  // The native night events did not witness any interval or Coach finding.
+  expect(screen.findByTestId('usage-recap-story-slide-night')).toBeFalsy();
+  expect(screen.findByTestId('usage-recap-story-slide-parallel')).toBeFalsy();
+  expect(screen.findByTestId('usage-recap-story-slide-coach')).toBeFalsy();
+  expect(home!.requests.filter(request => request.path === '/v2/usage/query')).toEqual([]);
+});
 
 describe('Recap table/text controls through the admitted export Action', () => {
   it('reveals exact summary money and token basis behind abbreviated recap highlights', async () => {

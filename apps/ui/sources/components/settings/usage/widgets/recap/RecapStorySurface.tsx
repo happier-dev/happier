@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import type { UsageRecapComposed } from '@happier-dev/protocol/usage/usageRecap';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Animated, {
     useAnimatedStyle,
@@ -34,7 +35,7 @@ import { usageActivityGridPresentation, useUsageActivityGridTooltip, UsageGridVa
 import { usageChartValuesLabels } from '../usageChartHost';
 import { usageSignatureAccent, withUsageAccentAlpha } from '../../usageAccent';
 import { formatIdentifierLabel } from '@/utils/format/usageNumbers';
-import { buildRecapStorySlides, type RecapStorySlide, type RecapStorySlideId } from '@/sync/domains/usage/recap/buildRecapStorySlides';
+import { buildRecapStorySlides, type RecapStorySlideId } from '@/sync/domains/usage/recap/buildRecapStorySlides';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
@@ -52,7 +53,7 @@ export type RecapStorySurfaceProps = Readonly<{
     filters: UsageFilterState;
     query?: import('@happier-dev/protocol/inputs/usageQuery').UsageQuery;
     cacheSavings: UsageCacheSavingsViewModel | null;
-    sessionId?: string;
+    recap?: UsageRecapComposed;
     onDismiss?: () => void;
     onShare?: (invocation: CurrentUiContextCommandInvocation) => void;
     testID?: string;
@@ -172,10 +173,15 @@ const GRADIENT_FILL = {
  * so every card has a distinct, quarantined depth without introducing a
  * second hue. Values are gradient start/end points in [0,1] space.
  */
-const SLIDE_BACKDROPS: Record<RecapStorySlideId, Readonly<{
+type RecapStoryBackdrop = Readonly<{
     wash: Readonly<{ start: { x: number; y: number }; end: { x: number; y: number } }>;
     glow: Readonly<{ start: { x: number; y: number }; end: { x: number; y: number } }>;
-}>> = {
+}>;
+const FACT_BACKDROP: RecapStoryBackdrop = {
+    wash: { start: { x: 0, y: 1 }, end: { x: 0.9, y: 0.1 } },
+    glow: { start: { x: 1, y: 0.2 }, end: { x: 0.2, y: 0.9 } },
+};
+const SLIDE_BACKDROPS: Partial<Record<RecapStorySlideId, RecapStoryBackdrop>> = {
     usage: {
         wash: { start: { x: 0.5, y: 0 }, end: { x: 0.5, y: 0.85 } },
         glow: { start: { x: 1, y: 1 }, end: { x: 0.2, y: 0.2 } },
@@ -191,10 +197,6 @@ const SLIDE_BACKDROPS: Record<RecapStorySlideId, Readonly<{
     cache: {
         wash: { start: { x: 0.5, y: 1 }, end: { x: 0.5, y: 0.1 } },
         glow: { start: { x: 0, y: 0 }, end: { x: 0.9, y: 0.8 } },
-    },
-    rhythm: {
-        wash: { start: { x: 0, y: 1 }, end: { x: 0.9, y: 0.1 } },
-        glow: { start: { x: 1, y: 0.2 }, end: { x: 0.2, y: 0.9 } },
     },
 };
 
@@ -251,8 +253,9 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
             filters: props.filters,
             query: props.query,
             cacheSavings: props.cacheSavings,
+            recap: props.recap,
         }),
-        [props.cacheSavings, props.filters, props.viewModel, props.query],
+        [props.cacheSavings, props.filters, props.viewModel, props.query, props.recap],
     );
 
     const slide = slides[Math.min(index, Math.max(0, slides.length - 1))];
@@ -294,7 +297,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
     // softer counter-glow, both alpha steps of the ONE accent; geometry varies
     // per slide (SLIDE_BACKDROPS). Minimal level renders a flat static sheet.
     const theatrical = motion.effectsEnabled || motion.level === 'subtle';
-    const backdrop = SLIDE_BACKDROPS[slide.id];
+    const backdrop = SLIDE_BACKDROPS[slide.id] ?? FACT_BACKDROP;
     const washColors: [string, string, string] = [
         withUsageAccentAlpha(accentColor, theme.dark ? 0.52 : 0.3),
         withUsageAccentAlpha(accentColor, theme.dark ? 0.16 : 0.09),
@@ -330,6 +333,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
             progressAccessibilityLabel={slide.label} />;
     } else if (slide.visual?.kind === 'rankBars') {
         visual = <RankedRows theme={projectPluginUiTheme(theme)} label={slide.label} size="tile"
+            unknownLabel={t('usage.board.plans.cellUnknown')}
             barAppearance={{ minimumVisibleFraction: 0.1, fillOpacity: 0.92, zeroFillOpacity: 0.25, trackColor: theme.colors.background.canvas }}
             rows={slide.visual.rows.map(row => ({ ...row, id: row.label, color: accentColor }))}
             renderRow={(row, rowVisual) => <ChartTooltip triggerTestID={`usage-rank-bar-${row.label}`} title={row.label}
@@ -403,7 +407,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                                 {formatIdentifierLabel(slide.value)}
                             </Text>
                         )}
-                        <Text style={styles.subtitle}>{slide.subtitle}</Text>
+                        {slide.subtitle ? <Text style={styles.subtitle}>{slide.subtitle}</Text> : null}
                         {visual ? <View style={styles.visualWrap}>{visual}</View> : null}
                     </SlideEnter>
 
