@@ -74,11 +74,14 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
-vi.mock('@/utils/platform/desktopHost', () => ({
-    desktopHostKind: () => null,
-    useDesktopHostRoleAvailability: () => ({ kind: 'available' }),
-    isDesktopHost: () => isDesktopHostMock(),
-}));
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({ importOriginal, overrides: {
+        desktopHostKind: () => null,
+        useDesktopHostRoleAvailability: () => ({ kind: 'available' }),
+        isDesktopHost: () => isDesktopHostMock(),
+    } });
+});
 // The OS preference is the environment boundary; everything under it stays real.
 const reducedMotion = vi.hoisted(() => ({ value: false }));
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => reducedMotion.value }));

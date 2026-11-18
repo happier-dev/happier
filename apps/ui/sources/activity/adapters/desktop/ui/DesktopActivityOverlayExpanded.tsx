@@ -18,10 +18,7 @@ import {
     readDesktopActivityOverlayEventKey,
     type DesktopActivityOverlayKeyEvent,
 } from './desktopActivityOverlayKeyboard';
-import {
-    resolveDesktopActivityOverlayInitialFocusTarget,
-    type DesktopActivityOverlayFocusTargetRef,
-} from './resolveDesktopActivityOverlayInitialFocusTarget';
+import type { DesktopActivityOverlayFocusTargetRef } from './resolveDesktopActivityOverlayInitialFocusTarget';
 import type {
     DesktopActivityOverlayActionHandler,
     DesktopActivityOverlayUiModel,
@@ -98,11 +95,6 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
         }
         onDismissKey?.();
     }, [onDismissKey]);
-    const initialFocusTarget = React.useMemo(
-        () => resolveDesktopActivityOverlayInitialFocusTarget(props.model),
-        [props.model],
-    );
-
     const pinButton = props.pin && !props.content ? (
         <DesktopActivityOverlayPinButton
             testID="desktop-activity-overlay-pin"
@@ -151,7 +143,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
             ) : (
                 <DesktopActivityOverlayExpandedCards bots={props.bots} model={props.model} visualMode={props.visualMode}
                     onOpenSession={props.onOpenSession} conversationHandlers={props.conversationHandlers} onAction={props.onAction}
-                    completionAutoDismissPaused={completionAutoDismissPaused} initialFocusTarget={initialFocusTarget}
+                    completionAutoDismissPaused={completionAutoDismissPaused}
                     initialFocusRef={props.initialFocusRef} onDismissKey={props.onDismissKey}
                     leadRowClearance={pinButton && !props.underStatusRow ? cornerPinClearance : 0}
                     scroll={{

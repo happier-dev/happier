@@ -7,9 +7,10 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 
-import type {
-    DesktopActivityOverlayFocusTargetRef,
-    DesktopActivityOverlayInitialFocusTarget,
+import {
+    type DesktopActivityOverlayFocusTargetRef,
+    type DesktopActivityOverlayInitialFocusTarget,
+    resolveDesktopActivityOverlayInitialFocusTarget,
 } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import { DesktopActivityOverlayLeadRowClearance, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
@@ -217,7 +218,6 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     conversationHandlers?: NotchConversationHandlers;
     onAction?: DesktopActivityOverlayActionHandler;
     completionAutoDismissPaused?: boolean;
-    initialFocusTarget?: DesktopActivityOverlayInitialFocusTarget | null;
     initialFocusRef?: DesktopActivityOverlayFocusTargetRef;
     onDismissKey?: () => void;
     /**
@@ -232,6 +232,11 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const botFaces = props.bots?.faces ?? NO_FACES;
+    const firstBot = botFaces[0];
+    const focusRequested = Boolean(props.initialFocusRef);
+    const focusTarget = React.useMemo(() => focusRequested
+        ? resolveDesktopActivityOverlayInitialFocusTarget(props.model, firstBot)
+        : null, [firstBot, focusRequested, props.model]);
     const botKeys = React.useMemo(() => new Set(botFaces.map((face) => sessionRowKey(face.sessionId, face.serverId))), [botFaces]);
     const isBot = (sessionId: string, serverId: string | null) => botKeys.has(sessionRowKey(sessionId, serverId));
     const allCards = props.model.expanded.cards ?? [];
@@ -325,7 +330,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
         onOpenSession: props.onOpenSession,
         conversationHandlers: props.conversationHandlers,
         onAction: props.onAction,
-        initialFocusTarget: props.initialFocusTarget ?? null,
+        initialFocusTarget: focusTarget,
         initialFocusRef: props.initialFocusRef,
         onDismissKey: props.onDismissKey,
     });
@@ -338,12 +343,11 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
         if (asks) asks.push(card);
         else botAsks.set(key, [card]);
     }
-    const resolveRowFocusRef = (sessionId: string, serverId: string | null) => {
-        const focusTarget = props.initialFocusTarget;
-        return focusTarget?.kind === 'session_row' && focusTarget.sessionId === sessionId && focusTarget.serverId === serverId
-            ? props.initialFocusRef
-            : undefined;
-    };
+    const isFocusedSession = (sessionId: string, serverId: string | null) => focusTarget?.kind === 'session_row'
+        && focusTarget.sessionId === sessionId && focusTarget.serverId === serverId;
+    const resolveRowFocusRef = (sessionId: string, serverId: string | null) => (
+        isFocusedSession(sessionId, serverId) ? props.initialFocusRef : undefined
+    );
     const sessionRow = (row: DesktopActivityOverlaySessionRowModel, asking?: number) => (
         <ConversationRow
             target={row}
@@ -365,9 +369,6 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
             separator: previousEndsOnAsk, focus });
         previousEndsOnAsk = endsOnAsk;
     };
-    const isFocusedSession = (sessionId: string, serverId: string | null) => props.initialFocusTarget?.kind === 'session_row'
-        && props.initialFocusTarget.sessionId === sessionId && props.initialFocusTarget.serverId === serverId;
-    const focusTarget = props.initialFocusTarget;
     const containsFocusCard = (cards: readonly DesktopActivityOverlayExpandedCard[]) => focusTarget?.kind === 'card_action'
         && cards.some(card => card.id === focusTarget.cardId);
     if (props.bots) for (const [index, face] of botFaces.entries()) {
@@ -412,7 +413,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
             ? <DesktopActivityOverlayAutoDismissCompletionCard key={card.id} card={card}
                 paused={props.completionAutoDismissPaused === true} onDismiss={dismissCompletionCard} /> : null)}
         {props.scroll ? <ExpandedCardList rows={rows} drawRow={drawRow} scroll={props.scroll}
-            focusRequested={Boolean(props.initialFocusRef)} />
+            focusRequested={focusRequested} />
             : <View>{rows.map(row => <React.Fragment key={row.key}>{drawRow(row)}</React.Fragment>)}</View>}
     </DesktopActivityOverlayCardActionStateProvider>;
 }

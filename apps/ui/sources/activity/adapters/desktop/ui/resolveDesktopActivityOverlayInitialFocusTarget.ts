@@ -5,7 +5,7 @@ import {
     resolveDesktopActivityOverlayCompletionStateActions,
     resolveDesktopActivityOverlayRequestCardActions,
 } from './cards/resolveDesktopActivityOverlayCardActions';
-import type { DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
+import type { DesktopActivityOverlaySessionRowModel, DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
 
 /**
  * The single ref the route points at whichever control it resolved. `View` is the shared instance
@@ -23,7 +23,7 @@ export type DesktopActivityOverlayFocusTargetRef = React.Ref<View>;
  */
 export type DesktopActivityOverlayInitialFocusTarget =
     | Readonly<{ kind: 'card_action'; cardId: string; actionId: string }>
-    | Readonly<{ kind: 'session_row'; cardId: string; sessionId: string; serverId: string | null }>
+    | Readonly<{ kind: 'session_row'; cardId: string | null; sessionId: string; serverId: string | null }>
     | Readonly<{ kind: 'surface' }>;
 
 /**
@@ -33,7 +33,16 @@ export type DesktopActivityOverlayInitialFocusTarget =
  */
 export function resolveDesktopActivityOverlayInitialFocusTarget(
     model: Pick<DesktopActivityOverlayUiModel, 'expanded'>,
+    leadingConversation?: Pick<DesktopActivityOverlaySessionRowModel, 'sessionId' | 'serverId'>,
 ): DesktopActivityOverlayInitialFocusTarget {
+    // The expanded list can render conversations before the model's cards. Keep the first
+    // actionable card priority, and use the actual leading conversation for the row target.
+    const leadingRow = leadingConversation ? {
+        kind: 'session_row' as const,
+        cardId: null,
+        sessionId: leadingConversation.sessionId,
+        serverId: leadingConversation.serverId,
+    } : null;
     for (const card of model.expanded.cards ?? []) {
         switch (card.kind) {
             case 'permission_request':
@@ -52,7 +61,7 @@ export function resolveDesktopActivityOverlayInitialFocusTarget(
                 break;
             }
             case 'session_overview':
-                return {
+                return leadingRow ?? {
                     kind: 'session_row',
                     cardId: card.id,
                     sessionId: card.sessionId,
@@ -61,7 +70,7 @@ export function resolveDesktopActivityOverlayInitialFocusTarget(
             case 'multi_session_list': {
                 const firstRow = card.rows[0];
                 if (firstRow) {
-                    return {
+                    return leadingRow ?? {
                         kind: 'session_row',
                         cardId: card.id,
                         sessionId: firstRow.sessionId,
@@ -76,5 +85,5 @@ export function resolveDesktopActivityOverlayInitialFocusTarget(
         }
     }
 
-    return { kind: 'surface' };
+    return leadingRow ?? { kind: 'surface' };
 }

@@ -124,4 +124,15 @@ describe('resolveDesktopActivityOverlayInitialFocusTarget', () => {
             createModel({}),
         )).toEqual({ kind: 'surface' });
     });
+
+    it('focuses the leading conversation when the list renders it ahead of the model cards', () => {
+        const leading = { sessionId: 'bot-1', serverId: 'server-2' };
+
+        expect(resolveDesktopActivityOverlayInitialFocusTarget(
+            createModel({ cards: [sessionOverviewCard] }), leading,
+        )).toMatchObject({ kind: 'session_row', ...leading });
+        expect(resolveDesktopActivityOverlayInitialFocusTarget(
+            createModel({}), leading,
+        )).toMatchObject({ kind: 'session_row', ...leading });
+    });
 });
