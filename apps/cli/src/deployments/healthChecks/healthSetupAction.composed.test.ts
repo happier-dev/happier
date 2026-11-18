@@ -143,14 +143,18 @@ it('loads default alerts through the actual mounted Health Event Action RPC', as
         const materializationRef = runtime.registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id);
         if (!handler || !occurrenceId || !sourceCustody || !materializationRef) throw new Error('Expected current mounted Health Event');
         expect(runtime.registry.pluginDiagnosticsByPluginId[plugin.manifest.id] ?? []).toEqual([]);
-        const result = await handler({ machineId, qualifiedActionId: `${plugin.manifest.id}/health/setup`,
-            expectedContributorOccurrenceId: occurrenceId, executionSurface: 'ui',
-            input: { v: 1, mode: 'preview', subject: draft.subject },
-            invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId: plugin.manifest.id,
-                contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.status.localId,
-                occurrenceId, sourceCustody, materializationRef } },
-        }, { signal: new AbortController().signal, callerAuthority: 'present_user' });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { mode: 'preview',
-            sourceConfig: { v: 1, subject: draft.subject, alerts: { channels: [], phases: ['open', 'recovered'] } } } });
+        // The live RPC names its Home: the healthCheck approval scope then projects the
+        // setup's operands before dispatch, and a subject-only preview has none yet.
+        for (const serverId of [undefined, origin.serverIdentityId]) {
+            const result = await handler({ machineId, qualifiedActionId: `${plugin.manifest.id}/health/setup`,
+                expectedContributorOccurrenceId: occurrenceId, executionSurface: 'ui',
+                input: { v: 1, mode: 'preview', subject: draft.subject },
+                invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId: plugin.manifest.id,
+                    contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.status.localId,
+                    occurrenceId, sourceCustody, materializationRef } },
+            }, { signal: new AbortController().signal, callerAuthority: 'present_user', ...(serverId ? { serverId } : {}) });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { mode: 'preview',
+                sourceConfig: { v: 1, subject: draft.subject, alerts: { channels: [], phases: ['open', 'recovered'] } } } });
+        }
     } finally { restoreRequest(); await runtime.dispose(); }
 });

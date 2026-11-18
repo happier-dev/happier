@@ -1,4 +1,5 @@
-import { SavedHealthCheckSelectorV1Schema } from '../../deployments/healthCheckSourceV1.js';
+import { SavedHealthCheckSelectorV1Schema, type SavedHealthCheckSelectorV1 } from '../../deployments/healthCheckSourceV1.js';
+import { createHealthCheckSourceInstanceIdV1, HealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { readPluginAutomationSubjectKindV1, projectPluginAutomationSubjectsV1, type PluginAutomationSubjectKindDeclarationV1, type PluginAutomationSubjectProjectionReadV1 } from '../../automations/automationPluginSubjectV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { PluginActionApprovalScopeV2 } from './v2.js';
@@ -36,7 +37,33 @@ export function projectPluginActionApprovalScopeV1(args: Readonly<{
       projections: [args.declaration], value: args.input, subjectKinds: args.subjectKinds ?? [] });
   }
   if (args.declaration !== 'healthCheck' || !args.serverId) return { ok: true, subjects: [] };
-  const input = readRecord(args.input);
-  const selector = SavedHealthCheckSelectorV1Schema.parse({ sourceInstanceId: input.sourceInstanceId, checkId: input.checkId });
-  return { ok: true, subjects: [{ role: 'operand', subject: { kind: 'healthCheck', serverId: args.serverId, ...selector } }] };
+  const selectors = readHealthCheckOperandsV1(args.input);
+  if (!selectors) return { ok: false, code: 'invalid_subject_identity' };
+  const serverId = args.serverId;
+  return { ok: true, subjects: selectors.map(selector => ({ role: 'operand' as const,
+    subject: { kind: 'healthCheck' as const, serverId, ...selector } })) };
+}
+
+/**
+ * A saved-check Action names one check. Setup names the watched subject instead:
+ * its operands are the checks it saves, under the source that subject derives,
+ * and a subject-only preview has none yet.
+ */
+function readHealthCheckOperandsV1(value: unknown): readonly SavedHealthCheckSelectorV1[] | null {
+  const input = readRecord(value);
+  if (input.subject === undefined) {
+    const selector = SavedHealthCheckSelectorV1Schema.safeParse({ sourceInstanceId: input.sourceInstanceId, checkId: input.checkId });
+    return selector.success ? [selector.data] : null;
+  }
+  const subject = HealthCheckSubjectV1Schema.safeParse(input.subject);
+  const checks = input.checks ?? [];
+  if (!subject.success || !Array.isArray(checks)) return null;
+  const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject.data);
+  const selectors: SavedHealthCheckSelectorV1[] = [];
+  for (const check of checks) {
+    const selector = SavedHealthCheckSelectorV1Schema.safeParse({ sourceInstanceId, checkId: readRecord(check).checkId });
+    if (!selector.success) return null;
+    selectors.push(selector.data);
+  }
+  return selectors;
 }

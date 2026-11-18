@@ -2118,7 +2118,12 @@ bucket needs them. The CLI's bound Session metadata supplies a Machine; it
 does not infer a Project from a directory or an unrelated id.
 Contributed Actions declare a saved health check with
 `approvalScope: 'healthCheck'`; the host retains its source-instance and check
-identity. A heartbeat endpoint id is not part of that subject.
+identity. A heartbeat endpoint id is not part of that subject. An Action that
+names one saved check carries `sourceInstanceId` and `checkId`. Health setup
+carries the watched `subject` instead: its operands are the checks it saves,
+each under the source instance derived from that subject, and a subject-only
+preview has none. Input with neither shape is refused as an invalid subject
+identity before dispatch.
 Custom plugin subjects use their contribution owner's identity-schema admission.
 Native domain projectors declare their potential `subjectKinds` alongside the
 `project` function in `approvalScope`. Discovery enumerates these kinds without
