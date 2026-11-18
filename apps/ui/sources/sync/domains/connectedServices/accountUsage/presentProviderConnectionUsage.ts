@@ -4,7 +4,7 @@ import { resolveQuotaMeterTone } from '@happier-dev/protocol/connect/accountHeal
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
-import { deriveQuotaMeterValues } from '../deriveQuotaUtilizationPct';
+import { deriveQuotaMeterValues, selectLeastRemainingQuotaMeter } from '../deriveQuotaUtilizationPct';
 import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsageRefreshResource';
 
 /**
@@ -80,7 +80,7 @@ const ACCOUNT_LIMIT_SCOPES = new Set<
   NonNullable<ConnectedServiceQuotaMeterV1['limitScope']>
 >(['account', 'workspace', 'organization']);
 
-/** The source's compact fact: account balance first, then a key allowance, then reported usage. */
+/** The lowest reported fraction wins. Without comparable windows, prefer the account balance. */
 export function selectProviderConnectionUsageSummaryMeter(
   presentation: Pick<ProviderConnectionUsagePresentation, 'groups'>,
 ): ProviderUsageMeterPresentation | null {
@@ -88,7 +88,11 @@ export function selectProviderConnectionUsageSummaryMeter(
   const key = presentation.groups.find(group => group.scope === 'key');
   const hasRemaining = (meter: ProviderUsageMeterPresentation) =>
     meter.amount !== null && meter.amount.kind !== 'used';
-  return account?.meters.find(hasRemaining) ?? key?.meters.find(hasRemaining)
+  const constrained = selectLeastRemainingQuotaMeter(
+    presentation.groups.flatMap(group => group.meters),
+    meter => meter.remainingPct,
+  );
+  return constrained?.meter ?? account?.meters.find(hasRemaining) ?? key?.meters.find(hasRemaining)
     ?? account?.meters[0] ?? key?.meters[0] ?? null;
 }
 

@@ -7,7 +7,7 @@ import { ProviderUsageSourceV1Schema } from '@happier-dev/protocol/providers/con
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderUsageRefreshResponseV1Schema } from '@happier-dev/protocol/rpc';
 
-import { presentProviderConnectionUsage } from './presentProviderConnectionUsage';
+import { presentProviderConnectionUsage, selectProviderConnectionUsageSummaryMeter } from './presentProviderConnectionUsage';
 import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsageRefreshResource';
 
 const keySource = ProviderUsageSourceV1Schema.parse({
@@ -111,6 +111,21 @@ function view(
 }
 
 describe('Provider connection usage presentation', () => {
+  it('summarizes the most constrained window in either catalog order', () => {
+    const weekly = { ...usd, meterId: 'weekly', label: 'Weekly', used: 10, remaining: 10, limit: 20 };
+    const fiveHour = { ...usd, meterId: 'five-hour', label: 'Five hours', used: 80, remaining: 20, limit: 100 };
+    for (const meters of [[weekly, fiveHour], [fiveHour, weekly]]) {
+      const usage = snapshot(meters);
+      const presentation = presentProviderConnectionUsage({
+        sources: [keySource],
+        isBillingSlotBound: () => true,
+        view: view({ status: 'success', sources: [{ sourceId: keySource.id, status: 'ok', snapshot: usage }] },
+          { [keySource.id]: usage }),
+      });
+      expect(selectProviderConnectionUsageSummaryMeter(presentation)?.meterId).toBe('five-hour');
+    }
+  });
+
   it('carries explicit denomination without treating a non-USD balance as USD', () => {
     const credits = snapshot([{ ...usd, meterId: 'balance-CNY', label: 'Balance (CNY)',
       currency: 'CNY', unit: 'unknown', used: null, remaining: -0.0123, limit: null, limitScope: 'account' }]);

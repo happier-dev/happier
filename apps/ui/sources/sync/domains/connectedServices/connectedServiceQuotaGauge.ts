@@ -13,7 +13,7 @@ import { isConnectedServiceQuotaRecoveryCreditAvailable } from '@happier-dev/pro
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@happier-dev/agents';
-import { clampQuotaPct, deriveQuotaMeterValues, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
+import { clampQuotaPct, deriveQuotaMeterValues, deriveQuotaUtilizationPct, selectLeastRemainingQuotaMeter } from './deriveQuotaUtilizationPct';
 import {
     resolveQuotaTone,
 } from './resolveQuotaTone';
@@ -393,19 +393,8 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         const matching = rankableMeters.filter((meter) => meterMatchesWindowMode(meter, mode));
         // Preserve the predecessor single-window fallback; explicit multi-selections omit missing windows.
         const candidates = matching.length || params.windowModes?.length ? matching : rankableMeters;
-        let selected: ConnectedServiceQuotaMeterV1 | null = null;
-        let leastRemaining = Number.POSITIVE_INFINITY;
-        for (const meter of candidates) {
-            const usedPct = deriveQuotaUtilizationPct(meter);
-            if (usedPct === null) continue;
-            const remaining = typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
-                ? clampQuotaPct(meter.remainingPct) : clampQuotaPct(100 - usedPct);
-            if (remaining < leastRemaining) {
-                selected = meter;
-                leastRemaining = remaining;
-            }
-        }
-        return selected ? [{ meter: selected, remainingPct: leastRemaining }] : [];
+        const selected = selectLeastRemainingQuotaMeter(candidates, meter => deriveQuotaMeterValues(meter).remainingPct);
+        return selected ? [selected] : [];
     });
     // Favorites append to global windows after Pool filtering; dedupe shared meters.
     for (const meterId of params.additionalMeterIds ?? []) {

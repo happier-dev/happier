@@ -9,6 +9,7 @@ import { summarizeConnectedServiceQuotaCredits } from '@happier-dev/protocol/con
 
 import { selectConnectedServiceQuotaSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { selectComparableConnectedServiceQuotaMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
+import { selectLeastRemainingQuotaMeter } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
 import { deriveAccountHealth, type AccountHealth } from '@/sync/domains/connectedServices/deriveAccountHealth';
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
@@ -169,9 +170,7 @@ export function derivePoolUsage(input: Readonly<{
 
     for (const member of input.members) {
         const readings = member.meters ? readComparable(member.meters, input.now) : [];
-        const lowestRemainingPct = readings.length > 0
-            ? Math.min(...readings.map((reading) => reading.remainingPct))
-            : null;
+        const lowestRemainingPct = selectLeastRemainingQuotaMeter(readings, reading => reading.remainingPct)?.remainingPct ?? null;
         const credentialUsable = isConnectedServiceCredentialHealthStatusUsable(
             normalizeConnectedServiceCredentialHealthStatus(member.credentialStatus),
         );

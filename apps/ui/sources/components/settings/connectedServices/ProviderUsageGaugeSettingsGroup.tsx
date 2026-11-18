@@ -3,7 +3,6 @@ import { MultiSelectField } from '@/components/ui/forms/dropdown/MultiSelectFiel
 import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
-import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { SESSION_PROVIDER_LIMITS_SETTINGS } from '@/components/settings/session/sessionProviderLimitsSettings';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -23,10 +22,8 @@ export function buildGaugeWindowCandidates() {
     ] as const;
 }
 
-export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsageGaugeSettingsGroup(props: Readonly<{
-    settings?: Readonly<{ gaugeVisible: SettingRef; gaugeWindow: SettingRef; gaugeLabels: SettingRef; routingHints: SettingRef }>;
-}>) {
-    const settings = props.settings ?? SESSION_PROVIDER_LIMITS_SETTINGS.settings;
+export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsageGaugeSettingsGroup() {
+    const settings = SESSION_PROVIDER_LIMITS_SETTINGS.settings;
     const enabled = useFeatureEnabled('connectedServices.quotas');
     const visibility = useSetting('sessionProviderUsageGaugeMode');
     const legacyWindow = useSetting('sessionProviderUsageGaugeWindowMode');

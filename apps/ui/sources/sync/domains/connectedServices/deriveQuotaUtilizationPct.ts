@@ -7,6 +7,21 @@ export type QuotaUtilizationMeterLike = Readonly<{
   remainingPct?: number | null;
 }>;
 
+/** Compare only windows with a measurable remaining fraction, keeping source order for ties. */
+export function selectLeastRemainingQuotaMeter<T>(
+    meters: Iterable<T>,
+    readRemainingPct: (meter: T) => number | null,
+): { meter: T; remainingPct: number } | null {
+    let selected: { meter: T; remainingPct: number } | null = null;
+    for (const meter of meters) {
+        const remainingPct = readRemainingPct(meter);
+        if (remainingPct !== null && (!selected || remainingPct < selected.remainingPct)) {
+            selected = { meter, remainingPct };
+        }
+    }
+    return selected;
+}
+
 export function clampQuotaPct(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
