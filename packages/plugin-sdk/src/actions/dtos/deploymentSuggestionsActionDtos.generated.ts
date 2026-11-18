@@ -39,10 +39,17 @@ export type DeploymentSuggestionsActionInputById = {
                 plans?: undefined | {
                     id: string;
                     title: string;
-                    facts: {
+                    facts: ({
+                        label: string;
+                        price: {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                        };
+                    } | {
                         label: string;
                         value: string;
-                    }[];
+                    })[];
                     source: {
                         url: string;
                         checkedAt: string;
@@ -127,10 +134,17 @@ export type DeploymentSuggestionsActionResultById = {
             plans?: undefined | {
                 id: string;
                 title: string;
-                facts: {
+                facts: ({
+                    label: string;
+                    price: {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                    };
+                } | {
                     label: string;
                     value: string;
-                }[];
+                })[];
                 source: {
                     url: string;
                     checkedAt: string;
