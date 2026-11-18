@@ -55,6 +55,8 @@ import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { MachinePresetQueryState } from '../managed/useMachinePresets';
@@ -664,11 +666,17 @@ export function MachineHomeUnreadableRow(props: Readonly<{
     /** Retry reads the focused Home again; another Home recovers through its own connection. */
     canRetry: boolean;
 }>) {
-    const { execute } = useMountedActionExecution(props.group.serverId);
+    const { executeForPresentation } = useMountedActionExecution(props.group.serverId);
     const retry = React.useCallback(async () => {
-        const result = await execute('machines.list', { serverId: props.group.serverId, refresh: true });
-        if (!result.ok) throw new Error(result.error);
-    }, [execute, props.group.serverId]);
+        try {
+            const result = await executeForPresentation('machines.list', { serverId: props.group.serverId, refresh: true });
+            if (result && !result.ok) {
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
+            }
+        } catch (error) {
+            Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
+        }
+    }, [executeForPresentation, props.group.serverId]);
     return (
         <Item
             testID="settings.machines.unreadable"
