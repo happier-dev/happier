@@ -23,9 +23,7 @@ import {
 } from '@/components/store/inventory/managedOperationalInventory';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
-import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Text } from '@/components/ui/text/Text';
@@ -143,10 +141,8 @@ const MonitoringBody = React.memo(function MonitoringBody(
     () => router.push(SERVICES_ROUTE as never),
     [router],
   );
-  // The head, the glance band and the Checks table share one page column, as on Machines and its Updates page: the
-  // table's edges are the header's, and the page's ItemList is the scroller the table windows its rows in.
   return (
-    <CoreCollectionScope renderPageScroller={passThroughPageScroller}><PageContentColumn>
+    <>
       <MainScreenHeader
         testID="monitoring.header"
         title={t(`${m}.title`)}
@@ -190,13 +186,9 @@ const MonitoringBody = React.memo(function MonitoringBody(
           <ServicesPaging testID="monitoring.checks.paging" more={props.more} />
         </>
       ) : null}
-    </PageContentColumn></CoreCollectionScope>
+    </>
   );
 });
-
-function passThroughPageScroller(children: React.ReactNode): React.ReactNode {
-  return children;
-}
 
 /** The glance line (lab `.glance`): the worst state leads, larger and in its tone; then the rest, quietly. Then List | Cards. */
 function MonitoringBand(
