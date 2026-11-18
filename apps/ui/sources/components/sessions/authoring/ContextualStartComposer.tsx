@@ -317,14 +317,24 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
         return { step: { ...model.rootStep, inputPlaceholder: peopleChosen ? model.rootStep.inputPlaceholder : undefined,
             sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, added };
     }, [addAgent, addedLabels, addedMachines, addedSelections, busy, details, detailId, editModel, expanded, onChoose, onReplace, participants?.input.people?.chosen, model.rootStep, model.selectedIds, openRecipe, source.sections, startAdd, theme.colors.text.secondary, whoFilter, whoQuery]);
-    const chosenStep = React.useMemo<SelectionListStep>(() => ({
-        ...display.step, inputPlaceholder: undefined,
-        sections: display.step.sections.flatMap(section => {
-            if (section.kind !== 'static') return [];
-            const options = section.options.filter(option => display.selectedIds.has(option.id));
-            return options.length > 0 ? [{ ...section, options }] : [];
-        }),
-    }), [display.step, display.selectedIds]);
+    const chosenStep = React.useMemo<SelectionListStep>(() => {
+        const staticIds = new Set(display.step.sections.flatMap(section => section.kind === 'static'
+            ? section.options.map(option => option.id) : []));
+        const dynamicSelectedIds = [...display.selectedIds].filter(id => !staticIds.has(id));
+        return { ...display.step, inputPlaceholder: undefined,
+            sections: display.step.sections.flatMap((section): SelectionListSectionDescriptor[] => {
+                if (section.kind !== 'static') return dynamicSelectedIds.length === 0 ? [] : [{ ...section,
+                    resolverKey: JSON.stringify([section.resolverKey, dynamicSelectedIds]),
+                    resolve: async (_query, signal) => {
+                        const result = await section.resolve('', signal);
+                        return { ...result, options: result.options.filter(option => display.selectedIds.has(option.id)) };
+                    },
+                }];
+                const options = section.options.filter(option => display.selectedIds.has(option.id));
+                return options.length > 0 ? [{ ...section, options }] : [];
+            }),
+        };
+    }, [display.step, display.selectedIds]);
     const hasChosen = chosenStep.sections.length > 0 || display.added.length > 0;
     const choosingWho = whoEditing || !hasChosen;
     // Lab dpRev: the Who list always offers its search and, when it mixes kinds, one chip per kind beneath it.

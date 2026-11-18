@@ -93,6 +93,28 @@ function shownIds(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
 }
 
 describe('ContextualStartComposerBody Who list (lab flows `ask`)', () => {
+  it('keeps selected dynamic people editable beside a selected Session', async () => {
+    function MixedWho() {
+      const [aliceSelected, setAliceSelected] = React.useState(true);
+      const base = source({ models: 0, sessions: 1, bots: 0,
+        selected: ['session:0', ...(aliceSelected ? ['account:alice'] : [])] });
+      const current: ContextualStartSource = { ...base, sections: [{ category: 'person', section: { kind: 'dynamic', id: 'people',
+        resolverKey: 'home-people', resolve: async () => ({ options: [
+          { id: 'account:alice', testID: 'chosen-person-alice', label: 'Alice', onSelect: () => setAliceSelected(false) },
+          { id: 'account:bob', label: 'Bob', onSelect: () => undefined },
+        ] }) } }, ...base.sections.slice(1)] };
+      return <Composer source={current} />;
+    }
+    const screen = await renderScreen(<MixedWho />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Alice'));
+    expect(screen.getTextContent()).toContain('session 0');
+    expect(screen.getTextContent()).not.toContain('Bob');
+    await screen.pressByTestIdAsync('chosen-person-alice');
+    await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Alice'));
+    expect(screen.getTextContent()).toContain('session 0');
+    await screen.unmount();
+  });
+
   it('keeps chosen agents collapsed above the question until Change is pressed', async () => {
     const screen = await renderScreen(<Composer source={source({ models: 3, sessions: 1, bots: 0, selected: ['model:1'] })} />);
     expect(screen.getTextContent()).toContain('model 1');
