@@ -308,6 +308,8 @@ describe('SettingsView', () => {
         expect(subtitleText).toContain('Phone | android | 1.2.2');
         expect(subtitleText).toContain('web | 1.2.4');
         expect(subtitleText).not.toContain('Expired device');
+        // Last seen is shown to the minute, not to the millisecond.
+        expect(lines.find((line) => line.text.includes('Test laptop'))?.text).toMatch(/ \| \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/);
         // This instance's own lines (app, native, build, runtime) and this device's row are highlighted; nothing else is.
         expect(lines.filter((line) => line.isLocalDevice).map((line) => line.text)).toEqual([
             expect.stringContaining('0.0.0-test'),
