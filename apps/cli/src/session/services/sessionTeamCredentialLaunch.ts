@@ -37,9 +37,8 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     'teamIds' | 'resourceId' | 'applications'>): Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
 }>): Promise<NormalizedSessionTeamCredentialLaunch> {
   const typedModel = input.options.modelSelection?.v === 2 ? input.options.modelSelection : undefined;
-  const typedModelBinding = typedModel ? sessionModelSelectionV2TeamBindingIntent(typedModel) : undefined;
-  const options = typedModelBinding ? { ...input.options, teamCredentialBindings: mergeSessionTeamCredentialBindingIntents({
-    explicit: [typedModelBinding], admitted: input.options.teamCredentialBindings,
+  const options = typedModel ? { ...input.options, teamCredentialBindings: mergeSessionTeamCredentialBindingIntents({
+    explicit: [sessionModelSelectionV2TeamBindingIntent(typedModel)], admitted: input.options.teamCredentialBindings,
   }) } : input.options;
   const connectedServices = options.connectedServices == null ? null
     : ConnectedServiceBindingsV2IngressSchema.safeParse(options.connectedServices);

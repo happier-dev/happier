@@ -224,6 +224,7 @@ describe('native prompt loop non-admission recovery', () => {
             isCurrentRun: () => !abort.signal.aborted, checkCurrentPublisherAuthority: async () => !abort.signal.aborted,
             authorize,
             publishIntent: async (selection, expected) => {
+                if ('source' in selection) throw new Error('Expected this fixture to publish a V1 model selection');
                 const candidate = createModelIntentMetadataCasCandidate({ selection, ownerScope: scope, nowMs: () => ++intentOrder,
                     ...(expected ? { expected: { owner: 'inactive', scope, ...expected } } : {}) });
                 session.updateMetadata(current => candidate.update(current ?? createTestMetadata()));

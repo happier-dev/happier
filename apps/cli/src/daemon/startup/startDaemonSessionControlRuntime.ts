@@ -13133,11 +13133,12 @@ export async function startDaemonSessionControlRuntime(
                     const current = await fetchSessionByIdCompat({ reason: 'session-control', sessionId,
                       token: requester?.bootstrap.credentials.token ?? params.credentials.token, signal });
                     const teamBinding = current?.acceptedTeamCredentialBinding;
-                    const selection = teamBinding?.providerModelSelection ?? tracked.spawnOptions?.modelSelection?.ref;
-                    const teamId = teamBinding?.teamId ?? tracked.spawnOptions?.primaryTeamId;
-                    if (typeof teamId !== 'string' || teamBinding?.slot.kind !== 'provider_model'
+                    if (teamBinding?.slot.kind !== 'provider_model'
                       || teamBinding.resourceId !== operation.resourceId
-                      || teamBinding.expectedResourceRevision !== operation.expectedResourceRevision
+                      || teamBinding.expectedResourceRevision !== operation.expectedResourceRevision) return null;
+                    const selection = teamBinding.providerModelSelection ?? tracked.spawnOptions?.modelSelection?.ref;
+                    const teamId = teamBinding.teamId ?? tracked.spawnOptions?.primaryTeamId;
+                    if (typeof teamId !== 'string'
                       || selection?.agentTargetKey !== operation.agentTargetKey
                       || (teamBinding.deliveryMode !== 'brokered' && selection.modelId !== operation.modelId)) return null;
                     return { teamId, deliveryMode: teamBinding.deliveryMode,

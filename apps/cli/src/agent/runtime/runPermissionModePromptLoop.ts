@@ -320,7 +320,7 @@ class PreTurnPromptFailure extends Error {
 }
 
 function createModelTransitionPreTurnFailure(
-  transition: Extract<SessionModelTransitionResultV1, { ok: false }>,
+  transition: Pick<Extract<SessionModelTransitionResultV1, { ok: false }>, 'status' | 'reason' | 'failureCause'>,
 ): PreTurnPromptFailure {
   const reason = transition.status === 'owner_unavailable'
     ? 'provider_unavailable_before_acceptance' as const
@@ -1319,14 +1319,10 @@ export async function runPermissionModePromptLoop(opts: {
           return await runProviderInputDispatch(dispatchGrantedInput);
         }
         if (!opts.transitionModelSelectionBeforePrompt) {
-          const transition = {
-            ok: false,
+          throw createModelTransitionPreTurnFailure({
             status: 'owner_unavailable',
-            activeSelection: null,
-            requestedSelection,
             reason: 'Structured model transition owner is unavailable',
-          } as const;
-          throw createModelTransitionPreTurnFailure(transition);
+          });
         }
 
         let dispatchStatus: 'dispatched' | 'cancelled' | null = null;

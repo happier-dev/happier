@@ -49,7 +49,9 @@ function resolveRuntimeDescriptorSelection(params: ResolveSessionRuntimeSnapshot
 
 type SnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
-type TeamResourceSessionModelSelection = Extract<SessionModelSelectionV2, { ref: { source: 'team_resource' } }>;
+type TeamResourceSessionModelSelection = SessionModelSelectionV2 & Readonly<{
+  ref: Extract<SessionModelSelectionV2['ref'], { source: 'team_resource' }>;
+}>;
 
 export type SessionRuntimeSnapshot = Readonly<{
   sessionId: string | null;
