@@ -1,7 +1,15 @@
+import { writeSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 const OUTPUT_MARKER = '__HAPPIER_GENERATOR_MODULE_JSON__';
+
+// Exiting closes this process's esbuild service, whose exit the session also
+// hears (esbuildServiceExit.sh). Announce the worker's own exit first, with a
+// synchronous write, so the session does not mistake it for a dead service.
+process.on('exit', code => {
+  try { writeSync(2, `\n__HAPPIER_INSPECTION_WORKER_EXIT__ ${code}\n`); } catch { /* stderr already closed */ }
+});
 
 // The session's process already preloads the canonical source runtime. Its
 // module cache shares dependencies within this session; the process isolates

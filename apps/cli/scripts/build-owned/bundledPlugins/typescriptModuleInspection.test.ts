@@ -10,8 +10,14 @@ import {
 } from './typescriptModuleInspection.ts';
 
 const fixtureRoots: string[] = [];
+// Workers a test spawned and must retire if its assertion did not.
+const spawnedWorkers: number[] = [];
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  for (const pid of spawnedWorkers.splice(0)) {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
+  }
   await Promise.all(fixtureRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -23,6 +29,26 @@ async function createFixture(): Promise<string> {
 }
 
 describe('per-Plugin TypeScript inspection worker', () => {
+  // IMPL-01C 2026-11-17: the worker sat in futex wait beside a defunct esbuild
+  // child. tsx's synchronous transform waits on esbuild's service thread with
+  // no deadline; when that thread dies (here: a binary whose version does not
+  // match the API), its esbuild process exits and nothing in the worker can
+  // observe it. The esbuild executable is the process boundary.
+  it.skipIf(process.platform === 'win32')('fails the session when its esbuild service exits instead of waiting forever', async () => {
+    const root = await createFixture();
+    const mismatched = join(root, 'esbuild-mismatched');
+    await writeFile(mismatched, "#!/bin/sh\nprintf '\\006\\000\\000\\0000.0.0x'\nexec cat >/dev/null\n", { mode: 0o755 });
+    const authored = join(root, 'plug#in', 'authored.mts');
+    await writeFile(authored, 'export const READY: boolean = true;\n', 'utf8');
+    vi.stubEnv('ESBUILD_BINARY_PATH', mismatched);
+    const session = createTypescriptModuleInspectionSession({ onSpawn: pid => { if (pid) spawnedWorkers.push(pid); } });
+    try {
+      await expect(session.inspect(authored)).rejects.toThrow(/esbuild service exited/u);
+      await expect(session.inspect(authored)).rejects.toThrow(/esbuild service exited/u);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  }, 60_000);
   it('shares one dependency graph within an inspection session and isolates the next session', async () => {
     const root = await createFixture();
     const shared = join(root, 'plug#in', 'shared.mts');
