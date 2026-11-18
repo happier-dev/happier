@@ -692,7 +692,7 @@ describe('mounted managed configurator', () => {
     expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
   });
 
-  it('keeps the offline Pool recovery without offering a redundant form retry for Docker', async () => {
+  it('keeps offline Pool recovery and gives manual Devcontainer choices a controller recovery', async () => {
     const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
     const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
     const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
@@ -722,6 +722,7 @@ describe('mounted managed configurator', () => {
       name: 'Docker container', owner: { kind: 'account', accountId: 'owner' }, controllerPoolId: poolId,
       launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, name: 'Docker container', choices } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [saved] } });
     const { MachinePoolListOutputV1Schema } = await import('@happier-dev/protocol/machines/pools/v1');
     harness.answer(serverId, '/v1/machines/pools/list', { body: MachinePoolListOutputV1Schema.parse({ pools: [{
       pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Docker pool' }, recipientEnvelope: null } },
@@ -744,6 +745,20 @@ describe('mounted managed configurator', () => {
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
       expect(screen.findByTestId('managed-config.form-unavailable')).toBeNull();
       expect(screen.findByTestId('managed-config.form-unavailable:action')).toBeNull();
+      expect(screen.findByTestId('managed-config.error')).toBeNull();
+      expect(screen.findByTestId('managed-config.retained-choice')).toBeNull();
+      expect(screen.findByTestId('managed-config.field:configuration.image')).toBeNull();
+
+      await screen.pressByTestIdAsync('managed-config.start-from:hand');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+      expect(screen.getTextContent()).toContain(t('managedMachines.controller.requiredUnnamed'));
+      expect(screen.findByTestId('managed-config.field:configuration.image')).toBeNull();
+      await screen.pressByTestIdAsync('managed-config.error-action');
+      await flushHookEffects();
+      expect(screen.getTextContent()).toContain(t('managedMachines.controller.requiredUnnamed'));
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
     } finally { await screen.unmount(); }
   });
 

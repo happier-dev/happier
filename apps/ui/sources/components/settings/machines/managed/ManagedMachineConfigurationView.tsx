@@ -186,6 +186,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const targetEdited = props.presetOnly && draft && (draft.controllerPoolId !== creationPreset?.controllerPoolId
         || !pluginJsonValuesEqual(draft.controller ?? null, creationPreset?.controller ?? null));
     const delegatedPreset = !props.presetOnly && !targetEdited && creationPreset?.teamAcquireDelegated === true;
+    const poolId = pooledDraft ? draft?.controllerPoolId ?? creationPreset?.controllerPoolId : undefined;
+    const poolView = useMachinePoolView(props.serverId, poolId);
+    // The shared Pool projection already owns the current availability answer. A known zero-connected
+    // pool cannot satisfy Use or Create; show its typed refusal at review before either is attempted.
+    const poolUnavailableAtReview = isManagedPoolUnavailableAtReview(poolView, !props.presetOnly && poolId !== undefined);
     const [delegatedName, setDelegatedName] = React.useState<string | null>(null);
     const loadedPreset = React.useRef<OpenedManagedMachinePresetV1 | null>(null);
     const [busy, setBusy] = React.useState(false);
@@ -544,7 +549,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const readOptions = React.useCallback(() => {
         optionsAbort.current?.abort();
         const binding = catalog.binding;
-        if (props.presetOnly || delegatedPreset || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
+        if (props.presetOnly || delegatedPreset || poolUnavailableAtReview || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
         if (accountHostPending || accountHostUnreadable || needsApp) return;
         if (!catalogProvisioner || !catalogPlacementAvailable || !credentialsReady) {
             setDraft(current => current && current.optionStatus !== 'unavailable'
@@ -570,10 +575,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             setError(result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
                 : optionsInput.kind === 'unavailable' ? optionsInput.error : null, 'read', result.failure
                     ? resolveActionExecutionFailureMessage({ ...result.failure, ok: false, errorCode: result.failure.code },
-                        t('managedMachines.options.unavailable')) ?? undefined : undefined);
+                        result.failure.code === 'controller_unavailable' ? t('managedMachines.controller.requiredUnnamed')
+                            : t('managedMachines.options.unavailable')) ?? undefined : undefined);
         });
     }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
-        draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedPreset, pooledDraft, accountHostPending, accountHostUnreadable, needsApp]);
+        draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedPreset, pooledDraft, poolUnavailableAtReview, accountHostPending, accountHostUnreadable, needsApp]);
 
     React.useEffect(() => { readOptions(); return () => optionsAbort.current?.abort(); }, [readOptions]);
 
@@ -643,12 +649,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // computer that manages it. A delegated receipt also uses that label without reading the controller.
     // A pool-backed preset is managed by whichever connected machine in its pool takes it. Its editor names the pool;
     // a delegated review can use the shared availability without reading private pool members.
-    const poolId = pooledDraft ? draft?.controllerPoolId ?? creationPreset?.controllerPoolId : undefined;
-    const poolView = useMachinePoolView(props.serverId, poolId);
     const poolName = useMachinePoolName(props.serverId, props.presetOnly && pooledDraft ? draft?.controllerPoolId || null : null);
-    // The shared Pool projection already owns the current availability answer. A known zero-connected
-    // pool cannot satisfy Use or Create; show its typed refusal at review before either is attempted.
-    const poolUnavailableAtReview = isManagedPoolUnavailableAtReview(poolView, !props.presetOnly && poolId !== undefined);
     const controllerName = pooledDraft ? poolName ?? t('machinePresets.controllerPoolAny') : knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const controllerSentence = !pooledDraft ? controllerName : poolName ? t('machinePresets.controllerPoolIn', { pool: poolName })
         : t('machinePresets.controllerPoolInUnnamed');
@@ -957,7 +958,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A saved preset must load before its provisioner catalog is enabled; that disabled catalog is not a refusal.
     const loadingCatalog = !!props.presetId && presetQuery.state.loading || catalog.loading || controllerAwaitsMachineList;
     // One failure line for the page, shared by the setup-only and creation forms.
-    const errorNotice = error ? <ItemGroup>
+    const errorNotice = error && !(poolUnavailableAtReview && error.during === 'read') ? <ItemGroup>
         {/* A read retries its read; a refused Create or Save is retried from the receipt's own action, which stays in view. */}
         <SurfaceStateCard kind="error" size="line" title={error.reason ?? (error.code === 'conflict' ? t('machinePresets.conflict')
             : error.code === 'machine_setup_conflict' ? t('machinePresets.setup.itemConflict')
@@ -1083,7 +1084,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A refusal the provider pins to a field the form shows is said there and as Create's reason; the launch it
     // replaced is not drawn again as a generic "no longer available" choice.
     const refusalOnField = !!launchRefusal?.fieldPath && launchFields.some(field => field.path === launchRefusal.fieldPath);
-    const retainedChoice = facts?.optionStatus === 'unavailable' && !refusalOnField ? draft?.selected : undefined;
+    const controllerReadUnavailable = error?.during === 'read' && error.code === 'controller_unavailable';
+    const choicesBlocked = poolUnavailableAtReview || controllerReadUnavailable;
+    const retainedChoice = !choicesBlocked && facts?.optionStatus === 'unavailable' && !refusalOnField ? draft?.selected : undefined;
     const repairs = (receiptFacts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options))
         .filter(prerequisite => prerequisite.status !== 'available' && (prerequisite.repairAction || prerequisite.status === 'unknown'));
     // Nothing to choose from yet is not "no choices" while the launch still waits on a required field: the field says what it needs.
@@ -1098,7 +1101,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A preset's launch is fixed here (only its editor changes it): its choices read as the chosen rows, not as locked fields.
     const presetLocked = !!preset && !props.presetOnly;
     // While its choices load it shows nothing the answer would then take over.
-    const showLaunchFields = launchFields.length > 0 && !awaitsAccount && !(readFailed && awaitsRequiredInput)
+    const showLaunchFields = !choicesBlocked && launchFields.length > 0 && !awaitsAccount && !(readFailed && awaitsRequiredInput)
         && !(presetLocked && !draft?.options);
     // A free-form host (Cua, Lima) sizes itself from its form: at most one size row comes back, echoing what was asked.
     // The form is then the one Size choice; the fields that row assigns move into Size and no echo table is drawn.
@@ -1172,7 +1175,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     </>;
     // A failed check is the cause: its own words say why and what to do ("Not installed · get it from …"), ahead of the option
     // reads that fail because of it. The generic line only fills the gap when the check named nothing.
-    const choiceState = props.presetOnly || !draft ? null
+    const choiceState = props.presetOnly || !draft || choicesBlocked ? null
         : launchFormUnreadable ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.form-unavailable"
             title={t('managedMachines.options.error')}
             action={{ label: t('common.retry'), onPress: retry, testID: 'managed-config.form-unavailable:action' }} />
@@ -1272,7 +1275,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             })}
         </ItemGroup> : null}
         {/* Drawn once the form is known: before that a form-sized host's one size echo would show and then be replaced. */}
-        {draft && !props.presetOnly && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
+        {draft && !props.presetOnly && !choicesBlocked && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
             billing={selectedCapabilities!.billing}
             incomplete={!!missingLaunchField}
             formSize={formSized ? { editor: showLaunchFields && sizeFields.length ? launchForm(sizeFields, formFields.length === 0) : undefined } : undefined}

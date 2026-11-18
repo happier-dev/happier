@@ -100,6 +100,10 @@ export async function prepareUiManagedProvisionerAdmission(
         const entry = projectAccountManagedProvisioners([selected]).find(candidate => candidate.contribution.localId === input.contribution.localId);
         const role = actionId === 'machines.provisioners.check' ? 'check' : 'options';
         const localId = entry?.descriptor.actions[role];
+        const declaration = selected.manifest.contributes.actions.find(action => action.id === localId);
+        if (declaration?.execution.target === 'daemon') {
+            return { ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' };
+        }
         const requests = localId && resolvePluginActionConnectedAccountUseRequestsV2(selected.manifest, localId);
         if (!entry || !localId || !requests) return { ok: false, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
         const identity = { pluginId: input.contribution.pluginId, localId };
