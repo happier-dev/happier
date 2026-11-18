@@ -4,7 +4,7 @@
 
 use std::{
   borrow::Cow,
-  ffi::{c_char, c_void, CStr},
+  ffi::{c_char, CStr},
   panic::AssertUnwindSafe,
   ptr::NonNull,
 };
@@ -264,15 +264,14 @@ extern "C" fn start_task(
                 }))
                 .map_err(|_e| crate::Error::CustomProtocolTaskInvalid)?;
 
-                // Send data
-                let data = NSData::alloc();
-                // MIGRATE NOTE: we copied the content to the NSData because content will be freed
-                // when out of scope but NSData will also free the content when it's done and cause doube free.
-                let data = NSData::initWithBytes_length(
-                  data,
-                  content.as_ptr() as *mut c_void,
-                  content.len(),
-                );
+                // Send data. An owned body moves into the NSData, which frees it through its
+                // deallocator, so a script is not copied a second time on every request
+                // (Happier, P03-DESKTOP-IPC). A borrowed body is still copied: its lifetime here
+                // is not 'static.
+                let data = match sent_response.into_body() {
+                  Cow::Owned(bytes) => NSData::from_vec(bytes),
+                  Cow::Borrowed(bytes) => NSData::with_bytes(bytes),
+                };
 
                 // Check validity again
                 check_webview_id_valid(webview_id)?;

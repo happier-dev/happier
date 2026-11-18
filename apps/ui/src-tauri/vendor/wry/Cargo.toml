@@ -357,6 +357,7 @@ default-features = false
 version = "0.3.0"
 features = [
     "std",
+    "block2",
     "objc2-core-foundation",
     "NSURLRequest",
     "NSURL",
