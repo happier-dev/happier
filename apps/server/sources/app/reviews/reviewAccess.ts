@@ -11,5 +11,6 @@ export async function resolveReviewAccessInTx(tx: Tx, input: Readonly<{
     const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.actorAccountId, artifactId: input.reviewId });
     if (!access) return null;
     const review = await tx.reviewMetadata.findUnique({ where: { artifactId: input.reviewId }, select: { artifactId: true } });
-    return review ? { ...access, reviewId: input.reviewId } : null;
+    return review ? { reviewId: input.reviewId, ownerAccountId: access.ownerAccountId,
+        level: access.level, encryptionMode: access.encryptionMode } : null;
 }

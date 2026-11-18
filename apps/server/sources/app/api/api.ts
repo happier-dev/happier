@@ -61,6 +61,7 @@ import { liveActivityHostedRelayRoutes } from "./routes/activity/liveActivityHos
 import { registerPeerMediationGrantRoutes } from "./routes/machines/peer/mediation/registerPeerMediationGrantRoutes";
 import { registerReviewCommentRoutes } from "@/app/reviews/comments/routes";
 import { registerReviewReadRoutes } from "@/app/reviews/readRoutes";
+import { registerReviewHumanRoutes } from "@/app/reviews/reviewHumanRoutes";
 import { registerPluginPermissionGrantRoutes } from "@/app/plugins/permissions/routes";
 import { registerPluginAvailabilityRoutes } from "@/app/plugins/availability/routes";
 import { pluginDataRoutes } from "./routes/plugins/data/pluginDataRoutes";
@@ -276,6 +277,7 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
     registerExternalProviderApiRoutes(typed);
     registerReviewCommentRoutes(typed);
     registerReviewReadRoutes(typed);
+    registerReviewHumanRoutes(typed);
     // Team lifecycle, policy, and branding. These need no composed dependency:
     // the domain owns its own authorization, transaction, and media boundary, and
     // the single `teams` feature gate is applied inside the route module.
