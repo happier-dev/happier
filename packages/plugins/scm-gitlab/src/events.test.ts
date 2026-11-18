@@ -25,7 +25,7 @@ describe('GitLab deployment Event normalization', () => {
       merge_commit_sha: 'c'.repeat(40) };
     expect(normalize('Merge Request Hook', { project, object_attributes })).toMatchObject({
       eventRef: { localId: 'automation/pull-request-merged-v1' },
-      payload: { pullRequest: { id: '123', number: 4, mergeCommitSha: 'c'.repeat(40) } },
+      payload: { pullRequest: { id: '123', number: 4, mergeCommitSha: 'c'.repeat(40), authorAssociation: 'unknown' } },
     });
     expect(normalize('Merge Request Hook', { project, object_attributes: { ...object_attributes, action: 'update' } })).toBeNull();
     expect(() => normalize('Merge Request Hook', { project, object_attributes: { ...object_attributes, target_project_id: 88 } })).toThrow();

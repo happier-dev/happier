@@ -22,7 +22,7 @@ const GitlabPushPayloadSchema = defineProtocolObject({ repository: GitlabEventRe
 }, { policy: 'closed' });
 const GitlabMergePayloadSchema = defineProtocolObject({ repository: GitlabEventRepositorySchema,
   pullRequest: defineProtocolObject({ id: Identifier, number: defineProtocolNumber({ integer: true, minimum: 1 }),
-    mergeCommitSha: Sha }, { policy: 'closed' }),
+    mergeCommitSha: Sha, authorAssociation: defineProtocolLiteral('unknown') }, { policy: 'closed' }),
 }, { policy: 'closed' });
 export const GITLAB_EVENT_CATALOG = [
   { localId: GITLAB_EVENT_LOCAL_IDS.push, title: 'GitLab repository pushed',
@@ -62,5 +62,6 @@ export function normalizeGitlabWebhookDelivery(input: Readonly<{ eventType?: str
   return { eventRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_EVENT_LOCAL_IDS.merge }, sourceInstanceId,
     occurrenceId: input.providerDeliveryId, occurredAtMs: input.receivedAtMs,
     payload: GitlabMergePayloadSchema.parse({ repository,
-      pullRequest: { id: positiveId(mr.id), number: Number(positiveId(mr.iid)), mergeCommitSha: mr.merge_commit_sha } }) };
+      pullRequest: { id: positiveId(mr.id), number: Number(positiveId(mr.iid)), mergeCommitSha: mr.merge_commit_sha,
+        authorAssociation: 'unknown' } }) };
 }

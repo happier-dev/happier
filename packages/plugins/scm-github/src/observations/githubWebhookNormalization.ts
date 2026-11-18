@@ -171,6 +171,19 @@ function eventRepository(repository: Readonly<{ id: string; nameWithOwner: strin
   });
 }
 
+function readPullRequestAuthorAssociation(value: unknown): GithubPullRequestLifecycleV1['authorAssociation'] {
+  switch (value) {
+    case 'OWNER':
+    case 'MEMBER':
+    case 'COLLABORATOR': return 'internal';
+    case 'CONTRIBUTOR':
+    case 'FIRST_TIMER':
+    case 'FIRST_TIME_CONTRIBUTOR':
+    case 'NONE': return 'external';
+    default: return 'unknown';
+  }
+}
+
 /** Events omit webhook repository names and PR users; their source supplies those facts. */
 export function normalizeGithubPullRequestLifecycle(
   value: unknown,
@@ -215,6 +228,7 @@ export function normalizeGithubPullRequestLifecycle(
     headRepository: head.repo === null ? null : identity(head.repo),
     author: readActor(pullRequest.user === undefined && repositoryEventContext !== undefined
       ? repositoryEventContext.actor : pullRequest.user, 'pull_request.user'),
+    authorAssociation: readPullRequestAuthorAssociation(pullRequest.author_association),
   });
 }
 

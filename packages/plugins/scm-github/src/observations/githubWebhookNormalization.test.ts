@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   GithubWebhookPayloadError,
+  normalizeGithubPullRequestLifecycle,
   normalizeGithubWebhookDelivery,
 } from './githubWebhookNormalization.js';
 
@@ -25,6 +26,16 @@ const pullRequestSourceFacts = {
 };
 
 describe('GitHub webhook normalization', () => {
+  it.each([
+    ['OWNER', 'internal'], ['MEMBER', 'internal'], ['COLLABORATOR', 'internal'],
+    ['CONTRIBUTOR', 'external'], ['FIRST_TIMER', 'external'], ['FIRST_TIME_CONTRIBUTOR', 'external'], ['NONE', 'external'],
+    [undefined, 'unknown'], ['NEW_PROVIDER_VALUE', 'unknown'],
+  ])('projects author association %s without inferring membership from repository or actor kind', (association, expected) => {
+    const pullRequest = normalizeGithubPullRequestLifecycle({
+      ...pullRequestSourceFacts, id: 455, number: 33, author_association: association,
+    }, 'opened');
+    expect(pullRequest).toMatchObject({ authorAssociation: expected });
+  });
   it.each(['opened', 'reopened', 'synchronize', 'closed', 'merged'] as const)(
     'projects %s with exact head and neutral repository identities without using the sender as author', action => {
       const delivery = normalizeGithubWebhookDelivery({ eventType: 'pull_request', providerDeliveryId: `pr-${action}`, receivedAtMs: defaultReceivedAtMs,
@@ -45,6 +56,7 @@ describe('GitHub webhook normalization', () => {
           baseRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
           headRepository: { kind: 'github', deployment: 'https://github.com', repository: 'octocat/widgets' },
           author: { id: '99', login: 'octocat', kind: 'human' },
+          authorAssociation: 'unknown',
         } },
       }));
     },

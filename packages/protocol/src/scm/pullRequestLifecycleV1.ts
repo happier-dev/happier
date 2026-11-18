@@ -6,6 +6,10 @@ import { ScmHostingRepositoryIdentityV1Schema } from './hostingRepositoryIdentit
 export const ScmHostingPullRequestLifecycleActionV1Schema = lazyZodSchema(() => z.enum([
     'opened', 'reopened', 'synchronize', 'closed', 'merged',
 ]));
+export const ScmHostingPullRequestAuthorAssociationV1Schema = lazyZodSchema(() => z.enum([
+    'internal', 'external', 'unknown',
+]));
+export type ScmHostingPullRequestAuthorAssociationV1 = z.infer<typeof ScmHostingPullRequestAuthorAssociationV1Schema>;
 /** Authoritative per-occurrence Forge facts; preview admission and fork policy stay with consumers. */
 export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.strictObject({
     id: z.string().check(z.regex(/^[1-9][0-9]*$/)),
@@ -18,6 +22,8 @@ export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.stri
     headRepository: z.nullable(ScmHostingRepositoryIdentityV1Schema),
     author: z.strictObject({ id: z.string().check(z.regex(/^[1-9][0-9]*$/)), login: z.string().check(z.minLength(1)),
         kind: z.enum(['human', 'bot', 'unsupported']) }),
+    /** Providers without association evidence and retained occurrences require approval. */
+    authorAssociation: z._default(ScmHostingPullRequestAuthorAssociationV1Schema, 'unknown'),
 }));
 export type ScmHostingPullRequestLifecycleV1 = z.infer<typeof ScmHostingPullRequestLifecycleV1Schema>;
 export const ScmHostingPullRequestLifecycleV1ProtocolSchema = projectZodProtocolSchema(ScmHostingPullRequestLifecycleV1Schema);

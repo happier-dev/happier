@@ -362346,6 +362346,15 @@
                   ],
                   "type": "object"
                 },
+                "authorAssociation": {
+                  "default": "unknown",
+                  "enum": [
+                    "internal",
+                    "external",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
                 "baseRef": {
                   "minLength": 1,
                   "type": "string"

@@ -172,6 +172,7 @@ describe('GitHub SCM manifest', () => {
     expect(setup?.connectedAccountPurposeBindings).toEqual([{ path: 'credentialRef', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE }]);
   });
   it.each([
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview, {}, true],
     ['github/pull-request/merge', {}, true],
     ['github/pull-request/merge', { intent: 'withoutWaiting' }, true],
     ['github/pull-request/enqueue', {}, false],

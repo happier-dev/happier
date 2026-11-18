@@ -183,6 +183,21 @@ Accepted V2 operations and deployment receipts retain the admitted Workflow
 origin separately from the approver, so terminal admission applies the ordinary
 ancestor loop rule. The V1 operation projection omits that provenance field.
 
+## Pull-request author association (unreleased 0.3)
+
+The closed SCM lifecycle payload carries `authorAssociation` as `internal`,
+`external` or `unknown`. The provider normalizer owns that fact; actor kind and
+repository equality do not establish membership. GitHub maps its delivered
+association once for webhook and repository-history observations. Missing or
+unrecognized values, retained occurrences without the field, and GitLab's
+merge-only event explicitly resolve to `unknown`. Bitbucket and Azure DevOps
+currently publish no pull-request lifecycle Event to extend.
+
+This is an unpublished development-contract extension. Matching Protocol,
+plugin SDK and event consumers reload together; an older closed reader rejects
+the additional field. No membership lookup, legacy authority inference or
+compatibility epoch is introduced.
+
 ## Workflow authoring discovery (unreleased 0.3)
 
 The existing Action discovery read accepts optional `purpose: 'workflow_step' |

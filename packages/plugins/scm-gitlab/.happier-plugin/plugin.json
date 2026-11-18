@@ -34807,7 +34807,203 @@
     "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
-    "events": [],
+    "events": [
+      {
+        "automation": {
+          "eligible": true,
+          "source": {
+            "connectedAccountPurposeBindings": [
+              {
+                "path": "credentialRef",
+                "purpose": "gitlab-connected-account"
+              }
+            ],
+            "historyGapResetActionRef": {
+              "localId": "gitlab/reset-repository-event-history-gap",
+              "pluginId": "happier.scm.forge.gitlab"
+            },
+            "setupActionRef": {
+              "localId": "gitlab/setup-repository-event",
+              "pluginId": "happier.scm.forge.gitlab"
+            },
+            "sourceConfigSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false,
+              "properties": {
+                "credentialRef": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "service": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            },
+                            "pluginId": {
+                              "const": "happier"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                "repository": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseUrl": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "nameWithOwner": {
+                      "minLength": 3,
+                      "type": "string"
+                    },
+                    "repositoryId": {
+                      "minLength": 1,
+                      "pattern": "^[1-9][0-9]*$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "repositoryId",
+                    "nameWithOwner",
+                    "baseUrl"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "credentialRef",
+                "repository"
+              ],
+              "type": "object"
+            },
+            "sourceContractVersion": 1,
+            "supportedObservationTransports": [
+              "durablePush"
+            ],
+            "webhookContributionRef": {
+              "localId": "gitlab-events",
+              "pluginId": "happier.scm.forge.gitlab"
+            }
+          },
+          "v": 1
+        },
+        "description": "A merge request was merged.",
+        "id": "automation/pull-request-merged-v1",
+        "kind": "event",
+        "payloadSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "pullRequest": {
+              "additionalProperties": false,
+              "properties": {
+                "authorAssociation": {
+                  "const": "unknown"
+                },
+                "id": {
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]*$",
+                  "type": "string"
+                },
+                "mergeCommitSha": {
+                  "pattern": "^[a-fA-F0-9]{40}$",
+                  "type": "string"
+                },
+                "number": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "number",
+                "mergeCommitSha",
+                "authorAssociation"
+              ],
+              "type": "object"
+            },
+            "repository": {
+              "additionalProperties": false,
+              "properties": {
+                "baseUrl": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "nameWithOwner": {
+                  "minLength": 3,
+                  "type": "string"
+                },
+                "repositoryId": {
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]*$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "repositoryId",
+                "nameWithOwner",
+                "baseUrl"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "repository",
+            "pullRequest"
+          ],
+          "type": "object"
+        },
+        "title": "GitLab merge request merged"
+      }
+    ],
     "executionRunProfiles": [],
     "healthCheckKinds": [],
     "hooks": [],
