@@ -177,6 +177,9 @@ function BotRosterReports(props: Readonly<{
   </>;
 }
 
+/** The roster's drawn width (lab `b-rail A`): a name, its current line and the trailing time on one row. */
+export const BOTS_ROSTER_WIDTH_PX = 376;
+
 /**
  * The Bots roster (lab `b-rail A/M/S/G`): every Bot of the Homes the app shows, as the ordinary
  * Session rows (seeded avatar, the awareness line, Talk and the shared More on hover), then New bot

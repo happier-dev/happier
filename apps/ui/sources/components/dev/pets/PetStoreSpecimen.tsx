@@ -333,6 +333,7 @@ function StoreScene() {
 }
 
 const BOBA = FIXTURES.find((item) => item.id === 'boba')!;
+const BOBA_WEAR = { kind: 'accountPet', accountPetId: 'specimen-boba', displayName: 'Boba' } as const;
 
 function BobaListing(props: Readonly<{ state: StorePetListingState }>) {
   const item = summary(BOBA);
@@ -354,7 +355,8 @@ function BobaListing(props: Readonly<{ state: StorePetListingState }>) {
         { key: 'published', value: '2 May 2026' },
       ]}
       onAdd={noop}
-      onUseAsFace={noop}
+      wearPet={BOBA_WEAR}
+      onUndo={noop}
       onMakeCompanion={noop}
       onOpenSettingsPets={noop}
       onOpenFeatures={noop}
@@ -378,7 +380,11 @@ const STATES: readonly Readonly<{
 }>[] = [
   { label: 'Adding', state: { kind: 'adding' } },
   { label: 'Added', state: { kind: 'added' } },
-  { label: "Couldn't add", state: { kind: 'couldntAdd' } },
+  { label: 'Added just now, with Undo', state: { kind: 'addedNow', undo: 'ready' } },
+  { label: "Undo couldn't remove it", state: { kind: 'addedNow', undo: 'failed' } },
+  { label: 'Undone', state: { kind: 'removed' } },
+  { label: "Couldn't add: the sheet fails the pet check", state: { kind: 'couldntAdd', reason: 'sheetCheck' } },
+  { label: "Couldn't add: any other refusal", state: { kind: 'couldntAdd', reason: 'other' } },
   { label: 'Library full', state: { kind: 'libraryFull', limit: 20 } },
   { label: 'Pet sync off', state: { kind: 'syncOff' } },
 ];

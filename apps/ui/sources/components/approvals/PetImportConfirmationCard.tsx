@@ -7,14 +7,21 @@ import {
   PET_ATLAS_V2,
 } from '@happier-dev/protocol/pets/constants';
 import type { PetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
+import { createAccountPetReferenceV1 } from '@happier-dev/protocol/pets/selection';
 
+import { PetAddOutcomeActions, PetAddOutcomeLine } from '@/components/pets/add/PetAddOutcome';
+import { petAddOutcomeOfImport, petAddOutcomeWithUndo } from '@/components/pets/add/petAddOutcome';
+import { usePetSettingsOpeners } from '@/components/pets/add/usePetSettingsOpeners';
 import { PetPoseGrid } from '@/components/pets/render/PetPoseGrid';
+import { usePetAddUndo } from '@/components/pets/source/usePetImport';
+import { usePetSelectionAction } from '@/components/pets/source/usePetSelectionAction';
 import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /** Poses in the card: 56 on a page, 48 on a phone (DECISIONS-R12 spec). */
 const POSE_PX = 56;
@@ -25,7 +32,10 @@ const CARD_MAX_WIDTH = 440;
 /**
  * The pet preview card (lab r12-create-C, round 3): the confirmation of Hatch pet's pet-import request. One column on
  * one left edge: the name with where it was made, the check line, and every pose in the shared 3 × 3 grid, which is
- * the try-on. Approving the request is Add to my pets (Keep); the daemon's validation already checked the sheet.
+ * the try-on. Approving the request is Add to my pets (Keep); the daemon's validation already checked the sheet. Once
+ * the import owner answered, the card says the same outcome as the Store listing (one Action, one set of outcomes,
+ * R12 §16): Added with Use as a Bot's face…, Make it my companion and Undo, or the refusal. Undo runs on the Home that
+ * approved it.
  */
 export const PetImportConfirmationCard = React.memo(
   function PetImportConfirmationCard(
@@ -67,6 +77,30 @@ export const PetImportConfirmationCard = React.memo(
       validation.width,
       validation.height,
     );
+    const { outcome } = props.confirmation;
+    const added = React.useMemo(() => (outcome ? petAddOutcomeOfImport(outcome) : null), [outcome]);
+    const { progress, onUndo } = usePetAddUndo(added?.undo ?? null, props.serverId ?? undefined);
+    const state = added ? petAddOutcomeWithUndo(added.state, progress) : null;
+    const addedPet = outcome?.kind === 'added' && state?.kind !== 'removed' ? outcome.pet : null;
+    const wearPet = React.useMemo(() => (addedPet ? createAccountPetReferenceV1(addedPet) : null), [addedPet]);
+    const selectPet = usePetSelectionAction();
+    const open = usePetSettingsOpeners();
+    const name = validation.manifest.displayName;
+    const outcomeProps = state ? {
+      state,
+      name,
+      sourceTitle: machine ?? t('runs.unknownMachine'),
+      size: phone ? ('normal' as const) : ('small' as const),
+      ...(wearPet ? { wearPet } : {}),
+      ...(addedPet ? { onMakeCompanion: () => fireAndForget(
+        selectPet({ petRef: { kind: 'accountPet', accountPetId: addedPet.accountPetId } }),
+        { tag: 'PetImportConfirmationCard.companion' },
+      ) } : {}),
+      ...(onUndo ? { onUndo } : {}),
+      onOpenSettingsPets: open.pets,
+      onOpenFeatures: open.features,
+      ...(props.testID ? { testID: props.testID } : {}),
+    } : null;
     return (
       <View
         style={[styles.card, phone ? null : styles.cardWide]}
@@ -74,7 +108,7 @@ export const PetImportConfirmationCard = React.memo(
       >
         <View style={styles.identity}>
           <Text variant="body" emphasis="semiBold" style={styles.name}>
-            {validation.manifest.displayName}
+            {name}
           </Text>
           {machine ? (
             <Text variant="meta" style={styles.meta}>
@@ -82,18 +116,25 @@ export const PetImportConfirmationCard = React.memo(
             </Text>
           ) : null}
         </View>
-        <View style={styles.check}>
-          <View style={styles.checkGlyph}>
-            <Icon
-              name="check"
-              size={ICON_SIZE.xs}
-              color={theme.colors.text.secondary}
-            />
+        {outcomeProps ? (
+          // The outcome takes the check line's place (lab r12-create-A, -Cs).
+          <View style={styles.outcome}>
+            <PetAddOutcomeLine {...outcomeProps} />
           </View>
-          <Text variant="meta" style={styles.meta}>
-            {t('settingsPets.store.checkedAll')}
-          </Text>
-        </View>
+        ) : (
+          <View style={styles.check}>
+            <View style={styles.checkGlyph}>
+              <Icon
+                name="check"
+                size={ICON_SIZE.xs}
+                color={theme.colors.text.secondary}
+              />
+            </View>
+            <Text variant="meta" style={styles.meta}>
+              {t('settingsPets.store.checkedAll')}
+            </Text>
+          </View>
+        )}
         {spritesheet ? (
           <PetPoseGrid
             spritesheetSource={spritesheet}
@@ -103,6 +144,7 @@ export const PetImportConfirmationCard = React.memo(
             testID={props.testID ? `${props.testID}.poses` : undefined}
           />
         ) : null}
+        {outcomeProps ? <PetAddOutcomeActions {...outcomeProps} /> : null}
       </View>
     );
   },
@@ -123,6 +165,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   name: { color: theme.colors.text.primary },
   meta: { color: theme.colors.text.secondary, flexShrink: 1 },
+  outcome: { gap: theme.space.s8 },
   check: {
     flexDirection: 'row',
     alignItems: 'flex-start',

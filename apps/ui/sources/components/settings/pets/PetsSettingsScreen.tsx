@@ -1,6 +1,4 @@
 import * as React from 'react';
-import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
-import { PetImportResultV1Schema } from '@happier-dev/protocol/pets/importActionV1';
 import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, PET_DAEMON_RPC_METHODS, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
@@ -29,6 +27,8 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { usePetImport } from '@/components/pets/source/usePetImport';
+import { Modal } from '@/modal';
 import { PETS_SETTINGS } from '@/components/settings/pets/petsSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -104,7 +104,7 @@ export function PetsSettingsScreen() {
     const applyLocalSettings = useApplyLocalSettings();
     const settingsScope = storage((state) => state.settingsScope);
     const resetPositionAction = useMountedActionExecution(settingsScope);
-    const importAccountAction = useMountedActionExecution(targetServerId);
+    const importPet = usePetImport(targetServerId);
     const selectPet = usePetSelectionAction();
     const companionEnabled = useFeatureEnabled('pets.companion');
     const syncEnabled = useFeatureEnabled('pets.sync');
@@ -323,12 +323,20 @@ export function PetsSettingsScreen() {
         if (!importPayload) return;
         const request = beginRequest('accountImport');
         try {
-            const result = await importAccountAction.execute(PET_IMPORT_ACTION_ID_V1,
+            // The import owner reads the outcome and puts an added pet in the library.
+            const outcome = await importPet(
                 { source: { kind: 'machine', machineId: target.machine.id, ...importPayload } }, { signal: request.signal });
             if (request.signal.aborted || !isExecutionTargetCurrent(target)) return;
-            if (!result.ok) return;
-            const pet = PetImportResultV1Schema.parse(result.result).pet;
-            storage.getState().upsertAccountPet(pet);
+            if (outcome.kind !== 'added') {
+                // The same refusal words as a shared Bot's "Add <pet>": one Action, one set of outcomes.
+                const name = candidate.displayName;
+                Modal.alert(t('settingsPets.importToAccountTitle'), outcome.kind === 'library_full' ? t('petShare.offerLibraryFull')
+                    : outcome.kind === 'pet_sync_off' ? t('petShare.offerSyncOff')
+                        // A Machine package has no catalog to reach: an unanswered import is a plain "couldn't add".
+                        : t('petShare.offerCouldNotAdd', { name }));
+                return;
+            }
+            const { pet } = outcome;
             setImportedAccountPets((pets) => upsertByKey(pets, pet, (entry) => entry.accountPetId));
             await selectPet({ petRef: { kind: 'accountPet', accountPetId: pet.accountPetId } }, { signal: request.signal });
         } catch {
@@ -336,7 +344,7 @@ export function PetsSettingsScreen() {
         } finally {
             finishRequest('accountImport', request);
         }
-    }, [administrationTargetSelection.resolveExecutionTarget, importAccountAction.execute, selectPet, beginRequest, finishRequest, isExecutionTargetCurrent, syncEnabled]);
+    }, [administrationTargetSelection.resolveExecutionTarget, importPet, selectPet, beginRequest, finishRequest, isExecutionTargetCurrent, syncEnabled]);
 
     const removeLocalPet = React.useCallback(async (pet: LocalDevicePetRow) => {
         const requestKey = `remove:${pet.sourceKey}`;

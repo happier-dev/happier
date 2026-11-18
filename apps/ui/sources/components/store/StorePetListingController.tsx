@@ -1,15 +1,14 @@
 import * as React from 'react';
-import type { Href } from 'expo-router';
-import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { createAccountPetReferenceV1, type PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
   resolveBuiltInPetPackage,
   type BuiltInPetId,
 } from '@/components/pets/builtIns/builtInPetRegistry';
-import { usePetImport, type PetImportResult } from '@/components/pets/source/usePetImport';
+import { petAddOutcomeOfImport, petAddOutcomeWithUndo, type PetAddOutcomeState } from '@/components/pets/add/petAddOutcome';
+import { usePetAddUndo, usePetImport, type PetImportUndo } from '@/components/pets/source/usePetImport';
+import { usePetSettingsOpeners } from '@/components/pets/add/usePetSettingsOpeners';
 import { usePetSelectionAction } from '@/components/pets/source/usePetSelectionAction';
-import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { BUILT_IN_PET_SUBTITLE_KEYS } from '@/components/settings/pets/devicePetSelector/constants';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
@@ -58,24 +57,17 @@ export function StorePetListingController(
   );
 }
 
-function useOpenSettings() {
-  const router = useRouter();
-  return React.useMemo(
-    () => ({
-      pets: () => router.push(SETTINGS_ROUTES.pets as Href),
-      features: () => router.push(SETTINGS_ROUTES.features as Href),
-    }),
-    [router],
-  );
-}
-
 function BuiltInPetListing(props: Readonly<{ petId: BuiltInPetId }>) {
   const pet = resolveBuiltInPetPackage(props.petId);
   const selectPet = usePetSelectionAction();
-  const open = useOpenSettings();
+  const open = usePetSettingsOpeners();
   const art = React.useMemo(
     () => storePetArt({ kind: 'builtInPet', pet }),
     [pet],
+  );
+  const wearPet = React.useMemo<PetAccountReferenceV1>(
+    () => ({ kind: 'builtIn', petId: props.petId }),
+    [props.petId],
   );
   return (
     <StorePetListing
@@ -89,6 +81,7 @@ function BuiltInPetListing(props: Readonly<{ petId: BuiltInPetId }>) {
       facts={NO_FACTS}
       reportUrl={null}
       onAdd={noop}
+      wearPet={wearPet}
       onOpenSettingsPets={open.pets}
       onOpenFeatures={open.features}
       onMakeCompanion={() =>
@@ -102,6 +95,7 @@ function BuiltInPetListing(props: Readonly<{ petId: BuiltInPetId }>) {
 }
 
 const BUILT_IN_STATE: StorePetListingState = { kind: 'builtIn' };
+const HELD: StorePetListingState = { kind: 'added' };
 const NO_FACTS: readonly StorePetListingFact[] = [];
 const noop = () => {};
 
@@ -136,20 +130,23 @@ function RegistryPetListing(
   );
   const importPet = usePetImport();
   const selectPet = usePetSelectionAction();
-  const open = useOpenSettings();
+  const open = usePetSettingsOpeners();
   const [adding, setAdding] = React.useState(false);
-  const [outcome, setOutcome] = React.useState<StorePetListingState | null>(null);
+  const [added, setAdded] = React.useState<Readonly<{ state: PetAddOutcomeState; undo: PetImportUndo | null }> | null>(null);
+  // The import owner's Undo for the pet this listing just added; a reused pet never has one.
+  const { progress: undoProgress, onUndo } = usePetAddUndo(added?.undo ?? null);
+  const outcome = added ? petAddOutcomeWithUndo(added.state, undoProgress) : null;
   const summary = read.item?.summary ?? null;
   const pet = read.item?.payload.kind === 'pet' ? read.item.payload.pet : null;
 
   const onAdd = React.useCallback(() => {
     setAdding(true);
-    setOutcome(null);
+    setAdded(null);
     fireAndForget(
       (async () => {
         try {
           // The pet-import owner names the outcome; the listing only says it (one Action, one set of outcomes).
-          setOutcome(listingStateOfImport(await importPet({ source: { kind: 'registry', sourceId: props.sourceId, itemId: props.itemId } })));
+          setAdded(petAddOutcomeOfImport(await importPet({ source: { kind: 'registry', sourceId: props.sourceId, itemId: props.itemId } })));
         } finally {
           setAdding(false);
         }
@@ -157,6 +154,11 @@ function RegistryPetListing(
       { tag: 'StorePetListing.add' },
     );
   }, [importPet, props.sourceId, props.itemId]);
+
+  const wearPet = React.useMemo(
+    () => (held ? createAccountPetReferenceV1(held) : null),
+    [held],
+  );
 
   if (!summary) {
     return read.loading || !read.error ? (
@@ -177,8 +179,9 @@ function RegistryPetListing(
       />
     );
   }
+  // Held: the library's word, unless this listing just added it (then its Undo stands beside it).
   const state: StorePetListingState = held
-    ? { kind: 'added' }
+    ? outcome?.kind === 'addedNow' ? outcome : HELD
     : !syncEnabled
       ? { kind: 'syncOff' }
       : adding
@@ -223,6 +226,8 @@ function RegistryPetListing(
       onAdd={onAdd}
       onOpenSettingsPets={open.pets}
       onOpenFeatures={open.features}
+      {...(wearPet ? { wearPet } : {})}
+      {...(onUndo ? { onUndo } : {})}
       {...(held
         ? {
             onMakeCompanion: () =>
@@ -239,15 +244,4 @@ function RegistryPetListing(
         : {})}
     />
   );
-}
-
-/** A failed import as the listing says it; an added pet is shown from the Account library, not from this state. */
-function listingStateOfImport(outcome: PetImportResult): StorePetListingState | null {
-  switch (outcome.kind) {
-    case 'added': return null;
-    case 'library_full': return { kind: 'libraryFull', limit: PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount };
-    case 'pet_sync_off': return { kind: 'syncOff' };
-    case 'could_not_add': return { kind: 'couldntAdd' };
-    case 'unreachable': return { kind: 'unreachable' };
-  }
 }

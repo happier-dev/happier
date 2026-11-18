@@ -360,6 +360,8 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsSpy,
     useApplyLocalSettings: () => applyLocalSettingsSpy,
+    // Settings › Pets runs the import on its administration target's Home, never the Account settings scope.
+    useAccountSettingsScope: () => null,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({

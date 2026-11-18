@@ -24,7 +24,7 @@ import {
   resolveRailPinFlightStart,
   type WindowRect,
 } from '@/components/sessions/bots/railPinFlight';
-import { BotsPopoverContent } from '@/components/sessions/bots/BotsPopoverContent';
+import { BOTS_ROSTER_WIDTH_PX, BotsPopoverContent } from '@/components/sessions/bots/BotsPopoverContent';
 import { useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRosterRuntime';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -64,8 +64,6 @@ import type {
 } from './appRailModel';
 import { useAppRailBotReorder } from './useAppRailBotReorder';
 
-/** The roster's drawn width (lab `b-rail A`): a name, its current line and the trailing time on one row. */
-const ROSTER_WIDTH_PX = 376;
 const PIN_AVATAR_SIZE_PX = 24;
 const PIN_RING_SIZE_PX = 32;
 
@@ -158,7 +156,7 @@ export const AppRailBots = React.memo(function AppRailBots(
         buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
         interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
         iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
-        popoverWidthPx={ROSTER_WIDTH_PX}
+        popoverWidthPx={BOTS_ROSTER_WIDTH_PX}
         renderContent={renderRoster}
         registerOpener={runtime?.registerAnchoredOpener}
         renderIcon={(open) => <AppRailIcon name={props.entry.icon} active={open} />}

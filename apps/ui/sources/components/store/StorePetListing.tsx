@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { Linking, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
 
 import { PetPoseGrid } from '@/components/pets/render/PetPoseGrid';
 import { usePetSheetSpriteVersion } from '@/components/pets/render/usePetSheetSpriteVersion';
+import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
+import { PetAddOutcome } from '@/components/pets/add/PetAddOutcome';
+import type { PetAddOutcomeState } from '@/components/pets/add/petAddOutcome';
 import { BotFacePet } from '@/components/sessions/bots/face/BotFacePet';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -13,7 +15,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -27,16 +28,14 @@ const HERO_PX = 148;
 const HERO_PHONE_PX = 132;
 const POSE_PX = 40;
 
-/** Where Add stands, said once (decision 9). Each failure leaves Add disabled except Couldn't reach. */
+/** Where Add stands, said once (decision 9): before Add, or the shared outcome once the import owner answered. */
 export type StorePetListingState =
   | Readonly<{ kind: 'available' }>
   | Readonly<{ kind: 'adding' }>
-  | Readonly<{ kind: 'added' }>
   | Readonly<{ kind: 'builtIn' }>
-  | Readonly<{ kind: 'couldntAdd' }>
-  | Readonly<{ kind: 'libraryFull'; limit: number }>
-  | Readonly<{ kind: 'syncOff' }>
-  | Readonly<{ kind: 'unreachable' }>;
+  | PetAddOutcomeState;
+
+const BUILT_IN_OUTCOME: PetAddOutcomeState = { kind: 'added' };
 
 export type StorePetListingFact = Readonly<{
   key: 'looksAround' | 'licence' | 'published';
@@ -56,9 +55,11 @@ export type StorePetListingViewProps = Readonly<{
   facts: readonly StorePetListingFact[];
   reportUrl: string | null;
   onAdd: () => void;
-  /** The Bot face chooser hand-off; absent until the chooser can take a preselected pet. */
-  onUseAsFace?: () => void;
+  /** The pet as a Bot can wear it: Use as a Bot's face… hands it to the Bots roster (DECISIONS-R12 §10). */
+  wearPet?: PetAccountReferenceV1;
   onMakeCompanion?: () => void;
+  /** The import's own Undo, offered only while the state is `addedNow`. */
+  onUndo?: () => void;
   onOpenSettingsPets: () => void;
   onOpenFeatures: () => void;
   testID?: string;
@@ -136,88 +137,22 @@ export const StorePetListing = React.memo(function StorePetListing(
         ) : null}
 
         <View style={styles.decision}>
-          {state.kind === 'syncOff' ? (
-            <OutcomeLine
-              glyph="info"
-              tone="info"
-              text={t('settingsPets.store.syncOff')}
-              action={{
-                label: t('settingsPets.store.openFeatures'),
-                onPress: props.onOpenFeatures,
-              }}
-              testID={id('syncOff')}
+          {state.kind !== 'available' && state.kind !== 'adding' ? (
+            <PetAddOutcome
+              state={state.kind === 'builtIn' ? BUILT_IN_OUTCOME : state}
+              name={props.name}
+              sourceTitle={props.sourceTitle}
+              size={buttonSize}
+              {...(props.wearPet ? { wearPet: props.wearPet } : {})}
+              {...(props.onMakeCompanion ? { onMakeCompanion: props.onMakeCompanion } : {})}
+              {...(props.onUndo ? { onUndo: props.onUndo } : {})}
+              onOpenSettingsPets={props.onOpenSettingsPets}
+              onOpenFeatures={props.onOpenFeatures}
+              {...(props.testID ? { testID: props.testID } : {})}
             />
-          ) : state.kind === 'added' || state.kind === 'builtIn' ? (
+          ) : null}
+          {state.kind === 'syncOff' || state.kind === 'added' || state.kind === 'addedNow' || state.kind === 'builtIn' ? null : (
             <>
-              <View style={styles.inline}>
-                <Icon
-                  name="check"
-                  size={ICON_SIZE.xs}
-                  color={theme.colors.text.secondary}
-                />
-                <Text variant="body" style={styles.meta}>
-                  {t('settingsPets.store.added')}
-                </Text>
-              </View>
-              <View
-                style={[styles.actions, phone ? styles.actionsPhone : null]}
-              >
-                {props.onUseAsFace ? (
-                  <RoundButton
-                    size={buttonSize}
-                    title={t('settingsPets.store.useAsFace')}
-                    onPress={props.onUseAsFace}
-                    testID={id('useAsFace')}
-                  />
-                ) : null}
-                {props.onMakeCompanion ? (
-                  <RoundButton
-                    size={buttonSize}
-                    display={props.onUseAsFace ? 'secondary' : undefined}
-                    title={t('settingsPets.store.makeCompanion')}
-                    onPress={props.onMakeCompanion}
-                    testID={id('companion')}
-                  />
-                ) : null}
-              </View>
-            </>
-          ) : (
-            <>
-              {state.kind === 'couldntAdd' ? (
-                <OutcomeLine
-                  glyph="x-circle"
-                  tone="danger"
-                  testID={id('couldntAdd')}
-                  text={t('settingsPets.store.couldntAdd', {
-                    name: props.name,
-                    reason: t('settingsPets.store.checkFailed'),
-                    source: props.sourceTitle,
-                  })}
-                />
-              ) : state.kind === 'libraryFull' ? (
-                <OutcomeLine
-                  glyph="warning"
-                  tone="warning"
-                  testID={id('libraryFull')}
-                  text={t('settingsPets.store.libraryFull', {
-                    name: props.name,
-                    limit: state.limit,
-                  })}
-                  action={{
-                    label: t('settingsPets.store.openSettingsPets'),
-                    onPress: props.onOpenSettingsPets,
-                  }}
-                />
-              ) : state.kind === 'unreachable' ? (
-                <SurfaceStateCard
-                  size="line"
-                  kind="warning"
-                  testID={id('unreachable')}
-                  title={t('settingsPets.store.unreachable', {
-                    source: props.sourceTitle,
-                  })}
-                />
-              ) : null}
               <View
                 style={[styles.actions, phone ? styles.actionsPhone : null]}
               >
@@ -277,47 +212,6 @@ export const StorePetListing = React.memo(function StorePetListing(
   );
 });
 
-function OutcomeLine(
-  props: Readonly<{
-    glyph: 'info' | 'x-circle' | 'warning';
-    tone: 'info' | 'danger' | 'warning';
-    text: string;
-    action?: Readonly<{ label: string; onPress: () => void }>;
-    testID?: string;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const colour =
-    props.tone === 'danger'
-      ? theme.colors.state.danger.foreground
-      : props.tone === 'warning'
-        ? theme.colors.state.warning.foreground
-        : theme.colors.text.secondary;
-  return (
-    <View style={styles.outcome} testID={props.testID}>
-      <View style={styles.outcomeGlyph}>
-        <Icon name={props.glyph} size={ICON_SIZE.xs} color={colour} />
-      </View>
-      <Text variant="body" style={styles.outcomeText}>
-        {props.text}
-        {props.action ? (
-          <>
-            {' '}
-            <Text
-              variant="body"
-              accessibilityRole="link"
-              style={styles.link}
-              onPress={props.action.onPress}
-            >
-              {props.action.label}
-            </Text>
-          </>
-        ) : null}
-      </Text>
-    </View>
-  );
-}
-
 const FACT_LABEL_KEY = {
   looksAround: 'settingsPets.store.looksAround',
   licence: 'settingsPets.store.licence',
@@ -353,16 +247,5 @@ const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', gap: theme.space.s8, alignItems: 'center' },
   actionsPhone: { flexDirection: 'column', alignItems: 'stretch' },
   inline: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-  outcome: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space.s8,
-  },
-  // The glyph sits in a box one body line high, so it centres on the first line of text.
-  outcomeGlyph: {
-    height: HAPPIER_TYPE_SCALE.body.lineHeight,
-    justifyContent: 'center',
-  },
-  outcomeText: { color: theme.colors.text.primary, flexShrink: 1 },
   link: { color: theme.colors.text.primary, textDecorationLine: 'underline' },
 }));
