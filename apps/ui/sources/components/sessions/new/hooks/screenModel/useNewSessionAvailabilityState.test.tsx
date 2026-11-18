@@ -6,6 +6,7 @@ import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/instal
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 installNewSessionScreenModelCommonModuleMocks({ storage: async (importOriginal) => importOriginal() });
 
@@ -137,6 +138,7 @@ describe('machine launch readiness', () => {
     it('keeps pending capability detection in the single unknown readiness state', async () => {
         const home = await network.addHome('https://pending-readiness.example.test', 'pending-readiness-owner');
         const machine = createMachineFixture({ id: 'pending-readiness', active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
         storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
         let releaseDetection!: (value: unknown) => void;
         const detection = new Promise<unknown>(resolve => { releaseDetection = resolve; });
@@ -163,7 +165,7 @@ describe('machine launch readiness', () => {
     it('keeps roster and launch admission active until the authoritative withdrawal push', async () => {
         const home = await network.addHome('https://presence-deadline.example.test', 'presence-owner');
         vi.useFakeTimers();
-        const machine = createMachineFixture({ id: 'presence-deadline', active: true,
+        const machine = createMachineFixture({ id: 'presence-deadline', active: true, presenceProtocolVersion: 1,
             activeAt: Date.now() - 59_990 });
         storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
         const hook = await renderHook(() => {
@@ -227,6 +229,7 @@ describe('machine launch readiness', () => {
     it.each([false, true])('loads Windows Terminal facts on picker demand or selected launch (selected: %s)', async (selected) => {
         const machine = createMachineFixture({ id: `windows-terminal-demand-${selected}`, active: true, activeAt: Date.now(),
             metadata: { ...createMachineFixture().metadata!, platform: 'win32' } });
+        publishMachineActivityForTest([machine]);
         const home = await network.addHome(`https://windows-terminal-demand-${selected}.example.test`, 'windows-terminal-owner');
         storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
         network.respond('capabilities.detect', { protocolVersion: 1, results: {} });
@@ -254,6 +257,7 @@ describe('machine launch readiness', () => {
     it.each([false, true])('requests only selected launch facts (external dependency: %s)', async (hasDependency) => {
         const { publishProjectedAgentUiBehaviorDescriptors, clearProjectedAgentUiBehaviorDescriptors } = await import('@/agents/registry/agentUiBehaviorProjection');
         const machine = createMachineFixture({ id: `selected-dependencies-${hasDependency}`, active: true, activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
         const home = await network.addHome(`https://selected-dependencies-${hasDependency}.example.test`, 'selected-dependencies-owner');
         storage.getState().applyMachines([machine], false, { sourceServerId: home.id });
         const agentId = 'acme.tools/agent';
@@ -324,6 +328,7 @@ describe('machine launch readiness', () => {
             'tool.tmux': { ok: true, checkedAt: Date.now(), data: { available: true } },
         } });
         const machine = createMachineFixture({ id: 'launch-hydration', activeAt: Date.now(), daemonStateVersion: 0 });
+        publishMachineActivityForTest([machine]);
         const home = await network.addHome('https://launch-hydration.example.test', 'launch-account');
         const serverId = home.id;
         storage.getState().applyMachines([machine], false, { sourceServerId: serverId });

@@ -3,7 +3,8 @@ import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/scr
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, renderScreen, flushHookEffects, act } from '@/dev/testkit';
-import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
@@ -77,6 +78,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             daemonState: null,
             daemonStateVersion: 0,
         };
+        publishMachineActivityForTest([machine]);
         let readiness: MachineSpawnReadiness = { status: 'unknown', machineId: 'm1' };
         let selectedMachineId: string | null = 'm1';
 
@@ -158,16 +160,21 @@ describe('useNewSessionAgentInputPresentation', () => {
         expect(canAttemptMachineSpawn({ scope, selectedMachineId, machine, spawnReadiness: readiness })).toBe(true);
         // Conversely, a cached ready result must not override current withdrawal.
         readiness = { status: 'ready', machineId: 'm1' };
-        await act(async () => withdrawMachinePresenceForScope(scope));
+        const recoveredMachine = machine;
+        machine = null;
+        await hook.rerender();
         expect(hook.getCurrent().connectionStatus?.text).toBe('newSession.machineUnavailableStatus');
         expect(canAttemptMachineSpawn({ scope, selectedMachineId, machine, spawnReadiness: readiness })).toBe(false);
-        await act(async () => captureMachinePresenceObservation(scope)([machine!.id]));
+        machine = recoveredMachine;
+        await hook.rerender();
         expect(hook.getCurrent().connectionStatus).toBeUndefined();
         machine = { ...machine!, active: false, activeAt: 0 };
+        publishMachineActivityForTest([machine]);
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus?.text).toBe('newSession.machineOfflineInlineTitle');
         expect(canAttemptMachineSpawn({ scope, selectedMachineId, machine, spawnReadiness: readiness })).toBe(false);
         machine = { ...machine, active: true, activeAt: Date.now() };
+        publishMachineActivityForTest([machine]);
         readiness = resolveMachineSpawnReadiness({ scope, selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus).toMatchObject({
@@ -183,6 +190,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         machine = readableMachine;
         readiness = resolveMachineSpawnReadiness({ scope, selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
         machine = { ...machine, active: false, activeAt: 0 };
+        publishMachineActivityForTest([machine]);
         readiness = resolveMachineSpawnReadiness({ scope, selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus).toMatchObject({ text: 'newSession.machineOfflineInlineTitle', dotColor: 'danger' });
