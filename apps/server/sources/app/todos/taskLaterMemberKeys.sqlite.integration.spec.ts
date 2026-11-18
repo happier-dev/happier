@@ -88,11 +88,13 @@ describe('Task keys for later Team members', () => {
   };
   const client = (
     account: Readonly<{ id: string; contentSecretKey: Uint8Array }>,
+    requests: string[] = [],
   ) =>
     createTaskResourceClientV1({
       accountId: account.id,
       requireCurrent: () => {},
       request: async ({ method, path, body }) => {
+        requests.push(`${method} ${path}`);
         const response = await app.inject({
           method,
           url: path,
@@ -163,8 +165,11 @@ describe('Task keys for later Team members', () => {
       code: 'task_content_unavailable',
     });
 
-    // The membership-change wake's repair: one Task inventory, then each owned shared Task's census.
-    await ownerClient.prepareOwnedShared();
+    // The membership-change wake's repair: one owed census page, then one fenced commit for the owed Task.
+    const wake: string[] = [];
+    await client(owner, wake).prepareOwed();
+    expect(wake).toEqual(['GET /v1/tasks/recipients/owed',
+      `POST /v1/tasks/${owner.id}/${taskId}/recipients/commit`]);
 
     expect((await client(later).read(address)).todo.title).toBe(
       'Shared before join',
@@ -178,9 +183,15 @@ describe('Task keys for later Team members', () => {
     const recipients = (await db.taskKeyEnvelope.findMany({ select: { recipientAccountId: true } })).map(row => row.recipientAccountId).sort();
     // The removed member's earlier wrap is kept (no retraction); the outsider never gets one.
     expect(recipients).toEqual([early.id, later.id, owner.id, removed.id].sort());
-    // Nothing owed: a second wake commits nothing.
-    const before = await db.taskKeyEnvelope.count();
-    await ownerClient.prepareOwnedShared();
-    expect(await db.taskKeyEnvelope.count()).toBe(before);
+    // Nothing owed: a second wake is exactly one request and commits nothing.
+    const before = await db.taskKeyEnvelope.findMany({ orderBy: { recipientAccountId: 'asc' } });
+    const idle: string[] = [];
+    await client(owner, idle).prepareOwed();
+    expect(idle).toEqual(['GET /v1/tasks/recipients/owed']);
+    expect(await db.taskKeyEnvelope.findMany({ orderBy: { recipientAccountId: 'asc' } })).toEqual(before);
+    // The owed census is owner-only by query: a member's own wake sees nothing of the owner's Tasks.
+    const memberWake: string[] = [];
+    await client(later, memberWake).prepareOwed();
+    expect(memberWake).toEqual(['GET /v1/tasks/recipients/owed']);
   });
 });

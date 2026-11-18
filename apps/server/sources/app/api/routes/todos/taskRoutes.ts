@@ -5,12 +5,12 @@ import { TaskResourceAddressV1Schema, TaskResourceV1Schema, TaskResourcesListRes
     TaskAccessGrantsListResponseV1Schema, TaskAccessGrantMutationResponseV1Schema,
     TaskAccessRecipientCensusRequestV1Schema, TaskAccessRecipientCensusResponseV1Schema,
     TaskRecipientKeyEnvelopeCommitInputV1Schema, TaskRecipientKeyEnvelopeCommitResponseV1Schema,
-    TaskResourceErrorResponseV1Schema, type TaskResourceErrorV1 } from '@happier-dev/protocol/actions/internalTaskActions';
+    TaskResourceErrorResponseV1Schema, TaskOwedRecipientCensusPageV1Schema, type TaskResourceErrorV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import type { Fastify } from '@/app/api/types';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
 import { readTaskResource, listTaskResources, mutateTaskResource, type TaskResult } from '@/app/todos/taskResourceService';
 import { listTaskGrants, setTaskGrant, removeTaskGrant, readTaskRecipientCensus,
-    commitTaskRecipientKeyEnvelopes } from '@/app/todos/taskAccessService';
+    commitTaskRecipientKeyEnvelopes, listOwedTaskRecipientCensuses } from '@/app/todos/taskAccessService';
 
 function failureStatus(error: TaskResourceErrorV1): 400 | 403 | 404 | 409 {
     if (error === 'task_not_found') return 404;
@@ -46,6 +46,10 @@ export function taskRoutes(app: Fastify): void {
         }
         return sendResult(reply, await listTaskResources(request.userId, selection));
     });
+    // The owner's later-member repair asks only what its owned, granted Tasks owe (owner-only by query).
+    app.get('/v1/tasks/recipients/owed', { ...options,
+        schema: { response: { 200: TaskOwedRecipientCensusPageV1Schema, ...failures } },
+    }, async (request, reply) => reply.send(await listOwedTaskRecipientCensuses(request.userId)));
     app.get(taskPath, { ...options,
         schema: { params: TaskResourceAddressV1Schema, response: { 200: TaskResourceV1Schema, ...failures } },
     }, async (request, reply) => sendResult(reply, await readTaskResource({ actorAccountId: request.userId, ...request.params })));

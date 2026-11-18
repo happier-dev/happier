@@ -55,7 +55,7 @@ import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1, prepareOwedArtifactRecipientKeysV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
 import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
@@ -1344,6 +1344,31 @@ async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
         });
     }
     return opened ? artifactsFromRead([opened], params.serverId)[0]! : null;
+}
+
+/**
+ * The owner's later-member Artifact key repair on the Team-change wake: page the server's owed census, then
+ * seal and fence-commit only what each census owes (`prepareOwedArtifactRecipientKeysV1`). Nothing owed costs
+ * one request. Keys open through the same cache as every other Artifact read; content is never opened.
+ */
+export async function prepareOwedArtifactRecipientKeys(params: Readonly<{
+    credentials: AuthCredentials; accountId: string; request?: ArtifactApiOptions['request'];
+    encryption: Encryption; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
+}>): Promise<void> {
+    const { encryption, artifactDataKeys, signal } = params;
+    const accessApi = createArtifactAccessApi(params.credentials, { request: params.request });
+    await prepareOwedArtifactRecipientKeysV1({ ownerAccountId: params.accountId, randomBytes: getRandomBytes, signal,
+        readOwedPage: cursor => accessApi.readOwedRecipients(cursor, signal),
+        openKeys: async census => {
+            if (!census.dataEncryptionKey) return null;
+            const artifact = { id: census.artifactId, dataEncryptionKey: census.dataEncryptionKey,
+                provenanceDataEncryptionKey: census.provenanceDataEncryptionKey ?? null };
+            const dataKey = await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys, workClass: 'bulk' });
+            if (!dataKey) return null;
+            return { dataKey, provenanceDataKey: await resolveArtifactProvenanceDataKey({ artifact, encryption, artifactDataKeys, workClass: 'bulk' }) };
+        },
+        commit: input => accessApi.commitKeyEnvelopes(input, signal),
+    });
 }
 
 export async function fetchArtifactBinaryFromApi(params: Readonly<{

@@ -550,6 +550,7 @@ import {
     fetchArtifactBinaryFromApi,
     fetchArtifactHtmlPreviewFromApi,
     fetchArtifactForViewFromApi,
+    prepareOwedArtifactRecipientKeys,
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
@@ -673,7 +674,7 @@ import type { SessionMetadataInactiveModelIntentExpectationV1 } from '@happier-d
 import type { AutomationV3ClearRunHistoryResponse, AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
-import { abortServerFetches, createServerFetchAtEndpoint, StaleServerGenerationError, type ServerFetch, type ServerFetchOptions, type ServerResponseRequest } from './http/client';
+import { abortServerFetches, createServerFetchAtEndpoint, createServerFetchForActiveServer, StaleServerGenerationError, type ServerFetch, type ServerFetchOptions, type ServerResponseRequest } from './http/client';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { clearEmbedMemoryStorage } from '@/sync/domains/state/persistenceStorage';
 import { clearEmbedBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
@@ -1864,12 +1865,16 @@ class Sync {
                     await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope,
                         decryptDataKeyEnvelope: (encryptedDataKey) => encryption.decryptEncryptionKey(encryptedDataKey, scope),
                     }).catch((error: unknown) => log.log(`Saved Secret envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                    // Owned Tasks shared with a Team owe later members the same kind of key.
+                    // Owned Tasks and Artifacts shared with a Team or Group owe later members the same kind of
+                    // key. Each asks its owner's owed census once and seals only what that census owes.
                     const credentials = this.credentials;
-                    const { prepareOwnedSharedTaskKeys } = await import('./domains/todos/taskResourceTransport');
-                    await prepareOwnedSharedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId,
-                        isCurrent: () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope),
+                    const isCurrent = () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope);
+                    const { prepareOwedTaskKeys } = await import('./domains/todos/taskResourceTransport');
+                    await prepareOwedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId, isCurrent,
                     }).catch((error: unknown) => log.log(`Task key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
+                    await prepareOwedArtifactRecipientKeys({ credentials, accountId: scope.accountId, encryption,
+                        artifactDataKeys: this.artifactDataKeys, request: createServerFetchForActiveServer(undefined, { credentials, isCurrent }),
+                    }).catch((error: unknown) => log.log(`Artifact key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
                 }
                 await repairTeamLabelEnvelopes(target.serverId);
             }, { pause, backoff, shouldRetry,

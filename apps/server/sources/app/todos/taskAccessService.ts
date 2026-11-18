@@ -1,10 +1,10 @@
 import * as privacyKit from 'privacy-kit';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ResourceRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
-import { summarizeResourceRecipientReadinessV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
+import { listOwedResourceRecipientsV1, summarizeResourceRecipientReadinessV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
 import type { TaskAccessGrantSetRequestV1, TaskAccessGrantRemoveRequestV1, TaskAccessGrantsListResponseV1,
     TaskAccessGrantMutationResponseV1, TaskAccessRecipientCensusResponseV1, TaskRecipientKeyEnvelopeCommitInputV1,
-    TaskRecipientKeyEnvelopeCommitResponseV1, TaskResourcePromotionV1, TaskAccessGrantRowV1 } from '@happier-dev/protocol/actions/internalTaskActions';
+    TaskRecipientKeyEnvelopeCommitResponseV1, TaskResourcePromotionV1, TaskAccessGrantRowV1, TaskOwedRecipientCensusPageV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import { inTx, inReadSnapshot, type Tx } from '@/storage/inTx';
 import { applyUserKvMutationsInTx } from '@/app/kv/kvMutate';
 import { assertAccountJsonKvMutationStoredContent, classifyAccountJsonKvStoredContent,
@@ -17,7 +17,7 @@ import { applyResourceRecipientKeyEnvelopesInTx, mayManageResourceGrants, projec
     validateResourceGrantPrincipalInTx, validateResourceRecipientEnvelopeCommit,
     resourceGrantRelationsSelect, projectResourceGrantRows, resolveResourceGrantAudienceFromFacts,
     type ResourceGrantAccessFacts, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
-import { resolveTaskAudienceInTx, taskGrantStorageAdapter } from './taskGrantStorageAdapter';
+import { resolveTaskAudienceInTx, taskGrantStorageAdapter, taskRowsWhere } from './taskGrantStorageAdapter';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import { lockTaskMutationInTx, projectTaskContent, resolveTaskContextInTx, type TaskActorInput, type TaskContext, type TaskResult } from './taskResourceService';
 import { publishTaskChangedInTx } from './taskChanges';
@@ -247,8 +247,28 @@ export async function commitTaskRecipientKeyEnvelopesInTx(tx: Tx, input: TaskAct
         { resourceId: row.id, recipientKeyEnvelopes: input.request.recipientKeyEnvelopes }) };
 }
 
+/**
+ * The owner's owed census (`GET /v1/tasks/recipients/owed`), read on the Team-change wake: each owned Task with a
+ * grant goes through the ordinary owner census, and the shared owed predicate keeps only what it owes. Like the
+ * unpaged Task inventory it answers in one page. Owed is computed from grants and envelope rows; nothing is stored.
+ * Owned granted Tasks are few (QA A: 8 of 125), so each candidate reuses the single-Task census rather than a batch.
+ */
+export async function listOwedTaskRecipientCensusesInTx(tx: Tx, actorAccountId: string): Promise<TaskOwedRecipientCensusPageV1> {
+    const candidates = await tx.userKVStore.findMany({ where: { accountId: actorAccountId, ...taskRowsWhere, grants: { some: {} } },
+        orderBy: { id: 'asc' }, select: { key: true } });
+    const items: TaskOwedRecipientCensusPageV1['items'] = [];
+    for (const { key } of candidates) {
+        const census = await readTaskRecipientCensusInTx(tx, { actorAccountId, ownerAccountId: actorAccountId, taskId: key.slice('todo.'.length) });
+        if (!census.ok || census.value.access !== 'owner') continue;
+        const owed = listOwedResourceRecipientsV1(census.value);
+        if (owed.length) items.push({ ...census.value, recipients: owed });
+    }
+    return { items, nextCursor: null };
+}
+
 export const listTaskGrants = (input: TaskActorInput) => inReadSnapshot(tx => listTaskGrantsInTx(tx, input));
 export const readTaskRecipientCensus = (input: Parameters<typeof readTaskRecipientCensusInTx>[1]) => inReadSnapshot(tx => readTaskRecipientCensusInTx(tx, input));
+export const listOwedTaskRecipientCensuses = (actorAccountId: string) => inReadSnapshot(tx => listOwedTaskRecipientCensusesInTx(tx, actorAccountId));
 export const setTaskGrant = (input: Parameters<typeof setTaskGrantInTx>[1]) => inTx(tx => setTaskGrantInTx(tx, input));
 export const removeTaskGrant = (input: Parameters<typeof removeTaskGrantInTx>[1]) => inTx(tx => removeTaskGrantInTx(tx, input));
 export const commitTaskRecipientKeyEnvelopes = (input: Parameters<typeof commitTaskRecipientKeyEnvelopesInTx>[1]) => inTx(tx => commitTaskRecipientKeyEnvelopesInTx(tx, input));

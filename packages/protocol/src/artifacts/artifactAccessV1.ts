@@ -116,6 +116,11 @@ export const ArtifactAccessRecipientCensusResponseV1Schema = lazyZodSchema(() =>
   })),
 }));
 export type ArtifactAccessRecipientCensusResponseV1 = z.infer<typeof ArtifactAccessRecipientCensusResponseV1Schema>;
+/** The owner's owed census page (`GET /v1/artifacts/access/recipients/owed`): only owned Artifacts whose census owes an envelope. */
+export const ArtifactOwedRecipientCensusPageV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(ArtifactAccessRecipientCensusResponseV1Schema), nextCursor: z.nullable(z.string().check(z.minLength(1))),
+}));
+export type ArtifactOwedRecipientCensusPageV1 = z.infer<typeof ArtifactOwedRecipientCensusPageV1Schema>;
 
 export const ArtifactRecipientKeyEnvelopeCommitInputV1Schema = lazyZodSchema(() => z.extend(ResourceRecipientKeyEnvelopeCommitInputV1Schema, {
   artifactId: z.string().check(z.minLength(1)),

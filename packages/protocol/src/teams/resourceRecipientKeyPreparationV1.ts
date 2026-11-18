@@ -28,6 +28,58 @@ export function summarizeResourceRecipientReadinessV1(encryptionMode: ResourceAc
 }
 
 /**
+ * The one "owed" decision, shared by each server owed census and the client seal step so they cannot drift:
+ * a recipient whose content key is available but lacks a wrap for its current binding on every key channel
+ * the resource carries. Unavailable recipients (Plain, setup required, inconsistent) are never owed.
+ */
+export function isResourceRecipientEnvelopeOwedV1(
+  recipient: ResourceRecipientCensusRowV1 & Readonly<{ encryptedProvenanceDataKey?: string | null }>,
+  channels: Readonly<{ provenance?: boolean }> = {},
+): boolean {
+  if (recipient.contentKey.status !== 'available') return false;
+  return recipient.recipientContentPublicKeyFingerprint !== recipient.contentPublicKeyFingerprint || !recipient.encryptedDataKey
+    || (channels.provenance === true && !recipient.encryptedProvenanceDataKey);
+}
+
+/** A census owes envelopes only for a keyed E2EE resource, and never to its owner. */
+export function listOwedResourceRecipientsV1<Recipient extends ResourceRecipientCensusRowV1 & Readonly<{ encryptedProvenanceDataKey?: string | null }>>(
+  census: Readonly<{ ownerAccountId: string; encryptionMode: ResourceAccessRecipientCensusV1['encryptionMode'];
+    dataEncryptionKey: string | null; recipients: readonly Recipient[] }>,
+  channels: Readonly<{ provenance?: boolean }> = {},
+): Recipient[] {
+  if (census.encryptionMode !== 'e2ee' || !census.dataEncryptionKey) return [];
+  return census.recipients.filter(recipient => recipient.recipientAccountId !== census.ownerAccountId
+    && isResourceRecipientEnvelopeOwedV1(recipient, channels));
+}
+
+/**
+ * The one later-member repair loop for every resource owner: page the censuses the server says are owed,
+ * then run that resource's seal and fenced commit for each. Nothing owed costs one page request.
+ * One resource's refusal does not hold back the others; the first failure still reaches the caller.
+ */
+export async function prepareOwedResourceRecipientKeysV1<Census>(params: Readonly<{
+  readOwedPage: (cursor: string | null) => Promise<Readonly<{ items: readonly Census[]; nextCursor: string | null }>>;
+  prepare: (census: Census) => Promise<unknown>;
+  signal?: AbortSignal;
+}>): Promise<void> {
+  let cursor: string | null = null;
+  let firstFailure: unknown = null;
+  do {
+    params.signal?.throwIfAborted();
+    const page: Readonly<{ items: readonly Census[]; nextCursor: string | null }> = await params.readOwedPage(cursor);
+    for (const census of page.items) {
+      try { await params.prepare(census); }
+      catch (error) {
+        params.signal?.throwIfAborted();
+        firstFailure ??= error;
+      }
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  if (firstFailure) throw firstFailure;
+}
+
+/**
  * Verify a recipient's key binding only when sealing to it, so an unchanged audience
  * costs no signature check. A current wrap reaches `prepare` for its other key channels;
  * any seal it asks for verifies first, and a binding that fails leaves that recipient out.
@@ -71,8 +123,8 @@ export function prepareResourceRecipientKeyEnvelopesV1(params: Readonly<{
   dataKey: Uint8Array; recipients: readonly ResourceRecipientCensusRowV1[];
   randomBytes: (length: number) => Uint8Array; replaceExisting?: boolean;
 }>): ResourceRecipientKeyEnvelopeInputV1[] {
-  return prepareVerifiedResourceRecipientEnvelopesV1(params, (recipient, current, seal) =>
-    current && recipient.encryptedDataKey ? null : { encryptedDataKey: seal(params.dataKey) });
+  return prepareVerifiedResourceRecipientEnvelopesV1(params, (recipient, _current, seal) =>
+    !params.replaceExisting && !isResourceRecipientEnvelopeOwedV1(recipient) ? null : { encryptedDataKey: seal(params.dataKey) });
 }
 
 /** Resource address validation and additional key channels remain in the resource adapter. */

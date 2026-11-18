@@ -1150,10 +1150,13 @@ client-generated task data key: client reseal, owner/recipient key envelopes,
 version CAS and the grant commit together. The server never receives that key
 or task plaintext. A keyless Plain recipient cannot open an E2EE owner's task.
 A member who joins after the share gets their envelope from the owner's app on
-the Team-change wake and reconnect that also repair Team labels. That pass lists
-Tasks once and runs the existing recipient census for each owned Task that has a
-resource key. It seals only what the census owes, so outsiders and removed members
-get nothing new. Until the owner's app is online, the member sees the Task as
+the Team-change wake and reconnect that also repair Team labels. That pass asks
+the owner-only owed census (`GET /v1/tasks/recipients/owed`) once. The server runs
+the ordinary census for each owned Task that has a grant and returns only those
+that owe an envelope, by the shared `isResourceRecipientEnvelopeOwedV1` predicate
+the client seal step also uses. The app then seals and fence-commits just those,
+so outsiders and removed members get nothing new and nothing owed costs one
+request. Until the owner's app is online, the member sees the Task as
 `recipient_key_pending`. `tasks.internal.prepare` remains the explicit repair.
 
 The existing Account-KV classifier recognizes `{ t: 'encrypted', k: 'task', c }`
@@ -5522,6 +5525,18 @@ the same Artifact access Action owner and workflow, role and Launch Profile kind
 adapters. The UI's captured Account context supplies the grant HTTP transport;
 its Artifact sync opener runs recipient preparation on encrypted grant-aware
 opens and after grant list/set/remove. Plain documents do no recipient-key work.
+A member who joins a granted Team or Group later gets their envelope from the
+owner's app on the Team-change wake and reconnect that also repair Team labels,
+Saved Secrets and Tasks, through the same owed loop
+(`prepareOwedResourceRecipientKeysV1`). The app asks the owner-only owed census
+(`GET /v1/artifacts/access/recipients/owed`). The server walks the caller's owned
+Artifacts that have a grant, one read snapshot per inventory-sized candidate page,
+and answers with the first page that owes something; each item is the ordinary
+owner census narrowed to its owed recipients. Owed is computed from grants, live
+membership, Project Source readers and envelope rows; nothing is stored. Nothing
+owed is one request with no cursor. The app seals and fence-commits only those
+Artifacts, never opens content, and a Plain Account asks nothing. Until the
+owner's app is online, the member sees the Artifact as locked.
 The 0.3 development startup selected-detail batch returns exact authorized
 content and the recipient census under one read-only capture. Its opener shares
 the exact-read key-preparation owner: a changed caller envelope still fails

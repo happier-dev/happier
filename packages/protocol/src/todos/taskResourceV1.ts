@@ -104,6 +104,11 @@ export const TaskAccessRecipientCensusResponseV1Schema = lazyZodSchema(() => z.e
   taskId: z.string().check(z.minLength(1)),
 }));
 export type TaskAccessRecipientCensusResponseV1 = z.infer<typeof TaskAccessRecipientCensusResponseV1Schema>;
+/** The owner's owed census page (`GET /v1/tasks/recipients/owed`): only owned Tasks whose census owes an envelope. */
+export const TaskOwedRecipientCensusPageV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(TaskAccessRecipientCensusResponseV1Schema), nextCursor: z.nullable(z.string().check(z.minLength(1))),
+}));
+export type TaskOwedRecipientCensusPageV1 = z.infer<typeof TaskOwedRecipientCensusPageV1Schema>;
 export const TaskRecipientKeyEnvelopeCommitInputV1Schema = ResourceRecipientKeyEnvelopeCommitInputV1Schema;
 export type TaskRecipientKeyEnvelopeCommitInputV1 = z.infer<typeof TaskRecipientKeyEnvelopeCommitInputV1Schema>;
 export const TaskRecipientKeyEnvelopeCommitResponseV1Schema = ResourceRecipientKeyEnvelopeCommitResponseV1Schema;

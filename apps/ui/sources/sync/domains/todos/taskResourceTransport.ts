@@ -46,17 +46,18 @@ export function createUiTaskResourceClient(args: Parameters<typeof createUiTaskR
 }
 
 /**
- * The owner's later-member Task key repair on the membership-change wake. A Home without Task
- * resources has nothing to repair; every other failure reaches the wake's own error path.
+ * The owner's later-member Task key repair on the membership-change wake: the shared owed loop over the
+ * Task owed census. A Home without Task resources has nothing to repair; every other failure reaches the
+ * wake's own error path.
  */
-export async function prepareOwnedSharedTaskKeys(args: Readonly<{
+export async function prepareOwedTaskKeys(args: Readonly<{
   credentials: AuthCredentials; accountId: string; serverId: string; isCurrent: () => boolean;
 }>): Promise<void> {
   const request = createServerFetchForActiveServer(undefined, { credentials: args.credentials, isCurrent: args.isCurrent });
   const requireCurrent = () => { if (!args.isCurrent()) throw new TaskResourceClientErrorV1('account_currentness_unavailable', 'failed'); };
   try {
     await createUiTaskResourceClient({ credentials: args.credentials, accountId: args.accountId, serverId: args.serverId,
-      request, requireCurrent }).prepareOwnedShared();
+      request, requireCurrent }).prepareOwed();
   } catch (error) {
     if (!(error instanceof TaskResourceClientErrorV1) || error.code !== 'task_resource_unsupported') throw error;
   }

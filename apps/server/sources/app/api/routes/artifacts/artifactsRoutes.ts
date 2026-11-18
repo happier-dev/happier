@@ -16,6 +16,7 @@ import {
     readArtifactForCaller,
     readArtifactBatchForCaller,
     readArtifactRecipientCensus,
+    listOwedArtifactRecipientCensusesForCaller,
     removeArtifactAccessGrantInTx,
     setArtifactAccessGrantInTx,
     reportArtifactTemplateAcceptedVersionInTx,
@@ -49,6 +50,8 @@ import { createDeploymentCandidateArtifactMutationGuard, isDeploymentCandidatePu
 import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 import { ProjectSourcePublicationPatchV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { ArtifactOwedRecipientCensusPageV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ResourceOwedRecipientCensusQueryV1Schema } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = ARTIFACT_LIST_PAGE_MAX_ITEMS_V1;
 
@@ -479,6 +482,12 @@ export function artifactsRoutes(app: Fastify) {
         });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
+    // The owner's later-member repair asks only what its owned, granted Artifacts owe (owner-only by query).
+    app.get('/v1/artifacts/access/recipients/owed', {
+        preHandler: app.authenticate,
+        schema: { querystring: ResourceOwedRecipientCensusQueryV1Schema, response: { 200: ArtifactOwedRecipientCensusPageV1Schema } },
+    }, async (request, reply) => reply.send(await listOwedArtifactRecipientCensusesForCaller({
+        actorAccountId: request.userId, cursor: request.query.cursor })));
     app.get('/v1/artifacts/:id/access/recipients', {
         preHandler: app.authenticate,
         schema: { params: accessParams, querystring: z.strictObject({ projectSourceId: z.optional(z.string().check(z.minLength(1))),

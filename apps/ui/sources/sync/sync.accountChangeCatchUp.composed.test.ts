@@ -436,9 +436,11 @@ describe('sync AccountChange catch-up projection', () => {
     // A Saved Secret shared with a Team before someone joined owes that member an envelope only its
     // custodian can write. The membership-change wake is when the custodian learns of it, so it asks
     // the owed census there too, not only when the custodian happens to open Saved Secrets.
-    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret owed census and the owned Task inventory on the membership-change wake (%s)', async mode => {
+    // Owned Tasks and Artifacts shared with a Team or Group owe later members a key the same way. With nothing
+    // owed, each owner's owed census costs exactly one request: no inventory walk, no per-resource census.
+    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret, Task and Artifact owed censuses once each on the membership-change wake (%s)', async mode => {
         const owedReads: string[] = [];
-        const taskListReads: string[] = [];
+        const repairReads: string[] = [];
         const credentials = mode === 'e2ee'
             ? { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url') }
             : { token: ACCOUNT_TOKEN };
@@ -448,9 +450,10 @@ describe('sync AccountChange catch-up projection', () => {
                 return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
             }
             if (path === '/v2/teams/label-envelopes') return Promise.resolve(jsonResponse({ teams: [] }));
-            if (path === '/v1/tasks') {
-                taskListReads.push(init?.method ?? 'GET');
-                return Promise.resolve(jsonResponse({ tasks: [] }));
+            // The Task inventory and any per-resource census are the reverted O(owned) walk; record them too.
+            if (path === '/v1/tasks' || path.endsWith('/recipients/owed') || path.endsWith('/recipients/census') || path.endsWith('/access/recipients')) {
+                repairReads.push(`${init?.method ?? 'GET'} ${path}`);
+                return Promise.resolve(jsonResponse(path === '/v1/tasks' ? { tasks: [] } : { items: [], nextCursor: null }));
             }
             if (path !== '/v1/account/saved-secrets/resources/envelope-census/owed') return undefined;
             owedReads.push(init?.method ?? 'GET');
@@ -460,19 +463,19 @@ describe('sync AccountChange catch-up projection', () => {
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
         await waitForHomeGovernance(() => expect(getActiveServerAccountScope()).not.toBeNull());
         owedReads.length = 0;
-        taskListReads.length = 0;
+        repairReads.length = 0;
         changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
             entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
         await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
         if (mode === 'e2ee') await waitForHomeGovernance(() => {
             expect(owedReads).toEqual(['GET']);
-            expect(taskListReads).toEqual(['GET']);
+            expect(repairReads.sort()).toEqual(['GET /v1/artifacts/access/recipients/owed', 'GET /v1/tasks/recipients/owed']);
         });
         else {
             // A Plain Account holds no content key: it custodies no E2EE envelope and asks nothing.
             await new Promise(resolve => setTimeout(resolve, 50));
             expect(owedReads).toEqual([]);
-            expect(taskListReads).toEqual([]);
+            expect(repairReads).toEqual([]);
         }
     });
 

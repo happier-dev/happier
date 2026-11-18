@@ -1,10 +1,11 @@
-import { prepareVerifiedResourceRecipientEnvelopesV1, runResourceRecipientKeyPreparationV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
+import { isResourceRecipientEnvelopeOwedV1, prepareOwedResourceRecipientKeysV1, prepareVerifiedResourceRecipientEnvelopesV1, runResourceRecipientKeyPreparationV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
 import type {
   ArtifactAccessRecipientCensusResponseV1,
   ArtifactAccessGrantMutationResponseV1,
   ArtifactRecipientKeyEnvelopeInputV1,
   ArtifactRecipientKeyEnvelopeCommitInputV1,
   ArtifactRecipientKeyEnvelopeCommitResponseV1,
+  ArtifactOwedRecipientCensusPageV1,
 } from './artifactAccessV1.js';
 
 /** Preparation cannot erase an acknowledged grant mutation or certify current content.
@@ -33,7 +34,7 @@ export function prepareArtifactRecipientKeyEnvelopesV1(params: Readonly<{
   replaceExisting?: boolean;
 }>): ArtifactRecipientKeyEnvelopeInputV1[] {
   return prepareVerifiedResourceRecipientEnvelopesV1(params, (recipient, current, seal) => {
-    if (current && recipient.encryptedDataKey && (!params.provenanceDataKey || recipient.encryptedProvenanceDataKey)) return null;
+    if (!params.replaceExisting && !isResourceRecipientEnvelopeOwedV1(recipient, { provenance: !!params.provenanceDataKey })) return null;
     return {
       encryptedDataKey: current && recipient.encryptedDataKey ? recipient.encryptedDataKey : seal(params.dataKey),
       ...(params.provenanceDataKey ? { encryptedProvenanceDataKey: current && recipient.encryptedProvenanceDataKey
@@ -69,4 +70,30 @@ export async function runArtifactRecipientKeyPreparationV1(params: Readonly<{
     commit: (input, census) => params.commit({ artifactId: params.artifactId, ...input,
       ...(census.provenanceDataEncryptionKey ? { expectedProvenanceDataEncryptionKey: census.provenanceDataEncryptionKey } : {}) }),
   });
+}
+
+/**
+ * The owner's later-member Artifact repair on the Team-change wake. A Team or Group grant follows live
+ * membership, so a member who joins later is owed an envelope only a keyholder can write. The server's
+ * owed census pages only Artifacts that owe one; each runs the census → seal → fenced commit above on
+ * that census, so nothing owed costs one request. Content is never opened.
+ */
+export async function prepareOwedArtifactRecipientKeysV1(params: Readonly<{
+  ownerAccountId: string;
+  readOwedPage: (cursor: string | null) => Promise<ArtifactOwedRecipientCensusPageV1>;
+  openKeys: (census: ArtifactAccessRecipientCensusResponseV1) => Promise<Readonly<{ dataKey: Uint8Array; provenanceDataKey: Uint8Array | null }> | null>;
+  randomBytes: (length: number) => Uint8Array;
+  commit: (input: ArtifactRecipientKeyEnvelopeCommitInputV1) => Promise<ArtifactRecipientKeyEnvelopeCommitResponseV1>;
+  signal?: AbortSignal;
+}>): Promise<void> {
+  await prepareOwedResourceRecipientKeysV1({ readOwedPage: params.readOwedPage, signal: params.signal,
+    prepare: async census => {
+      if (census.ownerAccountId !== params.ownerAccountId || census.access !== 'owner') return;
+      const keys = await params.openKeys(census);
+      if (!keys) return;
+      await runArtifactRecipientKeyPreparationV1({ artifactId: census.artifactId, dataKey: keys.dataKey,
+        openedDataEncryptionKey: census.callerDataEncryptionKey, provenanceDataKey: keys.provenanceDataKey,
+        openedProvenanceDataEncryptionKey: census.callerProvenanceDataEncryptionKey ?? null,
+        randomBytes: params.randomBytes, readCensus: async () => census, commit: params.commit, signal: params.signal });
+    } });
 }

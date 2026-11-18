@@ -60,6 +60,10 @@ export const ResourceAccessRecipientCensusV1Schema = lazyZodSchema(() => z.stric
   recipients: z.array(ResourceRecipientCensusRowV1Schema),
 }));
 export type ResourceAccessRecipientCensusV1 = z.infer<typeof ResourceAccessRecipientCensusV1Schema>;
+/** Owed census pages resume after the last candidate the server walked; the cursor is opaque to clients. */
+export const ResourceOwedRecipientCensusQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  cursor: z.optional(z.string().check(z.minLength(1))),
+}));
 export const ResourceRecipientKeyEnvelopeCommitResponseV1Schema = lazyZodSchema(() => z.strictObject({
   appliedRecipientAccountIds: z.array(z.string().check(z.minLength(1))),
   skippedRecipientAccountIds: z.array(z.string().check(z.minLength(1))),

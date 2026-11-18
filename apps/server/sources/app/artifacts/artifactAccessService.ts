@@ -3,7 +3,9 @@ import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 import * as privacyKit from "privacy-kit";
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { listOwedResourceRecipientsV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListPageV1';
+import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactOwedRecipientCensusPageV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
@@ -799,6 +801,29 @@ type ArtifactBatchReadItem = Readonly<{
     census: Awaited<ReturnType<typeof readArtifactRecipientCensusInTx>> | null;
 }>;
 
+/** Full audience facts and every stored envelope, batched so reads do not multiply with the Artifact count. */
+async function readArtifactAudienceRowsInTx(tx: Tx, artifactIds: readonly string[]) {
+    const readAudienceRows = (ids: readonly string[]) => tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere },
+        select: { ...artifactAccessFactsSelect(), dataEncryptionKey: true, provenanceDataEncryptionKey: true,
+            keyEnvelopes: artifactRecipientReadSelect().keyEnvelopes } });
+    const audienceRows: Awaited<ReturnType<typeof readAudienceRows>> = [];
+    for (const ids of portableQueryChunks({ values: artifactIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        audienceRows.push(...await readAudienceRows(ids));
+    }
+    return withArtifactSourceReadersInTx(tx, audienceRows);
+}
+
+/** Each shared recipient's readiness row, read once per capture rather than once per Artifact. */
+async function readArtifactCensusAccountsInTx(tx: Tx, accountIds: readonly string[]) {
+    const readAccounts = (ids: readonly string[]) => tx.account.findMany({ where: { id: { in: [...ids] } },
+        select: RECIPIENT_READINESS_SELECT, orderBy: { id: 'asc' } });
+    const accounts: Awaited<ReturnType<typeof readAccounts>> = [];
+    for (const ids of portableQueryChunks({ values: [...new Set(accountIds)].sort(), bindingsPerValue: 1, fixedBindings: 1 })) {
+        accounts.push(...await readAccounts(ids));
+    }
+    return accounts;
+}
+
 /** Capture the same admission and census facts for the whole request in one snapshot. */
 async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactIds: readonly string[]; projection?: 'headers';
@@ -828,24 +853,11 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
     }
     const byId = new Map(admittedRows.map(row => [row.id, row]));
     // Only admitted full-inspection resources collect their complete audience.
-    // Batch this phase so reads do not multiply with the selected Artifact count.
-    const readAudienceRows = (ids: readonly string[]) => tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere },
-        select: { ...artifactAccessFactsSelect(), keyEnvelopes: artifactRecipientReadSelect().keyEnvelopes } });
-    const audienceRows: Awaited<ReturnType<typeof readAudienceRows>> = [];
-    for (const ids of portableQueryChunks({ values: fullAudienceIds, bindingsPerValue: 1, fixedBindings: 1 })) {
-        audienceRows.push(...await readAudienceRows(ids));
-    }
-    for (const row of await withArtifactSourceReadersInTx(tx, audienceRows)) {
+    for (const row of await readArtifactAudienceRowsInTx(tx, fullAudienceIds)) {
         audienceByArtifact.set(row.id, resolveArtifactAudienceFromFacts(row));
         byId.get(row.id)!.keyEnvelopes = row.keyEnvelopes;
     }
-    const recipientIds = [...new Set([...audienceByArtifact.values()].flat())].sort();
-    const readAccounts = (ids: readonly string[]) => tx.account.findMany({ where: { id: { in: [...ids] } },
-        select: RECIPIENT_READINESS_SELECT, orderBy: { id: 'asc' } });
-    const accounts: Awaited<ReturnType<typeof readAccounts>> = [];
-    for (const ids of portableQueryChunks({ values: recipientIds, bindingsPerValue: 1, fixedBindings: 1 })) {
-        accounts.push(...await readAccounts(ids));
-    }
+    const accounts = await readArtifactCensusAccountsInTx(tx, [...audienceByArtifact.values()].flat());
     const readPublications = (ids: readonly string[]) => tx.publicSessionShare.findMany({ where: { artifactId: { in: [...ids] } },
         select: { artifactId: true, expiresAt: true } });
     const publications: Awaited<ReturnType<typeof readPublications>> = [];
@@ -917,6 +929,51 @@ export async function readArtifactBatchForCaller(input: Readonly<{
 }
 
 type AccessResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: ArtifactAccessErrorCodeV1 }>;
+
+/**
+ * One candidate page of the owner's owed census. Only owned Artifacts with a grant can owe a later member an
+ * envelope; each candidate's census is the ordinary owner census (grants, live membership, Project Source
+ * readers, envelope rows and recipient readiness), and the shared owed predicate keeps only what it owes.
+ */
+async function readOwedArtifactRecipientCensusPageInTx(tx: Tx, actorAccountId: string, cursor: string | null) {
+    const candidates = await tx.artifact.findMany({ where: { accountId: actorAccountId, ...artifactVisibleWhere, grants: { some: {} },
+        ...(cursor === null ? {} : { id: { gt: cursor } }) }, orderBy: { id: 'asc' }, take: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, select: { id: true } });
+    const rows = await readArtifactAudienceRowsInTx(tx, candidates.map(candidate => candidate.id));
+    const audiences = new Map(rows.map(row => [row.id, resolveArtifactAudienceFromFacts(row)]));
+    // Shared recipients are verified once for this page, not once per Artifact.
+    const accounts = new Map((await readArtifactCensusAccountsInTx(tx, [...audiences.values()].flat()))
+        .map(account => [account.id, { account, readiness: deriveAccountRecipientEnvelopeReadinessFromRow(account) }]));
+    const items: ArtifactAccessRecipientCensusResponseV1[] = [];
+    for (const row of rows) {
+        const access = resolveArtifactAccessFromFacts(row, actorAccountId);
+        if (access?.level !== 'owner' || access.encryptionMode !== 'e2ee') continue;
+        const recipients = [...new Set(audiences.get(row.id))].sort().flatMap(accountId => accounts.get(accountId) ?? []);
+        const census = projectArtifactRecipientCensus(row.id, access, row, recipients, row.keyEnvelopes, null);
+        if (!census.ok) continue;
+        const owed = listOwedResourceRecipientsV1(census.value, { provenance: census.value.provenanceDataEncryptionKey != null });
+        if (owed.length) items.push({ ...census.value, recipients: owed });
+    }
+    items.sort((left, right) => left.artifactId < right.artifactId ? -1 : left.artifactId > right.artifactId ? 1 : 0);
+    return { items, lastCandidateId: candidates.at(-1)?.id ?? null, exhausted: candidates.length < ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 };
+}
+
+/**
+ * The owner's owed census (`GET /v1/artifacts/access/recipients/owed`), read on the Team-change wake. Walks the
+ * caller's owned, granted Artifacts in id order, one read snapshot per candidate page, and answers with the first
+ * page that owes something. Nothing owed walks every candidate in one request and returns no cursor. Owed is
+ * computed from grants and envelope rows; nothing is stored, and the server never sees a data key.
+ */
+export async function listOwedArtifactRecipientCensusesForCaller(input: Readonly<{
+    actorAccountId: string; cursor?: string;
+}>): Promise<ArtifactOwedRecipientCensusPageV1> {
+    let cursor = input.cursor ?? null;
+    for (;;) {
+        const page = await captureReadSnapshot(tx => readOwedArtifactRecipientCensusPageInTx(tx, input.actorAccountId, cursor));
+        if (page.exhausted) return { items: page.items, nextCursor: null };
+        if (page.items.length) return { items: page.items, nextCursor: page.lastCandidateId };
+        cursor = page.lastCandidateId;
+    }
+}
 
 /** Kind-owned inspection scope is selected before loading any grant display profile. */
 export async function listArtifactAccessGrantsInTx(tx: Tx, input: ArtifactAccessGrantsListInputV1 & Readonly<{

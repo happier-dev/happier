@@ -1,12 +1,12 @@
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeV1.js';
-import { prepareResourceRecipientKeyEnvelopesV1, runResourceRecipientKeyPreparationV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
+import { prepareOwedResourceRecipientKeysV1, prepareResourceRecipientKeyEnvelopesV1, runResourceRecipientKeyPreparationV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
 import type { PrincipalRefV1 } from '../teams/principal.js';
 import type { ResourceAccessLevelV1 } from '../teams/resourceGrantAccessV1.js';
 import { TodoItemV1StoredSchema, type TodoItemV1, type TodoSessionLinkJsonPortV1 } from './todoSessionLinkV1.js';
 import {
   TaskResourceV1Schema, TaskResourcesListResponseV1Schema, TaskAccessGrantsListResponseV1Schema,
   TaskAccessGrantMutationResponseV1Schema, TaskAccessRecipientCensusResponseV1Schema,
-  TaskRecipientKeyEnvelopeCommitResponseV1Schema, TaskResourceErrorResponseV1Schema,
+  TaskRecipientKeyEnvelopeCommitResponseV1Schema, TaskResourceErrorResponseV1Schema, TaskOwedRecipientCensusPageV1Schema,
   type TaskResourceV1, type TaskResourceAddressV1, type TaskAccessGrantSetRequestV1, type TaskResourceContentV1, type TaskResourceSelectionV1,
 } from './taskResourceV1.js';
 
@@ -180,25 +180,28 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     }
   };
   /**
-   * The owner's later-member repair, run on the membership-change wake: one Task inventory, then the census of each
-   * owned Task that already has a resource key. Only envelopes the census owes are sealed; content is never opened.
+   * The owner's later-member repair, run on the membership-change wake: the server's owed census pages only
+   * owned keyed Tasks that owe an envelope, and each runs the existing seal and fenced commit on that census.
+   * Nothing owed costs one request; content is never opened.
    */
-  const prepareOwnedShared = async () => {
-    const result = TaskResourcesListResponseV1Schema.parse(await request('GET', '/v1/tasks'));
-    let firstFailure: unknown = null;
-    for (const resource of result.tasks) {
-      if (resource.ownerAccountId !== options.accountId || resource.encryptionMode !== 'e2ee' || resource.content.t !== 'encrypted'
-        || !('k' in resource.content) || !resource.encryptedDataKey) continue;
-      const dataKey = await options.crypto.openKey(resource.encryptedDataKey).catch(() => null);
-      if (dataKey?.length !== ENCRYPTED_DATA_KEY_V1_BYTES) continue;
-      // One Task's refusal does not hold back the others; the first failure still reaches the wake.
-      try { await prepareOpened({ resource, dataKey }); }
-      catch (error) { firstFailure ??= error; }
-      finally { dataKey.fill(0); }
-    }
-    if (firstFailure) throw firstFailure;
-  };
-  return { read, list, save, grants, census, share, unshare, prepareOwnedShared,
+  const prepareOwed = () => prepareOwedResourceRecipientKeysV1({ signal: options.signal,
+    readOwedPage: async cursor => TaskOwedRecipientCensusPageV1Schema.parse(await request('GET',
+      cursor === null ? '/v1/tasks/recipients/owed' : `/v1/tasks/recipients/owed?cursor=${encodeURIComponent(cursor)}`)),
+    prepare: async owed => {
+      if (owed.ownerAccountId !== options.accountId || owed.access !== 'owner' || !owed.dataEncryptionKey) return;
+      const dataKey = await options.crypto.openKey(owed.dataEncryptionKey).catch(() => null);
+      if (dataKey?.length !== ENCRYPTED_DATA_KEY_V1_BYTES) return;
+      const address = { ownerAccountId: owed.ownerAccountId, taskId: owed.taskId };
+      try {
+        await runResourceRecipientKeyPreparationV1({ dataKey, openedDataEncryptionKey: owed.callerDataEncryptionKey,
+          randomBytes: options.crypto.randomBytes, readCensus: async () => owed, validateIdentity: () => {}, signal: options.signal,
+          dataKeyChangedError: () => new TaskResourceClientErrorV1('task_data_key_changed'),
+          commit: async body => TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse(await request('POST', `${pathFor(address)}/recipients/commit`, body)),
+        });
+      } finally { dataKey.fill(0); }
+    },
+  });
+  return { read, list, save, grants, census, share, unshare, prepareOwed,
     prepare: async (address: TaskResourceAddressV1) => prepareOpened(await read(address)) };
 }
 export type TaskResourceClientV1 = ReturnType<typeof createTaskResourceClientV1>;

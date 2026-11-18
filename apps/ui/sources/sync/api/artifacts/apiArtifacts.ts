@@ -13,7 +13,7 @@ import { createServerFetchForActiveServer, serverFetch, type ServerFetch } from 
 import { encodeBase64 } from '@/encryption/base64';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, iterateArtifactUploadFrameV1,
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
-import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactOwedRecipientCensusPageV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
@@ -402,21 +402,23 @@ export async function postArtifactKindWriteBatch(credentials: AuthCredentials, i
 
 /** The existing Artifact HTTP owner carries grants and fenced recipient keys. */
 export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick<ArtifactApiOptions, 'request' | 'serverId' | 'readTransport' | 'projectSourceId' | 'projectSourcePatch'> = {}) {
-    const send = async <T>(artifactId: string, leaf: string, schema: { parse: (value: unknown) => T },
+    // A null Artifact addresses the caller's owned set (`/v1/artifacts/access/<leaf>`).
+    const send = async <T>(artifactId: string | null, leaf: string, schema: { parse: (value: unknown) => T },
         method?: string, input?: unknown, signal?: AbortSignal,
-        requestedAudience?: ArtifactAccessGrantsListInputV1['requestedAudience']): Promise<T> => {
+        query: Readonly<Record<string, string | undefined>> = {}): Promise<T> => {
         throwIfAborted(signal);
         const active = opts.request ? undefined : getActiveServerSnapshot();
         const mutationOptions = { ...opts, serverId: opts.serverId ?? active?.serverId };
         const request = opts.request ?? createServerFetchForActiveServer(active);
         const run = async () => {
             const sourceQuery = new URLSearchParams();
-            if (requestedAudience !== undefined) sourceQuery.set('requestedAudience', JSON.stringify(requestedAudience));
+            for (const [name, value] of Object.entries(query)) if (value !== undefined) sourceQuery.set(name, value);
             if (leaf === 'recipients' && opts.projectSourceId) {
                 sourceQuery.set('projectSourceId', opts.projectSourceId);
                 if (opts.projectSourcePatch) sourceQuery.set('projectSourcePatch', JSON.stringify(opts.projectSourcePatch));
             }
-            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}${sourceQuery.size ? `?${sourceQuery}` : ''}`, {
+            const base = artifactId === null ? '/v1/artifacts' : `/v1/artifacts/${encodeURIComponent(artifactId)}`;
+            const issue = () => request(`${base}/access/${leaf}${sourceQuery.size ? `?${sourceQuery}` : ''}`, {
                 ...(method ? { method } : {}),
                 headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
                 ...(input === undefined ? {} : { body: JSON.stringify(input) }),
@@ -442,13 +444,17 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
             await send(input.artifactId, 'accepted-version', ArtifactTemplateAcceptedVersionResponseV1Schema, 'PUT', input, signal);
         },
         list: (input: ArtifactAccessGrantsListInputV1, signal?: AbortSignal) =>
-            send(input.artifactId, 'grants', ArtifactAccessGrantsListResponseV1Schema, undefined, undefined, signal, input.requestedAudience),
+            send(input.artifactId, 'grants', ArtifactAccessGrantsListResponseV1Schema, undefined, undefined, signal,
+                { requestedAudience: input.requestedAudience === undefined ? undefined : JSON.stringify(input.requestedAudience) }),
         set: (input: ArtifactAccessGrantSetInputV1, signal?: AbortSignal) =>
             send(input.artifactId, 'grants', ArtifactAccessGrantMutationResponseV1Schema, 'PUT', input, signal),
         remove: (input: ArtifactAccessGrantRemoveInputV1, signal?: AbortSignal) =>
             send(input.artifactId, 'grants', ArtifactAccessGrantMutationResponseV1Schema, 'DELETE', input, signal),
         readRecipients: (artifactId: string, signal?: AbortSignal) =>
             send(artifactId, 'recipients', ArtifactAccessRecipientCensusResponseV1Schema, undefined, undefined, signal),
+        /** The owner's owed census: only owned, granted Artifacts whose census owes an envelope. */
+        readOwedRecipients: (cursor: string | null, signal?: AbortSignal) =>
+            send(null, 'recipients/owed', ArtifactOwedRecipientCensusPageV1Schema, undefined, undefined, signal, { cursor: cursor ?? undefined }),
         commitKeyEnvelopes: (input: ArtifactRecipientKeyEnvelopeCommitInputV1, signal?: AbortSignal) =>
             send(input.artifactId, 'key-envelopes', ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, 'POST', { ...input,
                 ...(opts.projectSourceId ? { projectSourceId: opts.projectSourceId,
