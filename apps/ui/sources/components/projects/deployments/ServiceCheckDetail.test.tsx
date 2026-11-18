@@ -1,11 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
   createProviderSettingsAccountHarness,
   createProviderSettingsHarness,
   installProviderSettingsRpcBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 // The real sync owner under the canonical Account/RPC boundary (the saved Check's edit seed is read through it).
@@ -15,6 +16,7 @@ const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
 const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { ServiceCheckDetail } = await import('./ServiceCheckDetail');
+const { storage } = await import('@/sync/domains/state/storageStore');
 
 afterEach(async () => {
   standardCleanup();
@@ -65,6 +67,32 @@ it('opens a Check with a recent failing result and says that result in words', a
   );
   expect(result).toBeTruthy();
   expect(screen.getTextContent()).toContain('Down');
+});
+
+it('describes the last passing result as stale until its observer returns', async () => {
+  const observer = createMachineFixture({ id: 'observer-1', active: false, activeAt: Date.now() - 3_600_000, storageMode: 'plain' });
+  const scope = await account.restore({ machines: [observer] });
+  const setPresence = (active: boolean) => storage.getState().applyMachineActivityUpdates([
+    { id: observer.id, active, activeAt: Date.now() - (active ? 0 : 3_600_000) },
+  ], { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  setPresence(false);
+  const row = {
+    kind: 'configuredCheck',
+    key: 'check-offline',
+    scope,
+    automationId: 'automation-1',
+    triggerId: 'trigger-1',
+    native: { name: 'Availability', templateVersion: 1, enabled: true, triggers: [] },
+    definitionFacts: { kind: 'available', observerMachineId: observer.id,
+      checks: [{ checkId: 'c1', name: 'HTTP', targetLabel: 'app', periodMs: 60_000, domainId: null }] },
+    lastResults: { kind: 'available', checks: [{ checkId: 'c1',
+      result: { status: 'up', observedAt: NOW - 86_400_000, evidence: { kind: 'none' } } }] },
+  } as never;
+  const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} />);
+  expect(screen.getTextContent()).toMatch(/Not checked since.*Nov/);
+  await act(async () => { setPresence(true); });
+  expect(screen.getTextContent()).not.toContain('Not checked since');
+  expect(screen.getTextContent()).toMatch(/Passing.*checked/i);
 });
 
 // MONITOR-ACCEPT-1116: the 30-day strip's left edge is its oldest day; a check younger than the window says when its

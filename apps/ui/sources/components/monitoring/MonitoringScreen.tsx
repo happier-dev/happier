@@ -7,7 +7,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { SERVICES_ROUTE } from '@/components/projects/deployments/deploymentNavigation';
-import { ServiceCheckList, useServiceCheckOfflineObservers, useServiceCheckSelection, type ServiceCheckSelection } from '@/components/projects/deployments/ServiceCheckList';
+import { ServiceCheckList, useServiceCheckSelection, type ServiceCheckSelection } from '@/components/projects/deployments/ServiceCheckList';
+import { useServiceCheckOfflineObservers } from '@/components/projects/deployments/useServiceCheckOfflineObservers';
 import {
   servicesFamilyCoverage,
   servicesFamilyMore,

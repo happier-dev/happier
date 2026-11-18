@@ -57,6 +57,7 @@ import {
   serviceCheckResultWord,
   serviceCheckStatusTone,
   serviceCheckStatusWord,
+  serviceCheckStale,
   type ServiceCheckSettings,
   formatServiceCheckLatency,
   formatServiceCheckPeriod,
@@ -65,6 +66,8 @@ import {
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 import { ServiceCheckKeyFlowSection } from './ServiceCheckKeyFlowSection';
 import { useEnvironmentName } from './useEnvironmentName';
+import { formatServiceCheckMoment } from './formatServiceCheckMoment';
+import { useServiceCheckOfflineObservers } from './useServiceCheckOfflineObservers';
 
 const k = 'projects.deployments.services' as const;
 const m = 'projects.deployments.monitoring' as const;
@@ -230,8 +233,11 @@ export function ServiceCheckDetail(
     },
     [row.automationId, row.native.templateVersion, row.scope.accountId, row.scope.serverId],
   );
+  const rowForPresence = React.useMemo(() => [row], [row]);
+  const stale = serviceCheckStale(row, useServiceCheckOfflineObservers(rowForPresence, row.scope));
   const failing =
     row.native.enabled &&
+    !stale &&
     serviceCheckStatusTone(facts.status) !== null;
   const statusText = row.native.enabled
     ? serviceCheckStatusWord(facts.status)
@@ -261,7 +267,7 @@ export function ServiceCheckDetail(
   const [factsWidth, setFactsWidth] = React.useState<number | null>(null);
   // Response, its average, today's and the 30-day uptime (lab A3); the state and when it was checked stand under the bars.
   const stripFacts: FactStripFact[] = [
-    ...(recent?.failingSince !== null && recent?.failingSince !== undefined
+    ...(!stale && recent?.failingSince !== null && recent?.failingSince !== undefined
       ? [
           {
             key: 'failingFor',
@@ -368,7 +374,9 @@ export function ServiceCheckDetail(
             <View style={styles.caption}>
               <Text variant="meta" style={styles.captionText}>{heroKept > 0 ? t(`${m}.heroOldest`, { count: heroKept }) : ''}</Text>
               <Text variant="meta" style={styles.captionText}>
-                {[statusText, t(`${m}.checkedAt`, { time: formatClock(shown.result.observedAt) })].join(' · ')}
+                {stale
+                  ? t(`${m}.staleState`, { time: formatServiceCheckMoment(shown.result.observedAt, nowMs) })
+                  : [statusText, t(`${m}.checkedAt`, { time: formatClock(shown.result.observedAt) })].join(' · ')}
               </Text>
             </View>
           </View>

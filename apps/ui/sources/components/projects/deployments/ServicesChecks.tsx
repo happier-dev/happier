@@ -26,7 +26,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 
 import { serviceCheckMonitorSummary } from './serviceCheckPresentation';
-import { ServiceCheckList, useServiceCheckOfflineObservers, type ServiceCheckSelection } from './ServiceCheckList';
+import { ServiceCheckList, type ServiceCheckSelection } from './ServiceCheckList';
+import { useServiceCheckOfflineObservers } from './useServiceCheckOfflineObservers';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
 import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './ServicesViews';

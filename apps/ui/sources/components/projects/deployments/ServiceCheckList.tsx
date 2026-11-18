@@ -18,11 +18,9 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 
 import { buildServiceCheckHref } from './deploymentNavigation';
 import {
@@ -32,8 +30,9 @@ import {
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 import { ServiceCheckDetail, useServiceCheckMeta } from './ServiceCheckDetail';
 import { ServiceCheckResponseTrend } from './ServiceCheckResponseTrend';
+import { formatServiceCheckMoment } from './formatServiceCheckMoment';
+import { useServiceCheckOfflineObservers } from './useServiceCheckOfflineObservers';
 import {
-  NO_OFFLINE_OBSERVERS,
   SERVICE_CHECK_ROW_BARS,
   formatServiceCheckLatency,
   serviceCheckListFacts,
@@ -50,10 +49,6 @@ const m = 'projects.deployments.monitoring' as const;
 
 const formatClock = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { hour: 'numeric', minute: '2-digit' });
-/** A moment as a clock when it is today, else with its day ("Nov 14, 12:25"), so an old time never reads as today's. */
-const formatMoment = (ms: number) =>
-  new Date(ms).toDateString() === new Date().toDateString() ? formatClock(ms)
-    : formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 export type ServiceCheckSelection = Readonly<{
   selectedKey: string | null;
   onSelect: (row: ManagedConfiguredCheckRow) => void;
@@ -132,31 +127,6 @@ export function useServiceCheckSelection(active: boolean) {
     [meta, openCheckPage, shown],
   );
   return { selection, details, closeCheck };
-}
-
-/**
- * The observing Machines this Home cannot reach, by the Machine presence owner (the Machines list's own verdict, pushed
- * on every heartbeat): the one input of serviceCheckStale for the rows, the glance line and Needs you.
- */
-export function useServiceCheckOfflineObservers(
-  rows: readonly ManagedConfiguredCheckRow[],
-  scope: ServerAccountScope | null,
-): ReadonlySet<string> {
-  const machineIds = React.useMemo(
-    () => [...new Set(rows.flatMap((row) =>
-      row.native.enabled && row.definitionFacts.kind === 'available' && row.definitionFacts.observerMachineId !== null
-        ? [row.definitionFacts.observerMachineId] : []))].sort(),
-    [rows],
-  );
-  const summaries = useMachinePresenceSummaries(scope?.serverId ?? null, machineIds);
-  return React.useMemo(() => {
-    if (machineIds.length === 0) return NO_OFFLINE_OBSERVERS;
-    const offline = machineIds.filter((_, index) => {
-      const summary = summaries[index];
-      return summary?.machineIsKnown === true && describeMachinePresenceSummary(summary).status === 'offline';
-    });
-    return offline.length === 0 ? NO_OFFLINE_OBSERVERS : new Set(offline);
-  }, [machineIds, summaries]);
 }
 
 type RowInput = Readonly<{
@@ -527,7 +497,7 @@ const CheckState = React.memo(function CheckState(
     props.facts.recent.bars[props.facts.recent.bars.length - 1]?.observedAt ??
     null;
   if (stale && lastObservedAt !== null)
-    return quiet(t(`${m}.staleState`, { time: formatMoment(lastObservedAt) }));
+    return quiet(t(`${m}.staleState`, { time: formatServiceCheckMoment(lastObservedAt) }));
   const tone = serviceCheckStatusTone(props.facts.status);
   if (tone)
     return (
@@ -586,7 +556,7 @@ const CheckByline = React.memo(function CheckByline(
             facts.failingSince === null
               ? null
               : t(`${m}.failingSince`, {
-                  time: formatMoment(facts.failingSince),
+                  time: formatServiceCheckMoment(facts.failingSince),
                 }),
           ]
             .filter(Boolean)
