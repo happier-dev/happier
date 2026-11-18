@@ -199,6 +199,9 @@ Reference shape: Paseo `dc07efe937c3160e8fe83d02dc972c8a0b014957`,
 `sendAgentMessage` request and awaits its accepted response. This is source shape,
 not a measured reference-runtime total or an equivalent authorization topology.
 
+| `journey-deploy.F7` (U10 Session host) | One `skills_read` pointer, one catalog read, C checks, and Q native questions for a draft; no duplicate catalog or polling reads. | Constructed count test pending U10 transcript wiring. | `apps/ui/sources/components/tools/renderers/system/DeploySuggestionCheckToolBody.test.tsx`; F7 count test | Built-in `happier:deploy` skill, catalog/check Actions and existing question owner |
+| `journey-deploy.F8` (U4 account plan) | One existing `quota` observation per connected target account on visible demand, zero when disconnected, and zero idle observations. | Constructed plugin response tests; UI demand count test pending U4 card wiring. | Vercel/Cloudflare quota tests; F8 count test | `ConnectedAccountRuntime.quota` and existing connected-service quota demand owner |
+
 ### Database capture — P5 (implementation evidence, 2026-11-16)
 
 | Shape id | Contract | Current evidence | Canonical owner |
