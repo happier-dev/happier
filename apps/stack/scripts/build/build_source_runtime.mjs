@@ -38,6 +38,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
+import { requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -52,7 +53,7 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
 /** Both roles derive from one authored-input capture, including their imports
  * and manifests. Capturing only Protocol would mix it with later SDK/host bytes.
  * Installed third-party tools retain their existing dependency-publication owner. */
-export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision }) {
+export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot, revisionArchivePath }) {
   repoDir = resolve(repoDir);
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
@@ -72,18 +73,25 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
     filesByComponent = Object.fromEntries(Object.entries(filesByComponent)
       .map(([component, files]) => [component, files.filter(path => captured.has(path))]));
     let revisionIdentity;
+    let dependencyRootDir;
     if (revision) {
       // One revision application for both roles keeps their shared bytes identical.
       const descriptor = await readSourceRevisionDescriptor(revision.descriptorPath);
-      const files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
+      // Its generated clients, mounted tools and captured runtime dependencies come
+      // from the revision's own installation (the checkout's when identical). A caller
+      // without the host's revision store (`treesRoot`) captures with the checkout's.
+      dependencyRootDir = treesRoot ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
+        archivePath: revisionArchivePath, env, signal }) : repoDir;
+      const files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir, files: capture.files,
         ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor, env, signal });
       filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => [component,
         files.filter(path => componentFiles.includes(path) || (!captured.has(path)
           && ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))))]));
       revisionIdentity = sourceRevisionIdentity(descriptor);
     }
+    const ownDependencies = dependencyRootDir && dependencyRootDir !== repoDir ? { dependencyRootDir } : {};
     await writeFile(join(outputDir, SHARED_SOURCE_INPUT_MANIFEST), JSON.stringify({ filesByComponent, capturedAt: capture.capturedAt,
-      ...(revisionIdentity ? { revision: revisionIdentity } : {}) }));
+      ...(revisionIdentity ? { revision: revisionIdentity } : {}), ...ownDependencies }));
     return { repoDir: realpathSync(outputDir), ...(revisionIdentity ? { revision: revisionIdentity } : {}) };
   });
 }
@@ -122,7 +130,8 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   // The checkout's workspace list can name another lane's untracked package,
   // which the revision drops; mount only the workspaces the capture holds.
   const captured = descriptor ? new Set(capture.files) : null;
-  await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: outputDir,
+  const dependencyRootDir = sharedManifest?.dependencyRootDir;
+  await mountCapturedWorkspaceDependencies({ sourceDir: dependencyRootDir ?? repoDir, captureDir: outputDir,
     workspaceDirs: captured ? workspaceDirs.filter(dir => captured.has(`${dir.replaceAll('\\', '/')}/package.json`)) : workspaceDirs });
   if (component === 'expo') {
     const uiManifest = JSON.parse(await readFile(join(outputDir, 'apps/ui/package.json'), 'utf8'));
@@ -158,7 +167,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   const capturedRepoDir = realpathSync(outputDir);
   return { repoDir: capturedRepoDir, uiProjectDir: join(capturedRepoDir, 'apps/ui'), files: capture.files,
     capturedAt: sharedManifest?.capturedAt ?? capture.capturedAt, ...(revisionIdentity ? { revision: revisionIdentity } : {}),
-    inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
+    ...(dependencyRootDir ? { dependencyRootDir } : {}), inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
 }
 
 async function linkInstalledDirectory(from, to) {
@@ -190,7 +199,9 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
     exportGuestPayload,
     readSourceGuestPayloadArchiveImports(env).map(({ target, sha256 }) => [target.os, target.arch, sha256]),
     component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload' : null,
-    component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev' : null];
+    component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev' : null,
+    // A revision's own installation is part of what its graph links and captures.
+    ...(sharedManifest?.dependencyRootDir ? [sharedManifest.dependencyRootDir] : [])];
   return await readBuildInputIdentity({ sourceDir: sharedSourceInputs?.repoDir ?? repoDir,
     files: fingerprintFiles, options });
 }
@@ -941,7 +952,7 @@ async function withSourceRuntimeWorkerResult(run) {
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
   signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, sourceRevision,
-  logger = console, stderrStream = process.stderr }) {
+  requestBaseArchive, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -951,6 +962,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const requireCurrentSource = context.consumerStackName === context.producerStackName;
   let revision;
+  let revisionArchivePath = null;
   // The producer's own source-dev Stack keeps its live-checkout runtime; a revision it
   // builds for QA consumers is published to the store, never selected into that Stack.
   const select = () => !(requireCurrentSource && revision);
@@ -975,6 +987,11 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     if (completed) return report(completed);
     if (requireLastGreen && !revision) throw sourceRuntimeCaptureUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
+    // A revision needing its own installation on a mirror without Git objects
+    // receives its archive from the controller before the finite worker starts.
+    revisionArchivePath = revision?.descriptorPath ? await requestRevisionInstallArchive({ repoDir,
+      descriptor: await readSourceRevisionDescriptor(revision.descriptorPath), treesRoot: sourceRevisionTreesRoot(context.producerStackBaseDir),
+      requestBaseArchive, env: context.env, signal }) : null;
     const response = await withSingleTrailingBuildPass({ run: async () => {
       const response = await withSourceRuntimeWorkerResult(async resultPath => {
         const result = await runWorkspaceBuildAdmission({ repoDir,
@@ -982,7 +999,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
           args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
             stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
             producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource,
-            revision: revision && { ...revision, latest: false }, select: select(), resultPath })] }),
+            revision: revision && { ...revision, latest: false }, select: select(), revisionArchivePath, resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
           cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
@@ -1005,11 +1022,13 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     if (signal?.aborted) throw cause;
     if (cause instanceof SharedDatabaseMigrationError) throw cause;
     throw sourceRuntimeProducerUnavailable(cause, context);
+  } finally {
+    if (revisionArchivePath) await rm(revisionArchivePath, { force: true });
   }
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, select = true, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, select = true, revisionArchivePath, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
@@ -1076,7 +1095,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
       // The controller describes its revision only once a capture needs it.
       const descriptorPath = revision.descriptorPath ?? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
         outputDir: descriptorDir = await mkdtemp(join(sourceRoot, 'revision-')) });
-      const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, env, signal,
+      const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, env, signal, treesRoot: sourceRevisionTreesRoot(stackBaseDir), revisionArchivePath,
         outputDir: captureDir = await mkdtemp(join(sourceRoot, 'shared-inputs-')), revision: { descriptorPath } });
       const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, sharedSourceInputs, env })));
       // Digest adoption (94ce557e60c) against the revision's bytes, never the checkout's.
@@ -1355,6 +1374,8 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   const sourceCapture = { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt,
     ...(captured.revision ? { revision: captured.revision.revision, overlayDigest: captured.revision.overlayDigest } : {}) };
   repoDir = captured.repoDir;
+  // Installed packages come from here; sourceRepoDir stays the checkout identity.
+  const dependencyRootDir = captured.dependencyRootDir ?? sourceRepoDir;
   const projectDir = join(repoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   const runtimeDir = join(outputDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   await mkdir(runtimeDir, { recursive: true });
@@ -1367,11 +1388,12 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   try {
-    const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles: captured.files, guestPayloadTargets,
+    const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootDir, capturedFiles: captured.files, guestPayloadTargets,
       captureDependencies: Boolean(captured.revision) || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot',
       outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir,
+        ...(captured.dependencyRootDir ? { dependencyRootDir } : {}),
         targets: guestPayloadTargets, sourceCapture, env, signal });
       built.env = { ...built.env, ...sourceGuestPayloadEnvironment(built.guestPayload) };
     }
@@ -1382,6 +1404,8 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
       component, serverComponent, dbProvider, sharedSourceInputs, env });
     logSourceRuntimePhase(component, 'input-identity', identityStarted);
     return { ...built, inputIdentity, captureFingerprint,
+      // Retains a revision's own installation while this graph links into it.
+      ...(captured.dependencyRootDir ? { dependencyRootDir } : {}),
       sourceCapture, ...(component === 'server'
       ? { serverComponent, dbProvider: dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres') } : {}) };
   } catch (error) {
@@ -1453,7 +1477,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 }
 
-async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, captureDependencies, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime,
+async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootDir = sourceRepoDir, capturedFiles, guestPayloadTargets, captureDependencies, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime,
   projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal }) {
   let phaseStarted = performance.now();
   let activePhase = 'input-digests';
@@ -1669,7 +1693,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     await writeFile(target, `export * from './${key.split('/').at(-1)}.js';\n`);
     retainedCodeFiles.push(target);
   }
-  const installedProjectDir = join(sourceRepoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
+  const installedProjectDir = join(dependencyRootDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   if (component === 'server') {
     // Keep the generated clients and the @prisma/client wrapper that loads the
     // default one with this graph after the temporary input capture is retired.
@@ -1681,12 +1705,12 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       await chmod(target, (await lstat(join(repoDir, path))).mode & 0o777);
       retainedCodeFiles.push(target);
     }
-    await mountInstalledNodeModules({ sourceModules: join(sourceRepoDir, 'node_modules'), targetModules: join(outputDir, 'node_modules') });
+    await mountInstalledNodeModules({ sourceModules: join(dependencyRootDir, 'node_modules'), targetModules: join(outputDir, 'node_modules') });
     // The captured clients stay physical; the mount fills the rest of each scope.
     await mountInstalledNodeModules({ sourceModules: join(installedProjectDir, 'node_modules'),
       targetModules: join(runtimeDir, 'node_modules') });
   } else if (!captureDependencies) {
-    await linkInstalledDirectory(join(sourceRepoDir, 'node_modules'), join(outputDir, 'node_modules'));
+    await linkInstalledDirectory(join(dependencyRootDir, 'node_modules'), join(outputDir, 'node_modules'));
     await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(runtimeDir, 'node_modules'));
     // Plugin entries live outside apps/cli, but externalize against that same
     // host. Preserve its Node lookup chain before the checkout-root fallback.
@@ -1843,11 +1867,12 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   const runtimeImports = component === 'daemon' ? [...new Map([...Object.values(result.metafile.outputs)
     .flatMap(output => output.imports).filter(item => item.external && !item.path.startsWith('.'))
     .map(item => {
-      const entry = { path: item.path, resolveFrom: join(sourceRepoDir, 'apps/cli/package.json') };
+      const entry = { path: item.path, resolveFrom: join(dependencyRootDir, 'apps/cli/package.json') };
       return entry;
     }), ...authorRuntimeImports].map(entry => [JSON.stringify(entry), entry])).values()] : null;
   const runtimeDependencyClosure = runtimeImports ? (captureDependencies
-    ? captureRuntimeDependencies({ imports: runtimeImports, outputDir, sourceRepoDir, signal })
+    ? captureRuntimeDependencies({ imports: runtimeImports, outputDir, sourceRepoDir: dependencyRootDir,
+      manifestPath: join(projectDir, 'package.json'), signal })
     : { imports: runtimeImports, identity: readSourceRuntimeDependencyIdentity({ imports: runtimeImports, signal }) }) : null;
   const hash = createHash('sha256');
   for (const absolute of retainedCodeFiles.sort()) {

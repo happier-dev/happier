@@ -1,0 +1,332 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
+import { inspectDependencyRefresh, resolveDependencyInstallRoot } from '../utils/proc/dependency_refresh.mjs';
+import { CURRENT_GENERATION_LINK, createDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
+
+/**
+ * The one owner of a source revision's dependency installation, for revision
+ * trees (a base mounts it) and revision bundles (a capture mounts, derives and
+ * captures from it). An installation is keyed by the revision's dependency
+ * identity (the refresh owner's identity of its manifests, lockfile, patches and
+ * runtime), so a revision never borrows the moving checkout's tools when its
+ * own lockfile pins different ones (2c8b5a872a: Prisma 6 schema, checkout Prisma 7, P1012).
+ */
+export const INSTALLS = 'installs';
+/** Shared with the base marker name: existing published installations stay valid. */
+const INSTALL_MARKER = '.happier-revision-tree.json';
+
+/** Host-wide root for revision bases and installations, beside the shared source bundles. */
+export function sourceRevisionTreesRoot(stackBaseDir) {
+  return join(dirname(resolve(stackBaseDir)), 'source-revision-trees');
+}
+
+/** The paths whose bytes form a revision's dependency identity (the refresh owner's inputs). */
+export function isRevisionDependencyInput(path) {
+  return path === 'pnpm-lock.yaml' || path === 'pnpm-workspace.yaml' || path === 'package.json' || path.endsWith('/package.json')
+    || path.startsWith('patches/');
+}
+
+/** The installation directory of a published identity. */
+export function revisionInstallDir(treesRoot, identity) {
+  return join(resolve(treesRoot), INSTALLS, identity);
+}
+
+/**
+ * A revision's tracked bytes, from Git objects only: `git archive <revision>` from
+ * a checkout that has them, or (`archivePath`) the controller's archive of the same
+ * revision on a host whose mirror has no Git objects. Unpacked into outputDir with
+ * tar, which every supported OS ships.
+ */
+export async function extractRevision({ repoDir, revision, outputDir, archivePath }) {
+  const { spawn } = await import('node:child_process');
+  await new Promise((resolvePromise, reject) => {
+    const archive = archivePath ? null : spawn('git', ['-C', repoDir, 'archive', '--format=tar', revision], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const tar = spawn('tar', archivePath ? ['-xzf', archivePath, '-C', outputDir] : ['-x', '-C', outputDir],
+      { stdio: [archive ? 'pipe' : 'ignore', 'ignore', 'pipe'] });
+    const errors = [];
+    archive?.stderr.on('data', chunk => errors.push(chunk));
+    tar.stderr.on('data', chunk => errors.push(chunk));
+    archive?.stdout.pipe(tar.stdin);
+    let pending = archive ? 2 : 1;
+    const settle = name => code => {
+      if (code !== 0) reject(new Error(`[source-tree] ${name} of ${revision} failed (${code}): ${Buffer.concat(errors).toString().trim()}`));
+      else if (--pending === 0) resolvePromise();
+    };
+    archive?.once('error', reject); tar.once('error', reject);
+    archive?.once('close', settle('git archive')); tar.once('close', settle('tar extract'));
+  });
+}
+
+
+/**
+ * One installation per dependency identity per host, keyed like the shared
+ * checkout's refresh marker (the base's own manifests, lockfile, patches and
+ * runtime). When the checkout's published installation has exactly that
+ * identity it is reused as a hardlink snapshot (the root and every workspace
+ * `node_modules`, without the workspace links a base mounts itself; a refresh
+ * replaces installed files, never rewrites them). Otherwise the revision's own
+ * lockfile is installed frozen into a dependency generation laid out from the
+ * base, so another lane's uncommitted dependency edit never reaches a base.
+ * @returns {Promise<{ dir: string, identity: string }>}
+ */
+export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal }) {
+  const { installIdentity: identity } = await inspectDependencyRefresh({ installDir: baseDir, env });
+  const dir = join(resolve(treesRoot), INSTALLS, identity);
+  await mkdir(dirname(dir), { recursive: true });
+  return await withBaseLock(dir, signal, async () => {
+    if (existsSync(join(dir, INSTALL_MARKER))) return { dir, identity };
+    const staging = `${dir}.tmp-${randomUUID()}`;
+    try {
+      // This is an optional snapshot of an already published installation, not
+      // a request to install the moving checkout's dependency inputs. A dirty
+      // manifest must never trigger its remote refresh while preparing a revision.
+      const snapshotEnv = { ...env, HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1' };
+      const snapshotted = await withBuildInputDependencies({ sourceDir: repoDir, env: snapshotEnv, signal }, async (_env, publication) => {
+        if (publication.state.identity !== identity) return false;
+        for (const workspaceDir of ['', ...workspaceDirs]) {
+          const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+          // A generation-managed root links each installed entry into its generation: copy what they name.
+          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed,
+            skip: ['@happier-dev', '.pnpm-task-run-state-v1', CURRENT_GENERATION_LINK], follow: resolveDependencyGenerationContainer(repoDir) });
+        }
+        await publication.assertCurrent();
+        return true;
+      });
+      if (!snapshotted) await installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal });
+      await writeFile(join(staging, INSTALL_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
+      await rm(dir, { recursive: true, force: true });
+      await rename(staging, dir);
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+    // Never chmod it: a snapshot's files share inodes with the checkout's installation.
+    return { dir, identity };
+  });
+}
+
+/** Frozen install of the base's lockfile in a generation shadow (its project
+ * paths real, every other entry linked to the base), then only the installed
+ * trees stay: the shadow's source links and workspace links are dropped, so an
+ * installation shared by bases never points into one base's sources. */
+async function installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal }) {
+  const { projects } = await createDependencyGeneration(baseDir, { genRoot: staging });
+  const { ensureUiPostinstallOutputs, installFrozenDependencies } = await import('../utils/proc/pm.mjs');
+  // Lifecycle scripts (the CLI's unpack-tools) run from their real location in
+  // the base and load installed tools from there: lend the base this
+  // installation's trees while pnpm runs. A base's own physical entries (its
+  // generated server clients) are held aside and restored afterwards.
+  const lent = [];
+  try {
+    for (const dir of ['', ...projects]) {
+      const modules = join(baseDir, dir, 'node_modules');
+      const held = await lstat(modules).then(() => `${modules}.held-${randomUUID()}`, error => error.code === 'ENOENT' ? null : Promise.reject(error));
+      if (held) await rename(modules, held);
+      lent.push({ modules, held });
+      await mkdir(join(staging, dir, 'node_modules'), { recursive: true });
+      await symlink(join(staging, dir, 'node_modules'), modules, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+    await installFrozenDependencies(staging, { env, signal });
+  } finally {
+    for (const { modules, held } of lent.toReversed()) {
+      if ((await lstat(modules).catch(() => null))?.isSymbolicLink()) await rm(modules, { force: true });
+      if (held && !existsSync(modules)) await rename(held, modules);
+    }
+  }
+  const keepInstalledTrees = async dir => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.name === 'node_modules' && entry.isDirectory()) {
+        await rm(join(path, '@happier-dev'), { recursive: true, force: true });
+        await rm(join(path, '.pnpm-task-run-state-v1'), { recursive: true, force: true });
+      } else if (entry.isDirectory()) await keepInstalledTrees(path);
+      else await rm(path, { force: true });
+    }
+  };
+  await keepInstalledTrees(staging);
+  // The UI's installed outputs (vendored WASM, worker bundles) are written by
+  // tools that resolve their own real location: run from the shadow, whose
+  // tools link into the base, they would write into the base and leave the
+  // installation unpatched. Run them from the base with this installation
+  // mounted, then remove what the mount added (the base's physical generated
+  // clients stay) so the base mounts the published installation.
+  const uiDir = join(baseDir, 'apps', 'ui');
+  if (!existsSync(join(uiDir, 'package.json'))) return;
+  const before = new Map();
+  for (const dir of ['', ...workspaceDirs]) {
+    const modules = join(baseDir, dir, 'node_modules');
+    before.set(modules, existsSync(modules) ? new Set(await readdir(modules)) : null);
+  }
+  await mountCapturedWorkspaceDependencies({ sourceDir: staging, captureDir: baseDir, workspaceDirs });
+  try {
+    await ensureUiPostinstallOutputs(uiDir, baseDir, { env, quiet: true, force: true });
+    const ready = join(baseDir, 'node_modules', '.happier-ui-postinstall-ready');
+    if (existsSync(ready)) await rename(ready, join(staging, 'node_modules', '.happier-ui-postinstall-ready'));
+  } finally {
+    for (const [modules, kept] of before) {
+      if (kept === null) { await rm(modules, { recursive: true, force: true }); continue; }
+      for (const name of await readdir(modules)) if (!kept.has(name)) await rm(join(modules, name), { recursive: true, force: true });
+    }
+  }
+}
+
+/** Installation snapshots no remaining base names go with the base sweep (the newest is kept). */
+export async function sweepUnreferencedInstalls({ treesRoot, keep }) {
+  const root = join(treesRoot, INSTALLS);
+  const entries = (await readdir(root, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)))
+    .filter(entry => entry.isDirectory() && !entry.name.includes('.tmp-') && existsSync(join(root, entry.name, INSTALL_MARKER)));
+  if (entries.length < 2) return;
+  const dated = await Promise.all(entries.map(async entry => ({ name: entry.name, at: (await lstat(join(root, entry.name))).mtimeMs })));
+  keep.add(dated.sort((a, b) => b.at - a.at)[0].name);
+  // A revision bundle's server graph links into its own installation.
+  for (const name of await readBundleInstallReferences(treesRoot)) keep.add(name);
+  for (const { name } of dated) {
+    if (keep.has(name)) continue;
+    await withBaseLock(join(root, name), undefined, () => rm(join(root, name), { recursive: true, force: true }));
+  }
+}
+
+/** Installations named by retained revision bundles (`dependencyRootDir` in
+ * their record), in the shared bundle store beside the trees root. */
+async function readBundleInstallReferences(treesRoot) {
+  const installs = join(resolve(treesRoot), INSTALLS);
+  const bundleRoot = join(dirname(resolve(treesRoot)), 'source-bundles');
+  const names = new Set();
+  for (const entry of await readdir(bundleRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    if (!entry.isDirectory()) continue;
+    const record = await readFile(join(bundleRoot, entry.name, 'source-bundle.json'), 'utf8')
+      .then(JSON.parse, error => error.code === 'ENOENT' || error.code === 'ENOTDIR' ? null : Promise.reject(error));
+    const dir = typeof record?.dependencyRootDir === 'string' ? resolve(record.dependencyRootDir) : null;
+    if (dir && dirname(dir) === installs) names.add(basename(dir));
+  }
+  return names;
+}
+
+/** One base per revision on this host; concurrent requests for it build it once. */
+export function withBaseLock(baseDir, signal, run) {
+  return withJsonOwnerFileLock(run, { lockPath: `${baseDir}.lock`, timeoutMs: Infinity, staleAfterMs: Infinity, signal,
+    errorLabel: 'source revision base lock' });
+}
+
+/** Hardlink files, recreate links; directories are the clone's own. A link into
+ * `roots.follow` is cloned as what it names. */
+export async function cloneTree(from, to, roots = { base: from, clone: to }) {
+  await mkdir(to, { recursive: true });
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    if (roots.skip?.includes(entry.name) && from === roots.base) continue;
+    const source = join(from, entry.name);
+    const target = join(to, entry.name);
+    const named = entry.isSymbolicLink() && roots.follow ? resolve(from, await readlink(source)) : null;
+    if (named?.startsWith(roots.follow + sep)) {
+      if ((await lstat(named)).isDirectory()) await cloneTree(named, target, roots);
+      else await link(named, target);
+    } else if (entry.isSymbolicLink()) {
+      let link = await readlink(source);
+      // A workspace link into the base points at the clone's own copy instead.
+      if (isAbsolute(link) && link.startsWith(roots.base + sep)) link = join(roots.clone, relative(roots.base, link));
+      const info = await lstat(source);
+      await symlink(link, target, process.platform === 'win32' && info.isDirectory() ? 'junction' : undefined);
+    } else if (entry.isDirectory()) await cloneTree(source, target, roots);
+    else await link(source, target);
+  }
+}
+
+async function writeRevisionDependencyInputs({ descriptor, outputDir }) {
+  const paths = new Set([...Object.keys(descriptor.tree), ...Object.keys(descriptor.overlay)].filter(isRevisionDependencyInput));
+  for (const path of paths) {
+    // Declared overlay bytes are the selected manifest; null deletes it.
+    const bytes = Object.hasOwn(descriptor.overlay, path) || Object.hasOwn(descriptor.blobs, path) ? descriptor.blobs[path] ?? null : undefined;
+    if (bytes === undefined) {
+      throw new Error(`[source-revision] descriptor ${descriptor.key} lacks dependency input ${path}; describe the revision with current stack source`);
+    }
+    await rm(join(outputDir, path), { force: true });
+    if (bytes === null) continue;
+    await mkdir(dirname(join(outputDir, path)), { recursive: true });
+    await writeFile(join(outputDir, path), bytes);
+  }
+}
+
+/** The revision's dependency identity and, when already available, its root:
+ * the checkout when its published installation has that identity, or the
+ * published installation of that identity. `root: null` means it must be installed. */
+async function inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env }) {
+  const inputsDir = join(scratch, 'inputs');
+  await mkdir(inputsDir, { recursive: true });
+  await writeRevisionDependencyInputs({ descriptor, outputDir: inputsDir });
+  const { installIdentity: identity } = await inspectDependencyRefresh({ installDir: inputsDir, env });
+  // A checkout no refresh owner has published (no marker) is installed from its own current inputs.
+  const checkout = (await readBuildInputDependencies({ sourceDir: repoDir, env })).identity
+    ?? (await inspectDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env })).installIdentity;
+  if (checkout === identity) return { identity, root: repoDir };
+  const dir = revisionInstallDir(treesRoot, identity);
+  return { identity, root: existsSync(join(dir, INSTALL_MARKER)) ? dir : null };
+}
+
+function revisionScratch(treesRoot) {
+  return join(resolve(treesRoot), INSTALLS, `.tmp-revision-${randomUUID()}`);
+}
+
+async function hasRevisionObjects(repoDir, revision) {
+  const { execFile } = await import('node:child_process');
+  return await new Promise(done => execFile('git', ['-C', repoDir, 'cat-file', '-e', `${revision}^{commit}`], error => done(!error)));
+}
+
+/**
+ * The dependency root a revision bundle mounts, derives its generated clients
+ * with and captures runtime dependencies from. A revision whose dependency
+ * identity is the checkout's published installation uses the checkout (no
+ * copy, no install). Any other identity uses that identity's own installation,
+ * prepared once per host from the revision's tracked tree (its lifecycle
+ * scripts run from there: Git objects, or `archivePath` on a mirror without
+ * them) and reused by every later revision with that identity.
+ * @returns {Promise<string>} the dependency root directory
+ */
+export async function resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, archivePath, env = process.env, signal }) {
+  repoDir = resolve(repoDir);
+  const scratch = revisionScratch(treesRoot);
+  try {
+    const { identity, root } = await inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env });
+    if (root) return root;
+    if (!archivePath && !await hasRevisionObjects(repoDir, descriptor.revision)) {
+      throw new Error(`[source-revision] ${descriptor.revision} needs its own installation (identity ${identity}), and this host has no Git objects or revision archive for it; prepare it through the controller's reload`);
+    }
+    const baseDir = join(scratch, 'tree');
+    await mkdir(baseDir, { recursive: true });
+    await extractRevision({ repoDir, revision: descriptor.revision, outputDir: baseDir, archivePath });
+    await writeRevisionDependencyInputs({ descriptor, outputDir: baseDir });
+    const workspaces = await readWorkspacePackages(baseDir);
+    const workspaceDirs = [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean);
+    const install = await prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal });
+    if (install.identity !== identity) {
+      throw new Error(`[source-revision] ${descriptor.revision} installed identity ${install.identity}, but its dependency inputs name ${identity}`);
+    }
+    console.error(`[source-revision] revision=${descriptor.revision} uses its own installation identity=${identity}`);
+    return install.dir;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A mirror without Git objects asks the controller for the revision archive
+ * (the revision trees' `requestBaseArchive` transport) only when the revision
+ * needs an installation this host has not published yet.
+ * @returns {Promise<string | null>} the archive path for resolveRevisionDependencyRoot, or null
+ */
+export async function requestRevisionInstallArchive({ repoDir, descriptor, treesRoot, requestBaseArchive, env = process.env, signal }) {
+  if (typeof requestBaseArchive !== 'function' || await hasRevisionObjects(repoDir, descriptor.revision)) return null;
+  const scratch = revisionScratch(treesRoot);
+  try {
+    if ((await inspectRevisionDependencies({ repoDir: resolve(repoDir), descriptor, treesRoot, scratch, env })).root) return null;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+  const path = join(resolve(treesRoot), INSTALLS, `.tmp-archive-${randomUUID()}.tar.gz`);
+  await requestBaseArchive({ revision: descriptor.revision, path, signal });
+  return path;
+}

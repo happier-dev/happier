@@ -8,10 +8,12 @@ import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs'
 /** Capture the same external package graph the source dependency owner inventories.
  * Physical packages are copied once; edges retain peer/version resolution and cycles.
  * All links terminate inside this bundle, including plugin and runner imports. */
-export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, signal }) {
+export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, manifestPath, signal }) {
+  // Resolution starts in the installation; a revision's own installation holds
+  // no sources, so its CLI manifest comes from the capture (`manifestPath`).
   const cliManifestPath = join(sourceRepoDir, 'apps/cli/package.json');
   const dependencies = new Set(collectExternalRuntimeDependencies(
-    JSON.parse(readFileSync(cliManifestPath, 'utf8')),
+    JSON.parse(readFileSync(manifestPath ?? cliManifestPath, 'utf8')),
   ).map(entry => entry.name));
   // Configured optional runtimes load by file URL, outside the emitted import
   // graph. Retain their installed closure through the same dependency owner.

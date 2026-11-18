@@ -280,7 +280,14 @@ revision's Git objects (`git archive` on the controller; a mirror host without G
 objects asks the controller for that archive), never from a working tree. A reload at
 a later commit reuses the newest compatible base and applies that commit's
 changed files plus the Stack's `--overlay` files to the Stack's own hardlink
-clone; a package manifest or lockfile change builds a new base. Server and daemon
+clone; a package manifest or lockfile change builds a new base. Every revision, tree or bundle, runs on its own
+lockfile's installation (`build/source_revision_install.mjs`): the checkout's
+installation when its published dependency identity is the revision's, otherwise one
+installation per identity per host under `source-revision-trees/installs/`, which also
+generates the revision's Prisma clients (an older revision's Prisma 6 schema never meets
+the checkout's Prisma 7). A bundle-path mirror without Git objects receives the revision
+archive for that installation from the controller, and the installation stays while a
+retained bundle names it. Server and daemon
 run that clone from source and take no compiler admission. When the commit or
 overlay touches plugin inputs, only the bundled-plugin derivation reruns for that
 Stack. That derivation also writes each plugin package's ignored

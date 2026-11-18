@@ -212,7 +212,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         : prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
         components: localComponents, pending, env: serverEnv, signal: pending.signal,
         sourceCapturedAfter, sourceRevision, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
-        logger, stderrStream });
+        requestBaseArchive, logger, stderrStream });
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
       preparations = [localPreparation, remotePreparation];

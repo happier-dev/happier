@@ -10,12 +10,13 @@ import { promisify } from 'node:util';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { resolvePnpmCommandInvocation } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { readSourceRevisionDescriptor } from './source_revision.mjs';
+import { readSourceRevisionDescriptor, resolveSourceRevision } from './source_revision.mjs';
+import { captureSourceRuntimeSharedInputs } from './build_source_runtime.mjs';
 import { prepareSourceRevisionBase, resolveSourceTreeRevision, setSourceRevisionTreeWritable } from './source_revision_tree.mjs';
 
 // A pnpm workspace with a committed lockfile. Its only external dependency is a
 // local directory, so real pnpm installs it with no registry.
-async function createPnpmRevisionFixture(t) {
+async function createPnpmRevisionFixture(t, { prisma = false } = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-install-', registerCleanup: false });
   t.after(async () => { await setSourceRevisionTreeWritable(fixture.root); await fixture.cleanup(); });
   const repoDir = fixture.path('repo');
@@ -39,14 +40,32 @@ async function createPnpmRevisionFixture(t) {
   await gitIn('config', 'user.name', 'test');
   await write('package.json', JSON.stringify({ name: 'fixture-root', private: true, packageManager: rootPackage.packageManager }));
   await write('pnpm-workspace.yaml', 'packages:\n  - apps/*\n  - packages/*\n');
-  await write('.gitignore', 'node_modules\n');
+  await write('.gitignore', 'node_modules\ngenerated\n');
   for (const [dir, version, value] of [['vendor/dep-one', '1.0.0', 'committed'], ['vendor/dep-two', '2.0.0', 'uncommitted']]) {
     await write(`${dir}/package.json`, JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
     await write(`${dir}/index.js`, `module.exports = ${JSON.stringify(value)};`);
   }
-  const serverManifest = dep => JSON.stringify({ name: '@happier-dev/server', version: '0.0.0', type: 'module',
-    dependencies: { '@happier-dev/shared': 'workspace:*', 'fixture-dep': `file:../../vendor/${dep}` },
+  const serverManifest = (dep, prismaVersion = '6.0.0') => JSON.stringify({ name: '@happier-dev/server', version: '0.0.0', type: 'module',
+    dependencies: { '@happier-dev/shared': 'workspace:*', 'fixture-dep': `file:../../vendor/${dep}`,
+      ...(prisma ? { '@prisma/client': `file:../../vendor/prisma-${prismaVersion}` } : {}) },
     exports: { '.': { 'happier-source': './sources/main.light.ts' } } });
+  if (prisma) {
+    // Two Prisma releases; the server's generator records the one it ran with,
+    // the process boundary a real `prisma generate` would cross.
+    for (const version of ['6.0.0', '7.0.0']) {
+      await write(`vendor/prisma-${version}/package.json`, JSON.stringify({ name: '@prisma/client', version, main: 'index.js' }));
+      await write(`vendor/prisma-${version}/index.js`, 'module.exports = {};');
+    }
+    await write('apps/server/prisma/schema.prisma', 'datasource db { provider = "postgresql" }\n');
+    await write('apps/server/scripts/generateClients.ts', [
+      "import { createHash } from 'node:crypto'; import fs from 'node:fs'; import { createRequire } from 'node:module';",
+      "const { version } = createRequire(`${process.cwd()}/package.json`)('@prisma/client/package.json');",
+      "const stamp = createHash('sha256').update(fs.readFileSync('prisma/schema.prisma')).digest('hex');",
+      "fs.mkdirSync('generated/default-client', { recursive: true });",
+      "fs.writeFileSync('generated/default-client/.happier-source-schema.sha256', stamp);",
+      "fs.writeFileSync('generated/default-client/prisma-version', version);",
+    ].join('\n'));
+  }
   await write('apps/server/package.json', serverManifest('dep-one'));
   await write('apps/server/sources/main.light.ts', 'export { marker } from "@happier-dev/shared";');
   // A workspace lifecycle script that loads an installed tool from its own real
@@ -132,4 +151,42 @@ test('remote revision preparation never refreshes a dirty checkout manifest agai
   assert.equal(loadFixtureDep(context.repoDir), 'committed', 'revision preparation leaves the live installation alone');
   assert.equal(JSON.parse(await readFile(join(baseDir, 'apps/server/package.json'), 'utf8')).dependencies['fixture-dep'],
     'file:../../vendor/dep-one');
+});
+
+test('a base generates its server clients with its own revision\'s Prisma, not the checkout\'s', async t => {
+  const context = await createPnpmRevisionFixture(t, { prisma: true });
+  const { repoDir, env, pnpm, write, serverManifest } = context;
+  // The checkout moved to Prisma 7 (installed, uncommitted); the revision pins Prisma 6.
+  await write('apps/server/package.json', serverManifest('dep-one', '7.0.0'));
+  pnpm(['install', '--offline', '--ignore-scripts']);
+  await publishCheckoutInstall({ repoDir, env });
+  const { baseDir } = await prepareHeadBase(context, 'prisma');
+  assert.equal(await readFile(join(baseDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '6.0.0');
+  assert.equal(createRequire(join(baseDir, 'apps/server/package.json'))('@prisma/client/package.json').version, '6.0.0');
+});
+
+test('a revision bundle capture generates with its revision\'s own installation and reuses the checkout\'s when identical', async t => {
+  const context = await createPnpmRevisionFixture(t, { prisma: true });
+  const { fixture, repoDir, env, pnpm, write, serverManifest } = context;
+  const older = (await promisify(execFile)('git', ['-C', repoDir, 'rev-parse', 'HEAD'])).stdout.trim();
+  // HEAD moved to Prisma 7 and the checkout installed it; the older revision pins Prisma 6.
+  await write('apps/server/package.json', serverManifest('dep-one', '7.0.0'));
+  pnpm(['install', '--offline', '--ignore-scripts']);
+  await promisify(execFile)('git', ['-C', repoDir, 'commit', '--quiet', '-am', 'prisma 7']);
+  await publishCheckoutInstall({ repoDir, env });
+  const treesRoot = fixture.path('trees');
+  const capture = async (rev, name) => {
+    const { descriptorPath } = await resolveSourceRevision({ repoDir, rev, outputDir: fixture.path(`descriptors-${name}`) });
+    const outputDir = fixture.path(`capture-${name}`);
+    await mkdir(outputDir);
+    await captureSourceRuntimeSharedInputs({ repoDir, outputDir, env, treesRoot, revision: { descriptorPath } });
+    return { outputDir, manifest: JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8')) };
+  };
+  const old = await capture(older, 'older');
+  assert.equal(await readFile(join(old.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '6.0.0');
+  assert.equal(dirname(old.manifest.dependencyRootDir), join(treesRoot, 'installs'));
+  assert.equal(createRequire(join(old.manifest.dependencyRootDir, 'apps/server/package.json'))('@prisma/client/package.json').version, '6.0.0');
+  const head = await capture('HEAD', 'head');
+  assert.equal(await readFile(join(head.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '7.0.0');
+  assert.equal(head.manifest.dependencyRootDir, undefined, 'the checkout\'s installation serves a revision with its identity');
 });

@@ -13,6 +13,7 @@ import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBu
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
+import { isRevisionDependencyInput } from './source_revision_install.mjs';
 
 /**
  * QA source captures run one committed revision plus the paths a Stack
@@ -185,9 +186,11 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
     // A host's live input walk can admit paths the controller's walk omits
     // (including tracked fixtures). Ship their Git bytes within the selected
     // workspace owners too: a mirror has no Git objects to repair them later.
+    // The revision's dependency inputs name its own installation on the host
+    // (resolveRevisionDependencyRoot); they ship with it like any tracked input.
     for (const path of Object.keys(tree)) {
-      if (!Object.hasOwn(identity.overlay, path)
-        && (files.has(path) || [...owners].some(owner => path.startsWith(owner)))) revisionFiles.add(path);
+      if (!Object.hasOwn(identity.overlay, path) && (files.has(path) || isRevisionDependencyInput(path)
+        || [...owners].some(owner => path.startsWith(owner)))) revisionFiles.add(path);
     }
   }
   // A later commit served as base + its diff (source revision trees): ship the
