@@ -113,6 +113,7 @@ export const FeatureGatesSchema = lazyZodSchema(() => z.object({
       filteredListing: z._default(z.optional(z.extend(FeatureGateSchema, {
         projectSelectorVersion: z.catch(z.optional(z.literal(1)), undefined),
         membershipSelectorVersion: z.catch(z.optional(z.literal(1)), undefined),
+        ordinaryPageVersion: z.catch(z.optional(z.literal(1)), undefined),
       })), DEFAULT_GATE_DISABLED),
       following: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),
       autonomousExchange: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),

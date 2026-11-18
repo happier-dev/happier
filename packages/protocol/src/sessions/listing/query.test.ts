@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { encodeV2SessionListCursorV1, encodeV2SessionListCursorV2 } from '../control/contract.js';
 import { SessionListQueryV1Schema, SessionListUnavailableQueryV1Schema } from '../../index.js';
-import { buildSessionListServerQueryV1 } from './query.js';
+import { buildSessionListServerQueryV1, sessionListMembershipFilterFromQuery } from './query.js';
 import { SessionListQueryResponseV1Schema } from './response.js';
 
 const query = {
@@ -59,6 +59,16 @@ describe('SessionListQueryV1', () => {
        if (parsed.scope !== 'my_work') throw new Error('Query entrypoint did not initialize');`,
     ], { cwd: fileURLToPath(new URL('.', import.meta.url)), stdio: 'pipe' });
   }, 30_000);
+
+  it('admits the ordinary first page only on the first active page and keeps it out of structural filters', () => {
+    const ordinaryPage = { limit: 50, includeAttention: true };
+    expect(SessionListQueryV1Schema.parse({ ...query, ordinaryPage })).toMatchObject({ ordinaryPage });
+    const cursor = encodeV2SessionListCursorV2({ sessionId: 'session', meaningfulActivityAt: 1 });
+    for (const invalid of [{ cursor }, { attentionCursor: cursor }, { storage: 'archived' }, { ordinaryPage: { limit: 50, extra: 1 } }]) {
+      expect(SessionListQueryV1Schema.safeParse({ ...query, ordinaryPage, ...invalid }).success).toBe(false);
+    }
+    expect(sessionListMembershipFilterFromQuery(SessionListQueryV1Schema.parse({ ...query, ordinaryPage }))).not.toHaveProperty('ordinaryPage');
+  });
 
   it('requires explicit inactive visibility and rejects unrecognized query or audience fields', () => {
     const { includeInactive: _includeInactive, ...missingInactive } = query;

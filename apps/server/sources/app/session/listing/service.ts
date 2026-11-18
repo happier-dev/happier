@@ -1,6 +1,8 @@
-import type { SessionListQueryResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
+import type { SessionListOrdinaryPageV1, SessionListQueryResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
+import { isDeepStrictEqual } from 'node:util';
 import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import type { V2SessionListCursorV2, V2SessionListResponse } from '@happier-dev/protocol/sessions/control/contract';
+import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionListQueryResponseV1Schema, SessionRuntimeManagedSubtreeListResponseV1Schema,
     type SessionRuntimeManagedSubtreeListResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
@@ -129,14 +131,34 @@ export async function listSessionsForAccount(params: Readonly<{
         return await listSessionRuntimeManagedSubtree({ ...params, source });
     }
     if (source.kind === "query") {
-        return await listFilteredSessionsForAccount({
+        const filtered = listFilteredSessionsForAccount({
             userId: params.userId,
             authentication: params.authentication,
             source,
             rowRepresentabilityWhere: params.rowRepresentabilityWhere,
             timing: params.timing,
         });
+        const { ordinaryPage } = source.query;
+        if (!ordinaryPage) return await filtered;
+        // One cold read serves both memberships: the ordinary page is the exact
+        // `GET /v2/sessions` page-one result, read beside the query page.
+        const [page, ordinary] = await Promise.all([filtered, listLegacySessionsForAccount({ ...params, source: {
+            kind: "legacy", storage: "active", limit: ordinaryPage.limit, includeAttention: ordinaryPage.includeAttention,
+        } })]);
+        return page && ordinary && { ...page, ordinary: projectOrdinarySessionListPage(ordinary, page.sessions) };
     }
+    return await listLegacySessionsForAccount({ ...params, source });
+}
+
+/** The ordinary owner-or-direct listing (`GET /v2/sessions` and its active/archived siblings). */
+async function listLegacySessionsForAccount(params: Readonly<{
+    userId: string;
+    authentication: SessionAccessAuthentication;
+    source: LegacySessionListSource;
+    rowRepresentabilityWhere: Prisma.SessionWhereInput;
+    timing: ReturnType<typeof createV2SessionListServerTiming>;
+}>): Promise<V2SessionListResponse | null> {
+    const source = params.source;
     return await captureSessionListingSnapshot(async (tx) => await params.timing.measureAsync("snapshot", async () => {
         const observationCursor = await readSessionObservationCursorInTx(tx, params.userId, params.authentication);
         const now = Date.now();
@@ -207,6 +229,25 @@ export async function listSessionsForAccount(params: Readonly<{
     }));
 }
 
+/**
+ * The ordinary page as `GET /v2/sessions` emits it, with each row that is identical to
+ * the query page's row of the same Session sent once, by id.
+ */
+function projectOrdinarySessionListPage(ordinary: V2SessionListResponse,
+    queryRows: readonly Readonly<{ id: string }>[]): SessionListOrdinaryPageV1 {
+    const emitted = V2SessionListResponseSchema.parse(ordinary);
+    const queryRowsById = new Map(queryRows.map(row => [row.id, row]));
+    const wire = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
+    return {
+        ...emitted,
+        sessionIds: emitted.sessions.map(row => row.id),
+        sessions: emitted.sessions.filter(row => {
+            const queryRow = queryRowsById.get(row.id);
+            return !queryRow || !isDeepStrictEqual(wire(row), wire(queryRow));
+        }),
+    };
+}
+
 /** Restricted listing uses the canonical subtree, paging and shared row projection. */
 async function listSessionRuntimeManagedSubtree(params: Readonly<{
     userId: string;
@@ -223,6 +264,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
         || query.projectKeys?.include.length || query.projectKeys?.exclude.length || query.projectKeys?.none
         || query.coordinator !== undefined || query.membership !== undefined
         || query.includeAttention === true || query.attentionCursor !== undefined
+        || query.ordinaryPage !== undefined
         || !query.includeInactive) throw new SessionListCredentialScopeDeniedError();
     const readIds = async (tx: Tx) => {
         const ids = await readSessionManagedSubtreeSessionIdsInTx(tx, {

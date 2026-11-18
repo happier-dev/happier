@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccessV1.js';
-import { V2SessionRecordSchema, V2SessionListRowSchema } from '../control/contract.js';
+import { V2SessionRecordSchema, V2SessionListRowSchema, V2SessionListResponseSchema } from '../control/contract.js';
 import { SessionListMetadataUpgradeRequiredCountSchema } from '../control/listResult.js';
 import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
 import { SessionListUnavailableQueryV1Schema } from './query.js';
@@ -45,6 +45,18 @@ export const SessionCurrentListProjectionRecordV1Schema = lazyZodSchema(() => z.
 }));
 
 /**
+ * The ordinary first page (`GET /v2/sessions`) carried by a query that asked for it.
+ * `sessionIds` is the page's row order. `sessions` holds only the ordinary rows whose
+ * projection differs from (or is absent in) the query page; every other id names the
+ * query row, which is the identical record. Every other member is the GET response's own.
+ */
+export const SessionListOrdinaryPageV1Schema = lazyZodSchema(() => z.looseObject({
+  ...V2SessionListResponseSchema.shape,
+  sessionIds: z.array(z.string().check(z.minLength(1))),
+}));
+export type SessionListOrdinaryPageV1 = Readonly<z.infer<typeof SessionListOrdinaryPageV1Schema>>;
+
+/**
  * Closed V1 response envelope for filtered listing. Session rows retain the
  * established V2 projection policy; pagination authority stays explicit at
  * this boundary so consumers cannot lose either independent continuation.
@@ -59,6 +71,7 @@ export const SessionListQueryResponseV1Schema = lazyZodSchema(() => z.strictObje
   attentionHasNext: z.boolean(),
   metadataUpgradeRequiredCount: z.optional(SessionListMetadataUpgradeRequiredCountSchema),
   membershipUnavailableReason: z.optional(SessionListUnavailableQueryV1Schema.shape.reason),
+  ordinary: z.optional(SessionListOrdinaryPageV1Schema),
 }));
 
 export type SessionListQueryResponseV1 = Readonly<z.infer<typeof SessionListQueryResponseV1Schema>>;
@@ -66,6 +79,7 @@ export type SessionListQueryResponseV1 = Readonly<z.infer<typeof SessionListQuer
 /** The same query envelope for a proved runtime subtree, without Account-private projections. */
 export const SessionRuntimeManagedSubtreeListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   ...SessionListQueryResponseV1Schema.shape,
+  ordinary: z.optional(z.never()),
   sessions: z.array(z.safeExtend(SessionCurrentListProjectionRecordV1Schema, {
     metadataAudience: z.literal('shared'),
     agentStateDocument: z.literal('redacted'),

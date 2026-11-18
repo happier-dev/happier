@@ -82,6 +82,12 @@ export const SessionListMembershipV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type SessionListMembershipV1 = Readonly<{ mode: 'filter_or_manual' | 'manual_only'; tagIds: readonly string[]; filter?: SessionListMembershipFilterV1 }>;
 
+/** The ordinary first page's own transport parameters (the `GET /v2/sessions` querystring for page one). */
+export const SessionListOrdinaryPageRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(SESSION_LIST_PAGE_MAX_LIMIT))),
+  includeAttention: z.optional(z.boolean()),
+}));
+
 /** V1 is a closed Home-local selection contract, independent of package SemVer. */
 export const SessionListQueryV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -97,7 +103,17 @@ export const SessionListQueryV1Schema = lazyZodSchema(() => z.strictObject({
   attentionCursor: z.optional(CursorSchema),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(SESSION_LIST_PAGE_MAX_LIMIT))),
   includeAttention: z.optional(z.boolean()),
-}).check(z.refine((value) => value.cursor === undefined || value.attentionCursor === undefined, { message: 'cursor and attentionCursor cannot be combined', path: ['attentionCursor'] })));
+  /**
+   * Also return the ordinary owner-or-direct first page (`GET /v2/sessions`) in this
+   * response, so one cold read serves both memberships. First active page only.
+   */
+  ordinaryPage: z.optional(SessionListOrdinaryPageRequestV1Schema),
+}).check(
+  z.refine((value) => value.cursor === undefined || value.attentionCursor === undefined, { message: 'cursor and attentionCursor cannot be combined', path: ['attentionCursor'] }),
+  z.refine((value) => value.ordinaryPage === undefined || (value.storage === 'active'
+    && value.cursor === undefined && value.attentionCursor === undefined), {
+    message: 'ordinaryPage reads only the first active page', path: ['ordinaryPage'] }),
+));
 
 export type SessionListQueryV1 = Readonly<Omit<z.infer<typeof SessionListQueryV1Schema>, 'audiences' | 'tagIds' | 'folderIds' | 'projectKeys' | 'membership'> & {
   audiences: readonly SessionAudienceSelectionV1[];
@@ -110,7 +126,8 @@ export type SessionListQueryV1 = Readonly<Omit<z.infer<typeof SessionListQueryV1
 /** Select the same structural vocabulary without transport or lifecycle fields. */
 export function sessionListMembershipFilterFromQuery(query: SessionListQueryV1): SessionListMembershipFilterV1 {
   const { v: _v, storage: _storage, includeInactive: _inactive, bot: _bot, membership: _membership,
-    cursor: _cursor, attentionCursor: _attentionCursor, limit: _limit, includeAttention: _attention, ...filter } = query;
+    cursor: _cursor, attentionCursor: _attentionCursor, limit: _limit, includeAttention: _attention,
+    ordinaryPage: _ordinaryPage, ...filter } = query;
   return filter;
 }
 
@@ -122,6 +139,12 @@ export function supportsSessionListProjectSelectionV1(payload: Pick<FeaturesResp
 export function supportsSessionListMembershipSelectionV1(payload: Pick<FeaturesResponse, 'features'>): boolean {
   return readServerEnabledBit(payload, 'sessions.filteredListing') === true
     && payload.features.sessions.filteredListing.membershipSelectorVersion === 1;
+}
+
+/** A Home that answers `ordinaryPage` on its strict query reader. */
+export function supportsSessionListOrdinaryPageV1(payload: Pick<FeaturesResponse, 'features'>): boolean {
+  return readServerEnabledBit(payload, 'sessions.filteredListing') === true
+    && payload.features.sessions.filteredListing.ordinaryPageVersion === 1;
 }
 
 /** Bot selection never asks a server to inspect encrypted metadata, including older strict servers. */
