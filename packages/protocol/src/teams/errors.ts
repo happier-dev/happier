@@ -84,6 +84,21 @@ const TeamInputErrorDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   reason: z.string().check(z.trim(), z.minLength(1)),
 }));
 
+const TeamCreationPolicyRefusalDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.enum(['managed_only', 'disabled']),
+}));
+export type TeamCreationPolicyRefusalDetailsV1 = z.infer<typeof TeamCreationPolicyRefusalDetailsV1Schema>;
+
+/** Action carriers retain the Team error body and may add transport metadata around it. */
+export function readTeamCreationPolicyRefusalV1(
+  code: unknown,
+  body: unknown,
+): TeamCreationPolicyRefusalDetailsV1 | null {
+  if (code !== 'team_forbidden' || !body || typeof body !== 'object'
+    || !('error' in body) || body.error !== code || !('details' in body)) return null;
+  return TeamCreationPolicyRefusalDetailsV1Schema.safeParse(body.details).data ?? null;
+}
+
 /**
  * The one error body every Team route sends. Clients read `error`; a route that
  * invented its own envelope would make the same domain result unreadable
@@ -91,12 +106,17 @@ const TeamInputErrorDetailsV1Schema = lazyZodSchema(() => z.strictObject({
  */
 export const TeamErrorV1Schema = lazyZodSchema(() => z.strictObject({
   error: TeamErrorCodeV1Schema,
-  details: z.optional(z.union([TeamAuthenticationPolicyUnavailableDetailsV1Schema, TeamInputErrorDetailsV1Schema])),
+  details: z.optional(z.union([
+    TeamAuthenticationPolicyUnavailableDetailsV1Schema,
+    TeamInputErrorDetailsV1Schema,
+    TeamCreationPolicyRefusalDetailsV1Schema,
+  ])),
 }).check(z.superRefine((value, context) => {
   if (value.details !== undefined && !(
     (value.error === 'team_authentication_policy_unavailable'
       && TeamAuthenticationPolicyUnavailableDetailsV1Schema.safeParse(value.details).success)
     || (value.error === 'invalid_team_input' && TeamInputErrorDetailsV1Schema.safeParse(value.details).success)
+    || (value.error === 'team_forbidden' && TeamCreationPolicyRefusalDetailsV1Schema.safeParse(value.details).success)
   )) {
     context.addIssue({
       code: "custom",

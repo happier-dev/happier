@@ -381,6 +381,11 @@ owner rolls the whole transaction back, so an ownerless Team cannot exist.
 
 - Home policy decides who may create: `self_service`, `managed_only` (owner/admin), or
   `disabled`. The database and Personal Home default is `managed_only`.
+- In unreleased 0.3, a Home creation policy refusal returns HTTP 403 with
+  `error: "team_forbidden"` and `details.reason` set to `managed_only` or `disabled`.
+  The detail applies to active Accounts and contains no Account identifiers.
+  Matching development server and Action readers load together because earlier
+  strict Team error readers reject the new detail. Code-only refusals remain valid.
 - `home.governance.eligibility.get` is the member-facing answer. Besides `teamsEnabled`,
   `createTeam` and `createTeamForChosenAccount`, it gives an **active** Account the creation
   policy class (`teamCreationPolicy`), the active owners' then administrators' display labels

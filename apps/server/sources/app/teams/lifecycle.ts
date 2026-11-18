@@ -156,12 +156,12 @@ export async function createTeamInTx(
     if (!actor || actor.status !== AccountStatus.active) return denied("team_forbidden");
 
     const policy = await readHomeGovernancePolicyInTx(tx);
-    const mayCreate = resolveHomeTeamCreationCapability({
+    const creation = resolveHomeTeamCreationCapability({
         account: actor,
         teamCreationPolicy: policy.teamCreationPolicy,
         teamsEnabled,
     });
-    if (!mayCreate) return denied("team_forbidden");
+    if (!creation.allowed) return denied("team_forbidden", creation.details);
 
     // Under `managed_only` the creator is provisioning a Team for somebody, and
     // the product asks them to choose who. Silently falling back to the creator

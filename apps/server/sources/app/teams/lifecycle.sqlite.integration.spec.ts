@@ -160,8 +160,13 @@ describe("Team lifecycle (SQLite integration)", () => {
 
         it("refuses creation the Home policy does not permit and self-service creation for somebody else", async () => {
             await setTeamCreationPolicy("managed_only");
+            const admin = await account("admin");
             const ordinary = await account();
-            expect(await create(ordinary.id, { name: "Nope" })).toEqual({ ok: false, error: "team_forbidden" });
+            expect(await create(admin.id, { name: "Managed control", initialOwnerAccountId: ordinary.id }))
+                .toMatchObject({ ok: true });
+            expect.soft(await create(ordinary.id, { name: "Nope" })).toEqual({
+                ok: false, error: "team_forbidden", details: { reason: "managed_only" },
+            });
 
             await setTeamCreationPolicy("self_service");
             const other = await account();
@@ -169,7 +174,9 @@ describe("Team lifecycle (SQLite integration)", () => {
                 .toEqual({ ok: false, error: "team_forbidden" });
 
             await setTeamCreationPolicy("disabled");
-            expect(await create(ordinary.id, { name: "Nope" })).toEqual({ ok: false, error: "team_forbidden" });
+            expect.soft(await create(admin.id, { name: "Nope", initialOwnerAccountId: ordinary.id })).toEqual({
+                ok: false, error: "team_forbidden", details: { reason: "disabled" },
+            });
             await setTeamCreationPolicy("self_service");
         });
 

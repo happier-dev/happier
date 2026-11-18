@@ -1,6 +1,7 @@
 import { NO_HOME_CAPABILITIES_V1, isActiveHomeAccountStatus, type AccountStatusV1, type HomeAccountMutationCapabilitiesV1, type HomeAccountMutationCapabilityV1, type HomeAccountMutationUnavailableReasonV1, type HomeCapabilitiesV1, type HomeRoleV1, type TeamCreationPolicyV1 } from '@happier-dev/protocol/home/governance';
 
 import type { Tx } from "@/storage/inTx";
+import type { TeamCreationPolicyRefusalDetailsV1 } from '@happier-dev/protocol/teams';
 
 /**
  * The current Home-authority facts of one Account, always read inside the
@@ -74,17 +75,19 @@ export function resolveHomeTeamCreationCapability(input: Readonly<{
     account: HomeGovernanceAccountFacts | null;
     teamCreationPolicy: TeamCreationPolicyV1;
     teamsEnabled: boolean;
-}>): boolean {
-    if (!input.teamsEnabled) return false;
+}>): Readonly<{ allowed: true } | { allowed: false; details?: TeamCreationPolicyRefusalDetailsV1 }> {
+    if (!input.teamsEnabled) return { allowed: false };
     const { account } = input;
-    if (!account || !isActiveHomeAccountStatus(account.status)) return false;
+    if (!account || !isActiveHomeAccountStatus(account.status)) return { allowed: false };
     switch (input.teamCreationPolicy) {
         case "self_service":
-            return true;
+            return { allowed: true };
         case "managed_only":
-            return account.homeRole === "owner" || account.homeRole === "admin";
+            return account.homeRole === "owner" || account.homeRole === "admin"
+                ? { allowed: true }
+                : { allowed: false, details: { reason: "managed_only" } };
         case "disabled":
-            return false;
+            return { allowed: false, details: { reason: "disabled" } };
     }
 }
 
@@ -98,12 +101,12 @@ export function resolveHomeCapabilitiesV1(input: Readonly<{
     if (authority === DENIED_GOVERNANCE_AUTHORITY) {
         return Object.freeze({
             ...NO_HOME_CAPABILITIES_V1,
-            createTeam: resolveHomeTeamCreationCapability(input),
+            createTeam: resolveHomeTeamCreationCapability(input).allowed,
         });
     }
     return Object.freeze({
         ...authority,
-        createTeam: resolveHomeTeamCreationCapability(input),
+        createTeam: resolveHomeTeamCreationCapability(input).allowed,
     });
 }
 
