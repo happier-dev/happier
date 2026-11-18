@@ -130,17 +130,11 @@ describe('external Action mint availability classification', () => {
                     v: 1, actionId: 'settings.list', requestId: envelope.requestId,
                     execution: { ok: true, result: { delivered: true } },
                 }));
-                // An authenticated daemon socket is the network fixture. Keep
-                // the real placement guard and its database admission reader.
-                const socket = { id: 'admitted-delivery-daemon', data: { clientType: 'machine-scoped',
-                    userId: account.id, machineId: machine.id, verifiedMachineInstallationId: machine.installationId },
-                    timeout: () => ({ emitWithAck: async () => response }) };
-                const targets = await params.targetGuard?.filterTargets([socket]) ?? [];
-                if (targets.length !== 1 || !params.targetGuard) return { ok: false, error: 'target_unavailable' };
-                const delivery = await params.targetGuard.runOperation({ target: socket, readLatestTarget: async () => socket,
-                    operation: async () => response });
-                return delivery.status === 'current' ? { ok: true, result: delivery.value }
-                    : { ok: false, error: 'target_unavailable' };
+                // The socket transport is the network boundary. Delivery spends the exact
+                // admitted receiver (043e2e19af4); it never re-reads withdrawn access.
+                expect(params.admittedMachineTarget).toMatchObject({ machineId: machine.id,
+                    installationId: machine.installationId, custodianAccountId: account.id });
+                return { ok: true, result: response };
             },
         });
         const request = { actionId: 'settings.list', envelope,
