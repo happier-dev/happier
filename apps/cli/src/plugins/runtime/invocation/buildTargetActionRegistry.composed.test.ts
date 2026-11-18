@@ -1747,7 +1747,9 @@ describe('buildTargetActionInvocationRegistry', () => {
         });
         const result = await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input: stored.input, surface: 'plugin' });
         const succeeds = variant === 'current' || variant === 'group';
-        expect(result.status).toBe(succeeds ? 'executed' : variant === 'group-change' ? 'failed' : 'unavailable');
+        const securityRefusal = variant === 'principal' || variant === 'scope';
+        expect(result.status).toBe(succeeds ? 'executed' : variant === 'group-change' || securityRefusal ? 'failed' : 'unavailable');
+        if (securityRefusal) expect(result).toMatchObject({ code: 'deployment_access_denied' });
         if (succeeds) expect(materializeAccount).toHaveBeenCalledOnce();
         else {
             if (!group) expect(resolveTarget).not.toHaveBeenCalled();
@@ -1952,7 +1954,7 @@ describe('buildTargetActionInvocationRegistry', () => {
             });
             if (refused) {
                 expect(result).toMatchObject({ status: 'failed', code: 'native_request_failed', data: { details: { nativeCause } } });
-                expect(warn.mock.calls).toEqual([['Plugin Action failed', { pluginId: 'acme.alpha', localId: 'run', code: 'native_request_failed' }]]);
+                expect(warn.mock.calls).toEqual([['Plugin Action failed', { pluginId: 'acme.alpha', localId: 'run', code: 'native_request_failed', requestId: expect.any(String) }]]);
                 expect(JSON.stringify(warn.mock.calls)).not.toContain('private-');
             } else {
                 expect(result).toEqual({ status: 'executed', value: { keyPresent: true } });
