@@ -21,6 +21,7 @@ import {
 } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
 import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../proc/dependency_generations.mjs';
 import {
   ensureExpoWorkspacePrepared,
   expoSpawn,
@@ -130,6 +131,15 @@ export async function resolveMetroConfigFingerprint({ projectDir, env = process.
 export function resolveExpoMetroCacheRoot({ tmpDir, currentFingerprint }) {
   if (!/^sha256:[a-f0-9]{64}$/.test(String(currentFingerprint))) return null;
   return join(tmpDir, 'metro-cache-generations', currentFingerprint.replace(':', '-'));
+}
+
+export function resolveExpoMetroGenerationRoot({ installDir } = {}) {
+  const root = String(installDir ?? '').trim();
+  if (!root) return null;
+  const generation = readCurrentDependencyGeneration(root);
+  return generation
+    ? join(resolveDependencyGenerationContainer(root), generation)
+    : null;
 }
 
 export async function reapExpoMetroCacheGenerations({ tmpDir, currentFingerprint, procRoot = '/proc', dryRun = false }) {
@@ -811,9 +821,13 @@ export async function ensureDevExpoServer({
     const spawnTrackedExpo = async ({ restartAttempt = 0 } = {}) => {
       // Supervisor restarts share this admission with initial startup, so a
       // dependency/configuration transition also retires its old cache root.
-      await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(uiDir), env, signal: restartAbort.signal });
+      const installDir = resolveDependencyInstallRoot(uiDir);
+      await waitForDependencyRefresh({ installDir, env, signal: restartAbort.signal });
       if (stopping()) throw new DOMException('Expo startup cancelled', 'AbortError');
       await refreshMetroConfigInspection();
+      const metroGenerationRoot = resolveExpoMetroGenerationRoot({ installDir });
+      if (metroGenerationRoot) env.HAPPIER_UI_METRO_GENERATION_ROOT = metroGenerationRoot;
+      else delete env.HAPPIER_UI_METRO_GENERATION_ROOT;
       const metroCacheRoot = resolveExpoMetroCacheRoot({
         tmpDir,
         currentFingerprint: metroConfigInspection?.currentFingerprint,

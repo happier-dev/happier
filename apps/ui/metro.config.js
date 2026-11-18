@@ -501,10 +501,31 @@ config.resolver.blockList = [
 
 addInternalWorkspaceWatchFolders();
 
+// Stack pins this child to the dependency generation selected immediately before
+// spawn. Resolve and watch that immutable tree for the whole Metro lifetime;
+// following the checkout's mutable links lets a publication move resolution
+// outside the captured file map.
+const pinnedDependencyGenerationRoot = String(process.env.HAPPIER_UI_METRO_GENERATION_ROOT ?? '').trim();
+const dependencyGenerationRoot = pinnedDependencyGenerationRoot && path.isAbsolute(pinnedDependencyGenerationRoot)
+  ? path.resolve(pinnedDependencyGenerationRoot)
+  : null;
+const rootNodeModules = dependencyGenerationRoot
+  ? path.join(dependencyGenerationRoot, 'node_modules')
+  : path.resolve(__dirname, "../../node_modules");
+const appNodeModules = dependencyGenerationRoot
+  ? path.join(dependencyGenerationRoot, path.relative(monorepoRoot, __dirname), 'node_modules')
+  : path.resolve(__dirname, "node_modules");
+
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
+if (dependencyGenerationRoot) {
+  for (const folder of [rootNodeModules, appNodeModules]) {
+    if (!config.watchFolders.includes(folder)) config.watchFolders.push(folder);
+  }
+  config.resolver.nodeModulesPaths = [appNodeModules, rootNodeModules];
+}
 // Every source Expo consumer owns an inventory and retained inputs. Finite
 // exports and interactive Metro share this transport, not a writable inventory.
 const privatePluginUiInventory = String(process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY ?? '').trim();
@@ -513,8 +534,6 @@ if (privatePluginUiInventory && !path.isAbsolute(privatePluginUiInventory)) {
 }
 if (privatePluginUiInventory) config.watchFolders.push(path.dirname(privatePluginUiInventory));
 const pluginUiAvailabilityRoot = path.resolve(__dirname, 'sources/sync/domains/plugins/availability');
-const rootNodeModules = path.resolve(__dirname, "../../node_modules");
-const appNodeModules = path.resolve(__dirname, "node_modules");
 const reactNativePrivateNodeModules = path.resolve(appNodeModules, "react-native/node_modules");
 const patchedEnrichedMarkdownStreamingRevealModule =
   "react-native-enriched-markdown/lib/module/web/streamingReveal.js";

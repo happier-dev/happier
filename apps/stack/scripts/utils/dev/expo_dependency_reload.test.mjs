@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { createMinimalMonorepoFixture } from '../../testkit/core/minimal_monorepo_layout.mjs';
 import { allocateAvailableLocalhostPort } from '../../testkit/core/ephemeral_port.mjs';
 import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
-import { ensureDevExpoServer } from './expo_dev.mjs';
+import { ensureDevExpoServer, resolveExpoMetroGenerationRoot } from './expo_dev.mjs';
 import { createDevDependencyReload, startDevReloadCoordinator } from './devReloadCoordinator.mjs';
-import { moveInPlaceInstallationIntoGeneration } from '../proc/dependency_generations.mjs';
+import { moveInPlaceInstallationIntoGeneration, readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../proc/dependency_generations.mjs';
 import { resolveDependencyRefreshMarkerPath, withDependencyRefresh, withDependencyRefreshLock, markDependencyMutation } from '../proc/dependency_refresh.mjs';
 import { killProcessTree } from '../proc/proc.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
@@ -45,6 +45,9 @@ test('completed generation publications replace the owned Expo while output-only
     await Promise.all(children.map(child => child.completion));
   });
   serving = await ensureDevExpoServer(options);
+  const expectedGenerationRoot = join(resolveDependencyGenerationContainer(fixture.root), readCurrentDependencyGeneration(fixture.root));
+  assert.equal(resolveExpoMetroGenerationRoot({ installDir: fixture.root }), expectedGenerationRoot,
+    'Expo selects the generation root for its Metro lifetime');
   const reload = await createDevDependencyReload({ repoDir: fixture.root, env,
     reloadExpo: async () => {
       await serving.close?.();
@@ -78,6 +81,10 @@ test('completed generation publications replace the owned Expo while output-only
     // Join the real native publication event and the complete owner replacement.
     await publicationObserved;
     assert.notEqual(serving.pid, before, 'a newly published physical generation must replace the old Metro');
+    const replacementGeneration = readCurrentDependencyGeneration(fixture.root);
+    assert.equal(resolveExpoMetroGenerationRoot({ installDir: fixture.root }),
+      join(resolveDependencyGenerationContainer(fixture.root), replacementGeneration),
+      'replacement Expo selects the new generation root before Metro loads');
     assert.equal(children.at(-2).exitCode !== null || children.at(-2).signalCode !== null, true);
     await notify();
     assert.equal(children.length, index + 2, 'duplicate publication events must not restart Expo again');

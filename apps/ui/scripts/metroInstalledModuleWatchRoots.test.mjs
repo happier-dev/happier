@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 const require = createRequire(import.meta.url);
+const uiRoot = path.resolve(import.meta.dirname, '..');
 const { resolveInstalledModuleWatchRoots } = require('./metroInstalledModuleWatchRoots.cjs');
 
 test('installed watch roots retain the selected generation without crawling retained generations', async () => {
@@ -44,6 +45,79 @@ test('installed watch roots retain the selected generation without crawling reta
     // An ordinary, unlinked tree stays with the existing watch policy.
     assert.deepEqual([...resolveInstalledModuleWatchRoots([selected])], []);
   } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+
+test('replacement Metro serves the published generation without resolving through its predecessor', async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-generation-replacement-')));
+  const generationStore = path.join(fixture, '.happier/deps/node_modules');
+  const generationA = path.join(generationStore, 'gA');
+  const generationB = path.join(generationStore, 'gB');
+  const rootModules = path.join(fixture, 'node_modules');
+  const ui = path.join(fixture, 'apps/ui');
+  const entry = path.join(ui, 'entry.js');
+  const asyncRequire = path.join(ui, 'asyncRequire.js');
+  const configPath = path.resolve(uiRoot, 'metro.config.js');
+  const runtimeRoot = path.dirname(require.resolve('metro-runtime/package.json'));
+  const originalGenerationRoot = process.env.HAPPIER_UI_METRO_GENERATION_ROOT;
+  try {
+    for (const generation of [generationA, generationB]) {
+      mkdirSync(path.join(generation, 'node_modules/dep'), { recursive: true });
+      mkdirSync(path.join(generation, 'apps/ui/node_modules'), { recursive: true });
+      writeFileSync(path.join(generation, 'node_modules/dep/package.json'), '{"name":"dep","main":"index.js"}');
+      writeFileSync(path.join(generation, 'node_modules/dep/index.js'), `module.exports = ${JSON.stringify(path.basename(generation))};\n`);
+    }
+    mkdirSync(rootModules, { recursive: true });
+    mkdirSync(ui, { recursive: true });
+    writeFileSync(entry, 'module.exports = require("dep");\n');
+    writeFileSync(asyncRequire, 'module.exports = {};\n');
+    const selectGeneration = generation => {
+      const link = path.join(rootModules, 'dep');
+      try { unlinkSync(link); } catch {}
+      symlinkSync(path.join(generation, 'node_modules/dep'), link, 'junction');
+    };
+    const loadConfig = generation => {
+      process.env.HAPPIER_UI_METRO_GENERATION_ROOT = generation;
+      delete require.cache[require.resolve(configPath)];
+      const configured = require(configPath);
+      configured.projectRoot = ui;
+      configured.watchFolders = [ui,
+        path.join(generation, 'node_modules'), path.join(generation, 'apps/ui/node_modules'), runtimeRoot];
+      configured.resolver.useWatchman = false;
+      configured.watcher = { ...(configured.watcher ?? {}), useWatchman: false };
+      configured.fileMapCacheDirectory = path.join(fixture, 'filemap');
+      mkdirSync(configured.fileMapCacheDirectory, { recursive: true });
+      configured.cacheStores = [];
+      configured.maxWorkers = 1;
+      configured.reporter = { update() {} };
+      configured.transformer = { ...configured.transformer, asyncRequireModulePath: asyncRequire };
+      configured.serializer = { ...configured.serializer,
+        getModulesRunBeforeMainModule: () => [], getPolyfills: () => [] };
+      return configured;
+    };
+    const build = async generation => {
+      selectGeneration(generation);
+      const configured = loadConfig(generation);
+      const { default: Server } = require('metro/private/Server');
+      const server = new Server(configured, { watch: true });
+      try {
+        return await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+          entryFile: entry, platform: 'web', dev: true, minify: false, lazy: false });
+      } finally { await server.end(); }
+    };
+    const before = await build(generationA);
+    assert.match(before.code, /gA/);
+    assert.doesNotMatch(before.code, /gB/);
+    const after = await build(generationB);
+    assert.match(after.code, /gB/);
+    assert.doesNotMatch(after.code, /gA/);
+    assert.doesNotMatch(after.code, /metro-two-generation-replacement/);
+  } finally {
+    if (originalGenerationRoot === undefined) delete process.env.HAPPIER_UI_METRO_GENERATION_ROOT;
+    else process.env.HAPPIER_UI_METRO_GENERATION_ROOT = originalGenerationRoot;
+    delete require.cache[require.resolve(configPath)];
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 
