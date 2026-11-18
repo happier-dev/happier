@@ -7344,6 +7344,7 @@ export const zhHans: TranslationStructure = {
       `${provider} 已关联到现有的 Happier 账号。要在此设备上登录，请从已登录的设备中将此设备进行关联。`,
     tokenExchangeFailed: "交换授权码失败",
     oauthAuthorizationDenied: "授权被拒绝",
+    oauthCancelled: '登录已取消。没有任何更改。',
     webViewLoadFailed: "加载认证页面失败",
     failedToLoadProfile: "无法加载用户资料",
     userNotFound: "未找到用户",

@@ -147,7 +147,7 @@ export const ApprovalProfileDefaultRow = React.memo(
               detail: t('teams.settings.memberDefaults.approvalProfileNotSet'),
             },
         none: {
-          title: t('teams.settings.memberDefaults.none'),
+          title: t('teams.settings.memberDefaults.approvalProfileNone'),
           subtitle: t(
             'teams.settings.memberDefaults.approvalProfileNoneDescription',
           ),

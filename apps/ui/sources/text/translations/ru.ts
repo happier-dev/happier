@@ -7371,6 +7371,7 @@ export const ru: TranslationStructure = {
       `${provider} уже привязан к существующему аккаунту Happier. Чтобы войти на этом устройстве, привяжите его с устройства, на котором вы уже вошли.`,
     tokenExchangeFailed: "Не удалось обменять код авторизации",
     oauthAuthorizationDenied: "В авторизации отказано",
+    oauthCancelled: 'Вход отменён. Ничего не изменилось.',
     webViewLoadFailed: "Не удалось загрузить страницу аутентификации",
     failedToLoadProfile: "Не удалось загрузить профиль пользователя",
     userNotFound: "Пользователь не найден",

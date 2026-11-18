@@ -16292,6 +16292,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 approvalProfileProject: "此專案中的每個人在選擇此設定檔之前，都會繼續使用自己的審批設定檔。",
                 approvalProfileNotSet: "未設定",
                 approvalProfileNotSetDescription: "此處不建議任何設定檔。",
+                approvalProfileNone: "無",
                 approvalProfileNoneDescription: "新工作階段啟動時不使用設定檔。",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `與${audience}共用 ${profile}？`,
                 approvalProfileShareBody: "他們只能選擇自己看得到的設定檔。共用後可以檢視，但不能修改。",

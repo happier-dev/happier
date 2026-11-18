@@ -8777,6 +8777,7 @@ const enErrors = {
     `${provider} is already linked to an existing Happier account. To sign in on this device, link it from a device that’s already signed in.`,
   tokenExchangeFailed: 'Failed to exchange authorization code',
   oauthAuthorizationDenied: 'Authorization was denied',
+  oauthCancelled: 'Sign-in was cancelled. Nothing changed.',
   webViewLoadFailed: 'Failed to load authentication page',
   failedToLoadProfile: 'Failed to load user profile',
   userNotFound: 'User not found',

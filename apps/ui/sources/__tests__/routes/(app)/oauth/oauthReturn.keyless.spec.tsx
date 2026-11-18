@@ -195,8 +195,6 @@ describe('oauth/[provider] return (keyless)', () => {
 
     it('retires claimed password-enrollment custody when the callback route is abandoned', async () => {
         const { credentials, target } = await startPasswordEnrollment();
-        let releaseAlert: (() => void) | undefined;
-        modal.alert.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseAlert = resolve; }));
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -206,14 +204,12 @@ describe('oauth/[provider] return (keyless)', () => {
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects(12);
-            expect(modal.alert).toHaveBeenCalled();
+            expect(modal.alert).not.toHaveBeenCalled();
             expect(resumeAccountPasswordEnrollmentExternalAuthSpy).not.toHaveBeenCalled();
             expect(clearAccountPasswordEnrollmentExternalAuthCustodySpy).not.toHaveBeenCalled();
         });
 
         expect(clearAccountPasswordEnrollmentExternalAuthCustodySpy).toHaveBeenCalledOnce();
-        releaseAlert?.();
-        await flushOAuthEffects();
         await expect(readAccountPasswordEnrollmentExternalAuthProof({ accountId: 'account-1',
             currentCredentials: credentials, target })).resolves.toBeNull();
     });
@@ -429,10 +425,7 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
             await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
-            expect(modal.alert).toHaveBeenCalledWith(
-                t('common.error'),
-                t('errors.operationFailed'),
-            );
+            expect(modal.alert).not.toHaveBeenCalled();
             expect(replaceSpy).toHaveBeenCalledWith(
                 '/settings/account',
             );

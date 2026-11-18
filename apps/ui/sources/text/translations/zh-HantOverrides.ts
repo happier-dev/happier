@@ -6462,6 +6462,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             `${provider} 已連結到現有的 Happier 帳號。要在此裝置上登入，請從已登入的裝置將此裝置連結進來。`,
         tokenExchangeFailed: '交換授權碼失敗',
         oauthAuthorizationDenied: '授權被拒絕',
+        oauthCancelled: '登入已取消。沒有任何變更。',
         webViewLoadFailed: '載入驗證頁面失敗',
         failedToLoadProfile: '無法載入使用者資料',
         userNotFound: '未找到使用者',

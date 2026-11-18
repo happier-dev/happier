@@ -16352,6 +16352,7 @@ const japanese: TeamsTranslationRoot = {
                 approvalProfileProject: "このプロジェクトの全員が、このプロファイルを選ぶまで自分の承認プロファイルを使い続けます。",
                 approvalProfileNotSet: "未設定",
                 approvalProfileNotSetDescription: "ここでは何も提案しません。",
+                approvalProfileNone: "なし",
                 approvalProfileNoneDescription: "新しいセッションはプロファイルなしで始まります。",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `${profile} を ${audience} と共有しますか?`,
                 approvalProfileShareBody: "見えるプロファイルしか選べません。共有すると閲覧はできますが、変更はできません。",

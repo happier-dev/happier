@@ -4,6 +4,11 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { readTeamSharedResourcesSummary } from '@/sync/ops/teams/teamSharedResources';
+import {
+    applyTeamSharedResourcesSummary,
+    applyTeamSharedResourcesSummaryFailure,
+    getTeamSharedResourcesSummarySnapshot,
+} from '@/sync/store/teams/teamsSnapshots';
 import { useTeamPagedList } from './useTeamPagedList';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import type { TeamPagedListStatus } from './useTeamPagedList';
@@ -25,8 +30,15 @@ export function useTeamSharedResourcesSummary(input: Readonly<{
     const { binding } = useServerCredentialAccountScopeBinding(input.enabled ? serverId : null);
     const enabled = input.enabled && scope !== null && address !== null && serverId === address.serverId
         && binding !== null && binding.isCurrent() && areServerAccountScopesEqual(binding.scope, scope);
+    const retained = getTeamSharedResourcesSummarySnapshot(scope, address);
     const page = useTeamPagedList<TeamSharedResourceSummaryRowV1>({
         key: JSON.stringify([serverId, accountId, teamId, binding?.credentialKey]), enabled, getRowKey: teamSharedResourceSummaryRowKeyV1,
+        initialRows: enabled ? retained?.data ?? undefined : undefined,
+        onStateChange: next => {
+            if (!scope || !address) return;
+            if (next.status === 'ready') applyTeamSharedResourcesSummary(scope, address, next.rows);
+            else if (next.status === 'error' && next.error) applyTeamSharedResourcesSummaryFailure(scope, address, next.error);
+        },
         accountChange: { serverId, affects: event => event.teamSharedResourcesAffect !== false },
         loadPage: async (_cursor, signal) => {
             if (!scope || !address) return null;

@@ -525,6 +525,7 @@ export const english = {
                 approvalProfileProject: "Everyone in this project keeps their own approval profile until they choose this one.",
                 approvalProfileNotSet: "Not set",
                 approvalProfileNotSetDescription: "Nothing is suggested here.",
+                approvalProfileNone: "None",
                 approvalProfileNoneDescription: "New sessions start without a profile.",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `Share ${profile} with ${audience}?`,
                 approvalProfileShareBody: "They can only choose a profile they can see. Sharing lets them view it, not change it.",

@@ -16445,6 +16445,7 @@ const russian: TeamsTranslationRoot = {
                 approvalProfileProject: "Все в этом проекте сохраняют свой профиль одобрения, пока не выберут этот.",
                 approvalProfileNotSet: "Не задан",
                 approvalProfileNotSetDescription: "Здесь ничего не предлагается.",
+                approvalProfileNone: "Нет",
                 approvalProfileNoneDescription: "Новые сеансы начинаются без профиля.",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `Поделиться ${profile} с ${audience}?`,
                 approvalProfileShareBody: "Выбрать можно только видимый профиль. Доступ позволяет просматривать его, но не менять.",

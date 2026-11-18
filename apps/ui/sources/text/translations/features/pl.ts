@@ -16441,6 +16441,7 @@ const polish: TeamsTranslationRoot = {
                 approvalProfileProject: "Wszyscy w tym projekcie zachowują własny profil zatwierdzania, dopóki nie wybiorą tego.",
                 approvalProfileNotSet: "Nie ustawiono",
                 approvalProfileNotSetDescription: "Nic tu nie jest sugerowane.",
+                approvalProfileNone: "Brak",
                 approvalProfileNoneDescription: "Nowe sesje zaczynają się bez profilu.",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `Udostępnić ${profile} dla ${audience}?`,
                 approvalProfileShareBody: "Można wybrać tylko widoczny profil. Udostępnienie pozwala go oglądać, nie zmieniać.",

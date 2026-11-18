@@ -16292,6 +16292,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 approvalProfileProject: "此项目中的每个人在选择此配置之前，都会继续使用自己的审批配置。",
                 approvalProfileNotSet: "未设置",
                 approvalProfileNotSetDescription: "此处不建议任何配置。",
+                approvalProfileNone: "无",
                 approvalProfileNoneDescription: "新会话启动时不使用配置。",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `与${audience}共享 ${profile}？`,
                 approvalProfileShareBody: "他们只能选择自己能看到的配置。共享后可以查看，但不能修改。",

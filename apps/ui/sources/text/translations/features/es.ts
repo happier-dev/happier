@@ -16353,6 +16353,7 @@ const spanish: TeamsTranslationRoot = {
                 approvalProfileProject: "Todos en este proyecto conservan su propio perfil de aprobación hasta que elijan este.",
                 approvalProfileNotSet: "Sin definir",
                 approvalProfileNotSetDescription: "Aquí no se sugiere nada.",
+                approvalProfileNone: "Ninguno",
                 approvalProfileNoneDescription: "Las sesiones nuevas empiezan sin perfil.",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `¿Compartir ${profile} con ${audience}?`,
                 approvalProfileShareBody: "Solo pueden elegir un perfil que puedan ver. Compartirlo les deja verlo, no cambiarlo.",

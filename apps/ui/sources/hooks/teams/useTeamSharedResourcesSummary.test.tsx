@@ -65,6 +65,27 @@ it('never retargets a Team address to another Home credential', async () => {
     expect(home.requests.some(row => row.path.includes('/shared-resources/summary'))).toBe(false);
 });
 
+it('shows the retained summary rows immediately when the Team page is reopened', async () => {
+    const serverId = await home.addHome({ name: 'Retained Home', serverUrl: 'https://retained-summary.example.test',
+        accountId: 'retained-reader', teamsEnabled: true });
+    const scope = { serverId, accountId: 'retained-reader' };
+    const address = { serverId, teamId: 'selected-team' };
+    const request = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
+    const first = { teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 4 }] } as const;
+    const second = { teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 5 }] } as const;
+    home.answer(serverId, request.path, { body: first });
+    const firstScreen = await renderHook(() => useTeamSharedResourcesSummary({ scope, address, enabled: true }));
+    await waitForHomeGovernance(() => expect(firstScreen.getCurrent().isCurrent).toBe(true));
+    await firstScreen.unmount();
+
+    const pending = new Promise<void>(() => {});
+    home.answer(serverId, request.path, { body: second, respondAfter: pending });
+    const reopened = await renderHook(() => useTeamSharedResourcesSummary({ scope, address, enabled: true }));
+    expect(reopened.getCurrent().kinds).toEqual(first.kinds);
+    expect(reopened.getCurrent().status).toBe('loading');
+    await reopened.unmount();
+});
+
 it('ignores known settings and profile changes while retaining membership, share and recovery refreshes', async () => {
     const serverId = await home.addHome({ name: 'Routing Home', serverUrl: 'https://resource-routing.example.test',
         accountId: 'routing-reader', teamsEnabled: true });

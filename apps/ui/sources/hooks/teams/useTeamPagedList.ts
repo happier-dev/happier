@@ -37,7 +37,7 @@ export type TeamPagedList<TRow> = Readonly<{
     reload: () => Promise<void>;
 }>;
 
-type ListState<TRow> = Readonly<{
+export type TeamPagedListState<TRow> = Readonly<{
     rows: readonly TRow[];
     status: TeamPagedListStatus;
     error: HomeDomainFailure | null;
@@ -45,9 +45,9 @@ type ListState<TRow> = Readonly<{
     hasMore: boolean;
 }>;
 
-function initialState<TRow>(): ListState<TRow> {
+function initialState<TRow>(rows: readonly TRow[] = []): TeamPagedListState<TRow> {
     return Object.freeze({
-        rows: Object.freeze([]) as readonly TRow[],
+        rows,
         status: 'loading' as const,
         error: null,
         cursor: null,
@@ -66,6 +66,10 @@ export function useTeamPagedList<TRow>(params: Readonly<{
     loadPage: (cursor: string | null, signal: AbortSignal) => Promise<TeamPageOutcome<TRow>>;
     /** Domain identity for admitted rows whose consumers require reference reuse. */
     getRowKey?: (row: TRow) => string;
+    /** Last-known rows owned by a retained snapshot, shown while this observer refreshes. */
+    initialRows?: readonly TRow[];
+    /** Persists each settled projection through the caller's canonical owner. */
+    onStateChange?: (state: TeamPagedListState<TRow>) => void;
     /** Optional AccountChange invalidation for the exact Home owning this page. */
     accountChange?: Readonly<{ serverId: string }> & (
         | Readonly<{ entityId: string; affects?: never }>
@@ -73,13 +77,17 @@ export function useTeamPagedList<TRow>(params: Readonly<{
     );
 }>): TeamPagedList<TRow> {
     const { key, enabled, getRowKey } = params;
-    const [state, setState] = React.useState<ListState<TRow>>(initialState<TRow>);
+    const [state, setState] = React.useState<TeamPagedListState<TRow>>(() => initialState(params.initialRows ?? []));
 
     // Answers for a superseded sequence must never be applied over its successor.
     const generation = React.useRef(0);
     // The caller may rebuild its closure on every render; only the latest is used.
     const loadPageRef = React.useRef(params.loadPage);
     loadPageRef.current = params.loadPage;
+    const initialRowsRef = React.useRef(params.initialRows ?? []);
+    initialRowsRef.current = params.initialRows ?? [];
+    const onStateChangeRef = React.useRef(params.onStateChange);
+    onStateChangeRef.current = params.onStateChange;
     const inFlight = React.useRef(false);
     const request = React.useRef<AbortController | null>(null);
     /**
@@ -88,11 +96,12 @@ export function useTeamPagedList<TRow>(params: Readonly<{
      * settled at that moment. This ref and `state` are written together and are
      * always the same value; only the ref is read by the loader.
      */
-    const stateRef = React.useRef<ListState<TRow>>(state);
+    const stateRef = React.useRef<TeamPagedListState<TRow>>(state);
 
-    const publish = React.useCallback((next: ListState<TRow>) => {
+    const publish = React.useCallback((next: TeamPagedListState<TRow>) => {
         stateRef.current = next;
         setState(next);
+        onStateChangeRef.current?.(next);
     }, []);
 
     const load = React.useCallback(async (mode: 'reset' | 'refresh' | 'more'): Promise<void> => {
@@ -104,7 +113,7 @@ export function useTeamPagedList<TRow>(params: Readonly<{
 
         const cursor = mode === 'more' ? previous.cursor : null;
         publish(mode === 'reset'
-            ? { ...initialState<TRow>(), status: 'loading' }
+            ? { ...initialState(initialRowsRef.current), status: 'loading' }
             : mode === 'refresh'
                 ? { ...previous, status: 'loading', error: null }
                 : { ...previous, status: 'loading_more', error: null });

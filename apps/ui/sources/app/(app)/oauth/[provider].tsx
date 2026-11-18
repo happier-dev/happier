@@ -87,6 +87,7 @@ import {
     type AccountServiceFailureCode,
 } from '@/components/account/auth/accountServiceFailurePresentation';
 import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protocol/teams';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 type AccountDirectoryCallbackStage = 'signing_in';
 type AccountDirectoryCallbackState = Readonly<{ providerName: string; endpointUrl: string }> & (
     | Readonly<{ kind: 'progress'; stage: AccountDirectoryCallbackStage }>
@@ -172,6 +173,8 @@ export function sanitizeExternalOAuthCallbackError(
     providerName: string,
 ): string {
     switch (code) {
+        case 'access_denied':
+            return t('errors.oauthCancelled');
         case 'oauth_not_configured':
             return t('friends.providerGate.notConfigured', { provider: providerName });
         case 'invalid_state':
@@ -1182,7 +1185,11 @@ function OAuthProviderReturnBody() {
             if (error) {
                 const providerName = provider.displayName ?? providerId;
                 const message = sanitizeExternalOAuthCallbackError(error, providerName);
-                await Modal.alert(t('common.error'), message);
+                if (error === 'access_denied') {
+                    publishPresentationNotice({ key: 'oauth-return', severity: 'info', message });
+                } else {
+                    await Modal.alert(t('common.error'), message);
+                }
                 let passwordEnrollmentReturnTo = '/settings/account/security';
                 let authenticationReturnTo = '/';
                 if (flow !== 'auth') {

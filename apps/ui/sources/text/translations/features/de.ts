@@ -16232,6 +16232,7 @@ const german: TeamsTranslationRoot = {
                 approvalProfileProject: "Alle in diesem Projekt behalten ihr eigenes Freigabeprofil, bis sie dieses wählen.",
                 approvalProfileNotSet: "Nicht festgelegt",
                 approvalProfileNotSetDescription: "Hier wird nichts vorgeschlagen.",
+                approvalProfileNone: "Keine",
                 approvalProfileNoneDescription: "Neue Sitzungen starten ohne Profil.",
                 approvalProfileShareTitle: ({ profile, audience }: { profile: string; audience: string }) => `${profile} mit ${audience} teilen?`,
                 approvalProfileShareBody: "Sie können nur ein Profil wählen, das sie sehen. Teilen erlaubt Ansehen, nicht Ändern.",

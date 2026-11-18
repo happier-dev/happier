@@ -7932,6 +7932,7 @@ localTailscale: {
       `${provider} は既存の Happier アカウントにすでにリンクされています。この端末でサインインするには、すでにサインイン済みの端末からこの端末をリンクしてください。`,
     tokenExchangeFailed: "認可コードの交換に失敗しました",
     oauthAuthorizationDenied: "認可が拒否されました",
+    oauthCancelled: 'サインインがキャンセルされました。変更はありません。',
     webViewLoadFailed: "認証ページの読み込みに失敗しました",
     failedToLoadProfile: "ユーザープロフィールの読み込みに失敗しました",
     userNotFound: "ユーザーが見つかりません",

@@ -7,7 +7,9 @@ import {
     type TeamCredentialViewerCapabilitiesV1,
     type TeamGroupV1,
     type TeamSummaryV1,
+    type TeamSharedResourceSummaryRowV1,
 } from '@happier-dev/protocol/teams';
+import { teamSharedResourceSummaryRowKeyV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
@@ -152,6 +154,14 @@ export type TeamCredentialResourcesSnapshot = Readonly<{
     error: ScopedSnapshotError | null;
 }>;
 
+export type TeamSharedResourcesSummarySnapshot = Readonly<{
+    scope: ServerAccountScope;
+    address: TeamAddress;
+    data: readonly TeamSharedResourceSummaryRowV1[] | null;
+    status: 'loading' | 'ready' | 'error';
+    error: HomeDomainFailure | null;
+}>;
+
 /**
  * Recipient-safe credential choices for one exact Home Account, Team and optional application.
  *
@@ -196,6 +206,7 @@ const groups = new Map<string, TeamGroupSnapshot>();
 const credentialLists = new Map<string, TeamCredentialResourcesSnapshot>();
 const credentialCatalogs = new CredentialCatalogPublication();
 const credentialResources = new Map<string, TeamCredentialResourceSnapshot>();
+const sharedResourceSummaries = new Map<string, TeamSharedResourcesSummarySnapshot>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -227,6 +238,10 @@ function credentialListKey(scope: ServerAccountScope, address: TeamAddress, quer
 
 function credentialResourceKey(scope: ServerAccountScope, address: TeamAddress, resourceId: string): string {
     return `${serverAccountScopedTeamKey(scope, address)}${resourceId.length}:${resourceId}`;
+}
+
+function sharedResourceSummaryKey(scope: ServerAccountScope, address: TeamAddress): string {
+    return serverAccountScopedTeamKey(scope, address);
 }
 
 function credentialSnapshotMatches(
@@ -306,6 +321,47 @@ export function getTeamMembersSnapshot(
 ): TeamMembersSnapshot | null {
     if (!scope || !address) return null;
     return memberLists.get(teamMembersSnapshotKey(scope, address, queryKey)) ?? null;
+}
+
+export function getTeamSharedResourcesSummarySnapshot(
+    scope: ServerAccountScope | null | undefined,
+    address: TeamAddress | null | undefined,
+): TeamSharedResourcesSummarySnapshot | null {
+    if (!scope || !address) return null;
+    return sharedResourceSummaries.get(sharedResourceSummaryKey(scope, address)) ?? null;
+}
+
+export function applyTeamSharedResourcesSummary(
+    scope: ServerAccountScope,
+    address: TeamAddress,
+    data: readonly TeamSharedResourceSummaryRowV1[],
+): void {
+    const previous = getTeamSharedResourcesSummarySnapshot(scope, address);
+    sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({
+        scope,
+        address,
+        data: retainKeyedRows(previous?.data ?? null, data, teamSharedResourceSummaryRowKeyV1),
+        status: 'ready',
+        error: null,
+    }));
+    notify();
+}
+
+export function applyTeamSharedResourcesSummaryFailure(
+    scope: ServerAccountScope,
+    address: TeamAddress,
+    error: HomeDomainFailure,
+): void {
+    const previous = getTeamSharedResourcesSummarySnapshot(scope, address);
+    const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(error.kind);
+    sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({
+        scope,
+        address,
+        data: withdrawn ? null : previous?.data ?? null,
+        status: 'error',
+        error,
+    }));
+    notify();
 }
 
 export function beginTeamMembersLoad(scope: ServerAccountScope, address: TeamAddress, queryKey: string, continuation = false): void {
@@ -1249,6 +1305,11 @@ export function invalidateTeamsSnapshotsForServer(serverIdRaw: string): boolean 
         credentialResources.set(key, Object.freeze({ ...snapshot, stale: true }));
         changed = true;
     }
+    for (const [key, snapshot] of sharedResourceSummaries) {
+        if (snapshot.scope.serverId !== serverId || snapshot.status !== 'ready') continue;
+        sharedResourceSummaries.set(key, Object.freeze({ ...snapshot, status: 'loading', error: null }));
+        changed = true;
+    }
     if (changed) notify();
     return changed;
 }
@@ -1302,6 +1363,11 @@ export function clearTeamsSnapshotsForServer(serverIdRaw: string): void {
         credentialResources.delete(key);
         changed = true;
     }
+    for (const [key, snapshot] of sharedResourceSummaries) {
+        if (snapshot.scope.serverId !== serverId) continue;
+        sharedResourceSummaries.delete(key);
+        changed = true;
+    }
     if (changed) notify();
 }
 
@@ -1315,5 +1381,6 @@ export function resetTeamsSnapshotsForTests(): void {
     credentialLists.clear();
     credentialCatalogs.clear();
     credentialResources.clear();
+    sharedResourceSummaries.clear();
     listeners.clear();
 }
