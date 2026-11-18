@@ -2,7 +2,15 @@ import { expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountReadContext, ConnectedAccountCredentialStore } from '@happier-dev/plugin-sdk/connected-accounts';
+import { listConnectedAccountSecretCredentialKeysV1 } from '../../../protocol/src/connect/pluginConnectedAccountAuthenticationV2.js';
 import * as entry from './index.js';
+
+it('allows a saved Secret to supply the management token field', () => {
+  const descriptor = entry.manifest.contributes.connectedAccountDescriptors?.find(value => value.id === 'supabase');
+  const mode = descriptor?.authentication.modes.find(value => value.id === 'token');
+  expect(listConnectedAccountSecretCredentialKeysV1(mode).get('token')).toBe('token');
+});
+
 
 it.each(['http', 'ambiguous403', 'ambiguous403health', 'transport', 'codeless', 'credentials'] as const)('retains supabase %s failure facts without credential echoes', async boundary => {
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry });

@@ -35,6 +35,7 @@ export const plugin = definePlugin({
           createKeyTitle: 'Open Neon Console',
         },
         credentialOrigin: 'authentication', outcomeReconciliation: 'none', directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+        credentialFieldKeys: { token: 'token' },
         fields: [{ id: 'token', title: 'API key', secret: true, schema: { type: 'string', minLength: 1 } }],
         configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
           { id: 'organizationId', title: 'Organization ID', required: true, secret: false, schema: { type: 'string', minLength: 1 } },

@@ -1,7 +1,15 @@
 import { expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialStore, ConnectedAccountPortableRuntime, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import { listConnectedAccountSecretCredentialKeysV1 } from '../../../protocol/src/connect/pluginConnectedAccountAuthenticationV2.js';
 import * as entry from './index.js';
+
+it('allows a saved Secret to supply the management token field', () => {
+  const descriptor = entry.manifest.contributes.connectedAccountDescriptors?.find(value => value.id === 'neon');
+  const mode = descriptor?.authentication.modes.find(value => value.id === 'token');
+  expect(listConnectedAccountSecretCredentialKeysV1(mode).get('token')).toBe('token');
+});
+
 
 it('declares browser verification unreachable for the existing authentication placement owner', () => {
   const descriptor = entry.manifest.contributes.connectedAccountDescriptors?.find(value => value.id === 'neon');
