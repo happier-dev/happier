@@ -5,6 +5,11 @@ export type DatabaseLexicalToken = Readonly<{
     start: number;
     end: number;
 }>;
+export type DatabaseStatementParameterSlotV1 = Readonly<{
+    /** One-based native bind index. Numbered placeholders can leave gaps. */
+    index: number;
+    placeholder: string;
+}>;
 
 export class DatabaseStatementError extends Error {
     readonly code = 'unsupported_action';
@@ -22,6 +27,7 @@ export function scanSqlStatements(sql: string, engine: 'mysql' | 'sqlite', optio
     if (sql.includes('\0')) throw new DatabaseStatementError('binary_sql_input');
     const tokens: DatabaseLexicalToken[] = [];
     const ranges: DatabaseStatementRange[] = [];
+    const sqliteParameter = /(?:\?[0-9]*|[:@$](?:::)*[\w$\u0080-\uFFFF]+(?:::[\w$\u0080-\uFFFF]*)*(?:\([^)\t\n\v\f\r ]*\))?)/y;
     let index = 0;
     let statementStart: number | undefined;
     let statementEnd = 0;
@@ -43,7 +49,7 @@ export function scanSqlStatements(sql: string, engine: 'mysql' | 'sqlite', optio
         }
         if ((char === '-' && next === '-' && (engine === 'sqlite' || /\s/.test(sql[index + 2] ?? ' ')))
             || (engine === 'mysql' && char === '#')) {
-            while (index < sql.length && sql[index] !== '\n' && sql[index] !== '\r') index++;
+            while (index < sql.length && sql[index] !== '\n') index++;
             continue;
         }
         if (char === '/' && next === '*') {
@@ -78,7 +84,8 @@ export function scanSqlStatements(sql: string, engine: 'mysql' | 'sqlite', optio
             if (!closed) throw new DatabaseStatementError('incomplete_sql_input');
             emit(quotedIdentifier ? 'identifier' : 'literal', start);
         } else if (char === '?' || (engine === 'sqlite' && /[:@$]/.test(char))) {
-            const parameter = engine === 'sqlite' ? /^(?:\?[0-9]*|[:@$][a-zA-Z0-9_\u0080-\uFFFF]+(?:::[a-zA-Z0-9_\u0080-\uFFFF]+)*(?:\([^)]*\))?)/.exec(sql.slice(index))?.[0] : '?';
+            sqliteParameter.lastIndex = index;
+            const parameter = engine === 'sqlite' ? sqliteParameter.exec(sql)?.[0] : '?';
             index += parameter?.length ?? 1;
             emit(parameter ? 'parameter' : 'symbol', start);
         } else if (/[0-9]/.test(char) || (char === '.' && /[0-9]/.test(next ?? ''))) {
@@ -94,6 +101,35 @@ export function scanSqlStatements(sql: string, engine: 'mysql' | 'sqlite', optio
     finish(statementEnd);
     if (!ranges.length) throw new DatabaseStatementError('incomplete_sql_input');
     return { tokens, ranges };
+}
+
+/** Resolve one statement's parameter tokens using native bind order. SQLite
+ * assigns a new name or bare '?' after the largest index seen so far. */
+export function projectDatabaseParameterSlots(
+    sql: string, engine: 'postgresql' | 'mysql' | 'sqlite', tokens: readonly DatabaseLexicalToken[],
+    start = 0, end = tokens.length,
+): DatabaseStatementParameterSlotV1[] {
+    const slots = new Map<number, DatabaseStatementParameterSlotV1>();
+    const sqliteNames = new Map<string, number>();
+    let highest = 0;
+    for (let cursor = start; cursor < end; cursor++) {
+        const token = tokens[cursor]!;
+        if (token.kind !== 'parameter') continue;
+        const placeholder = sql.slice(token.start, token.end);
+        let index: number;
+        if (engine === 'postgresql' || (placeholder.startsWith('?') && placeholder.length > 1)) {
+            index = Number(placeholder.slice(1));
+        } else if (placeholder === '?') {
+            index = highest + 1;
+        } else {
+            index = sqliteNames.get(placeholder) ?? highest + 1;
+            sqliteNames.set(placeholder, index);
+        }
+        if (!Number.isSafeInteger(index) || index < 1) continue;
+        highest = Math.max(highest, index);
+        if (!slots.has(index)) slots.set(index, { index, placeholder });
+    }
+    return [...slots.values()].sort((left, right) => left.index - right.index);
 }
 
 export function databaseStatementWords(sql: string, tokens: readonly DatabaseLexicalToken[]): string[] {

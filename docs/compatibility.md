@@ -1198,6 +1198,20 @@ Descriptors without this fact remain unknown; Machine names come from the existi
 qualified host lookup, and a catalogue page is never treated as a total table count.
 Matching development database-protocol producers and strict readers reload together.
 
+The closed V1 `relation.structure` result can carry optional `incomingForeignKeys`.
+Each entry identifies the referencing relation and lists its source columns in
+the same order as the referenced columns. Workbench reverse navigation binds
+the selected row's values to those source columns in the existing `rows.read`
+filter. Results that omit the field remain readable. Reload the matching
+development Action declarations, daemon and workbench together because earlier
+strict readers reject the added field. The operation keeps its existing wire epoch.
+
+Console slot labels use the active database dialect and default to text. Actual
+values still use the existing explicit `statement.run` parameters and their
+native one-based indexes. The in-process SQLite SDK's optional
+`prepare(sql, { namedParameters })` argument lets the Node and Bun implementations
+consume the same index-ordered values for named, numbered and positional binds.
+
 Protected provider target-link content optionally carries `data` presentation:
 engine, version and a credential-free HTTP(S) provider-console URL and label.
 The existing mode-aware link artifact writer captures these provider-produced

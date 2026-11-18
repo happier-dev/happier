@@ -179,10 +179,17 @@ export const DatabaseForeignKeyV1Schema = z.strictObject({
     targetColumns: z.array(name).check(z.minLength(1)),
 }).check(z.refine(value => value.columns.length === value.targetColumns.length, { message: 'Foreign key columns must align.' }));
 export type DatabaseForeignKeyV1 = z.infer<typeof DatabaseForeignKeyV1Schema>;
+export const DatabaseIncomingForeignKeyV1Schema = z.strictObject({
+    name, source: DatabaseRelationV1Schema,
+    sourceColumns: z.array(name).check(z.minLength(1)),
+    targetColumns: z.array(name).check(z.minLength(1)),
+}).check(z.refine(value => value.sourceColumns.length === value.targetColumns.length, { message: 'Foreign key columns must align.' }));
+export type DatabaseIncomingForeignKeyV1 = z.infer<typeof DatabaseIncomingForeignKeyV1Schema>;
 export const DatabaseRelationStructureV1Schema = z.strictObject({
     relation: DatabaseRelationV1Schema, kind: z.enum(['table', 'view', 'materialized_view']),
     columns: z.array(z.extend(DatabaseColumnV1Schema, { nullable: z.boolean(), generated: z.boolean() })),
     primaryKey: z.array(name), indexes: z.array(DatabaseIndexV1Schema), foreignKeys: z.array(DatabaseForeignKeyV1Schema),
+    incomingForeignKeys: z.optional(z.array(DatabaseIncomingForeignKeyV1Schema)),
     viewDefinition: z.optional(z.string()), capabilities: z.array(DatabaseCapabilityV1Schema),
 });
 export type DatabaseRelationStructureV1 = z.infer<typeof DatabaseRelationStructureV1Schema>;

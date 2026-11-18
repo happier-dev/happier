@@ -1,4 +1,4 @@
-import { DatabaseStatementError, databaseStatementWords, normalizeScannedStatement, scanSqlStatements } from '../statement.js';
+import { DatabaseStatementError, databaseStatementWords, normalizeScannedStatement, projectDatabaseParameterSlots, scanSqlStatements } from '../statement.js';
 
 export const scanSqliteStatements = (sql: string) => scanSqlStatements(sql, 'sqlite');
 export const sqliteStatementRanges = (sql: string) => scanSqlStatements(sql, 'sqlite').ranges;
@@ -6,7 +6,7 @@ export const normalizeSqliteStatement = (sql: string) => normalizeScannedStateme
 
 /** File read-only opening enforces effects; the statement boundary keeps the
  * operation inside its owning transaction and selected database. */
-export function admitSqliteWorkbenchStatement(sql: string): string {
+function readSqliteWorkbenchStatement(sql: string) {
     const { tokens, ranges } = scanSqlStatements(sql, 'sqlite');
     if (ranges.length !== 1) throw new DatabaseStatementError('unsupported_multi_result');
     const words = databaseStatementWords(sql, tokens);
@@ -26,5 +26,18 @@ export function admitSqliteWorkbenchStatement(sql: string): string {
     // to another file. Both cross this operation's selected-file boundary.
     const otherFile = first === 'ATTACH' || first === 'DETACH' || (first === 'VACUUM' && words.includes('INTO'));
     if (transaction || modeSetting || otherFile) throw new DatabaseStatementError('sqlite_transaction_control');
-    return sql.slice(ranges[0]!.start, ranges[0]!.end);
+    return { text: sql.slice(ranges[0]!.start, ranges[0]!.end), tokens };
+}
+
+export function admitSqliteWorkbenchStatement(sql: string): string {
+    return readSqliteWorkbenchStatement(sql).text;
+}
+
+export function sqliteStatementBindings(sql: string): { text: string; namedParameters?: ReadonlyMap<number, string> } {
+    const { text, tokens } = readSqliteWorkbenchStatement(sql);
+    const namedParameters = new Map<number, string>();
+    for (const { index, placeholder } of projectDatabaseParameterSlots(sql, 'sqlite', tokens)) {
+        if (!placeholder.startsWith('?')) namedParameters.set(index, placeholder);
+    }
+    return namedParameters.size ? { text, namedParameters } : { text };
 }

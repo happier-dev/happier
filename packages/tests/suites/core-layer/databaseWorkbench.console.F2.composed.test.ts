@@ -55,10 +55,17 @@ describe.sequential('F2 composed Console cases', () => {
     const sqlText = "'); SELECT 42; --";
     // SEC-CLOSE-165 preserves confidential parameter redaction. Derived booleans
     // prove native binding without asking the executor to disclose those values.
-    expect(await read('SELECT $1::text, $2::bigint, $3::text, $4::text, length($1::text)::integer, $2::bigint > 9007199254740992, $3::text IS NULL, $4::text = \'\'', undefined, [
+    const sql = 'SELECT $1::text, $2::bigint, $3::text, $4::text, length($1::text)::integer, $2::bigint > 9007199254740992, $3::text IS NULL, $4::text = \'\'';
+    const { projectConsoleParameterSlots } = await import('../../../plugins/database-workbench/src/ui/consoleSelection');
+    const [slots] = projectConsoleParameterSlots(sql, { start: 0, end: 0 }, 'read', 'postgresql');
+    expect(slots?.map(slot => [slot.placeholder, slot.defaultInput.type])).toEqual([
+      ['$1', 'text'], ['$2', 'text'], ['$3', 'text'], ['$4', 'text'],
+    ]);
+    const chosen: DatabaseReadStatementInputV1['statement']['parameters'] = [
       { type: 'text', value: sqlText }, { type: 'integer', value: '9007199254740993' },
       { type: 'null' }, { type: 'text', value: '' },
-    ])).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [
+    ];
+    expect(await read(sql, undefined, slots!.map(slot => chosen[slot.index - 1]!))).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [
       { type: 'text', value: '[REDACTED]' }, { type: 'text', value: '[REDACTED]' },
       { type: 'null' }, { type: 'text', value: '' },
       { type: 'integer', value: String(sqlText.length) },

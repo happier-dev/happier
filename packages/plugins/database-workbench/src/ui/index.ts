@@ -18,6 +18,7 @@ export type { WorkbenchPaneState, WorkbenchPaneIdentity } from './state.js';
 export { projectDatabaseStatementMetrics } from '../insights/presentation.js';
 export { createDatabaseMigrationHandoffControl, type DatabaseMigrationTask } from '../insights/migration.js';
 
-export { foreignKeyNavigation, foreignKeyBack, type ForeignKeyNavigation } from './location.js';
+export { foreignKeyNavigation, incomingForeignKeyNavigation, foreignKeyBack, type ForeignKeyNavigation } from './location.js';
 export { inspectJsonCell, type JsonCellInspection } from './cellInspection.js';
 export type { ConsoleParameterInput } from './consoleParameters.js';
+export type { ConsoleParameterSlot } from './consoleSelection.js';

@@ -1,4 +1,4 @@
-import type { DatabaseRelationV1, DatabaseCellV1, DatabaseForeignKeyV1, DatabaseFilterV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRelationV1, DatabaseCellV1, DatabaseForeignKeyV1, DatabaseIncomingForeignKeyV1, DatabaseFilterV1 } from '@happier-dev/database-protocol';
 import type { WorkbenchLocation } from './models.js';
 
 export function sameRelation(left?: DatabaseRelationV1, right?: DatabaseRelationV1): boolean {
@@ -19,16 +19,26 @@ export type ForeignKeyNavigation = Readonly<{ status: 'ready'; location: Workben
 /** All parts of the declared constraint are bound; NULL has no referenced row. */
 export function foreignKeyNavigation(location: WorkbenchLocation, foreignKey: DatabaseForeignKeyV1,
     columns: readonly string[], cells: readonly DatabaseCellV1[]): ForeignKeyNavigation {
+    return navigateByKey(location, foreignKey.target, foreignKey.columns, foreignKey.targetColumns, columns, cells);
+}
+
+export function incomingForeignKeyNavigation(location: WorkbenchLocation, reference: DatabaseIncomingForeignKeyV1,
+    columns: readonly string[], cells: readonly DatabaseCellV1[]): ForeignKeyNavigation {
+    return navigateByKey(location, reference.source, reference.targetColumns, reference.sourceColumns, columns, cells);
+}
+
+function navigateByKey(location: WorkbenchLocation, destination: DatabaseRelationV1, currentKey: readonly string[],
+    destinationKey: readonly string[], columns: readonly string[], cells: readonly DatabaseCellV1[]): ForeignKeyNavigation {
     const filters: DatabaseFilterV1[] = [];
-    for (const [index, column] of foreignKey.columns.entries()) {
+    for (const [index, column] of currentKey.entries()) {
         const value = cells[columns.indexOf(column)];
         if (!value) return { status: 'unavailable', reason: 'missing_key' };
         if (value.type === 'null') return { status: 'unavailable', reason: 'null_key' };
         if (value.type === 'partial') return { status: 'unavailable', reason: 'partial_key' };
-        filters.push({ kind: 'comparison', column: foreignKey.targetColumns[index]!, operator: 'eq', value });
+        filters.push({ kind: 'comparison', column: destinationKey[index]!, operator: 'eq', value });
     }
     const { fkTrail, relation, ...source } = location;
-    return { status: 'ready', location: { ...location, relation: foreignKey.target, mode: 'data', columns: [], sort: [],
+    return { status: 'ready', location: { ...location, relation: destination, mode: 'data', columns: [], sort: [],
         conditions: filters.length === 1 ? filters[0] : { kind: 'and', filters }, page: { rows: location.page.rows, offset: 0 },
         fkTrail: relation ? [...fkTrail, { ...source, relation }] : fkTrail } };
 }

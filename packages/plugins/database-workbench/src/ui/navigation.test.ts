@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { foreignKeyNavigation, foreignKeyBack } from './location.js';
+import { foreignKeyNavigation, foreignKeyBack, incomingForeignKeyNavigation } from './location.js';
 import type { WorkbenchLocation } from './models.js';
 
 const location: WorkbenchLocation = { targetKey: 'target', relation: { database: 'db', schema: 'public', name: 'child' }, mode: 'data',
@@ -19,4 +19,25 @@ it('does not invent a referenced row for NULL, missing, or incomplete foreign ke
     expect(foreignKeyNavigation(location, foreignKey, ['tenant', 'parent'], [{ type: 'text', value: 'a' }, { type: 'null' }])).toEqual({ status: 'unavailable', reason: 'null_key' });
     expect(foreignKeyNavigation(location, foreignKey, ['tenant'], [{ type: 'text', value: 'a' }])).toEqual({ status: 'unavailable', reason: 'missing_key' });
     expect(foreignKeyNavigation(location, foreignKey, ['tenant', 'parent'], [{ type: 'text', value: 'a' }, { type: 'partial', valueType: 'text', value: 'x', encoding: 'utf8', range: { offset: 0, length: 1, unit: 'utf8_bytes', total: 8 } }])).toEqual({ status: 'unavailable', reason: 'partial_key' });
+});
+
+it('opens an incoming composite reference with a typed filter on the referencing columns', () => {
+    const incoming = {
+        name: 'child_fk',
+        source: { database: 'db', schema: 'app', name: 'grandchild' },
+        sourceColumns: ['parent_id', 'tenant'],
+        targetColumns: ['id', 'tenant_id'],
+    };
+    const tenant = { type: 'text', value: "a' OR 1=1" } as const;
+    const id = { type: 'integer', value: '9007199254740993' } as const;
+    const result = incomingForeignKeyNavigation(location, incoming, ['tenant_id', 'id'], [tenant, id]);
+    expect(result).toMatchObject({ status: 'ready', location: { relation: incoming.source, page: { offset: 0 }, conditions: {
+        kind: 'and', filters: [
+            { kind: 'comparison', column: 'parent_id', operator: 'eq', value: id },
+            { kind: 'comparison', column: 'tenant', operator: 'eq', value: tenant },
+        ],
+    } } });
+    if (result.status === 'ready') expect(foreignKeyBack(result.location)).toEqual(location);
+    expect(incomingForeignKeyNavigation(location, incoming, ['id'], [id]))
+        .toEqual({ status: 'unavailable', reason: 'missing_key' });
 });

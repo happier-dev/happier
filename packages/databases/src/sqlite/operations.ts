@@ -1,10 +1,10 @@
 import type {
     DatabaseCellReadInputV1, DatabaseCellV1, DatabaseEditV1, DatabaseFailureV1, DatabaseFilterV1, DatabaseNamedCellV1,
-    DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabaseRelationStructureV1,
+    DatabaseIncomingForeignKeyV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabaseRelationStructureV1,
     DatabaseRelationV1, DatabaseRowsReadInputV1, DatabaseSemanticTypeV1,
-    DatabaseStatementResultV1, DatabaseValueV1,
+    DatabaseStatementResultV1, DatabaseStatementV1, DatabaseValueV1,
 } from '@happier-dev/database-protocol';
-import { admitSqliteWorkbenchStatement, scanSqliteStatements } from './statement.js';
+import { admitSqliteWorkbenchStatement, scanSqliteStatements, sqliteStatementBindings } from './statement.js';
 import { quoteSqliteIdentifier } from './identifiers.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { compileSqliteStatsV1, type SqliteStatsCompilationV1 } from './stats.js';
@@ -17,7 +17,7 @@ export interface SqliteNativeResult {
     rows: SqliteNativeValue[][];
     changes: bigint | null;
 }
-export interface SqliteCompiledStatement { text: string; values: SqliteNativeValue[] }
+export interface SqliteCompiledStatement { text: string; values: SqliteNativeValue[]; namedParameters?: ReadonlyMap<number, string> }
 export type SqliteQuery = (statement: SqliteCompiledStatement) => SqliteNativeResult;
 export type SqliteExecutionOptions = Readonly<{
     stats?: DatabaseStatsExecutionContextV1 & SqliteStatsCompilationV1;
@@ -44,6 +44,11 @@ export function sqliteParameter(value: DatabaseValueV1): SqliteNativeValue {
         case 'float': return typeof value.value === 'number' ? value.value : Number(value.value);
         default: return value.value;
     }
+}
+function compileStatement(statement: DatabaseStatementV1): SqliteCompiledStatement {
+    const binding = statement.parameters.length ? sqliteStatementBindings(statement.sql)
+        : { text: admitSqliteWorkbenchStatement(statement.sql) };
+    return { ...binding, values: statement.parameters.map(sqliteParameter) };
 }
 export function sqliteSemanticType(nativeType: string | null): DatabaseSemanticTypeV1 {
     const type = nativeType?.toUpperCase() ?? '';
@@ -107,7 +112,7 @@ function indexDefinition(sql: string): { expressions: string[]; predicate?: stri
     }
     return { expressions };
 }
-function structure(query: SqliteQuery, relation: DatabaseRelationV1): DatabaseRelationStructureV1 {
+function structure(query: SqliteQuery, relation: DatabaseRelationV1, includeIncoming = false): DatabaseRelationStructureV1 {
     const master = `${quoteSqliteIdentifier(relation.schema)}.sqlite_schema`;
     const identity = catalog(query, `SELECT type,sql FROM ${master} WHERE name=? AND type IN ('table','view')`, [relation.name])[0];
     if (!identity) unavailable('relation_missing');
@@ -119,17 +124,60 @@ function structure(query: SqliteQuery, relation: DatabaseRelationV1): DatabaseRe
     // rowid. INTEGER PRIMARY KEY DESC is the SQLite exception and has an index.
     const rowidAlias = primaryKey.length === 1 && !indexes.some(row => row[2] === 'pk')
         && columns.find(row => text(row, 1) === primaryKey[0])?.[2]?.toString().toUpperCase() === 'INTEGER' ? primaryKey[0] : undefined;
-    const foreign = catalog(query, 'SELECT id,seq,"table","from","to" FROM pragma_foreign_key_list(?,?) ORDER BY id,seq', [relation.name, relation.schema]);
-    const foreignKeys: DatabaseRelationStructureV1['foreignKeys'] = [];
+    // SQLite exposes foreign keys per source table, so the reverse lookup walks this schema's tables in one statement.
+    const incoming = includeIncoming && kind === 'table' ? `
+        UNION ALL
+        SELECT 1,source.name,fk.id,fk.seq,fk."table",fk."from",fk."to"
+        FROM selected CROSS JOIN ${master} source
+        CROSS JOIN pragma_foreign_key_list(source.name,selected.schema_name) fk
+        WHERE source.type='table' AND fk."table"=selected.name COLLATE NOCASE` : '';
+    const foreign = catalog(query, `WITH selected(name,schema_name) AS (VALUES (?,?))
+        SELECT 0,selected.name,fk.id,fk.seq,fk."table",fk."from",
+            coalesce(fk."to",(SELECT name FROM pragma_table_xinfo(fk."table",selected.schema_name) WHERE pk=fk.seq+1))
+        FROM selected CROSS JOIN pragma_foreign_key_list(selected.name,selected.schema_name) fk
+        ${incoming}
+        ORDER BY 1,2,3,4`, [relation.name, relation.schema]);
+    const outgoing = new Map<string, { name: string; target: DatabaseRelationV1; columns: string[]; targetColumns: string[] }>();
+    const incomingByName = new Map<string, { name: string; source: DatabaseRelationV1; sourceColumns: string[]; targetColumns: Array<string | null> }>();
     for (const row of foreign) {
-        const id = `${relation.name}_fk_${text(row, 0)}`;
-        let key = foreignKeys.find(item => item.name === id);
-        if (!key) { key = { name: id, columns: [], target: { schema: relation.schema, name: text(row, 2) }, targetColumns: [] }; foreignKeys.push(key); }
-        key.columns.push(text(row, 3));
-        // An omitted destination is SQLite shorthand for the referenced primary key.
-        const destination = row[4] === null ? catalog(query, 'SELECT name FROM pragma_table_xinfo(?,?) WHERE pk>0 ORDER BY pk', [text(row, 2), relation.schema])[Number(row[1])]?.[0] : row[4];
-        if (typeof destination !== 'string') unavailable('foreign_key_destination_unavailable');
-        key.targetColumns.push(destination);
+        const source = { schema: relation.schema, name: text(row, 1) };
+        const name = `${source.name}_fk_${text(row, 2)}`;
+        const destination = row[6];
+        if (Number(row[0]) === 0) {
+            if (typeof destination !== 'string') unavailable('foreign_key_destination_unavailable');
+            let key = outgoing.get(name);
+            if (!key) {
+                key = { name, target: { schema: relation.schema, name: text(row, 4) }, columns: [], targetColumns: [] };
+                outgoing.set(name, key);
+            }
+            key.columns.push(text(row, 5));
+            key.targetColumns.push(destination);
+        } else {
+            let key = incomingByName.get(name);
+            if (!key) {
+                key = { name, source, sourceColumns: [], targetColumns: [] };
+                incomingByName.set(name, key);
+            }
+            key.sourceColumns.push(text(row, 5));
+            key.targetColumns.push(typeof destination === 'string' ? destination : null);
+        }
+    }
+    const incomingForeignKeys: DatabaseIncomingForeignKeyV1[] = [];
+    if (incomingByName.size > 0) {
+        // The pragma preserves destination spelling. SQLite matches identifiers case-insensitively for ASCII.
+        const foldIdentifier = (name: string) => name.replace(/[A-Z]/g, letter => letter.toLowerCase());
+        const columnNames = new Map(columns.map(row => {
+            const name = text(row, 1);
+            return [foldIdentifier(name), name] as const;
+        }));
+        for (const key of incomingByName.values()) {
+            // An omitted destination uses the entire ordered parent PK.
+            const targetColumns = key.targetColumns[0] === null ? primaryKey
+                : key.targetColumns.map(name => name === null ? undefined : columnNames.get(foldIdentifier(name)));
+            if (targetColumns.length === key.sourceColumns.length && targetColumns.every(name => name !== undefined)) {
+                incomingForeignKeys.push({ ...key, targetColumns });
+            }
+        }
     }
     return { relation, kind, columns: columns.filter(row => Number(row[6]) !== 1).map(row => ({ name: text(row, 1), nativeType: text(row, 2) || 'unknown', semanticType: sqliteSemanticType(text(row, 2)),
         nullable: Number(row[3]) === 0 && text(row, 1) !== rowidAlias, defaultExpression: row[4] === null ? null : text(row, 4), generated: Number(row[6]) === 2 || Number(row[6]) === 3 })), primaryKey,
@@ -141,7 +189,8 @@ function structure(query: SqliteQuery, relation: DatabaseRelationV1): DatabaseRe
                     ...(Number(column[0]) === -2 ? { kind: 'expression' as const, expression: parsed.expressions[position] ?? '' } : { kind: 'column' as const, column: text(column, 1) }), direction: Number(column[2]) ? 'desc' as const : 'asc' as const })),
                 ...(parsed.predicate ? { predicate: parsed.predicate } : {}) };
         }),
-        foreignKeys, ...(kind === 'view' ? { viewDefinition: text(identity, 1) } : {}),
+        foreignKeys: [...outgoing.values()], ...(includeIncoming ? { incomingForeignKeys } : {}),
+        ...(kind === 'view' ? { viewDefinition: text(identity, 1) } : {}),
         capabilities: [{ operation: 'rows.read', available: true }, kind === 'table' ? { operation: 'edits.apply', available: true } : { operation: 'edits.apply', available: false, code: 'database_relation_read_only', reason: 'Views are read-only in the workbench' }] };
 }
 function keyset(order: readonly DatabaseOrderV1[], values: readonly DatabaseNamedCellV1[], statement: SqliteCompiledStatement, backward: boolean): string {
@@ -272,21 +321,22 @@ export function executeSqliteOperation(input: DatabaseOperationInputV1, query: S
             const rows = native.slice(0, input.page.rows);
             return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: text(row, 0) }, kind: row[1] === 'view' ? 'view' : 'table' })), completeness: native.length > rows.length ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.search ? { search: input.search } : {}), after: text(rows.at(-1)!, 0) } } : { complete: true } };
         }
-        case 'relation.structure': return { ok: true, operation: input.operation, structure: structure(query, input.relation) };
+        case 'relation.structure': return { ok: true, operation: input.operation, structure: structure(query, input.relation, true) };
         case 'rows.read': return readRows(query, input);
         case 'cell.read': return readCell(query, input);
         case 'statement.run': {
             const statements = input.mode === 'read' ? [input.statement] : input.statements;
             const results: DatabaseStatementResultV1[] = [];
             for (const [statementIndex, statement] of statements.entries()) {
-                try { results.push(decodeSqliteResult(query({ text: admitSqliteWorkbenchStatement(statement.sql), values: statement.parameters.map(sqliteParameter) }))); }
+                try { results.push(decodeSqliteResult(query(compileStatement(statement)))); }
                 catch (error) { if (error instanceof Error) Object.assign(error, { statementIndex }); throw error; }
             }
             return { ok: true, operation: input.operation, results };
         }
         case 'statement.explain': {
             if (input.mode === 'analyze') unavailable('SQLite does not support EXPLAIN ANALYZE');
-            const result = query({ text: `EXPLAIN QUERY PLAN ${admitSqliteWorkbenchStatement(input.statement.sql)}`, values: input.statement.parameters.map(sqliteParameter) });
+            const statement = compileStatement(input.statement);
+            const result = query({ ...statement, text: `EXPLAIN QUERY PLAN ${statement.text}` });
             return { ok: true, operation: input.operation, format: 'text', plan: result.rows.map(row => text(row, 3)).join('\n'), completeness: { complete: true } };
         }
         case 'edits.apply': {

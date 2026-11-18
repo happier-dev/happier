@@ -1,5 +1,5 @@
 import type {
-    DatabaseCellResultV1, DatabaseDescriptorV1, DatabaseFailureV1, DatabaseOperationResultV1,
+    DatabaseCellResultV1, DatabaseDescriptorV1, DatabaseFailureV1, DatabaseIncomingForeignKeyV1, DatabaseOperationResultV1,
     DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1,
     DatabaseStatsReadV1, DatabaseStatsObservationV1,
 } from '@happier-dev/database-protocol';
@@ -14,7 +14,7 @@ import { databaseEngineName } from './surface/engines.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
 import { createApplyControl, selectRelationChanges } from './apply.js';
-import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, foreignKeyBack } from './location.js';
+import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, incomingForeignKeyNavigation, foreignKeyBack } from './location.js';
 import type {
     DatabaseRelations, DatabaseTargets, WorkbenchApplyOutcome, WorkbenchChange, WorkbenchLocation,
     WorkbenchOptions, WorkbenchReview, WorkbenchCellState, WorkbenchActivityResource, WorkbenchControlBinding,
@@ -212,6 +212,12 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                         const foreignKey = metadata.data!.foreignKeys.find(candidate => candidate.name === constraintName);
                         if (!row || !foreignKey) return { status: 'unavailable' as const, reason: 'missing_key' as const };
                         return foreignKeyNavigation(local.get('location'), foreignKey, result.columns.map(column => column.name), row.cells);
+                    },
+                    incomingForeignKeys: metadata.data.incomingForeignKeys ?? [],
+                    incomingForeignKey(rowKey: string, reference: DatabaseIncomingForeignKeyV1) {
+                        const row = projected.rows.find(candidate => candidate.rowKey === rowKey);
+                        if (!row) return { status: 'unavailable' as const, reason: 'missing_key' as const };
+                        return incomingForeignKeyNavigation(local.get('location'), reference, result.columns.map(column => column.name), row.cells);
                     },
                     exportInput(rowKeys: readonly string[], format: 'csv' | 'json') {
                         const selected = new Set(rowKeys);

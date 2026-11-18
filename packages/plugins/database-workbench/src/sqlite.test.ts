@@ -54,6 +54,24 @@ describe('SQLite selected-file operations', () => {
             completeness: { complete: false },
         }] });
     });
+    it('binds named, numbered and anonymous parameters in native index order', async () => {
+        const { execute } = await fixture(true);
+        const one = { type: 'text', value: 'one' } as const;
+        const three = { type: 'text', value: 'three' } as const;
+        const four = { type: 'integer', value: '9007199254740993' } as const;
+        const five = { type: 'text', value: '' } as const;
+        const six = { type: 'binary', encoding: 'base64', value: 'AQI=' } as const;
+        expect(await execute({ operation: 'statement.run', target, mode: 'read', statement: {
+            sql: 'SELECT ?2, ?1, ?', parameters: [one, four, { type: 'null' }],
+        } })).toMatchObject({ ok: true, results: [{ rows: [{ cells: [four, one, { type: 'null' }] }] }] });
+        expect(await execute({ operation: 'statement.run', target, mode: 'read', statement: {
+            sql: 'SELECT ?3, :same, @same, ?, :same AS repeated, ?1, ?4',
+            parameters: [one, { type: 'null' }, three, four, five, six],
+        } })).toMatchObject({ ok: true, results: [{
+            columns: ['?3', ':same', '@same', '?', 'repeated', '?1', '?4'].map(name => ({ name })),
+            rows: [{ cells: [three, four, five, six, four, one, four] }],
+        }] });
+    });
     it('reads native statistics with held file capabilities and typed unavailable groups', async () => {
         const { connection, execute } = await fixture(true);
         expect(await execute({ operation: 'statement.run', target, mode: 'read', statement: {

@@ -108,7 +108,7 @@ function openNativeSqliteConnection(filePath: string, options: { readOnly: boole
             if (closed) return connectionUnavailable();
             const query: SqliteQuery = statement => {
                 checkCancellation();
-                const prepared = db.prepare(statement.text); const columns = prepared.columns();
+                const prepared = db.prepare(statement.text, statement); const columns = prepared.columns();
                 checkCancellation();
                 // Keep optional change metadata absent instead of replaying RETURNING writes.
                 if (columns.length) {

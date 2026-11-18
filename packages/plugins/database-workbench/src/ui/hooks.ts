@@ -7,6 +7,7 @@ import type { CodeEditorProps, CodeEditorSelectionRange } from '@happier-dev/plu
 import { createDatabaseCompletionSource } from './completions.js';
 import { createWorkbenchPaneState, workbenchPaneKey, type WorkbenchPaneIdentity, type WorkbenchPaneState } from './state.js';
 import { selectRelationChanges } from './apply.js';
+import { projectConsoleParameterSlots, readConsoleStatementLayout } from './consoleSelection.js';
 
 const paneState = createWorkbenchPaneState();
 
@@ -138,6 +139,7 @@ export function useStructure(relation: DatabaseRelationV1) {
         nullable: column.nullable, default: column.defaultExpression ?? null })) ?? emptyColumns,
         viewDefinition: snapshot.data?.viewDefinition,
         primaryKey: snapshot.data?.primaryKey ?? emptyColumns, foreignKeys: snapshot.data?.foreignKeys ?? emptyRows,
+        incomingForeignKeys: snapshot.data?.incomingForeignKeys ?? emptyRows,
         indexes: snapshot.data?.indexes.map(index => ({ ...index, method: null })) ?? emptyRows,
         status: snapshot.status === 'failed' ? 'unsupported' as const : snapshot.status === 'loading' ? 'loading' as const
             : snapshot.data?.columns.length ? 'loaded' as const : 'empty' as const,
@@ -221,13 +223,17 @@ export function useDatabaseConsole(targetKey: string) {
     const subscribeParameters = useCallback((listener: () => void) => controller.parameterInputs.subscribe('parameters', listener), [controller]);
     const getParameters = useCallback(() => controller.parameterInputs.get('parameters'), [controller]);
     const parameterInputs = useSyncExternalStore(subscribeParameters, getParameters, getParameters);
+    const engine = instance.target(targetKey).engine;
+    const statementLayout = useMemo(() => readConsoleStatementLayout(text.sql, engine), [text.sql, engine]);
+    const parameterSlots = useMemo(() => projectConsoleParameterSlots(text.sql, selection, execution.mode, engine, statementLayout),
+        [text.sql, selection, execution.mode, engine, statementLayout]);
     const onSelection = useCallback((range: CodeEditorSelectionRange | null) => { if (range) controller.setSelection(range); }, [controller]);
     const editorProps = useMemo(() => ({ value: text.sql, onChange: controller.setText, onSelection, completionSource,
         language: 'sql', resetKey: targetKey } satisfies CodeEditorProps), [controller, onSelection, completionSource, targetKey, text.sql]);
-    return useMemo(() => ({ text: text.sql, history: text.history, selection, parameterInputs, ...execution,
+    return useMemo(() => ({ text: text.sql, history: text.history, selection, parameterInputs, parameterSlots, ...execution,
         setText: controller.setText, setSelection: controller.setSelection, setMode: controller.setMode, setParameters: controller.setParameters, setParameterInputs: controller.setParameterInputs,
         run: controller.run, explain: controller.explain, cancel: controller.cancel, clearHistory: controller.clearHistory,
-        editorProps }), [controller, text, selection, parameterInputs, execution, editorProps]);
+        editorProps }), [controller, text, selection, parameterInputs, parameterSlots, execution, editorProps]);
 }
 export function useWorkbenchCellState(rowKey: string, column: string) {
     const instance = useWorkbenchInstance();

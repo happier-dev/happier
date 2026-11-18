@@ -1,6 +1,6 @@
 import type {
     DatabaseCellReadInputV1, DatabaseEditV1, DatabaseFailureCauseV1, DatabaseFailureV1, DatabaseFilterV1, DatabaseNamedCellV1,
-    DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabasePartialCellV1, DatabaseRelationStructureV1,
+    DatabaseIncomingForeignKeyV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabasePartialCellV1, DatabaseRelationStructureV1,
     DatabaseRelationV1, DatabaseRowsReadInputV1, DatabaseSemanticTypeV1,
     DatabaseStatementResultV1, DatabaseValueV1,
 } from '@happier-dev/database-protocol';
@@ -140,10 +140,12 @@ export function compilePostgresqlFilter(filter: DatabaseFilterV1, statement: Pos
     }
 }
 
-async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, missing?: DatabaseFailureV1): Promise<DatabaseRelationStructureV1> {
-    const identity = await query({ text: 'SELECT c.relkind FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN (\'r\',\'p\',\'v\',\'m\')', values: [relation.schema, relation.name] });
+async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, options: {
+    includeIncoming?: boolean; missing?: DatabaseFailureV1;
+} = {}): Promise<DatabaseRelationStructureV1> {
+    const identity = await query({ text: 'SELECT c.relkind,c.oid::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN (\'r\',\'p\',\'v\',\'m\')', values: [relation.schema, relation.name] });
     if (!identity.rows[0]) {
-        if (missing) throw new PostgresqlOperationError(missing);
+        if (options.missing) throw new PostgresqlOperationError(options.missing);
         unavailable('relation_missing');
     }
     const nativeKind = scalar(identity.rows[0], 0);
@@ -161,12 +163,33 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, m
         (SELECT json_agg(CASE WHEN (i.indoption[k-1] & 1)=1 THEN 'desc' ELSE 'asc' END ORDER BY k)::text FROM generate_series(1,i.indnkeyatts) k)
         FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
         JOIN pg_catalog.pg_class ci ON ci.oid=i.indexrelid WHERE n.nspname=$1 AND c.relname=$2 ORDER BY ci.relname`, values: [relation.schema, relation.name] });
-    const foreign = await query({ text: `SELECT f.conname, ns.nspname, ct.relname,
+    // A source partition's copy of its parent's key describes the same rows as the parent's key.
+    const incoming = options.includeIncoming && kind === 'table' ? `
+        UNION ALL
+        SELECT f.*,false FROM pg_catalog.pg_constraint f
+        LEFT JOIN pg_catalog.pg_constraint parent ON parent.oid=f.conparentid
+        WHERE f.contype='f' AND f.confrelid=$1::oid AND parent.confrelid IS DISTINCT FROM f.confrelid` : '';
+    const foreign = await query({ text: `SELECT f.conname,n.nspname,c.relname,
         (SELECT json_agg(a.attname ORDER BY u.ord)::text FROM unnest(f.conkey) WITH ORDINALITY u(num,ord) JOIN pg_catalog.pg_attribute a ON a.attrelid=f.conrelid AND a.attnum=u.num),
-        (SELECT json_agg(a.attname ORDER BY u.ord)::text FROM unnest(f.confkey) WITH ORDINALITY u(num,ord) JOIN pg_catalog.pg_attribute a ON a.attrelid=f.confrelid AND a.attnum=u.num)
-        FROM pg_catalog.pg_constraint f JOIN pg_catalog.pg_class c ON c.oid=f.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        JOIN pg_catalog.pg_class ct ON ct.oid=f.confrelid JOIN pg_catalog.pg_namespace ns ON ns.oid=ct.relnamespace
-        WHERE f.contype='f' AND n.nspname=$1 AND c.relname=$2 ORDER BY f.conname`, values: [relation.schema, relation.name] });
+        (SELECT json_agg(a.attname ORDER BY u.ord)::text FROM unnest(f.confkey) WITH ORDINALITY u(num,ord) JOIN pg_catalog.pg_attribute a ON a.attrelid=f.confrelid AND a.attnum=u.num),
+        f.outgoing
+        FROM (
+            SELECT f.*,true AS outgoing FROM pg_catalog.pg_constraint f WHERE f.contype='f' AND f.conrelid=$1::oid
+            ${incoming}
+        ) f
+        JOIN pg_catalog.pg_class c ON c.oid=CASE WHEN f.outgoing THEN f.confrelid ELSE f.conrelid END
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        ORDER BY f.conname,n.nspname,c.relname`, values: [scalar(identity.rows[0], 1)] });
+    const foreignKeys: Array<DatabaseRelationStructureV1['foreignKeys'][number]> = [];
+    const incomingForeignKeys: DatabaseIncomingForeignKeyV1[] = [];
+    for (const row of foreign.rows) {
+        const name = scalar(row, 0);
+        const peer = { schema: scalar(row, 1), name: scalar(row, 2) };
+        const sourceColumns = stringArray(scalar(row, 3));
+        const targetColumns = stringArray(scalar(row, 4));
+        if (row[5] === 't') foreignKeys.push({ name, target: peer, columns: sourceColumns, targetColumns });
+        else incomingForeignKeys.push({ name, source: peer, sourceColumns, targetColumns });
+    }
     const primary = indexes.rows.find(row => scalar(row, 2) === 'true');
     const result: DatabaseRelationStructureV1 = {
         relation, kind, columns: columns.rows.map(row => ({ name: scalar(row, 0), nativeType: scalar(row, 2),
@@ -179,7 +202,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, m
                 columns: expressions.map((expression, index) => ({ ...(names[index] ? { kind: 'column' as const, column: names[index]! } : { kind: 'expression' as const, expression }), direction: directions[index] === 'desc' ? 'desc' as const : 'asc' as const })),
                 ...(row[4] === null ? {} : { predicate: scalar(row, 4) }) };
         }),
-        foreignKeys: foreign.rows.map(row => ({ name: scalar(row, 0), target: { schema: scalar(row, 1), name: scalar(row, 2) }, columns: stringArray(scalar(row, 3)), targetColumns: stringArray(scalar(row, 4)) })),
+        foreignKeys, ...(options.includeIncoming ? { incomingForeignKeys } : {}),
         capabilities: [{ operation: 'rows.read', available: true },
             kind === 'table' ? { operation: 'edits.apply', available: true } : { operation: 'edits.apply', available: false, code: 'database_relation_read_only', reason: 'Views are read-only in the workbench' }],
     };
@@ -370,7 +393,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 ...(row[6] == null ? {} : { size: statsSize({ relation_bytes: row[3], table_bytes: row[4], index_bytes: row[5], size_bytes: row[6] }, 'database_bytes') }) })), completeness: native.rows.length > rows.length
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
-        case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation) };
+        case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation, { includeIncoming: true }) };
         case 'rows.read': return readRows(query, input);
         case 'statement.run': {
             const statements = input.mode === 'read' ? [input.statement] : input.statements;
@@ -393,7 +416,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
             return { ok: true, operation: input.operation, format: 'text', plan: plan.rows.map(row => scalar(row, 0)).join('\n'), completeness: { complete: true } };
         }
         case 'edits.apply': {
-            const metadata = await structure(query, input.relation, { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: 0, reason: 'relation_changed' });
+            const metadata = await structure(query, input.relation, { missing: { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: 0, reason: 'relation_changed' } });
             if (metadata.kind !== 'table') unavailable('relation_read_only');
             let inserted = 0n; let updated = 0n; let deleted = 0n;
             for (const [changeIndex, change] of input.changes.entries()) {
