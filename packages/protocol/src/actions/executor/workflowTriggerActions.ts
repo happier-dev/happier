@@ -887,7 +887,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (!currentChildren.complete) return { current: false, review: { reason: 'steps' } };
         const changedChildren = pinned.childRevisions.length !== currentChildren.revisions.length
           || pinned.childRevisions.some((child, index) => !sameStrictJsonValue(child, currentChildren.revisions[index]));
-        if (changedChildren) return { current: false, review: { reason: 'steps', changedSteps: currentChildren.steps } };
+        if (changedChildren) return { current: false, review: { reason: 'steps', changedSteps: [...currentChildren.steps] } };
         return { current: true, automationId: row.id, triggerId: trigger.id,
           triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
       }
