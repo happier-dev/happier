@@ -188,7 +188,10 @@ export function ExternalUrlTarget(props: Readonly<{
                 {framability.probe ? (
                     <IframeRefusalProbe
                         key={`${framability.probe.url}:${props.navigationKey ?? ''}`}
-                        probe={framability.probe}
+                        probe={{ ...framability.probe, onError: () => {
+                            framability.probe?.onError();
+                            onLifecycle?.({ kind: 'loadFailed', errorCode: WEBVIEW_LOAD_FAILED_ERROR_CODE, url: externalUrl });
+                        } }}
                     />
                 ) : null}
                 <BrowserFrameStatusCapsule

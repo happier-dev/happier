@@ -248,6 +248,48 @@ describe('browser sidecar CDP control adapter', () => {
         listener?.({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret', params: { frame: { id: 'main', loaderId: 'late', url: 'https://late.test/' } } });
         expect(events).toHaveLength(count);
     });
+    it.each(['acknowledged', 'failed', 'newer navigation'] as const)(
+        'publishes stopped readiness only for the acknowledged document (%s)', async outcome => {
+            let listener!: BrowserSidecarCdpEventSubscriber;
+            let settleStop!: () => void;
+            const acknowledgement = new Promise<void>((resolve, reject) => {
+                settleStop = () => outcome === 'failed' ? reject(new Error('CDP stop rejected')) : resolve();
+            });
+            const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+                transport: { ...createTransport(), subscribeCdpEvents: callback => { listener = callback; return () => undefined; },
+                    dispatchPageCommand: async command => {
+                        if (command.method === 'Page.stopLoading') return acknowledgement;
+                        if (command.method === 'Page.getFrameTree') return { frameTree: { frame: {
+                            id: 'main', loaderId: 'original', url: 'https://browser.example.test/start',
+                        } } };
+                        return {};
+                    },
+                },
+            });
+            try {
+                await adapter.dispatchCommand(externalOpenViewCommand());
+                const events: unknown[] = [];
+                adapter.subscribeBrowserEvents(event => events.push(event));
+                const command = { kind: 'stop', commandId: 'stop', browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
+                const stopped = adapter.dispatchCommand(command);
+                expect(adapter.getNavigationState(command)?.loadingState).toBe('loading');
+                if (outcome === 'newer navigation') listener({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret',
+                    params: { frame: { id: 'main', loaderId: 'next', url: 'https://browser.example.test/next' } } });
+                events.length = 0;
+                settleStop();
+                const result = await stopped;
+                const ready = outcome === 'acknowledged';
+                expect(adapter.getNavigationState(command)).toMatchObject({ loadingState: ready ? 'ready' : 'loading',
+                    navigationGeneration: outcome === 'newer navigation' ? 1 : 0 });
+                if (outcome === 'failed') expect(result).toMatchObject({ status: 'failed', error: { code: 'adapter_unavailable' } });
+                else expect(result).toMatchObject({ status: 'dispatched', events: expect.arrayContaining([
+                    expect.objectContaining({ kind: 'navigationStateChanged', loadingState: ready ? 'ready' : 'loading' }),
+                ]) });
+                expect(events).toEqual(ready ? [expect.objectContaining({ kind: 'navigationStateChanged', loadingState: 'ready' })] : []);
+            } finally { adapter.dispose(); }
+        },
+    );
+
     it.each(['live', 'bootstrap'] as const)('publishes the attempted address for a Chromium error document (%s)', async admission => {
         let listener!: BrowserSidecarCdpEventSubscriber;
         const failedUrl = 'http://q94-unavailable.invalid/';

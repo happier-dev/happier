@@ -409,6 +409,52 @@ describe('browser runtime action executor', () => {
         } }))).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
         expect(openExternalUrl).not.toHaveBeenCalled();
     });
+    it.each([
+        { managed: false, currentUrl: 'https://example.com/', destination: 'https://slow.example.test/', enabled: true },
+        { managed: true, currentUrl: 'https://example.com/', destination: 'http://127.0.0.1:5173/', enabled: false },
+        { managed: true, currentUrl: 'http://127.0.0.1:5173/', destination: 'https://example.com/', enabled: true },
+    ])('uses the pending escape destination and its placement (managed: $managed, destination: $destination)', async ({ managed, currentUrl, destination, enabled }) => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { selectBrowserOpenExternalAvailability } = await import('./openExternal');
+        const adapterKind = managed ? 'streamedBrowserSurface' : 'externalUrl';
+        const engineKind = managed ? 'streamedSurface' : 'webIframe';
+        let state = openViewState({ adapterKind, engineKind, target: externalTarget, currentUrl,
+            capabilities: buildBrowserAdapterCapabilities({ adapterKind, supportedTargetKinds: ['externalUrl'], supportedRenderEngines: [engineKind] }) });
+        state = applyBrowserControlEvent(state, { kind: 'navigationStarted', eventId: 'start-pending', occurredAt: 1,
+            browserSessionId: 'browser_session_1', viewId: 'view_1', pendingUrl: destination });
+        const execute = createBrowserRuntimeActionExecutor({ control: { readState: () => state, applyDispatchResult: () => {} } });
+        vi.mocked(openExternalUrl).mockClear();
+        expect(selectBrowserOpenExternalAvailability({ view: state.viewsById.view_1 }).enabled).toBe(enabled);
+        const result = await execute(runtimeArgs({ actionId: 'browser.view.openExternal', input: {
+            browserSessionId: 'browser_session_1', viewId: 'view_1', commandId: 'open-pending-page',
+        } }));
+        if (enabled) {
+            expect(result).toMatchObject({ status: 'dispatched' });
+            expect(openExternalUrl).toHaveBeenCalledWith(destination);
+        } else {
+            expect(result).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+            expect(openExternalUrl).not.toHaveBeenCalled();
+        }
+    });
+    it.each([true, false])('opens the failed navigation destination instead of the previous page (reported URL: %s)', async reportsUrl => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { browserViewLifecycleEvent } = await import('../control/lifecycle');
+        const destination = 'https://bnroot-missing.invalid/';
+        let state = openViewState({ adapterKind: 'externalUrl', engineKind: 'webIframe', target: externalTarget,
+            capabilities: localPreviewCapabilities, currentUrl: 'https://duckduckgo.com/?q=javascript%3Aalert(1)' });
+        const target = { browserSessionId: 'browser_session_1', viewId: 'view_1' };
+        const started = browserViewLifecycleEvent(target, { kind: 'loadStarted', url: destination });
+        const failed = browserViewLifecycleEvent(target, { kind: 'loadFailed', errorCode: 'webview_load_failed',
+            ...(reportsUrl ? { url: destination } : {}) });
+        if (!started || !failed) throw new Error('Navigation lifecycle events are required');
+        state = applyBrowserControlEvent(applyBrowserControlEvent(state, started), failed);
+        const execute = createBrowserRuntimeActionExecutor({ control: { readState: () => state, applyDispatchResult: () => {} } });
+        expect(await execute(runtimeArgs({ actionId: 'browser.view.openExternal', input: {
+            ...target, commandId: 'open-failed-page',
+        } }))).toMatchObject({ status: 'dispatched' });
+        expect(openExternalUrl).toHaveBeenCalledWith(destination);
+        expect(state.viewsById.view_1).toMatchObject({ currentUrl: destination, pendingUrl: null, loadingState: 'failed' });
+    });
     it.each(['https://example.com/recovered', 'http://127.0.0.1:5173/', 'http://[::1]:5173/'])(
         'uses the streamed current address for the own-browser escape (%s)', async url => {
         const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');

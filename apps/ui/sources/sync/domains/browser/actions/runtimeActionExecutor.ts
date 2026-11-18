@@ -33,7 +33,7 @@ import { openDesktopBrowserDevtools } from '../adapters/desktopWebViewBridge';
 import { buildOpenExternalTabSelection, openBrowserExternalTabSelection } from '../adapters/selection';
 import type { BrowserControlState } from '../control/state';
 import type { BrowserControlViewState } from '../control/state';
-import { selectBrowserOpenExternalAvailability, type BrowserOpenExternalUrlResult } from './openExternal';
+import { selectBrowserOpenExternalAddress, selectBrowserOpenExternalAvailability, type BrowserOpenExternalUrlResult } from './openExternal';
 import {
     createBrowserRecordingAttachExecutor,
     type BrowserRecordingAttachAdapter,
@@ -333,7 +333,7 @@ async function executeBrowserControlAction(
         if (view.target.kind !== 'localServicePreview' && !selectBrowserOpenExternalAvailability({ view }).enabled) {
             return browserRuntimeActionDisabledResult('browser_view_unavailable');
         }
-        let url = view.currentUrl ?? view.pendingUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        let url = selectBrowserOpenExternalAddress(view);
         if (view.target.kind === 'localServicePreview') {
             if (!control?.resolveOpenExternalUrl) return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
             const resolved = await control.resolveOpenExternalUrl(view, args.context.signal);

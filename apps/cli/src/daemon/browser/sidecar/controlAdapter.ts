@@ -551,6 +551,7 @@ export function createBrowserSidecarCdpControlAdapter(
             return failed(command, 'view_not_found', 'Browser sidecar does not own this view.');
         }
 
+        const navigationGeneration = boundView.state.navigationGeneration;
         let issued = false;
         try {
             scope.signal?.throwIfAborted();
@@ -563,6 +564,13 @@ export function createBrowserSidecarCdpControlAdapter(
                 method,
                 ...(params ? { params } : {}),
             });
+            // Page.stopLoading acknowledges that navigations and resource fetches stopped.
+            // Publish that engine fact before the response can trail its terminal CDP event.
+            if (command.kind === 'stop' && readBoundView(command) === boundView
+                && boundView.state.navigationGeneration === navigationGeneration) {
+                boundView.state = { ...boundView.state, loadingState: 'ready' };
+                publishState(boundView);
+            }
             return dispatchState(command);
         } catch (error) {
             return cdpFailure(command, !issued || isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');

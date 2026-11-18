@@ -9,11 +9,16 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { isDaemonAuthoritativeBrowserView } from '../control/commands';
 
+/** The escape follows the page currently requested in the frame, including an unfinished navigation. */
+export function selectBrowserOpenExternalAddress(view: BrowserControlViewState): string | null {
+    return view.pendingUrl ?? view.currentUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+}
+
 /** A managed page on the Machine's own localhost: this device's browser would open its own instead. */
 function isMachineLocalAddress(view: BrowserControlViewState): boolean {
     if (!isDaemonAuthoritativeBrowserView(view)) return false;
     try {
-        const url = view.currentUrl ?? view.pendingUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        const url = selectBrowserOpenExternalAddress(view);
         return url !== null && isLoopbackHostname(new URL(url).hostname);
     } catch {
         return false;

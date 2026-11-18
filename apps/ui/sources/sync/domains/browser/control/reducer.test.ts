@@ -211,6 +211,9 @@ describe('browser control reducer', () => {
         state = applyBrowserControlEvent(state, { kind: 'navigationFinished', eventId: 'next', browserSessionId: 'browser_session_1', viewId: 'view_1',
             occurredAt: 11, currentUrl: 'https://preview.happier.test/other?previewToken=fresh' });
         expect(state.viewsById.view_1).toMatchObject({ currentUrl: 'https://preview.happier.test/other', navigationGeneration: 1 });
+        state = applyBrowserControlEvent(state, { kind: 'navigationFailed', eventId: 'failed', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            occurredAt: 12, failedUrl: 'https://preview.happier.test/missing?previewToken=failed-admission', errorCode: 'webview_load_failed' });
+        expect(state.viewsById.view_1).toMatchObject({ currentUrl: 'https://preview.happier.test/missing', pendingUrl: null, loadingState: 'failed' });
     });
     it('settles an ended relay preview so its chrome no longer offers the page\'s history or address', async () => {
         const { applyBrowserControlEvent, createBrowserControlState } = await import('./reducer');

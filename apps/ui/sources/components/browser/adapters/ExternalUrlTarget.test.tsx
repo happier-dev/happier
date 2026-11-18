@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
-import { createBrowserControlState } from '@/sync/domains/browser/control';
+import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control';
+import { browserViewLifecycleEvent } from '@/sync/domains/browser/control/lifecycle';
 import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -153,6 +154,29 @@ describe('ExternalUrlTarget (web)', () => {
         await vi.waitFor(() => {
             expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/');
         });
+    });
+
+    it('opens the pending destination when the refusal probe fails before the iframe loads', async () => {
+        const destination = 'https://bnroot-missing.invalid/';
+        const initialView = { ...createExternalUrlView(), pendingUrl: destination, loadingState: 'loading' as const };
+        function PendingNavigation() {
+            const [state, setState] = React.useState<ReturnType<typeof createBrowserControlState>>(() => ({ ...createBrowserControlState(),
+                viewsById: { [initialView.viewId]: initialView } }));
+            const view = state.viewsById[initialView.viewId];
+            return <ExternalUrlTarget testID="external-url" view={view}
+                onOpenInSystemBrowser={openInSystemBrowser(view)} onLifecycle={lifecycle => {
+                    const event = browserViewLifecycleEvent(view, lifecycle);
+                    if (event) setState(previous => applyBrowserControlEvent(previous, event));
+                }} />;
+        }
+        const probeElement = new EventTarget();
+        const screen = await renderScreen(<PendingNavigation />,
+            { createNodeMock: element => element.type === 'object' ? probeElement : null });
+        await act(async () => { probeElement.dispatchEvent(new Event('error')); });
+        const action = screen.findByTestId('external-url-non-framable-action');
+        expect(action).toBeTruthy();
+        await act(async () => { (action?.props as { onPress?: () => void }).onPress?.(); });
+        await vi.waitFor(() => { expect(openExternalUrlMock).toHaveBeenCalledWith(destination); });
     });
 
     it('keeps an embeddable site inline and drops the refusal check once it loads', async () => {

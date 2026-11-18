@@ -154,7 +154,7 @@ function withoutViewAdmission(state: BrowserControlState, event: BrowserEventV1)
         : 'viewId' in event ? state.viewsById[event.viewId]?.target : undefined;
     if (target?.kind !== 'localServicePreview') return event;
     let next = event;
-    for (const key of ['currentUrl', 'pendingUrl'] as const) {
+    for (const key of ['currentUrl', 'pendingUrl', 'failedUrl'] as const) {
         const value: unknown = (next as Record<string, unknown>)[key];
         if (typeof value !== 'string') continue;
         const clean = withoutPreviewAdmission(value);
@@ -336,12 +336,15 @@ export function applyBrowserControlEvent(state: BrowserControlState, input: Brow
         case 'navigationFailed': {
             const view = state.viewsById[event.viewId];
             if (!view) return state;
+            const failedUrl = event.failedUrl ?? view.pendingUrl ?? view.currentUrl;
             return {
                 ...state,
                 viewsById: {
                     ...state.viewsById,
                     [event.viewId]: {
                         ...view,
+                        currentUrl: failedUrl,
+                        currentUrlExpiresAt: failedUrl !== view.currentUrl ? null : view.currentUrlExpiresAt,
                         pendingUrl: null,
                         loadingState: 'failed',
                         lastError: event.errorCode,
