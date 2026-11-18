@@ -41,6 +41,7 @@ import type { Fastify } from '../../types';
 import { registerEnvironmentSecretLaunchAdmissionRoute } from './environmentSecretLaunchAdmissionRoute';
 import { registerDeploymentDomainRoutes } from './deploymentDomainRoutes';
 import { deploymentNewWorkFeatureGate } from './deploymentFeatureGate';
+import { PresentUserRequiredResponseSchema } from '../../utils/requirePresentUser';
 import { deploymentLinkValidationFailure } from './deploymentValidation';
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
 
@@ -49,7 +50,8 @@ const receiptParams = z.extend(environmentParams, { deploymentId: z.string().che
 const targetParams = z.extend(environmentParams, { targetLinkId: z.string().check(z.minLength(1)) });
 const invalid = { ok: false as const, error: 'deployment_invalid' as const };
 function responses<T extends z.ZodMiniType>(schema: T) {
-    return { 200: schema, 400: schema, 403: schema, 404: schema, 409: schema, 413: schema, 503: schema };
+    // A restricted API token refused at route admission answers the shared present-user body.
+    return { 200: schema, 400: schema, 403: z.union([schema, PresentUserRequiredResponseSchema]), 404: schema, 409: schema, 413: schema, 503: schema };
 }
 function status(result: { ok: boolean; error?: string }) {
     return result.ok ? 200 : result.error === 'deployment_unavailable' ? 404

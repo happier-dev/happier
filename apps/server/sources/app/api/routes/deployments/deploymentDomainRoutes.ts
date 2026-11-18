@@ -9,13 +9,15 @@ import { createDeploymentDomainInTx, removeDeploymentDomainInTx, readDeploymentD
     listDeploymentDomainsInTx, transitionDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
 import type { Fastify } from '../../types';
 import { deploymentNewWorkFeatureGate } from './deploymentFeatureGate';
+import { PresentUserRequiredResponseSchema } from '../../utils/requirePresentUser';
 import { readDeploymentExecutionBindingFromRequest, readDeploymentExecutionEffectFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
 
 const environmentParams = z.strictObject({ environmentId: z.string().check(z.minLength(1)) });
 const domainParams = z.extend(environmentParams, { domainId: z.string().check(z.minLength(1)) });
 const invalid = { ok: false as const, error: 'deployment_invalid' as const };
 function responses<T extends z.ZodMiniType>(schema: T) {
-    return { 200: schema, 400: schema, 403: schema, 404: schema, 409: schema, 413: schema, 503: schema };
+    // A restricted API token refused at route admission answers the shared present-user body.
+    return { 200: schema, 400: schema, 403: z.union([schema, PresentUserRequiredResponseSchema]), 404: schema, 409: schema, 413: schema, 503: schema };
 }
 function status(result: { ok: boolean; error?: string }) {
     return result.ok ? 200 : result.error === 'deployment_unavailable' ? 404 : result.error === 'deployment_access_denied' ? 403

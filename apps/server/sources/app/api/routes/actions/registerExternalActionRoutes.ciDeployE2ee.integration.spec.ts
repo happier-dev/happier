@@ -284,8 +284,7 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
       // The full Environment read stays closed to the scoped token.
       const full = await typed.inject({ method: 'GET',
         url: `/v1/deployments/environments/${f.environmentId}?serverId=${f.serverId}`, headers });
-      expect(full.statusCode).toBeGreaterThanOrEqual(400);
-      expect(full.body).not.toContain(f.controller.id);
+      expect({ status: full.statusCode, body: full.json() }).toEqual({ status: 403, body: { error: 'present_user_required' } });
 
       // The read controller places the submission; E2EE seals it with that target.
       const target = { kind: 'machine' as const, machineId: read.json().controllerMachineId };
