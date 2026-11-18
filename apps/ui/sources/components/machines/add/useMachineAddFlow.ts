@@ -13,6 +13,7 @@ import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCa
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { z } from 'zod/mini';
 import type { MachineAddSshAnswerSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { buildSshCredentialsDraftFromRemoteHostConfig } from '@/components/settings/remoteHosts/remoteHostOutcomeActions';
@@ -122,16 +123,16 @@ async function cancelMachineAddThroughActions(execute: MachineAddActionExecute, 
     const snapshot = handle.taskId ? handle.runner.getSnapshot(handle.taskId) : null;
     // A terminal task or an owner-issued cancellation needs only local view disposal.
     if (!handle.starting && (snapshot?.result || snapshot?.cancelRequested)) return true;
-    let errorCode: string | null = null;
+    let message: string;
     try {
         const result = await execute(kind === 'ssh' ? 'machines.add.ssh.cancel' : 'machines.add.local.cancel', handle.starting ? {} : { taskId: handle.taskId });
         if (result.ok) {
             const current = readMachineAddFlowDraft()[key];
             return current === null || current === handle;
         }
-        errorCode = result.errorCode ?? result.error;
-    } catch { errorCode = 'machine_enroll_cancel_failed'; }
-    updateMachineAddFlowDraft(draft => draft[key] !== handle ? draft : { ...draft, [key]: { ...handle, startError: errorCode } });
+        message = resolveActionExecutionErrorMessage(result, t('common.requestFailed'));
+    } catch (error) { message = resolveActionExecutionErrorMessage(error, t('common.requestFailed')); }
+    updateMachineAddFlowDraft(draft => draft[key] !== handle ? draft : { ...draft, [key]: { ...handle, startError: message } });
     return false;
 }
 
@@ -259,7 +260,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const configured = useConfiguredSshHostSuggestions({ runner, enabled: runner.mode === 'tauri' && sshDemand });
     const configuredHosts = React.useMemo(() => filterConfiguredSshHostSuggestions({ suggestions: configured.suggestions, remoteHosts: savedHosts }), [configured.suggestions, savedHosts]);
     const recordSshError = React.useCallback((error: unknown) => update((current) => current.serverId !== serverId || current.path !== 'ssh' ? current : ({ ...current, sshTask: {
-        ...(current.sshTask ?? { runner, taskId: null, starting: false }), startError: error instanceof Error ? error.message : t('settings.systemTaskStartFailed'),
+        ...(current.sshTask ?? { runner, taskId: null, starting: false }),
+        startError: resolveActionExecutionErrorMessage(error, error instanceof Error ? error.message : t('settings.systemTaskStartFailed')),
     } })), [runner, serverId, update]);
     const setDraft = React.useCallback((next: MachineAddSshDraft) => update((current) => ({ ...current, sshDraft: { ...next,
         privateKeyMaterial: next.authMode === 'keyfile' ? current.sshDraft.privateKeyMaterial : undefined,
@@ -302,10 +304,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         const recordError = (error: unknown) => update(current => current.serverId !== serverId || current.path !== 'thisComputer'
             || current.thisComputerTask !== originHandle ? current : { ...current, thisComputerTask: {
                 ...(current.thisComputerTask ?? { runner, taskId: null, starting: false }),
-                startError: error instanceof Error ? error.message : t('settings.systemTaskStartFailed'),
+                startError: resolveActionExecutionErrorMessage(error, error instanceof Error ? error.message : t('settings.systemTaskStartFailed')),
             } });
         void sshActions.execute('machines.add.local.start', { serverId }).then(result => {
-            if (!result.ok && result.errorCode !== 'cancelled') recordError(new Error(result.error));
+            if (!result.ok && result.errorCode !== 'cancelled') recordError(result);
         }).catch(recordError);
     }, [isActiveHome, chosen, profile, runner, serverId, sshActions.execute, sshActions.ready, sshActions.approval.approvalPending, update]);
     const startSsh = React.useCallback(() => {
@@ -323,7 +325,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         void sshActions.execute('machines.add.ssh.start', input).then(result => {
             // Admission failures belong to their originating draft, not a task accepted meanwhile.
             if (!result.ok && result.errorCode !== 'cancelled' && readMachineAddFlowDraft().sshTask === originHandle
-                && readMachineAddFlowDraft().sshDraft === submitted) recordSshError(new Error(result.error));
+                && readMachineAddFlowDraft().sshDraft === submitted) recordSshError(result);
         }).catch(recordSshError);
     }, [isActiveHome, chosen, draft.sshDraft, hostCatalog, profile, recordSshError, serverId, sshActions.execute, sshActions.ready, sshActions.approval.approvalPending]);
 
@@ -369,7 +371,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         const handle = readMachineAddFlowDraft().sshTask;
         if (!handle?.taskId || sshActions.approval.approvalPending) return;
         void sshActions.execute('machines.add.ssh.respond', { taskId: handle.taskId, answer }).then(result => {
-            if (!result.ok) recordSshError(new Error(result.error));
+            if (!result.ok) recordSshError(result);
         }).catch(recordSshError);
     }, [isActiveHome, recordSshError, sshActions.execute, sshActions.approval.approvalPending]);
     const cancel = React.useCallback(async () => {

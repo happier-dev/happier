@@ -323,7 +323,7 @@ describe('machine add flow lifetime', () => {
             storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1 } });
             const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'thisComputer' }));
             await act(async () => hook.getCurrent().startThisComputer());
-            await vi.waitFor(() => expect(readMachineAddFlowDraft().thisComputerTask?.startError).toBe('action_disabled'));
+            await vi.waitFor(() => expect(hook.getCurrent().run?.failure?.body).toBe('actionConfirmations.turnedOffUnnamedMessage'));
             expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === 'setup.thisComputer.v1')).toBe(false);
             await hook.unmount();
         } finally { await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
@@ -475,7 +475,7 @@ describe('machine add flow lifetime', () => {
             }
             const promise = readMachineAddFlowDraft()[key]?.startPromise;
             await act(async () => { await hook.getCurrent()[operation](); });
-            await vi.waitFor(() => expect(readMachineAddFlowDraft()[key]?.startError).toBe('action_disabled'));
+            await vi.waitFor(() => expect(hook.getCurrent().run?.failure?.body).toBe('actionConfirmations.turnedOffUnnamedMessage'));
             expect(readMachineAddFlowDraft()[key]?.startPromise).toBe(promise);
             harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1: sshPolicy } }, version: 2 } });
             await act(async () => { storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, { ...storage.getState().settings, actionsSettingsV1: sshPolicy }, 2); });
@@ -500,7 +500,7 @@ describe('machine add flow lifetime', () => {
             const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'ssh' }));
             await act(async () => hook.getCurrent().ssh.setDraft({ ...hook.getCurrent().ssh.draft, host: 'box' }));
             await act(async () => hook.getCurrent().startSsh());
-            await vi.waitFor(() => expect(readMachineAddFlowDraft().sshTask?.startError).toBe('action_disabled'));
+            await vi.waitFor(() => expect(hook.getCurrent().run?.failure?.body).toBe('actionConfirmations.turnedOffUnnamedMessage'));
             expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.bootstrapMachine.v1')).toBe(false);
             await hook.unmount();
         } finally { storage.setState(previous); vi.unstubAllGlobals(); }
