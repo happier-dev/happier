@@ -88,8 +88,9 @@ type GlassCompression = Readonly<{ value: number; inputs: readonly ThemePaint[] 
 /**
  * Glass composites the filtered backdrop and coat C at opacity α. Before filter clipping, brightness
  * and lift form an affine map, followed by saturation. `tone` is that filter; `coat` is C.
+ * `opaqueCoat` lets a floating surface use its solid paint when that map erases the backdrop.
  */
-export type GlassBackdropMap = Readonly<{ tone: string; coat: string | null; opacity?: number }>;
+export type GlassBackdropMap = Readonly<{ tone: string; coat: string | null; opacity?: number; opaqueCoat?: true }>;
 
 /**
  * How a floating surface declares its job. Panels (centred dialogs, phone sheets and large anchored
@@ -157,7 +158,7 @@ const parseRgb = (value: string): readonly [number, number, number] | null => {
  * feasible coat, rather than clamp the coat.
  * This is colour feasibility for named materials, never a legibility floor on custom opacity.
  */
-function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number, ground: GlassBackdropPaintGround | null): GlassBackdropPaintMap {
+function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number, ground: GlassBackdropPaintGround | null, floating: boolean): GlassBackdropPaintMap {
     const compression = compressionPaint.value;
     const page = ground ? parseRgb(ground.page.color) : null;
     const authoredSolid = ground ? parseRgb(ground.solid.color) : null;
@@ -178,19 +179,24 @@ function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number,
     const allowLift = compression < 1 - alpha;
     const lift = allowLift ? Math.max(0, (Math.max(...spread) - alpha) / (1 - alpha)) : 0;
     const filter = (neutralLift: number, unliftedScale = scale) => {
-        if (neutralLift === 0) return {
-            tone: `brightness(${toneNumber(unliftedScale)}) saturate(1.05)`,
-            backdrop: saturate(page.map(value => clamp(value * Number(toneNumber(unliftedScale))))),
-        };
+        if (neutralLift === 0) {
+            const brightness = Number(toneNumber(unliftedScale));
+            return {
+                tone: `brightness(${brightness}) saturate(1.05)`,
+                backdrop: saturate(page.map(value => clamp(value * brightness))),
+                flat: brightness === 0,
+            };
+        }
         // Evaluate the exact rounded CSS coefficients, clamping at each filter boundary.
         const total = Number(toneNumber(scale + neutralLift));
         const pivot = Number(toneNumber(scale / (scale + neutralLift)));
         return {
             tone: `invert(1) brightness(${pivot}) invert(1) brightness(${total}) saturate(1.05)`,
             backdrop: saturate(page.map(value => clamp((1 - clamp((1 - value) * pivot)) * total))),
+            flat: pivot === 0 || total === 0,
         };
     };
-    let { tone, backdrop } = filter(lift);
+    let { tone, backdrop, flat } = filter(lift);
     const coatFor = (opacity: number) => solid.map((value, channel) => (value - (1 - opacity) * backdrop[channel]!) / opacity);
     const feasibleOpacity = (filtered: readonly number[]) => Math.max(alpha, ...solid.map((value, channel) => {
         const behind = filtered[channel]!;
@@ -205,7 +211,7 @@ function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number,
         // keeps exactly k. The required coat grows with its own brightness, so this converges in a few steps.
         for (let step = 0; step < 8 && infeasible(); step++) {
             opacity = feasibleOpacity(backdrop);
-            ({ tone, backdrop } = filter(0, compression / (1 - opacity)));
+            ({ tone, backdrop, flat } = filter(0, compression / (1 - opacity)));
             coat = coatFor(opacity);
         }
         coat = coat.map(clamp);
@@ -216,15 +222,18 @@ function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number,
         // Keep the lift when rounding only needs a slight α adjustment; saturated targets can use
         // a much thinner feasible coat without it. Both candidates solve the actual clipped filter.
         if (unliftedOpacity < opacity) {
-            ({ tone, backdrop } = unlifted);
+            ({ tone, backdrop, flat } = unlifted);
             opacity = unliftedOpacity;
         }
         coat = coatFor(opacity);
     }
-    return { tone, color: Color.rgb(coat.map(value => value * 255)).round().string(),
+    return { tone, flat, color: Color.rgb(coat.map(value => value * 255)).round().string(),
         ...(opacity !== alpha ? { opacity } : {}) };
     });
     return { tone: result.tone, coat: result.color, coatPaint: { color: result.color, source: result.source },
+        // A zero rounded gain erases the backdrop. Paint that same solid fill directly so a
+        // browser that skips compositing the filter still shows the floating surface.
+        ...(floating && authoredSolid && result.flat ? { opaqueCoat: true as const } : {}),
         ...(result.opacity === undefined ? {} : { opacity: result.opacity }) };
 }
 
@@ -325,7 +334,7 @@ export function resolveGlassBackdropMapPaint(settings: GlassMaterialSettings, gr
         if (alpha !== undefined) {
             // The heavy coat carries the panel: the backdrop passes at most at 1 − α, never brightened.
             const compression = legibleCompression(Math.min(1 - alpha, dark ? 1 : tint.lightCompression), dark, picture ? environment.atmosphereTone : undefined, ground);
-            return { opacity: alpha, ...solveGlassFixedPoint(compression, alpha, ground) };
+            return { opacity: alpha, ...solveGlassFixedPoint(compression, alpha, ground, true) };
         }
         // Every tint lands on the surface's own solid paint over the plain page, its warm hue included;
         // Lower tints carry that paint in a thinner coat, so the picture shows through more.
@@ -336,7 +345,7 @@ export function resolveGlassBackdropMapPaint(settings: GlassMaterialSettings, gr
         const standing = group === 'card' && picture ? resolveGlassReadingCoatOpacity(settings, environment, dark) : 0;
         // Dark floating glass keeps passing an ordinary page through unchanged (the monocode reference).
         const contentTone = group === 'floating' && !picture && !dark ? pageInkTone(ground) : undefined;
-        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : contentTone, ground, standing), opacity, ground);
+        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : contentTone, ground, standing), opacity, ground, group === 'floating');
     }
     // Shell planes over a wallpaper are frosted picture under their coat, as in the atmosphere lab's G1
     // (owner, 2026-10-24: the title bar shows the picture): light keeps it unwashed, dark only dims it.

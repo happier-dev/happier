@@ -878,6 +878,44 @@ describe('web glass material', () => {
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === sectionTint)).toHaveLength(1);
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the sheet draft');
     });
+    it('keeps white labels readable when the browser skips a near-black floating backdrop filter', async () => {
+        const { lightTheme } = await import('@/theme');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials, readGlassTintedMaterials, resolveGlassBackdropMap } = await import('./glassMaterial');
+        const { resolveGlassPresentationVariables } = await import('./glassDocumentPresentation');
+        const settings = { glassSurfaceMaterials: glassPresetMaterials('auto') };
+        const page = lightTheme.colors.surface.base;
+        const ink = lightTheme.colors.text.primary;
+        const rgb = (color: Color): [number, number, number] => [color.red(), color.green(), color.blue()];
+        const white: [number, number, number] = [255, 255, 255];
+        const black: [number, number, number] = [0, 0, 0];
+        for (const solid of ['#000000', '#090909']) {
+            const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
+                <GlassSurface surfaceGroup="floating" solidColor={solid} finishRole={null}><DraftInput /></GlassSurface>
+            </GlassMaterialSettingsProvider>);
+            const [layer] = screen.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+            const background = flattenTestStyle(layer!.props.style)?.backgroundColor;
+            const paint = Color(resolveBrowserMaterialPaint(String(background), resolveGlassPresentationVariables(settings, {})));
+            const unfiltered = renderGlassOver({ filter: '', coat: rgb(paint), opacity: paint.alpha(), backdrop: white });
+            expect(glassContrastRatio(white, unfiltered)).toBeGreaterThanOrEqual(4.5);
+
+            const map = resolveGlassBackdropMap(settings, 'floating', false, {}, { page, solid, ink })!;
+            const opacity = map.opacity ?? readGlassTintedMaterials(settings).floating.opacity;
+            if (solid === '#000000') {
+                expect({ tone: map.tone, coat: map.coat, opacity }).toMatchInlineSnapshot(`
+                  {
+                    "coat": "rgb(0, 0, 0)",
+                    "opacity": 0.0124,
+                    "tone": "brightness(0) saturate(1.05)",
+                  }
+                `);
+            }
+            const filtered = renderGlassOver({ filter: map.tone, coat: rgb(Color(map.coat!)), opacity, backdrop: white });
+            expect(unfiltered.map(Math.round)).toEqual(filtered.map(Math.round));
+            expect(renderGlassOver({ filter: map.tone, coat: rgb(Color(map.coat!)), opacity, backdrop: black })).toEqual(filtered);
+            standardCleanup();
+        }
+    });
     it('tones the floating backdrop for legible defaults while custom and solid keep their authored material', async () => {
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');
@@ -1034,8 +1072,8 @@ describe('web glass material', () => {
         const paints = screen.findAll(node => typeof node.type === 'string' && typeof flattenTestStyle(node.props.style)?.backgroundImage === 'string');
         expect(paints).toHaveLength(1);
         const background = String(flattenTestStyle(paints[0]!.props.style)?.backgroundColor);
-        expect(background).toContain('color-mix(in srgb,');
-        expect(background).toContain(lightTheme.colors.button.primary.background);
+        const rendered = Color(resolveBrowserMaterialPaint(background));
+        expect(rendered.hexa()).toBe(Color(lightTheme.colors.button.primary.background).hexa());
     });
     it('paints a surface opened over a translucent dialog (a field\'s choices) on its own floating paint, even when it asks to be nested', async () => {
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');

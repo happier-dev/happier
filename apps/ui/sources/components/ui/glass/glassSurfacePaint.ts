@@ -44,6 +44,7 @@ export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: stri
 function resolveGlassTintPaint(input: Readonly<{ solid: ThemePaint; ink: ThemePaint; page?: ThemePaint; web: boolean; dark: boolean;
     settings: GlassMaterialSettings; group: GlassSurfaceGroup; environment?: GlassMaterialEnvironment; panel?: GlassFloatingCoat }>, map: GlassBackdropPaintMap | null): ThemePaint {
     if (input.web && input.page !== undefined) {
+        if (map?.opaqueCoat) return input.solid;
         const color = parseThemeColor(input.solid.color);
         const page = parseThemeColor(input.page.color);
         if (color === null || page === null) return input.solid;
@@ -83,6 +84,7 @@ export function glassSurfaceBackgroundColor(color: string, group: GlassSurfaceGr
 
 export function glassSurfaceBackgroundPaint(color: ThemePaint, group: GlassSurfaceGroup, web: boolean, nested: boolean, plane: boolean, coatOpacity?: number): ThemePaint {
     if (web && coatOpacity !== undefined) {
+        if (group === 'floating' && coatOpacity === 1) return color;
         return deriveThemePaint([color], value => `color-mix(in srgb, ${value} ${coatOpacity * 100}%, transparent)`);
     }
     if (web && group === 'content' && plane) {
@@ -129,7 +131,7 @@ export function resolveGlassSurfaceCoatPaint(input: GlassSurfaceCoatInput): Read
         page: input.page, solid: ground, ink: input.ink, controlFill: input.controlFill,
     }, context.panel);
     const tint = resolveGlassTintPaint({ solid: ground, page: input.page, ink: input.ink, dark: input.dark, ...context }, map);
-    return { tint, backdropTone: map?.tone ?? '', coatOpacity: map?.opacity };
+    return { tint, backdropTone: map?.tone ?? '', coatOpacity: context.web && map?.opaqueCoat ? 1 : map?.opacity };
 }
 
 function materialOpacityPaint(color: ThemePaint, opacity: number): ThemePaint {

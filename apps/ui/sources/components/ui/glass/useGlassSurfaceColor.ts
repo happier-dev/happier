@@ -27,9 +27,10 @@ export function useGlassSurfaceColor(color: string, group: GlassSurfaceGroup, ne
         || (capability === 'blur' && getBlurViewComponent() !== null)
         || (capability === 'liquidGlass' && getGlassViewComponent() !== null));
     const tint = nested || !available ? color : glassSurfaceTintColor({ color, ink: colors.text.primary, controlFill: colors.surface.selected, dark: theme.dark, settings, group, environment, page: colors.surface.base });
-    const coatOpacity = !nested && available && Platform.OS === 'web'
-        ? resolveGlassBackdropMap(settings, group, theme.dark, environment, { page: colors.surface.base, solid: color, ink: colors.text.primary, controlFill: colors.surface.selected })?.opacity
-        : undefined;
+    const map = !nested && available && Platform.OS === 'web'
+        ? resolveGlassBackdropMap(settings, group, theme.dark, environment, { page: colors.surface.base, solid: color, ink: colors.text.primary, controlFill: colors.surface.selected })
+        : null;
+    const coatOpacity = map?.opaqueCoat ? 1 : map?.opacity;
     // A CSS token's spelling stays the same when its live theme value changes.
     return React.useMemo(() => resolveGlassSurfaceColor(tint, group, settings, environment, available, nested, undefined, plane, coatOpacity), [colors, tint, group, settings, environment, nested, available, plane, coatOpacity]);
 }
