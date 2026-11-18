@@ -1816,4 +1816,68 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(await port.read(artifactId)).toBeNull();
         } finally { context.dispose(); }
     });
+
+    it('opens every listed legacy Workflow body of a page in one batch read, not one read per row', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://workflow-legacy-bodies.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token, secret: encodeBase64(new Uint8Array(32).fill(24), 'base64url') });
+        const rows = new Map<string, Artifact>();
+        const requests: string[] = [];
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const target = new URL(String(url));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'e2ee', updatedAt: 0 });
+            requests.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+            if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
+                const body = JSON.parse(String(init.body)) as ArtifactCreateRequest;
+                const row: Artifact = { ...body, ...projectArtifactStoredKind(body.kind), ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'e2ee',
+                    publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 10 + rows.size };
+                rows.set(row.id, row);
+                return json(row);
+            }
+            if (target.pathname === '/v1/artifacts') return createArtifactListHttpResponse(target, [...rows.values()]);
+            if (target.pathname === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)), id => {
+                const row = rows.get(id);
+                return row ? { artifactId: id, ok: true, artifact: row, recipientCensus: { artifactId: id, ownerAccountId: row.ownerAccountId,
+                    access: row.access, encryptionMode: row.encryptionMode, dataEncryptionKey: row.dataEncryptionKey,
+                    callerDataEncryptionKey: row.dataEncryptionKey, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey,
+                    callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey, recipients: [] } }
+                    : { artifactId: id, ok: false, error: 'artifact_not_found', status: 404, retryable: false };
+            });
+            const row = rows.get(target.pathname.slice('/v1/artifacts/'.length));
+            return row ? json(row) : json({ error: 'missing' }, 404);
+        });
+        const context = await captureLazyActionAccountContext(home.id);
+        try {
+            const body = JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,
+                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+                blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+            } });
+            const ids = [1, 2, 3].map(index => `1111111${index}-1111-4111-8111-111111111111`);
+            for (const artifactId of ids) {
+                await context.workflowArtifacts.create({ artifactId, body,
+                    header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: artifactId } } });
+            }
+            // Headers written before `previewSteps` (0.2-era data) carry no step labels, so listing opens their bodies.
+            const encryption = (await context.resolveAccountEncryption()).encryption!;
+            for (const row of rows.values()) {
+                const cipher = new ArtifactEncryption((await encryption.decryptEncryptionKey(row.dataEncryptionKey))!);
+                const { previewSteps: _previewSteps, ...legacyHeader } = (await cipher.decryptHeaderRaw(row.header))!;
+                rows.set(row.id, { ...row, header: await cipher.encryptHeader(legacyHeader) });
+            }
+            const { createWorkflowDefinitionActions } = await import('@happier-dev/protocol/actions');
+            const definitions = createWorkflowDefinitionActions({ artifactStore: context.workflowArtifacts,
+                encodeListCursor: context.encodeArtifactListCursor, assertDefinitionWriteAllowed: () => {},
+                readWorkflowTriggerSummaries: async () => new Map() });
+            requests.length = 0;
+            const listed = await definitions.list({});
+            expect(listed.definitions.map(row => [row.definitionId, row.stepCount]).sort()).toEqual(ids.map(id => [id, 1]));
+            expect(requests.filter(request => request === 'POST /v1/artifacts/read' || /^GET \/v1\/artifacts\/[^/]+$/.test(request))).toEqual(['POST /v1/artifacts/read']);
+        } finally { context.dispose(); }
+    });
 });

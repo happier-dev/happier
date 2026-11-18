@@ -348,16 +348,28 @@ export function createWorkflowDefinitionActions(params: Readonly<{
             triggerSummaryErrorCode = failure.errorCode;
           }
         }
-        for (const artifact of page.items) {
-          if (artifact.header.kind !== 'workflow-definition.v1') continue;
+        const listedRows = page.items.filter(artifact => artifact.header.kind === 'workflow-definition.v1'
+          && WorkflowDefinitionIdV1Schema.safeParse(artifact.artifactId).success)
+          .slice(0, limit === undefined ? undefined : limit - definitions.length)
+          .map(artifact => {
+            const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header);
+            const readableHeader = parsed.success && headerMatchesArtifact({
+              artifactId: artifact.artifactId,
+              headerVersion: artifact.headerVersion,
+              bodyVersion: artifact.bodyVersion,
+            }, parsed.data) ? parsed.data : null;
+            return { artifact, parsed, readableHeader };
+          });
+        // Every listed legacy body of the page is opened together, so the store's batch
+        // owner answers them in one read instead of one round trip per row.
+        const legacyOpenings = new Map(exactArtifactId !== undefined ? [] : listedRows
+          .filter(({ artifact, readableHeader }) => readableHeader && artifact.bodyVersion !== undefined && readableHeader.previewSteps === undefined)
+          .map(({ artifact }) => [artifact.artifactId, read({ definitionId: artifact.artifactId }).then(
+            opened => ({ ok: true as const, definition: opened.definition }),
+            (error: unknown) => ({ ok: false as const, error }))] as const));
+        for (const { artifact, parsed, readableHeader } of listedRows) {
           const identity = WorkflowDefinitionIdV1Schema.safeParse(artifact.artifactId);
           if (!identity.success) continue;
-          const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header);
-          const readableHeader = parsed.success && headerMatchesArtifact({
-            artifactId: artifact.artifactId,
-            headerVersion: artifact.headerVersion,
-            bodyVersion: artifact.bodyVersion,
-          }, parsed.data) ? parsed.data : null;
           let stepCount: number | null = null;
           let reason: WorkflowDefinitionContentUnavailableReasonV1 = readableHeader ? 'missing_body'
             : parsed.success ? 'revision_mismatch' : 'invalid_header';
@@ -366,8 +378,11 @@ export function createWorkflowDefinitionActions(params: Readonly<{
             else {
               try {
                 // An exact read already carries its body; a listed legacy row opens it through `read`.
-                const opened = exactArtifactId !== undefined ? openDefinitionBody(artifact.body)
-                  : (await read({ definitionId: artifact.artifactId })).definition;
+                const opened = exactArtifactId !== undefined ? openDefinitionBody(artifact.body) : await (async () => {
+                  const legacy = await legacyOpenings.get(artifact.artifactId)!;
+                  if (!legacy.ok) throw legacy.error;
+                  return legacy.definition;
+                })();
                 stepCount = countWorkflowStepsV1(opened.blocks);
               } catch (error) {
                 // Only this record's validated content failure is isolated. Transport,
