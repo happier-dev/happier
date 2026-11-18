@@ -326,7 +326,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
             if (error instanceof ProviderAlreadyLinkedError || isPrismaUniqueConstraintError(error)) return "conflict" as const;
             throw error;
         });
-        if (outcome !== "ok") return reply.code(outcome === "reauthentication" ? 401 : 409).send({
+        if (outcome !== "ok") return reply.code(outcome === "reauthentication" ? 403 : 409).send({
             error: outcome === "reauthentication"
                 ? "reauthentication_required"
                 : outcome === "inconsistent"
@@ -350,7 +350,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
             if (parsed.mode !== "plain") return reply.code(409).send({ error: "credential_inconsistent" });
             const passwordVerification = await runPasswordHashWork(async () => await verifyPlainAccountPasswordCredentialV1(parsed.credential, body.currentPassword));
             if (!passwordVerification.ok) return reply.code(503).send({ error: "password_hash_overloaded" });
-            if (!passwordVerification.value) return reply.code(401).send({ error: "authentication_failed" });
+            if (!passwordVerification.value) return reply.code(403).send({ error: "authentication_failed" });
         }
         const passwordHashWork = await runPasswordHashWork(async () => body.kind === "plain"
             ? await preparePlainAccountPasswordCredentialV1(body.newPassword)
@@ -382,7 +382,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
             if (error instanceof CredentialMutationConflict) return "conflict" as const;
             throw error;
         });
-        if (outcome === "authentication") return reply.code(401).send({ error: "authentication_failed" });
+        if (outcome === "authentication") return reply.code(403).send({ error: "authentication_failed" });
         if (outcome !== "ok") return reply.code(409).send({ error: outcome === "inconsistent" ? "credential_inconsistent" : "credential_revision_conflict" });
         await sendNotice({ delivery: authEmailDelivery, resolveApplicationLinkTarget }, email, "password_changed");
         return reply.send({ v: 1, status: "updated" });
@@ -400,7 +400,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
             if (parsed.mode !== "plain") return reply.code(409).send({ error: "credential_inconsistent" });
             const passwordVerification = await runPasswordHashWork(async () => await verifyPlainAccountPasswordCredentialV1(parsed.credential, body.currentPassword));
             if (!passwordVerification.ok) return reply.code(503).send({ error: "password_hash_overloaded" });
-            if (!passwordVerification.value) return reply.code(401).send({ error: "authentication_failed" });
+            if (!passwordVerification.value) return reply.code(403).send({ error: "authentication_failed" });
         }
         const email = snapshot.AccountIdentity[0]?.providerUserId ?? null;
         const passwordMutation = mutation({ action: "remove", accountId: request.userId, revision: body.expectedCredentialRevision, email, credential: null });
@@ -429,7 +429,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
             if (error instanceof CredentialMutationConflict) return "conflict" as const;
             throw error;
         });
-        if (outcome === "authentication") return reply.code(401).send({ error: "authentication_failed" });
+        if (outcome === "authentication") return reply.code(403).send({ error: "authentication_failed" });
         if (outcome !== "ok") return reply.code(409).send({
             error: outcome === "conflict"
                 ? "credential_revision_conflict"

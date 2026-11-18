@@ -5,7 +5,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { emailPasswordAuthMethodModule } from "@/app/auth/methods/modules/emailPasswordAuthMethodModule";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { hashPasswordMaterial, passwordHashAdmission, verifyPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
-import { parseAccountPasswordCredentialV1, type E2eeAccountPasswordCredentialV1 } from "@happier-dev/protocol";
+import { parseAccountPasswordCredentialV1, signAccountContentKeyBindingV1, type E2eeAccountPasswordCredentialV1 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { inTx } from "@/storage/inTx";
@@ -21,7 +21,7 @@ import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolic
 import { setTeamPolicyInTx } from "@/app/teams/policy";
 import { registerAuthEntryRoute } from "./registerAuthEntryRoute";
 import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1 } from "@happier-dev/protocol";
-import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
+import { prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe("Account Security native password lifecycle", () => {
     let harness: LightSqliteHarness;
@@ -89,6 +89,7 @@ describe("Account Security native password lifecycle", () => {
     it("lets a terminal credential read the Account security projection under an automation ceiling", async () => {
         const signing = tweetnacl.sign.keyPair();
         const account = await db.account.create({ data: {
+            encryptionMode: "plain",
             publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
         } });
         const token = await auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" });
@@ -154,7 +155,7 @@ describe("Account Security native password lifecycle", () => {
         try {
             const withoutMailbox = await app.inject({ method: "POST", url: "/v1/account/password/enroll", headers,
                 payload: { v: 1, kind: "e2ee", email, targetCredential, proof } });
-            expect(withoutMailbox.statusCode).toBe(401);
+            expect(withoutMailbox.statusCode).toBe(403);
             const requested = await app.inject({ method: "POST", url: "/v1/account/password/enroll/email/request", headers,
                 payload: { v: 1, email } });
             expect(requested.statusCode, requested.body).toBe(200);
@@ -304,7 +305,7 @@ describe("Account Security native password lifecycle", () => {
                 },
             });
             const substitutedEmailResponse = await enroll(substitutedEmail);
-            expect(substitutedEmailResponse.statusCode, substitutedEmailResponse.body).toBe(401);
+            expect(substitutedEmailResponse.statusCode, substitutedEmailResponse.body).toBe(403);
             expect(await db.repeatKey.findUnique({ where: { key: `mtls_claim_${pending}` } })).not.toBeNull();
             expect(await inTx(tx => readNativeAuthOneTimeOperation(tx, {
                 purpose: "verify_native_email",
@@ -338,7 +339,7 @@ describe("Account Security native password lifecycle", () => {
             ];
             for (const substitutedCredential of substitutedCredentials) {
                 const substitutedCredentialResponse = await enroll(email, substitutedCredential);
-                expect(substitutedCredentialResponse.statusCode, substitutedCredentialResponse.body).toBe(401);
+                expect(substitutedCredentialResponse.statusCode, substitutedCredentialResponse.body).toBe(403);
                 expect(await db.repeatKey.findUnique({ where: { key: `mtls_claim_${pending}` } })).not.toBeNull();
                 expect(await inTx(tx => readNativeAuthOneTimeOperation(tx, {
                     purpose: "verify_native_email",
@@ -689,7 +690,20 @@ describe("Account Security native password lifecycle", () => {
             expect(read.body).not.toMatch(/plain_password_hash|salt|digest|envelope|authVerifier/);
             const change = (currentPassword: string, revision = 1) => app.inject({ method: "POST", url: "/v1/account/password/change", headers,
                 payload: { v: 1, kind: "plain", expectedCredentialRevision: revision, currentPassword, newPassword: replacement } });
-            expect((await change("incorrect password value")).statusCode).toBe(401);
+            const invalidBearer = await app.inject({ method: "POST", url: "/v1/account/password/change",
+                headers: { authorization: "Bearer invalid-token" },
+                payload: { v: 1, kind: "plain", expectedCredentialRevision: 1, currentPassword: password, newPassword: replacement } });
+            expect(invalidBearer.statusCode).toBe(401);
+            expect(invalidBearer.json()).toEqual({ error: "invalid_token" });
+            const wrongPassword = await change("incorrect password value");
+            expect(wrongPassword.statusCode).toBe(403);
+            expect(wrongPassword.json()).toEqual({ error: "authentication_failed" });
+            const wrongRemovalPassword = await app.inject({ method: "POST", url: "/v1/account/password/remove", headers,
+                payload: { v: 1, kind: "plain", expectedCredentialRevision: 1, currentPassword: "incorrect password value" } });
+            expect(wrongRemovalPassword.statusCode).toBe(403);
+            expect(wrongRemovalPassword.json()).toEqual({ error: "authentication_failed" });
+            expect(await auth.verifyToken(token)).toMatchObject({ userId: account.id });
+            expect((await app.inject({ method: "GET", url: "/v1/account/security", headers })).statusCode).toBe(200);
             const rejected = await app.inject({ method: "POST", url: "/v1/account/password/change", headers,
                 payload: { v: 1, kind: "plain", expectedCredentialRevision: 1, currentPassword: password, newPassword: "too short" } });
             expect(rejected.statusCode).toBe(400);
@@ -733,7 +747,17 @@ describe("Account Security native password lifecycle", () => {
                 hash: await hashPasswordMaterial(new TextEncoder().encode(password)),
             },
         } });
-        const otherAccount = await db.account.create({ data: { encryptionMode: "e2ee", publicKey: "other-account-key" } });
+        const otherSigning = tweetnacl.sign.keyPair();
+        const otherContent = tweetnacl.box.keyPair();
+        const otherAccount = await db.account.create({ data: {
+            encryptionMode: "e2ee",
+            publicKey: privacyKit.encodeHex(new Uint8Array(otherSigning.publicKey)),
+            contentPublicKey: new Uint8Array(otherContent.publicKey),
+            contentPublicKeySig: new Uint8Array(signAccountContentKeyBindingV1({
+                accountSigningSecretKey: otherSigning.secretKey,
+                contentPublicKey: otherContent.publicKey,
+            })),
+        } });
         await db.accountIdentity.create({ data: {
             accountId: otherAccount.id,
             provider: "email",
@@ -748,7 +772,8 @@ describe("Account Security native password lifecycle", () => {
             label: await preparePlainAccountApiTokenLabel(account.id, "Expired Account Security read"),
             expiresAt: new Date("2000-01-02T00:00:00.000Z"),
         }, new Date("2000-01-01T00:00:00.000Z"));
-        const otherPat = await auth.createApiToken({ accountId: otherAccount.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(otherAccount.id, "Other Account Security read") });
+        const otherTokenId = crypto.randomUUID();
+        const otherPat = await auth.createApiToken({ accountId: otherAccount.id, tokenId: otherTokenId, label: await prepareE2eeAccountApiTokenLabel(otherAccount.id, otherTokenId, "Other Account Security read") });
 
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);

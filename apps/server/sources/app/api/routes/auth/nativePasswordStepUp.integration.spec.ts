@@ -10,6 +10,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { auth } from "@/app/auth/auth";
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { plainPrivateLabel } from "@/testkit/privateLabelFixture";
 
 describe("native current-password first-key authority", () => {
     let harness: LightSqliteHarness;
@@ -33,7 +34,14 @@ describe("native current-password first-key authority", () => {
         const stepUp = (candidate = password) => app.inject({ method: "POST", url: "/v1/auth/email/step-up",
             headers: { authorization: `Bearer ${token}` }, payload: { v: 1, password: candidate, purpose: "account_encryption_first_key", requestDigest } });
         try {
-            expect((await stepUp("incorrect password")).statusCode).toBe(401);
+            const invalidBearer = await app.inject({ method: "POST", url: "/v1/auth/email/step-up",
+                headers: { authorization: "Bearer invalid-token" },
+                payload: { v: 1, password, purpose: "account_encryption_first_key", requestDigest } });
+            expect(invalidBearer.statusCode).toBe(401);
+            const wrongPassword = await stepUp("incorrect password");
+            expect(wrongPassword.statusCode).toBe(403);
+            expect(wrongPassword.json()).toEqual({ error: "authentication_failed" });
+            expect(await auth.verifyToken(token)).toMatchObject({ userId: account.id });
             const response = await stepUp();
             expect(response.statusCode, response.body).toBe(200);
             const externalAuthProof = response.json().externalAuthProof;
@@ -43,7 +51,14 @@ describe("native current-password first-key authority", () => {
             expect((await app.inject({ method: "POST", url: "/v1/auth/email/step-up", headers: {
                 authorization: `Bearer ${automationToken}`, [AUTHORITY_CEILING_HEADER_V1]: "account_automation",
             },
-                payload: { v: 1, password, purpose: "account_encryption_first_key", requestDigest } })).statusCode).toBe(403);
+                payload: { v: 1, password, purpose: "account_encryption_first_key", requestDigest } })).statusCode).toBe(200);
+            const apiToken = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
+                label: plainPrivateLabel("Step-up scoped credential") });
+            const scopedCredential = await app.inject({ method: "POST", url: "/v1/auth/email/step-up",
+                headers: { authorization: `Bearer ${apiToken.token}` },
+                payload: { v: 1, password, purpose: "account_encryption_first_key", requestDigest } });
+            expect(scopedCredential.statusCode).toBe(403);
+            expect(scopedCredential.json()).toEqual({ error: "present_user_required" });
             const persisted = await db.repeatKey.findUniqueOrThrow({ where: { key: externalAuthProof.pending } });
             expect(persisted.value).not.toContain(password);
             expect(persisted.value).not.toContain(externalAuthProof.proof);

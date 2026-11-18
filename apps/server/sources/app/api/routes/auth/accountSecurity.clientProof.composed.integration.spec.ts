@@ -85,9 +85,9 @@ describe("Account Security real client proof → registered HTTP consumer", () =
             const mutation = async (body: unknown) => app.inject({ method: "POST", url: "/v1/account/password/change",
                 headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, payload: JSON.stringify(body) });
             const substituted = await mutation({ ...prepared, action: action === "change" ? "recover" : "change" });
-            expect(substituted.statusCode).toBe(401);
+            expect(substituted.statusCode).toBe(403);
             const nonCanonical = await mutation({ ...prepared, proof: { ...prepared.proof, signature: `${prepared.proof.signature}=` } });
-            expect(nonCanonical.statusCode).toBe(401);
+            expect(nonCanonical.statusCode).toBe(403);
             if (!issuedChallenge) throw new Error("mutation_challenge_not_issued");
             // Even a correctly signed proof made with the authentication key
             // alone cannot replace the Account recovery/signing authority.
@@ -101,7 +101,7 @@ describe("Account Security real client proof → registered HTTP consumer", () =
             };
             authenticationOnly.secretKey.fill(0);
             const authKeyOnly = await mutation({ ...prepared, proof: authenticationOnlyProof });
-            expect(authKeyOnly.statusCode).toBe(401);
+            expect(authKeyOnly.statusCode).toBe(403);
             expect(await db.keyChallengeV2.findUnique({ where: { id: prepared.proof.challengeId } })).toMatchObject({ consumedAt: null });
             // A typed failure never interpolates the credential-bearing request.
             let failure: { status?: number; code?: string } | null = null;

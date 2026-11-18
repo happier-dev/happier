@@ -19,7 +19,7 @@ export function registerNativePasswordStepUpRoutes(app: Fastify): void {
             response: {
                 200: z.strictObject({ externalAuthProof: AccountEncryptionMigrateExternalAuthProofSchema }),
                 401: z.strictObject({ error: z.string() }),
-                403: z.union([PresentUserRequiredResponseSchema, z.strictObject({ error: z.literal("method_not_available") })]),
+                403: z.union([PresentUserRequiredResponseSchema, z.strictObject({ error: z.enum(["method_not_available", "authentication_failed"]) })]),
                 503: z.strictObject({ error: z.literal("password_hash_overloaded") }),
             },
         },
@@ -31,7 +31,7 @@ export function registerNativePasswordStepUpRoutes(app: Fastify): void {
         try {
             const externalAuthProof = await createNativePasswordFirstKeyStepUp({ accountId: request.userId,
                 password: request.body.password, requestDigest: request.body.requestDigest });
-            if (!externalAuthProof) return reply.code(401).send({ error: "authentication_failed" });
+            if (!externalAuthProof) return reply.code(403).send({ error: "authentication_failed" });
             return reply.send({ externalAuthProof });
         } catch (error) {
             if (error instanceof PasswordHashOverloadedError) return reply.code(503).send({ error: "password_hash_overloaded" });

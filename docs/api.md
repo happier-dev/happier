@@ -573,6 +573,14 @@ ordinary credential or API token. Every mutation and proof-preparation operation
 requires a present-user credential; an API token or autonomous runtime cannot be
 silently upgraded to a human security operation.
 
+In 0.3 development source, after bearer authentication succeeds, a rejected
+password, key proof, or enrollment reauthentication returns `403` with
+`authentication_failed` or
+`reauthentication_required`. Native current-password step-up at
+`/v1/auth/email/step-up` follows the same rule. These secondary-proof failures leave
+the current session usable; `401` remains the rejected-bearer response. Initial
+email/password login still returns `401` for incorrect credentials.
+
 Email-verification bearers are consumer-qualified in their existing `RepeatKey`
 record. Fresh Account, Team invitation, first password enrollment, and sign-in-email
 change consumers reject one another's bearers. A transferable Team invitation is
