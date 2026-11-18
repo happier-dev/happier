@@ -4,6 +4,7 @@ import { prepareManagedMachinePresetAuthoringV1, projectAccountManagedProvisione
 import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime/accountPluginActivationSource';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { createManagedPresetHydrator } from './presetHydration';
 
 /** Native and headless Save share the same captured Account custody as preset reads. */
@@ -18,6 +19,8 @@ export async function prepareCliManagedMachinePresetAuthoring(
   const hydrator = createManagedPresetHydrator({ credentials, serverUrl: input.serverUrl });
   return prepareManagedMachinePresetAuthoringV1(request, {
     custody: { accountId,
+      readWriterMode: async () => (await fetchAccountEncryptionCurrentness({ token: credentials.token, credentials,
+        serverBaseUrl: input.serverUrl, signal: request.context.signal })).mode,
       open: params => hydrator.openRecipientProjection({ ...params, signal: request.context.signal }),
       withE2eeAccountKey: operation => hydrator.withE2eeAccountKey(operation, request.context.signal),
       readRecipientCensus: async census => {

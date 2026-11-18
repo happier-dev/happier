@@ -32,6 +32,7 @@ import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/mach
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import {
+    admitManagedMachinePresetAuthorCensusV1,
     captureManagedMachinePresetSavedSecretReferencesV1,
     hydrateManagedOpaquePresetMachineV1,
     prepareManagedMachinePresetSavedSecretPromotionRewritesV1,
@@ -537,10 +538,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         signal?: AbortSignal;
     }>): Promise<SealResult> {
         const { writerMode } = input;
-        const census = await requestRecipientCensus(input.censusInput, input.signal);
-        if (!census) return { kind: 'failed', code: 'content_unavailable' };
+        const census = admitManagedMachinePresetAuthorCensusV1(writerMode, await requestRecipientCensus(input.censusInput, input.signal));
         if (census.kind === 'refused') return { kind: 'failed', code: census.code };
-        if (census.contentEncryptionMode !== writerMode) return { kind: 'failed', code: 'account_mode_mismatch' };
         const { controllerDisplayName: suppliedLabel, ...privateContent } = input.privateContent;
         let controllerDisplayName: string | null | undefined = suppliedLabel;
         if (writerMode === 'plain' && input.censusInput.owner.kind === 'team' && input.teamAcquireDelegated === true) {

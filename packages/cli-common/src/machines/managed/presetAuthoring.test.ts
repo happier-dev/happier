@@ -34,7 +34,7 @@ describe('preset author source review', () => {
       v: 1, name: 'Team source', preparation: { enabled: false }, launch: { provider: contribution,
         schemaVersion: 1, name: 'Authored', choices: { source: 'file' } },
     } });
-    const deps = { custody: { accountId: 'author',
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const,
       open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon' as const,
         descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }], randomBytes: (length: number) => new Uint8Array(length),
@@ -66,7 +66,7 @@ describe('preset author source review', () => {
       content: { t: 'plain', v: { v: 1, name: 'Forged', authorEffectReview: effectReview,
         launch: { provider: contribution, schemaVersion: 1, name: 'Authored', choices: { source: 'file' } } } } };
     const deps = {
-      custody: { accountId: 'author', open: params =>
+      custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params =>
         openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -93,7 +93,7 @@ describe('preset author source review', () => {
         return { ok: true, result: { base: { launch: content.launch.choices, effectReview },
           dimensions: { size: [], image: [], location: [], network: [], duration: [] } } };
       },
-    }, { custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
+    }, { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
       withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus }, readSelectedProvisioners: async () => [{ contribution,
       occurrenceId: 'installed', acquireExecutionTarget: 'daemon', descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }],
       randomBytes: length => new Uint8Array(length) });
@@ -118,7 +118,7 @@ describe('preset author source review', () => {
       const prepared = await managed.prepareManagedMachinePresetAuthoringV1({
         actionId: 'machines.presets.create', input, context: { runtimeAccountId: 'author' }, invokeChild,
       }, {
-        custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
+        custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
           withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
         readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon',
           descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }],
@@ -163,7 +163,7 @@ describe('preset authored configuration counter', () => {
     const preset = { id: 'preset', homeId: 'home', revision: 9, configurationRevision: 4,
       owner: { kind: 'account' as const, accountId: 'author' }, contentEncryptionMode: mode,
       ...initial };
-    const deps = { custody: { accountId: 'author', open: params => params.mode === 'plain'
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => mode, open: params => params.mode === 'plain'
       ? openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' })
       : openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'e2ee', accountId: 'author', accountKey }),
       withE2eeAccountKey: operation => operation({ accountId: 'author', accountKey }),
@@ -233,7 +233,7 @@ describe('preset authored configuration counter', () => {
   it('starts new and legacy setup-only presets at zero and advances setup edits', async () => {
     const content = { v: 1 as const, name: 'Setup only', setup: { scripts: [{ body: 'echo setup', affects: 'none' as const }] } };
     const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content });
-    const deps = { custody: { accountId: 'author', open: params =>
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params =>
       openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -257,7 +257,7 @@ describe('preset authored configuration counter', () => {
     const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
       v: 1, name: 'Setup', setup: { scripts: [{ body: 'echo setup', affects: 'none' }] },
     } });
-    const deps = { custody: { accountId: 'author', open: params =>
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params =>
       openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -282,7 +282,7 @@ describe('preset authored configuration counter', () => {
   });
 
   it('fails closed when the incumbent is unavailable and strips counter edits from Keep-only patches', async () => {
-    const deps = { custody: { accountId: 'author', open: params =>
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const, open: params =>
       openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -304,7 +304,7 @@ describe('preset authored configuration counter', () => {
 
 describe('preset author draft sealing', () => {
   // An agent invokes Save with a plaintext draft; the persisted Account mode, reported by the
-  // Home's recipient census, decides the stored arm. Only the census transport is substituted.
+  // host and confirmed by the recipient census, decides the stored arm.
   const accountKey = new Uint8Array(32).fill(21);
   const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
   const recipientCensus = [{ account: { kind: 'account' as const, accountId: 'author', name: null, firstName: null,
@@ -316,7 +316,7 @@ describe('preset author draft sealing', () => {
     { body: 'echo one', affects: 'none' as const }, { body: 'echo two', affects: 'none' as const }] } };
   const censusInputs: unknown[] = [];
   let nonce = 50;
-  const deps = { custody: { accountId: 'author',
+  const deps = { custody: { accountId: 'author', readWriterMode: async () => 'e2ee' as const,
     open: params => params.mode === 'plain' ? openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' })
       : openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'e2ee', accountId: 'author', accountKey }),
     withE2eeAccountKey: operation => operation({ accountId: 'author', accountKey }),
@@ -338,6 +338,15 @@ describe('preset author draft sealing', () => {
     expect(input.recipients.map(recipient => recipient.accountId)).toEqual(['author']);
     expect(openE2ee(input)).toEqual(draft);
     expect(censusInputs.at(-1)).toEqual({ homeId: 'home', owner });
+  });
+
+  it('refuses a plain census for an E2EE Account before preparing the Save carrier', async () => {
+    const custody = { ...deps.custody,
+      readRecipientCensus: async () => plainCensus };
+    const prepared = await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.create',
+      input: { id: 'preset', homeId: 'home', owner, contentEncryptionMode: 'plain', content: { t: 'plain', v: draft }, recipients: [] },
+      context: { runtimeAccountId: 'author' } }, { ...deps, custody });
+    expect(prepared).toMatchObject({ ok: false, errorCode: 'account_mode_mismatch' });
   });
 
   it('seals a plaintext update draft against the E2EE incumbent and advances its setup revision', async () => {

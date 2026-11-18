@@ -76,7 +76,7 @@ export async function prepareUiManagedProvisionerAdmission(
         if (!custody) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
         try {
             return await prepareManagedMachinePresetAuthoringV1(request, {
-                custody: { accountId: custody.accountId, open: params => custody.open(params),
+                custody: { accountId: custody.accountId, readWriterMode: async () => custody.mode, open: params => custody.open(params),
                     withE2eeAccountKey: operation => custody.mode === 'e2ee' ? custody.withAccountKey(operation) : null,
                     readRecipientCensus: census => requestManagedMachinePresetRecipientCensusInContext({ homeId: census.homeId,
                         account, signal: request.context.signal }, census) },

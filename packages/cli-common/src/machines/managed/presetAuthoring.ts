@@ -1,6 +1,7 @@
 import type { ActionExecutorDeps, ActionExecuteFailure, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetRecipientCensusResultV1,
+  type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { captureManagedMachinePresetAuthorEffectReviewV1, projectManagedMachinePresetForRecipientV1,
   replaceManagedMachinePresetAuthorContentV1, sealManagedMachinePresetContentV1,
   type ManagedMachinePresetContentSealV1, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -17,11 +18,24 @@ function readAuthoredConfiguration(content: ManagedMachinePresetContentV1) {
   return { launch, setup: content.setup };
 }
 
+/** Admit the preset audience against the writer's captured Account mode before sealing. */
+export function admitManagedMachinePresetAuthorCensusV1(
+  writerMode: ManagedMachinePresetV1['contentEncryptionMode'] | null,
+  census: ManagedMachinePresetRecipientCensusResultV1 | null,
+) {
+  if (!census || !writerMode) return { kind: 'refused', code: 'content_unavailable' } as const;
+  if (census.kind === 'refused') return census;
+  if (census.contentEncryptionMode !== writerMode) return { kind: 'refused', code: 'account_mode_mismatch' } as const;
+  return census;
+}
+
 /** The author captures native source effects into the exact carrier reviewed by Save. */
 export async function prepareManagedMachinePresetAuthoringV1(
   request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
   deps: Readonly<{
-    custody: Pick<ManagedMachinePresetSavedSecretPromotionReaderV1, 'accountId' | 'open' | 'withE2eeAccountKey' | 'readRecipientCensus'>;
+    custody: Pick<ManagedMachinePresetSavedSecretPromotionReaderV1, 'accountId' | 'open' | 'withE2eeAccountKey' | 'readRecipientCensus'> & Readonly<{
+      readWriterMode(): Promise<ManagedMachinePresetV1['contentEncryptionMode'] | null>;
+    }>;
     readSelectedProvisioners: ManagedProvisionerSelectionRead;
     randomBytes(length: number): Uint8Array;
   }>,
@@ -56,13 +70,11 @@ export async function prepareManagedMachinePresetAuthoringV1(
   let recipients = value.recipients ?? incumbent?.recipients ?? [];
   let authored = value.content;
   if (authored.t === 'plain') {
-    // A plaintext carrier is the author's draft (an agent cannot know the Account mode). The
-    // Home's census reports the persisted Account mode; E2EE drafts are sealed here, before review.
-    // Like the UI's create, a new preset's census names no preset id; an update names the incumbent.
-    const census = await deps.custody.readRecipientCensus({ homeId: input.homeId,
+    // An agent supplies a plaintext draft. The host verifies the census against its Account mode before review.
+    const writerMode = await deps.custody.readWriterMode();
+    const census = admitManagedMachinePresetAuthorCensusV1(writerMode, writerMode && await deps.custody.readRecipientCensus({ homeId: input.homeId,
       ...('patch' in input ? { presetId: input.id, owner: incumbent!.owner } : { owner: input.owner }),
-      ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) });
-    if (!census) return failure('content_unavailable');
+      ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) }));
     if (census.kind === 'refused') return failure(census.code);
     if (census.contentEncryptionMode === 'e2ee') {
       const draft = authored.v;
