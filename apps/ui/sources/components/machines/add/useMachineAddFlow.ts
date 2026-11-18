@@ -238,7 +238,6 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         resolveWebDesktopSetupHandoffTarget({ ...homeTarget, os, remote: draft.path !== 'thisComputer' }),
     ])) as Record<MachineAddCommandOs, ReturnType<typeof resolveWebDesktopSetupHandoffTarget>>, [homeTarget, draft.path]);
     const commandTarget = commandTargets[draft.os];
-    const selectedCommandAvailable = commandTarget.kind !== 'unavailable';
     const noAvailableCommand = MACHINE_ADD_COMMAND_OS.every(os => commandTargets[os].kind === 'unavailable');
     const remoteHomeUnavailable = noAvailableCommand && commandTarget.kind === 'unavailable'
         && (commandTarget.code === 'home_not_guest_reachable' || paths.find(path => path.id === draft.path)?.runs === 'command');
@@ -294,10 +293,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         update({ ...readMachineAddFlowDraft(), serverId, path: id, os: current.os, sshDraft: current.sshDraft });
     }, [paths, serverId, update]);
     const startWatching = React.useCallback(() => {
-        if (!selectedCommandAvailable) return;
+        if (remoteHomeUnavailable) return;
         const current = readMachineAddFlowDraft();
         if (current.path && current.serverId && paths.some((candidate) => candidate.id === current.path && candidate.runs === 'command')) beginMachineAddWatch(current.serverId, current.path);
-    }, [paths, draft.path, draft.serverId, selectedCommandAvailable]);
+    }, [paths, draft.path, draft.serverId, remoteHomeUnavailable]);
     const startThisComputer = React.useCallback(() => {
         if (chosen?.id !== 'thisComputer' || chosen.runs !== 'task' || chosen.connectedMachineId || !profile || !isActiveHome
             || !sshActions.ready || hasRunningTask() || sshActions.approval.approvalPending) return;

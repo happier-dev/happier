@@ -287,9 +287,10 @@ function MachineAddPane(props: Readonly<{
     const [runYourself, setRunYourself] = React.useState(false);
     // A command's machine can only announce itself: shown means watching. An SSH form shows no command until it can run one.
     const commandShown = Boolean(flow.commands) && (runsCommand || (pathId === 'ssh' && runYourself)) && (pathId !== 'ssh' || flow.ssh.ready);
+    const commandReadyToWatch = commandShown && Boolean(flow.commands?.[flow.os]);
     React.useEffect(() => {
-        if (commandShown && flow.watch.status === 'idle') startWatching();
-    }, [flow.watch.status, commandShown, startWatching]);
+        if (commandReadyToWatch && flow.watch.status === 'idle') startWatching();
+    }, [flow.watch.status, commandReadyToWatch, startWatching]);
     // A server's host key is asked in the trust sheet (lab af-ssh Kp), not inline; the answer goes back through the flow.
     const sshPrompt = pathId === 'ssh' && flow.run?.kind === 'ssh' ? flow.run.prompt as RemoteSshBootstrapPrompt | null : null;
     const hostKeyPrompt = sshPrompt && (sshPrompt.kind === 'ssh.trustHost' || sshPrompt.kind === 'ssh.replaceHostKey') ? sshPrompt : null;

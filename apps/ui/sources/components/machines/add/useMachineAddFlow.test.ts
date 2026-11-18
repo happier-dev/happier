@@ -625,12 +625,12 @@ describe('machine add flow lifetime', () => {
     });
     it('reports not-seeing after five minutes without abandoning the watch, and discard stops it', async () => {
         const previous = storage.getState();
-        const home = await upsertServerProfile({ serverUrl: 'https://flow-clock.example.test', name: 'Clock Home' });
+        const serverId = await harness.addHome({ serverUrl: 'https://flow-clock.example.test', name: 'Clock Home' });
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
         let discard: (() => void) | undefined;
         try {
-            storage.setState({ machineListByServerId: { [home.id]: [] } });
-            const hook = await renderHook(() => useMachineAddFlow({ serverId: home.id }));
+            storage.setState({ machineListByServerId: { [serverId]: [] } });
+            const hook = await renderHook(() => useMachineAddFlow({ serverId }));
             discard = hook.getCurrent().discard;
             await act(async () => { hook.getCurrent().choosePath('anotherComputer'); hook.getCurrent().startWatching(); });
             await act(async () => { vi.advanceTimersByTime(5 * 60_000 - 1); });
@@ -639,14 +639,14 @@ describe('machine add flow lifetime', () => {
             expect(hook.getCurrent().watch).toMatchObject({ status: 'watching', notSeeing: true });
             await act(async () => { await hook.getCurrent().discard(); });
             expect(hook.getCurrent().watch).toMatchObject({ status: 'idle', notSeeing: false });
-            await act(async () => storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'late', activeAt: Date.now() })] } }));
+            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'late', activeAt: Date.now() })] } }));
             expect(hook.getCurrent().watch.status).toBe('idle');
             await hook.unmount();
         } finally {
             await act(async () => discard?.());
             vi.useRealTimers();
             storage.setState(previous);
-            await removeServerProfile(home.id);
+            await removeServerProfile(serverId);
         }
     });
 });
