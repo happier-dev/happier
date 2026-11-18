@@ -129,7 +129,7 @@ export const PLUGIN = definePlugin({
         ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
         ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
       }); } },
-    snapshot: { ...defaults, surfaces: ['ui', 'cli', 'plugin'], title: 'Snapshot exact DigitalOcean Droplet', dangerLevel: 'externalSideEffect',
+    snapshot: { ...defaults, surfaces: ['ui', 'cli', 'plugin', 'agent'], title: 'Snapshot exact DigitalOcean Droplet', dangerLevel: 'externalSideEffect',
       confirmation: { title: 'Snapshot this DigitalOcean Droplet?', body: 'This creates a billable snapshot of the exact managed Droplet’s root disk. Attached volumes are not included.' },
       inputSchema: ROLE_SCHEMAS.snapshotInput, resultSchema: MachineProvisionerSnapshotResultV1Schema,
       async run(input, context) {

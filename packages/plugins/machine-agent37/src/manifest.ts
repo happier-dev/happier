@@ -16,7 +16,7 @@ import { BILLING, RETENTION, CONTRIBUTION, ROLE_SCHEMAS, RECONCILIATION, Agent37
 import { options as projectOptions } from './machine/options.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Agent37 machine?', body: 'Agent37 bills running compute and retained disk. Stop is a cold shutdown; retained disk is still billed. Delete permanently removes the instance.' };

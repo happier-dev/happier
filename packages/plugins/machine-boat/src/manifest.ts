@@ -54,7 +54,7 @@ function rethrowNativeFailure(error: unknown): never {
 }
 const billing = { location: 'cloud', stoppedBilling: 'not-billed' } as const;
 const retention = { supportedIntents: ['stop', 'resume', 'delete'], deletionNotices: [BOAT_STOPPED_STORAGE_NOTICE] } as const;
-const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const runtime = (context: Parameters<typeof nativeFetch>[0]) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });

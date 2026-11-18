@@ -17,7 +17,7 @@ import { createMaritimeSandboxClient } from './sandbox/native.js';
 import { createMaritimePreparationClient, SandboxPreparationInputSchema, SandboxPreparedArtifactSchema, SandboxPreparationOperationSchema, SANDBOX_PREPARATION } from './sandbox/preparation.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Maritime machine?', body: 'Maritime may sleep idle machines and bills retained storage. Delete permanently removes the machine and its disk.' };

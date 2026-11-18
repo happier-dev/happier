@@ -25,7 +25,7 @@ function resourceRef<T>(value: T) { return { contributionRef: { pluginId: PLUGIN
 function pending(correlation: string, nativeCause?: MachineProvisionerNativeCauseV1) { return { kind: 'pending' as const, nativeOperationRef: resourceRef({ correlation }), ...(nativeCause ? { nativeCause } : {}) }; }
 function failureCause(error: unknown) { return error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}; }
 const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
-const defaults = { scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['ui', 'cli', 'plugin', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 async function nativeOptions(context: PluginAccountActionContext | PluginInvocationContext) {

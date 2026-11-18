@@ -15,7 +15,7 @@ import { createSuperservePreparationClient, SUPERSERVE_PREPARATION_HOME, Superse
 import { BILLING, CONTRIBUTION, SuperserveLaunchSchema, SuperserveOptionsSchema, SuperserveResourceSchema, SuperserveOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Superserve sandbox?', body: 'Superserve charges for sandbox resources. Pausing retains memory and disk; deleting permanently removes both.' };

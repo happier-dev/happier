@@ -14,7 +14,7 @@ import { createDaytonaPreparationClient, DAYTONA_PREPARATION_HOME, DaytonaPrepar
 import { BILLING, CONTRIBUTION, DaytonaLaunchSchema, DaytonaOptionsSchema, DaytonaResourceSchema, DaytonaOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Daytona sandbox?', body: 'Daytona charges for sandbox resources. Stopping retains its filesystem; deleting permanently removes it.' };

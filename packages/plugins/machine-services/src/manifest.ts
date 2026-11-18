@@ -46,7 +46,7 @@ export const plugin = definePlugin({
     activation: { events: [], configuration: { automationEventSources: true } },
     actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthActions, ...savedHealthTransitionActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
-            title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
+            title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'agent', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],
             execution: { target: 'client', client: { artifactId: 'health-setup', exportName: 'activate' },
                 platforms: ['web', 'ios', 'android'] },

@@ -15,7 +15,7 @@ import { createE2bPreparationClient, E2B_PREPARATION_HOME, E2bPreparationInputSc
 import { BILLING, RETENTION, CONTRIBUTION, ROLE_SCHEMAS, RECONCILIATION, E2bLaunchSchema, E2bOptionsSchema, E2bResourceSchema, E2bOperationSchema } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this E2B sandbox?', body: 'E2B bills running compute. Pause preserves memory and disk; delete permanently removes both.' };

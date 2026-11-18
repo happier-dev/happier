@@ -14,7 +14,7 @@ import { createRailwayPreparationClient, RAILWAY_PREPARATION_HOME, RailwayPrepar
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOptionsSchema, RailwayResourceSchema, RailwayOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Railway sandbox?', body: 'Railway charges for sandbox resources. This sandbox stays running until you delete it; deleting permanently removes its filesystem.' };

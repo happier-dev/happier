@@ -14,7 +14,7 @@ import { createUpstashBoxPreparationClient, UPSTASH_BOX_PREPARATION_HOME, Upstas
 import { BILLING, CONTRIBUTION, UpstashBoxLaunchSchema, UpstashBoxOptionsSchema, UpstashBoxResourceSchema, UpstashBoxOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Upstash Box sandbox?', body: 'Upstash Box bills active CPU and retained storage. Native idle auto-pause is based on the Upstash plan, not Happier activity. Stopping retains files; deleting permanently removes the live box.' };

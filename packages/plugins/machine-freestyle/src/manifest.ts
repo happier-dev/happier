@@ -15,7 +15,7 @@ import { createFreestylePreparationClient, FREESTYLE_PREPARATION_HOME, Freestyle
 import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOptionsSchema, FreestyleResourceSchema, FreestyleOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
-const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const confirmation = { title: 'Manage this Freestyle VM?', body: 'Freestyle charges for VM resources. Pausing retains memory and disk, subject to your Freestyle plan retention policy; deleting permanently removes it.' };
