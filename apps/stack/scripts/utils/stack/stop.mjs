@@ -434,6 +434,27 @@ async function withStackCleanupExecutorLock(input, dependencies, fn) {
   });
 }
 
+async function retireStackQaBrowsers({ stackName, baseDir, sourceDir, env, capture, warn, actions }) {
+  try {
+    actions.browsers = await stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }, { capture });
+    for (const warning of actions.browsers.warnings) warn(warning);
+  } catch {
+    warn({ code: 'browser_cleanup_incomplete', reason: 'browser_cleanup_unavailable', retryable: true });
+  }
+}
+
+/** The browser half of a stop that deferred it (`deferBrowserCleanup`), logged
+ * like the stop's own warnings. Called once the restart's replacement launched. */
+export async function retireStackQaBrowsersAfterStop({ rootDir, stackName, baseDir, env }, { runCaptureResultImpl = runCaptureResult } = {}) {
+  const actions = { warnings: [] };
+  const warn = warning => {
+    actions.warnings.push(warning);
+    console.warn(`[stack] ${warning.code}${warning.target ? ` for ${warning.target}` : ''}${warning.reason ? ` (${warning.reason})` : ''}; cleanup will retry at the next boundary`);
+  };
+  await retireStackQaBrowsers({ stackName, baseDir, sourceDir: getRepoDir(rootDir, env), env, capture: runCaptureResultImpl, warn, actions });
+  return actions;
+}
+
 export async function stopStackWithEnv(input = {}, dependencies = {}) {
   return await withStackCleanupExecutorLock(input, dependencies, async () => {
     return await stopStackWithEnvSerialized(input, dependencies);
@@ -542,6 +563,7 @@ async function stopStackWithEnvInternal({
   stopAttribution = null,
   expectedOwnerPid = null,
   expectedOwnerStartedAt = null,
+  deferBrowserCleanup = false,
 }, {
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
   stopHappyServerManagedInfraImpl = stopHappyServerManagedInfra,
@@ -638,13 +660,10 @@ async function stopStackWithEnvInternal({
   const runnerPid = Number(runtimeState?.ownerPid);
   const processEntries = getStackRuntimeProcessEntries(runtimeState);
 
-  try {
-    actions.browsers = await stopStackQaBrowsers({ stackName, baseDir,
-      sourceDir, env }, { capture: runCaptureResultImpl });
-    for (const warning of actions.browsers.warnings) warn(warning);
-  } catch (error) {
-    warn({ code: 'browser_cleanup_incomplete', reason: 'browser_cleanup_unavailable', retryable: true });
-  }
+  // A restart retires browsers after it launched its replacement (an
+  // unreachable host must never delay the reload); see retireStackQaBrowsersAfterStop.
+  if (deferBrowserCleanup) actions.browsers = { deferred: true };
+  else await retireStackQaBrowsers({ stackName, baseDir, sourceDir, env, capture: runCaptureResultImpl, warn, actions });
 
   // Retire native roles while the controller's forwards still exist. The same
   // target-owned stop guards Sessions. Unreachable targets retain their remote

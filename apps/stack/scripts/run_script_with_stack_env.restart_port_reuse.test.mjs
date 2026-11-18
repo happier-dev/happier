@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
@@ -671,6 +671,38 @@ test('a reload whose replacement fails readiness after retirement restarts the i
     { selected: entries.incumbent, rollback: '1' },
   ]);
 });
+
+test('a restart retires browsers only after it launched the replacement, never on the stop critical path', async t => {
+  // P03 ORCH 2026-11-18: browser cleanup across every QA host (including an
+  // unreachable one) must never delay a reload; it runs afterwards, logged.
+  const { rootDir, stackName, markerPath } = await createRestartPreflightFixture(t, 'run.mjs');
+  const seen = [];
+  const warn = console.warn;
+  console.warn = (...values) => {
+    const line = values.map(String).join(' ');
+    if (line.includes('browser_cleanup')) {
+      seen.push({ line, launched: readFileSyncSafe(markerPath) === 'started' });
+    }
+  };
+  t.after(() => { console.warn = warn; });
+  await stackEnvRunner.runStackScriptWithStackEnv({
+    rootDir, stackName, scriptPath: 'run.mjs',
+    args: ['--restart', '--no-daemon', '--no-ui', '--no-browser'],
+    extraEnv: { HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' },
+  }, {
+    runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' }),
+    runProcess: async ({ args }) => ({ code: 0, out: JSON.stringify([{ name: args[2], paused: false,
+      status: 'watching', successfulCycles: 1,
+      alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) }),
+  });
+  assert.equal(await readFile(markerPath, 'utf8'), 'started');
+  assert.ok(seen.length > 0, 'the unreachable fixture host reports its browser cleanup');
+  assert.deepEqual(seen.map(entry => entry.launched), seen.map(() => true), 'browser cleanup ran after the replacement launched');
+});
+
+function readFileSyncSafe(path) {
+  try { return readFileSync(path, 'utf8'); } catch { return null; }
+}
 
 test('outer start publication records requested UI truth before the child runner starts', () => {
   const base = {

@@ -49,7 +49,7 @@ import {
 } from '../utils/stack/runtime_state.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from '../utils/stack/runtime_owner_incarnation.mjs';
 import { listAllStackNames } from '../utils/stack/stacks.mjs';
-import { completeInterruptedStackStopBeforeStart, createStackRuntimeCleanupIncompleteError, stopStackWithEnv } from '../utils/stack/stop.mjs';
+import { completeInterruptedStackStopBeforeStart, createStackRuntimeCleanupIncompleteError, retireStackQaBrowsersAfterStop, stopStackWithEnv } from '../utils/stack/stop.mjs';
 import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
@@ -690,6 +690,8 @@ export async function stopObservedStackForRestart({
     preserveDaemon,
     expectedOwnerPid,
     expectedOwnerStartedAt,
+    // The restart owner retires browsers after it launched the replacement.
+    deferBrowserCleanup: true,
   };
   // Restart depends on terminal cleanup, not the standalone Stop command's
   // lock-acquisition deadline. Reuse the executor's file-change completion signal.
@@ -919,6 +921,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
       // an execution host the controller's restart owner decides both: a host
       // keeps its record (released by its next reload) for that restart.
       let retiredForSourceReload = false;
+      let restartDeferredBrowserCleanup = false;
       const ownsSourceReloadRollback = env.HAPPIER_DEV_TARGET_EXECUTION !== '1';
       const settleSourceReload = async () => {
         if (!retiredForSourceReload || !ownsSourceReloadRollback || startOutcome.readiness !== 'ready') return;
@@ -1012,6 +1015,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
               env,
             });
             retiredForSourceReload = scriptPath === 'run.mjs' && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
+            restartDeferredBrowserCleanup = true;
             const stopResult = await stopObservedStackForRestart({
               rootDir,
               stackName,
@@ -1180,6 +1184,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
               }
               if (isTrueRestart && !wantsJson) {
                 // Try one more safe cleanup of stack-owned processes and re-check.
+                restartDeferredBrowserCleanup = true;
                 const stopResult = await stopObservedStackForRestart({
                   rootDir,
                   stackName,
@@ -1642,6 +1647,11 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
           error.sourceReloadRollback = { baseDir, args: args.filter(arg => !arg.startsWith('--source-ui-dir=')) };
         }
         throw error;
+      } finally {
+        // Deferred by the restart's stop: never on the reload's critical path.
+        if (restartDeferredBrowserCleanup) {
+          await retireStackQaBrowsersAfterStop({ rootDir, stackName, baseDir, env });
+        }
       }
     },
   });
