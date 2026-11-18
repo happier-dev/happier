@@ -11,7 +11,7 @@ import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
-import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
+import historicalReviewAndConvergeV1 from './fixtures/historicalReviewAndConvergeV1.json';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
 import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowDefinitionV1Schema } from './workflowV1.js';
@@ -615,7 +615,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   });
 
   it.each([
-    ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { engines: ['agent:happier.agent.codex/codex'] }, 'review'],
+    ['historical Review & converge', WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1), { engines: ['agent:happier.agent.codex/codex'] }, 'review'],
     ['Plan with a panel', PLAN_WITH_A_PANEL_WORKFLOW_V1, { request: 'Plan the change', engines: ['agent:happier.agent.codex/codex'] }, 'plan'],
   ] as const)('admits an agent start of %s with accepted engine choices', async (_name, authored, inputs, actionBlockId) => {
     const result = await materialize({ definition: authored,
@@ -640,7 +640,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     ]);
   });
   it('checks every known item-loop Action engine against current Agent authority', async () => {
-    const result = await materialize({ definition: REVIEW_AND_CONVERGE_WORKFLOW_V1,
+    const result = await materialize({ definition: WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1),
       context: { ...context, actionCaller: policyActionContext.actionCaller,
         authorization: { principal: { kind: 'session', sessionId: 'origin' } }, inputs: { engines: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] },
         origin: { kind: 'direct', originSessionId: 'origin' } },
