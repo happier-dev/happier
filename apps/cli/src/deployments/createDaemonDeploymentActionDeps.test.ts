@@ -1381,7 +1381,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
@@ -1417,7 +1417,9 @@ describe('installed deployment storage and target composition', () => {
         const sourceAdmission = { phase: 'deployment_source_admission', reason: 'requester_authority_unavailable',
             requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } as const;
         const sdkBackgroundObservation = scenario === 'SDK background receipt observe';
-        const backgroundObservation = scenario === 'background receipt observe' || scenario === 'uncertain receipt observe' || sdkBackgroundObservation;
+        const settlementObservationRefused = scenario === 'settlement observation refused';
+        const backgroundObservation = scenario === 'background receipt observe' || scenario === 'uncertain receipt observe'
+            || sdkBackgroundObservation || settlementObservationRefused;
         const settlementPointerChanged = scenario === 'settlement pointer changed';
         {
             // Saved-profile persistence is the OS boundary, as in the native materialization fixture below.
@@ -2307,7 +2309,8 @@ describe('installed deployment storage and target composition', () => {
             });
             // Controller build cases create exclusive stage-log directories.
             const buildReceiptId = controllerBuildOutput ? `platform-receipt-${scenario.replaceAll(' ', '-')}` : undefined;
-            const receipt = createDeploymentReceiptHeaderV1({ id: buildReceiptId ?? 'platform-receipt', environmentId: environment.environment.id,
+            const receipt = createDeploymentReceiptHeaderV1({ id: buildReceiptId ?? (settlementObservationRefused
+                ? 'platform-receipt-settlement-observation-refused' : 'platform-receipt'), environmentId: environment.environment.id,
                 targetLinkId: row.targetLink.id, state: scenario === 'uncertain receipt observe' ? 'outcome_unknown' : scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
                 actionOperationId: 'platform-operation', requestedByAccountId: 'owner',
                 startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: 'reserved-platform-content',
@@ -2408,6 +2411,7 @@ describe('installed deployment storage and target composition', () => {
                     }
                     settling = false;
                     const transition = DeploymentTransitionInputV1Schema.parse(request.data);
+                    if (settlementObservationRefused) return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
                     // The server transaction applies this prepared mutation to the SAME receipt Artifact.
                     if (!transition.contentArtifactId || !transition.contentUpdate
                         || transition.contentUpdate.expectedHeaderVersion === undefined
@@ -2831,6 +2835,21 @@ describe('installed deployment storage and target composition', () => {
                     return;
                 }
                 const observationContext = context;
+                if (settlementObservationRefused) {
+                    await expect(executor.execute('deployments.receipts.observe', input, observationContext))
+                        .resolves.toMatchObject({ ok: true, result: { state: 'queued' } });
+                    const result = await executor.execute('deployments.receipts.observe', input, observationContext);
+                    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', effectAttempted: true,
+                        failureCause: { phase: 'deployment.transition', errorCode: 'deployment_conflict', httpStatus: 409 } });
+                    const module = runtime.modulesByPluginId.get(pluginId);
+                    if (!module || !('readObservationCount' in module) || typeof module.readObservationCount !== 'function')
+                        throw new Error('Missing provider observation probe');
+                    expect(module.readObservationCount()).toBe(2);
+                    expect(transitionWrites).toBe(0);
+                    expect(receipt.state).toBe('queued');
+                    expect(providerSends).toBe(0);
+                    return;
+                }
                 const controllerMachineId = environment.environment.controllerMachineId;
                 environment.environment.controllerMachineId = 'replacement-controller';
                 const reassigned = await executor.execute('deployments.receipts.observe', input, observationContext);

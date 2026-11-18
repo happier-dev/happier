@@ -695,7 +695,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
                     headers: admittedHeaders, data: wire, signal: request.context.signal, validateStatus: () => true });
                 const parsed = DeploymentReceiptResultV1Schema.safeParse(response.data);
-                const result = parsed.success ? projectDeploymentTransitionResultForHost(parsed.data) : null;
+                const result = parsed.success ? projectDeploymentTransitionResultForHost(parsed.data, response.status) : null;
                 if (!result) return projectDeploymentTransitionOutcomeUnknownForHost({ response });
                 if (result.ok && prepared) await atHome(() => prepared.afterCommit());
                 return result;

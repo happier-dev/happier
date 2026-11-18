@@ -1,5 +1,5 @@
 import type { DeploymentReceiptResultV1 } from '@happier-dev/protocol';
-import { readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Native continuations already have a receipt; pending admission is not a transition ACK. */
 export type DeploymentTransitionResultForHost =
@@ -16,7 +16,10 @@ export function projectDeploymentTransitionOutcomeUnknownForHost(error: unknown)
 /** The transition boundary owns the domain-to-Action failure projection, including quota facts. */
 export function projectDeploymentTransitionResultForHost(
     result: DeploymentReceiptResultV1,
+    httpStatus: number | null = null,
 ): DeploymentTransitionResultForHost | null {
-    if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result };
+    if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result,
+        failureCause: readActionFailureCauseV1({ phase: 'deployment.transition', errorClass: 'UnknownThrownValue',
+            errorCode: result.error, httpStatus }) };
     return 'deploymentId' in result ? result : null;
 }

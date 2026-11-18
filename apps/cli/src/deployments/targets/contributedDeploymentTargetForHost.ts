@@ -335,7 +335,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
             } } : {}),
             content: observed, context });
-        return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
+        return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true,
+            failureCause: written.failureCause };
     }
 
     /** A finite observer spends the retained receipt's controller proof, never another Deploy request. */
