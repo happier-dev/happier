@@ -280,12 +280,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         if (request.actionId === 'projects.prepare' && request.input.heldOperationId) {
             const refusal = await readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal });
             if (refusal) return refusal;
-            // The held operation retains its original automation context. The
-            // approving authority is the verified ingress that delivered this
-            // decision, so do not re-read the held context as the approver.
-            if (ingress.callerAuthority !== 'present_user' && args.context.authority !== 'present_user') {
-                return failure('project_setup_consent_invalid');
-            }
+            // Action admission owns approval; retained automation context is
+            // not a second authority decision for this admitted response.
             await assertNotCancelled();
             const operation = await runtime.operationRuntime.decideSetupReview({ accountId: runtime.accountId, machineId: runtime.machineId },
                 request.input.heldOperationId, request.input.workspace, request.input.phase, {

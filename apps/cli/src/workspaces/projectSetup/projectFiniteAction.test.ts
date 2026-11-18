@@ -1666,17 +1666,18 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-trust/mutate'))).toEqual([]);
     });
 
-    it('accepts a held This time or Skip decision from the verified present-user ingress', async () => {
+    it.each([false, true])('accepts an admitted held decision without rechecking present-user authority (skip=%s)', async skipForInvocation => {
         const h = await harness({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const scope = { accountId: 'owner', machineId: 'machine' };
         const held = ProjectCommandActionOutputV1Schema.parse(await h.invoke('projects.prepare', { workspace: h.address, phase: 'setup' }));
         await expect.poll(() => h.operationRuntime.store.get(scope, held.operation.operationId)?.setupReview?.code)
             .toBe('project_setup_consent_required');
         const reviewed = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, held.operation.operationId)!.setupReview);
-        const decide = createFiniteActionWithCapturedRequester(h.runtime, { ...h.context, callerAuthority: 'present_user' });
+        const decide = createFiniteActionWithCapturedRequester(h.runtime, h.context);
         const result = await decide({ actionId: 'projects.prepare', input: {
             workspace: h.address, phase: 'setup', heldOperationId: held.operation.operationId,
-            expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope: 'thisTime',
+            expectedEffectDigest: reviewed.reviewedEffectDigest,
+            ...(skipForInvocation ? { skipForInvocation: true } : { consentScope: 'thisTime' }),
         }, context: { ...h.context, authority: 'account_automation', surface: 'agent', actionRequestId: 'present-user-decision' } });
         expect(result, JSON.stringify(result)).toMatchObject({ operation: { state: 'accepted' } });
     });
@@ -1783,7 +1784,7 @@ describe('authenticated finite Project Action owner', () => {
         } finally { await h.operationRuntime.runner.retireProjectFiniteOperations(); }
     });
 
-    it('keeps a changed retained digest held and refuses late decisions after cancellation or from automation', async () => {
+    it('keeps a changed retained digest held and refuses late decisions after cancellation', async () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const manifest = { ...portableNativeManifest, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } };
@@ -1795,8 +1796,6 @@ describe('authenticated finite Project Action owner', () => {
             const reviewed = h.operationRuntime.store.get(scope, 'operation')!.setupReview!;
             const decision = { workspace: h.address, phase: 'setup', heldOperationId: 'operation',
                 expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope: 'thisTime' };
-            expect(await h.invoke('projects.prepare', decision, { ...h.context, transportRequestId: 'automation-decision' }))
-                .toMatchObject({ ok: false, errorCode: 'project_setup_consent_invalid' });
             await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...manifest,
                 workspace: { setup: [{ kind: 'command', command: 'echo changed setup' }] } }));
             h.waiveSetupApproval();
