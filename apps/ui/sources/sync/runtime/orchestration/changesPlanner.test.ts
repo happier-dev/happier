@@ -11,6 +11,7 @@ import {
     buildAccountIdentitiesChangeV1,
     buildConnectedServicesAccountChangeV1,
     PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
+    HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
 } from '@happier-dev/protocol/changes';
 import {
@@ -83,6 +84,8 @@ it('retains accounting for catalog, allowance and managed-policy inputs on mixed
         row('fixture-managed-policy', { managedMachinePolicy: true, machineId: machine.entityId }),
         row(PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1),
         row('provider-account-usage-record:paug_v1_abcdefgh'),
+        row(HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        row(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
         { ...buildConnectedServicesAccountChangeV1(), cursor: 12, changedAt: 1 },
     ];
     for (const change of irrelevant) {

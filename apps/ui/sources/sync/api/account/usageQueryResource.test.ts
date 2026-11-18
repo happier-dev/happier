@@ -27,6 +27,7 @@ import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAc
 import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { planSyncActionsFromChanges, plannedChangesAffectUsageQuery, plannedChangesAffectUsageAccounting } from '@/sync/runtime/orchestration/changesPlanner';
 // These source-adapter tests do not register unrelated Settings surfaces.
@@ -1973,6 +1974,15 @@ describe('usage query captured Resource adapter', () => {
       publishPage([{ kind: 'account', entityId: 'provider-account-usage', cursor: 5, changedAt: 1 }, machine,
         { kind: 'automation', entityId: 'automation-fixture', cursor: 6, changedAt: 1 }]);
       await settle();
+      // Captured mounted Year pages mixed quota with independent Home/Team
+      // administration and plugin checkpoints, without a UsageEvent change.
+      for (const entityId of [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]) {
+        publishPage([{ kind: 'account', entityId: 'provider-account-usage', cursor: 5, changedAt: 1 }, machine,
+          { kind: 'account', entityId, cursor: 6, changedAt: 1 },
+          { kind: 'pluginDomain', entityId: 'pluginDomain/happier.scm.forge.github/data-collection/automation-event-checkpoints-v1', cursor: 7, changedAt: 1 },
+          { kind: 'automation', entityId: 'automation-source-status', cursor: 8, changedAt: 1 }]);
+        await settle();
+      }
       expect.soft(reads() - before, 'Catalog configuration, Machine policy and allowance changes contain no accounting events').toBe(0);
       revision = 2;
       publishHomeAccountChange(captured.accountLifetime.scope.serverId, [], { changeKinds: ['account'], usageQueryAffects: true,
@@ -1991,8 +2001,12 @@ describe('usage query captured Resource adapter', () => {
 
   it('keeps admitted accounting quiet through provider quota Home publications and still reads a real accounting change', async () => {
     let revision = 1;
-    const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, totals: { ...value.totals, eventCount: revision } }) : undefined);
+    let held: ReturnType<typeof createDeferred<void>> | undefined;
+    const captured = await context(async request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      await held?.promise;
+      return Response.json({ ...value, totals: { ...value.totals, eventCount: revision } });
+    });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeInsights: true });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
@@ -2011,12 +2025,35 @@ describe('usage query captured Resource adapter', () => {
         await settle();
       }
       expect.soft(reads() - before, 'Allowance publications change no server accounting answer, including insights').toBe(0);
+      for (let index = 0; index < 3; index++) {
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, undefined,
+          { source: 'connected', changesCatchUp: true });
+        await settle();
+      }
+      expect.soft(reads() - before, 'The primary Home reconnect reuses settled accounting while its feed catches up').toBe(0);
+      const retained = entry.getSnapshot().value;
+      held = createDeferred<void>();
+      const pending = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [{ ...query, period: { startMs: 2000, endMs: 3000 } }] }) });
+      const releasePending = pending.subscribe(() => {}, true);
+      try {
+        await expect.poll(reads).toBeGreaterThan(before);
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, undefined,
+          { source: 'connected', changesCatchUp: true });
+        await flushHookEffects({ cycles: 20 });
+        expect.soft(entry.getSnapshot().pending, 'Recovering an interrupted sibling retains this settled accounting').toBe('idle');
+        expect.soft(entry.getSnapshot().value).toBe(retained);
+        held.resolve();
+        held = undefined;
+        await expect.poll(() => pending.getSnapshot().pending).toBe('idle');
+      } finally { held?.resolve(); held = undefined; releasePending(); }
+      const beforeAccountingChange = reads();
       revision = 2;
       publishHomeAccountChange(captured.accountLifetime.scope.serverId, [], {
         changeKinds: ['account'], usageQueryAffects: true, usageAccountingChange: { sessionId: null },
       });
       await settle();
-      expect.soft(reads() - before, 'The accounting producer still replaces its admitted answer once').toBe(1);
+      expect.soft(reads() - beforeAccountingChange, 'The accounting producer still replaces its admitted answer once').toBe(1);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(2);
     } finally { release(); }
   });
@@ -5830,9 +5867,11 @@ describe('usage query captured Resource adapter', () => {
             cursor: ++catchUpCursor, changedAt: now }));
           await sync.resumeSync('socket-reconnect');
           await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+          const accountingBeforeEmpty = reads('/v2/usage/query');
           catchUpRows = [];
           await sync.resumeSync('socket-reconnect');
           await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+          expect.soft(reads('/v2/usage/query'), 'An empty reconnect retains the settled accounting batch').toBe(accountingBeforeEmpty);
         }
         expect(wakes.filter(event => event.feedPageConsumed)).toHaveLength(3);
         expect(wakes.every(event => event.source === 'catch-up-pending' || event.feedPageConsumed === true), 'No fallback/reset was requested by the unrelated pages').toBe(true);
@@ -5912,7 +5951,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect.soft(reads(sourcePath), 'A mode withdrawal discovered by durable catch-up also requires fresh allowance admission').toBe(beforeCaughtMode + 3);
       for (const wake of [
-        () => publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['session-arrival'], { source: 'connected', changeKinds: ['session'], usageQueryAffects: true }),
+        () => publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['session-arrival'], { source: 'connected', changesCatchUp: true, changeKinds: ['session'], usageQueryAffects: true }),
       ]) {
         const beforeSources = reads(sourcePath);
         const beforeRecords = reads(recordPath);

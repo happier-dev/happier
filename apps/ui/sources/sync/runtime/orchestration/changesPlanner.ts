@@ -1236,6 +1236,10 @@ export function plannedChangesAffectUsageAccounting(planned: PlannedChangeAction
             return planned.afterCursor === undefined || readSessionUsageAccountingChangedV1(change, planned.afterCursor);
         }
         if (change.kind !== 'account' || isAccountCurrentnessChangeV1(change)) return true;
+        // Home/Team administration publishes reconstructible rosters and
+        // policy. Account-owned UsageEvents retain their independent push.
+        if (change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
+            || change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) return false;
         // These canonical rows contain service configuration, allowances or
         // Machine policy, not UsageEvents, message counts or entered prices.
         // Other self changes and unknown Account rows remain conservative.

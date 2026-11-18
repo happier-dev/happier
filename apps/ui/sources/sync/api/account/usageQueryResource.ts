@@ -1924,6 +1924,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         }
         return pluginUiResourceReferenceKey(reference, null);
     };
+    const readNeedsRecovery = (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => {
+        const snapshot = owner.store.getEntry(reference).getSnapshot();
+        return snapshot.pending !== 'idle' || snapshot.value === undefined || !!snapshot.error;
+    };
     // subscribe/refresh synchronously starts readResource. Only that start
     // captures this operation's caller; joining admitted work leaves no origin.
     let acquisitionCaller: Readonly<{ context: ActionExecutorContext; admitted: boolean }> | undefined;
@@ -2363,6 +2367,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const observe = (event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]) => {
                     const accountModeChanged = takeAccountModeChange();
                     if (accountModeChanged) replaceAccounting();
+                    if (!accountModeChanged && typeof change === 'object' && change.source === 'connected'
+                        && change.changesCatchUp === true && !readNeedsRecovery(reference)) return;
                     if (!accountModeChanged && typeof change === 'object' && isUsagePresentationHomeAccountChange(change)) return;
                     if (!accountModeChanged && change === 'session-evidence' && !privateEvidence) return;
                     if (!accountModeChanged && change === 'quota-inputs' && quotaRecordIds !== undefined
@@ -2555,7 +2561,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             // Session, quota-input and projection wakes change no server answer.
             const quotaChange = typeof homeChange === 'object' && (isUsageQuotaHomeAccountChange(homeChange)
                 || homeChange.usageAccountingAffects === false && isUsageProjectionHomeAccountChange(homeChange, true));
-            if (homeChange === undefined || typeof homeChange === 'object' && !quotaChange && !isUsagePresentationHomeAccountChange(homeChange)) {
+            if (typeof homeChange === 'object' && homeChange.source === 'connected' && homeChange.changesCatchUp === true) {
+                // Catch-up owns changed facts. Recover interrupted transports
+                // without discarding this Account's settled accounting answers.
+                accountingReads.invalidate();
+            } else if (homeChange === undefined || typeof homeChange === 'object' && !quotaChange && !isUsagePresentationHomeAccountChange(homeChange)) {
                 const change = typeof homeChange === 'object' ? readUsageAccountingChangeScope(homeChange) : undefined;
                 if (!change) replaceAccounting();
                 else {
@@ -2653,7 +2663,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             owner.invalidate(projectionChanged ? event
                 : accountingUnchanged ? 'session-evidence' : event);
         }
-    }, { reconnect: 'refresh' });
+    }, { reconnect: { readNotCurrent: () => [...listeners.values()].some(({ reference }) => readNeedsRecovery(reference)) } });
     const readProviderRows = () => {
         const scope = readOpenedQuotaScope(sharedContext);
         return scope ? getProviderAccountUsageCacheState().entriesByCredentialScope[scope.providerScope] : undefined;
