@@ -5,6 +5,7 @@ import {
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { inTx, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from '../usageSourceClassifier';
 
 export type UsageMessageCounts = {
@@ -48,14 +49,15 @@ export async function loadUsageMessageCountsBySessionInTx(
         return new Map();
     }
 
-    const publicationRows = await tx.session.findMany({
+    const dateFilter = toObservedAtFilter(request);
+    const readPublications = (ids: readonly string[] | undefined) => tx.session.findMany({
         where: {
-            id: sessionIds === undefined ? undefined : { in: sessionIds },
+            id: ids === undefined ? undefined : { in: [...ids] },
             accountId,
             OR: [
-                { usageEvents: { some: { observedAt: toObservedAtFilter(request),
+                { usageEvents: { some: { observedAt: dateFilter,
                     source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } } } },
-                { usageReports: { some: { updatedAt: toObservedAtFilter(request) } } },
+                { usageReports: { some: { updatedAt: dateFilter } } },
             ],
         },
         select: withSessionContentSelect({
@@ -63,17 +65,29 @@ export async function loadUsageMessageCountsBySessionInTx(
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         }),
     }).then(decodeSessionStoredContent);
-    const counts = await tx.sessionMessage.groupBy({
-        by: ['sessionId'],
-        _count: { _all: true },
-        where: {
-            ...buildSessionMessagesPublicationWhere(publicationRows),
-            createdAt: toObservedAtFilter(request),
-            session: {
-                accountId,
-            },
-        },
+    // The lookup binds the Account, LIMIT/OFFSET, both date bounds per relation,
+    // and the excluded sources. The candidate filter can exceed that budget too.
+    const publicationIdChunks = sessionIds === undefined ? [undefined] : portableQueryChunks({
+        values: [...new Set(sessionIds)], bindingsPerValue: 1,
+        fixedBindings: 7 + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length,
     });
-
-    return new Map(counts.map(row => [row.sessionId, row._count._all]));
+    const counts = new Map<string, number>();
+    // A distinct publication ceiling can bind both a Session id and sequence.
+    // Prisma also binds LIMIT and OFFSET alongside the Account and date bounds.
+    for (const ids of publicationIdChunks) {
+        const publications = await readPublications(ids);
+        for (const rows of portableQueryChunks({ values: publications, bindingsPerValue: 2, fixedBindings: 5 })) {
+            const grouped = await tx.sessionMessage.groupBy({
+                by: ['sessionId'],
+                _count: { _all: true },
+                where: {
+                    ...buildSessionMessagesPublicationWhere(rows),
+                    createdAt: dateFilter,
+                    session: { accountId },
+                },
+            });
+            for (const row of grouped) counts.set(row.sessionId, row._count._all);
+        }
+    }
+    return counts;
 }
