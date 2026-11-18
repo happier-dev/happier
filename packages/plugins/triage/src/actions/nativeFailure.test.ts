@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
 import { TriageSessionHandoffResultV1Schema } from '@happier-dev/triage-protocol/v1';
-import { presentTriageNativeFailureResult } from './nativeFailure.js';
+import { createTriageNativeFailureOwner, presentTriageNativeFailureResult } from './nativeFailure.js';
+import { TriageNativeFailureInputV1Schema } from './nativeFailureProtocol.js';
 const scope = { serverId: 'server-a' };
 describe('native failure presentation at its Triage owner', () => {
   it('retains the exact Session handoff for outcome links without calling it a finding', () => {
@@ -27,4 +30,19 @@ describe('native failure presentation at its Triage owner', () => {
       .toEqual({ kind: 'unavailable', code: 'invalid_result' });
   });
 
+  it.each([
+    ['a refused read keeps its own code', () => { throw new PluginError({ code: 'action_target_unavailable' }); }, 'action_target_unavailable'],
+    ['a read the catalog itself refuses stays catalogUnavailable', () => ({ v: 1, kind: 'unavailable', reason: 'catalogUnavailable' }), 'catalogUnavailable'],
+    ['an unreadable answer is an invalid result', () => ({ v: 1, kind: 'actions_invoke', data: {} }), 'invalid_result'],
+  ])('settles Investigate to the named reason of its choices read: %s (BL2-HEALTH)', async (_name, answer, code) => {
+    // Live #177: every reason the choices read could fail was reported as catalogUnavailable, so a refused
+    // or unreadable read looked like a Home with no Triage catalog and the real cause was lost.
+    const context = { plugin: { id: 'happier.triage' }, signal: new AbortController().signal,
+      ui: { executeAction: async () => answer() } } as unknown as PluginClientActionContext;
+    const launch = TriageNativeFailureInputV1Schema.parse({ kind: 'launch', context: { kind: 'healthAlert',
+      notice: { kind: 'host', artifactId: 'notice', source: { kind: 'host', topic: 'resource_limit' } },
+      target: { kind: 'machine', machine: { serverId: 'home', machineId: 'affected' } } } });
+    expect(await createTriageNativeFailureOwner().invoke(launch, context))
+      .toEqual({ kind: 'presentation', outcome: { kind: 'unavailable', code } });
+  });
 });

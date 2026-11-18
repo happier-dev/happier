@@ -74,8 +74,10 @@ export function createTriageNativeFailureOwner() {
     const actionSubject = subject.kind === 'failure' ? triageFailureSubjectActionSubjectV1(subject.subject) : undefined;
     const result = await execute(context, 'actions/read-v1', { v: 1, projection: 'sessionHandoff', task: 'investigate',
       ...(actionSubject === undefined ? {} : { subject: actionSubject }) });
-    const parsed = result.ok ? TriageSessionHandoffChoicesV1Schema.safeParse(result.result) : null;
-    return parsed?.success ? parsed.data : { v: 1, kind: 'unavailable', reason: 'catalogUnavailable' } as const;
+    // A refused read keeps its own reason; only the catalog itself says catalogUnavailable (BL2-HEALTH).
+    if (!result.ok) return { v: 1, kind: 'unavailable', reason: result.errorCode ?? 'unknown_error' } as const;
+    const parsed = TriageSessionHandoffChoicesV1Schema.safeParse(result.result);
+    return parsed.success ? parsed.data : { v: 1, kind: 'unavailable', reason: 'invalid_result' } as const;
   }
   function resume(subject: Context, placement: Placement, context: PluginClientActionContext): Promise<ActionExecuteResult> | null {
     const key = subjectKey(subject);
