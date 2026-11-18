@@ -55,11 +55,24 @@ reload together; existing faces and templates without pets remain unchanged.
 The Account pet library optionally carries cell-local `opaqueBounds` computed
 by the existing server admission scan and retained in its stored manifest
 metadata. Older entries without bounds remain readable and use the full cell;
-built-in packages carry precomputed bounds. No database migration or device-side
-atlas scan is introduced. The shared reference lookup distinguishes an initial
+built-in packages carry precomputed bounds. No database migration is introduced;
+E2EE Accounts compute the same scan on the writing device before sealing. The shared reference lookup distinguishes an initial
 pending library from a settled missing or unavailable pet. Companion preferences
 remain separate from face lookup. Animation still frames and playback timing
 come from the existing pet timeline owner.
+
+E2EE Accounts store custom pets sealed under the Account envelope (see
+`docs/encryption.md` "Account pet library"). The Plain create, list and asset
+shapes are unchanged. The list and create responses add a sealed entry variant,
+and the create refusal enum adds `account_encryption_mode_mismatch`, which the
+daemon import response passes through. Released 0.2 clients on an E2EE Account
+previously received `custom_pet_sync_unavailable`. Against a 0.3 Home their strict
+list parse rejects a sealed entry, so their library stays unavailable, and their
+plaintext create is refused with the new code, which they cannot parse. Both are
+visible, recoverable degradations of a path that never worked for them; no adapter
+is added. There is no database migration: the existing `contentMode` columns carry
+the representation. Pet import outcomes now map only `feature_disabled` to "pet
+sync off"; Account-mode and storage-policy refusals present as "could not add".
 
 ## Pet discovery and local imports (unreleased 0.3)
 

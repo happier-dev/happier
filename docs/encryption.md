@@ -1144,6 +1144,40 @@ domain-separated Account ciphers and Session/Machine fallback encryption retain
 their own contracts. This is an owner-approved one-way 0.3 raw-KV transition;
 it does not promise that an older secretbox-only writer can read new AES rows.
 
+### Account pet library (unreleased 0.3)
+
+Custom pets follow persisted `Account.encryptionMode`. A Plain Account sends the
+released plaintext create package; the Home validates it with
+`validateAccountPetCreateRequestV1` (`packages/protocol/src/pets/accountPetCreateValidation.ts`,
+decoded with sharp) and reuses an identical plaintext package digest.
+
+An E2EE Account's writing client runs the same protocol validator with its platform
+decoder (canvas on web, Skia on native, sharp in the daemon), then seals with
+`sealAccountPetPackageV1` (`packages/protocol/src/pets/accountPetEncryptionV1.ts`).
+It uses two Account-scoped domains. `account_pet_metadata` (kind byte 53) holds the
+manifest, origin, spritesheet media type, plaintext digests, opaque bounds and the
+neutral look cell. `account_pet_spritesheet` (kind byte 54) holds the sheet's padded
+base64. The create body is `{ content: { t: 'encrypted', c }, spritesheet }`, where
+the spritesheet carries the sealed bytes, their size and their SHA-256. The Home
+admits only that structure, both kind bytes, the ciphertext bounds derived from
+`PET_PACKAGE_LIMITS_V1` (`ACCOUNT_PET_ENCRYPTED_LIMITS_V1`) and the existing count
+and byte quotas, measured on ciphertext. It stores `contentMode: 'encrypted'` on the
+package and asset rows, the envelope in the manifest column, an empty origin and an
+`application/octet-stream` asset. Server-visible fields are ids, ciphertext sizes
+and digests, version and timestamps. The Home does no digest reuse for E2EE;
+clients decide registry-origin and package-digest reuse against the opened library
+with `findMatchingAccountPetV1`.
+
+`openAccountPetStoredEntryForModeV1` is the client read boundary: a Plain Account
+reads only plaintext entries and an E2EE Account only sealed ones. Opening the
+spritesheet binds the decrypted bytes to the opened entry's digest and media type.
+A mismatch, a failed open or unavailable material omits that entry, so faces keep
+their seeded fallback; it never becomes plaintext. A plaintext create for an E2EE
+Account, a sealed create for a Plain Account and an inconsistent E2EE binding are
+refused with `account_encryption_mode_mismatch` before any bytes are written, and
+the persistence transaction re-decides mode against the persisted Account. The
+Account-mode transition still requires an empty pet library.
+
 ### Shared internal Tasks (0.3 development integration)
 
 Tasks retain their owner's single `UserKVStore` `todo.<id>` content row. Explicit
