@@ -1,5 +1,7 @@
 import type {
     AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type {
     AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
 import type {
@@ -188,6 +190,17 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
      * modes, session modes and configuration options — is answered for this id.
      */
     agentId: string;
+    /**
+     * This Agent's readiness on the exact Machine (installed, signed in or a
+     * connected default), from the Machine Agent inventory. Absent while that
+     * inventory has not answered: unknown never blocks a choice.
+     */
+    readiness?: MachineAgentExecutionStateV1;
+    /**
+     * The exact Machine's own inventory row for this Agent, when it has one. Every Agent picker
+     * presents a not-ready Agent from it the same way (placement, marker, setup pane).
+     */
+    machineAgent?: MachineAgent;
     /**
      * Whether this Agent, on the exact Machine, offers direct (unpersisted)
      * transcripts — the canonical Agent-behavior answer, which is a per-Agent,

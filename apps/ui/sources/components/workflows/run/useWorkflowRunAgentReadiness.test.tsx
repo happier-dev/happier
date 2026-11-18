@@ -2,8 +2,9 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 
 vi.mock('socket.io-client', async importOriginal => (
     await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')
@@ -44,7 +45,7 @@ describe('Workflow model source readiness', () => {
             machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
                 status: 'ready', lastCheckedAt: Date.now(), items: [item],
             });
-            const modelSelection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 1, ref: {
+            const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
                 source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a',
                 ...(source === 'account_provider_connection' ? { providerConnectionId: 'pc_work' } : {}),
                 ...(source === 'team_resource' ? { teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' } : {}),
@@ -53,9 +54,29 @@ describe('Workflow model source readiness', () => {
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, modelSelection,
             } });
             network.resetRequests();
-            const hook = await renderHook(() => useWorkflowRunAgentReadiness({ enabled: true, machineId: machine.id, definition }));
+            const hook = await renderHook((reviewedDefinition: typeof definition) => useWorkflowRunAgentReadiness({
+                enabled: true, machineId: machine.id, definition: reviewedDefinition,
+            }), { initialProps: definition });
             if (source === 'native') expect(hook.getCurrent()).toBeTruthy();
             else expect(hook.getCurrent()).toBeNull();
+            if (source === 'team_resource') {
+                // Run now's editor writes the picker's Team binding and clears the imported V2 model.
+                const defaults = withWorkflowAuthoringEngineFields(definition.defaults, {
+                    agentTarget: definition.defaults.agentTarget!,
+                    modelSelection: null,
+                    teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent(modelSelection, {
+                        executionMachineId: machine.id,
+                        application: { agentTargetKey: modelSelection.ref.agentTargetKey,
+                            implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                            endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+                    })],
+                    sessionConfigOptionOverrides: { v: 1, updatedAt: 2, overrides: {
+                        reasoning_effort: { value: 'minimal', updatedAt: 2 },
+                    } },
+                });
+                await hook.rerender(createWorkflowDefinitionFixture({ defaults }));
+                expect(hook.getCurrent()).toBeNull();
+            }
             expect(network.requests.filter(request => request.method === 'capabilities.detect')).toEqual([]);
         },
     );

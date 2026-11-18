@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowSessionAuthoringSelection, WorkflowStepExecutionSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import type { WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
@@ -693,7 +694,7 @@ export function formatSessionAuthoringEngineLabel(params: Readonly<{
 
 /** The Agent & model summary for a host that shows it as a value row rather than the chip. */
 export function useSessionAuthoringEngineSummary(params: Readonly<{
-    values: WorkflowSessionAuthoringSelection;
+    values: WorkflowStepExecutionSelection;
     engine?: SessionAuthoringEngine;
     workflowRoles?: readonly WorkflowRoleV1[];
     facts?: SessionAuthoringControlFacts;
@@ -705,10 +706,12 @@ export function useSessionAuthoringEngineSummary(params: Readonly<{
     const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: params.values,
         controls, facts, agentId });
     // The CLI's own model is no choice to name: the summary is the Agent alone.
-    const modelLabel = modelControl.kind === 'options'
-        ? modelControl.selectedOptionId === 'default' ? undefined
-            : resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
-        : params.values.modelSelection?.ref.modelId;
+    const modelLabel = params.values.modelSelection == null
+        ? readAuthoredSessionModelRef(params.values)?.modelId
+        : modelControl.kind === 'options'
+            ? modelControl.selectedOptionId === 'default' ? undefined
+                : resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
+            : params.values.modelSelection.ref.modelId;
     return formatSessionAuthoringEngineLabel({ engine: params.engine, workflowRoles: params.workflowRoles,
         agentLabel: enginePicker.label, values: params.values, modelLabel });
 }

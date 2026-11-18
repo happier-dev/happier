@@ -10,6 +10,7 @@ import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { useRoleRailItems } from '@/components/roles/rail/useRoleRailItems';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import { t } from '@/text';
 
 /** The step's engine choice a replay swaps: a Role, or an Agent with its model and effort. */
@@ -35,7 +36,9 @@ export function WorkflowRunAgentOverrideField(props: Readonly<{
         sessionConfigOptionOverrides: literal.sessionConfigOptionOverrides ?? null,
         teamCredentialBindings: literal.teamCredentialBindings,
     } : {}, [literal]);
-    const presentation = presentEngine(literal ? sessionSelectionToRoleEngineV1(selection) : undefined);
+    const engine = literal ? sessionSelectionToRoleEngineV1(selection) : undefined;
+    const modelId = readAuthoredSessionModelRef(selection)?.modelId;
+    const presentation = presentEngine(engine && modelId ? { ...engine, modelId } : engine);
     const roleId = props.value?.roleId ?? null;
     const role = roles.find((item) => item.roleId === roleId);
     return <FieldItem label={t('workflows.start.agentForStep', { step: props.step })}>

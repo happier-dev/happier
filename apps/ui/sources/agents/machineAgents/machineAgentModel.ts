@@ -7,6 +7,7 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { isSessionModelRefSourceBound, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { areTeamResourceConnectedServiceSelectionsEqual } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
@@ -122,6 +123,21 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
         checking: agent.state === 'checking',
         credentialRouteReady: selection.credentialBindingsReady === false || unreadRoute ? false : selection.providerRoute?.ready,
         authenticationRequired }) };
+}
+
+/** Project a held row using the review's selection before its route has been admitted. */
+export function projectMachineAgentForAuthoredSelection(
+    agent: MachineAgent | null | undefined,
+    selection: Parameters<typeof readAuthoredSessionModelRef>[0] & Readonly<{ connectedServices?: ConnectedServiceBindingsV2 | null }>,
+): MachineAgent | null {
+    if (!agent || agent.stale) return null;
+    return projectMachineAgentForCredential(agent, {
+        credentialBindings: selection.connectedServices,
+        modelRef: readAuthoredSessionModelRef(selection),
+        groupOptionsByServiceId: selection.connectedServices
+            ? Object.fromEntries(agent.signIn.connectedServices.map(service => [service.serviceId, service.groups ?? []]))
+            : undefined,
+    });
 }
 
 export function projectMachineAgent(input: Readonly<{

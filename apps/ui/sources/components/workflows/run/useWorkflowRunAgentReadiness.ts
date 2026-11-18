@@ -4,7 +4,7 @@ import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { findMachineAgentForBackendTarget } from '@/agents/machineAgents/machineAgentCatalog';
-import { projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
+import { projectMachineAgentForAuthoredSelection } from '@/agents/machineAgents/machineAgentModel';
 import { useMachineAgentsByMachine, type MachineAgentsSnapshot } from '@/agents/machineAgents/useMachineAgents';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -37,13 +37,7 @@ export function useWorkflowRunAgentReadiness(params: Readonly<{
         for (const selection of selections) {
             if (!selection.agentTarget) continue;
             const held = findMachineAgentForBackendTarget(snapshot.agents, selection.agentTarget);
-            if (!held || held.stale) continue;
-            const agent = projectMachineAgentForCredential(held, {
-                credentialBindings: selection.connectedServices,
-                modelRef: selection.modelSelection?.ref,
-                groupOptionsByServiceId: Object.fromEntries(held.signIn.connectedServices
-                    .map(service => [service.serviceId, service.groups ?? []])),
-            });
+            const agent = projectMachineAgentForAuthoredSelection(held, selection);
             if (agent && (agent.state === 'needsSignIn' || agent.state === 'notInstalled' || agent.state === 'unsupported')) {
                 return describeAgentReadinessCause({ title: agent.title, state: agent.state });
             }

@@ -3,7 +3,9 @@ import type {
     SessionTeamCredentialBindingIntentV1,
     TeamCredentialProviderModelSelectionV1,
 } from '@happier-dev/protocol/teams';
-import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionModelRef, SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 export type AssignedProviderModelCredentialBinding = Extract<
     SessionTeamCredentialBindingIntentV1,
@@ -39,6 +41,20 @@ export function readTeamCredentialProviderModelSelection(input: Readonly<{
         agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
         ...(binding.nativeDelivery ? { nativeDelivery: binding.nativeDelivery } : {}),
     };
+}
+
+/** Restore the effective model reference for readers of an authored Agent selection. */
+export function readAuthoredSessionModelRef(input: Readonly<{
+    agentTarget?: AgentExecutionTargetV1;
+    modelSelection?: SessionModelSelection | null;
+    teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
+}>): SessionModelRef | undefined {
+    const modelRef = input.modelSelection?.ref;
+    if (input.modelSelection?.v === 2 || !input.agentTarget) return modelRef;
+    const teamModel = readTeamCredentialProviderModelSelection(input);
+    if (!teamModel || teamModel.agentTargetKey !== buildBackendTargetKeyV2(input.agentTarget)) return modelRef;
+    const { kind: _kind, ...teamRef } = teamModel;
+    return { source: 'team_resource', ...teamRef };
 }
 
 /** Replace this slot without dropping Connected Service credential intents. */
