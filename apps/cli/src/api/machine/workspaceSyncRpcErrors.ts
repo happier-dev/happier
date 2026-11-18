@@ -22,6 +22,7 @@ const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
   'indeterminate',
   'invalid_request',
   'machine_carrier_unavailable',
+  'machine_manage_required',
   'peer_unavailable',
   'project_requester_authority_unavailable',
   'relationship_definition_conflict',
@@ -71,35 +72,58 @@ type WorkspaceSyncRpcFailureCause = Readonly<{
   message: string;
 }>;
 
+function projectAggregateCause(error: AggregateError): AggregateError {
+  const errors = error.errors.map(value => {
+    const message = redactBugReportSensitiveText(value instanceof Error ? value.message : 'Unknown Workspace Sync error');
+    const projected = new Error(message);
+    projected.name = redactBugReportSensitiveText(value instanceof Error ? value.name : 'UnknownThrownValue');
+    const code = value instanceof Error && 'code' in value && typeof value.code === 'string'
+      ? value.code : readRpcErrorCode(value);
+    if (code) {
+      const safeCode = redactBugReportSensitiveText(code);
+      Object.assign(projected, { code: safeCode, rpcErrorCode: safeCode });
+    }
+    return projected;
+  });
+  return new AggregateError(errors, redactBugReportSensitiveText(error.message));
+}
+
 export function projectWorkspaceSyncRpcError(error: unknown, method: string, requestId?: string): unknown {
   if (readRpcErrorCode(error) !== undefined) return error;
-  if (error instanceof Error && 'code' in error && typeof error.code === 'string'
-    && WORKSPACE_SYNC_RPC_ERROR_CODES.has(error.code)) {
-    // Keep the producer's closed failure cause (e.g. the TARGET handler's phase)
-    // when a local refusal wraps a transported Sync error.
-    const carried = ActionFailureCauseV1Schema.safeParse(('failureCause' in error ? error.failureCause : undefined)
-      ?? (error.cause && typeof error.cause === 'object' && 'failureCause' in error.cause ? error.cause.failureCause : undefined));
-    return Object.assign(new RpcError(error.message, error.code, carried.success ? carried.data : undefined),
-      { code: error.code, cause: error });
-  }
-  if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
-    // Keep OS/native codes as nested diagnostics, never as protocol identity.
-    // Project before wrapping so transport cannot replace the known cause with
-    // the generic workspace_sync_unavailable code. Retain no raw error payload.
-    const diagnostic = projectActionFailureCauseV1(error);
-    const cause: WorkspaceSyncRpcFailureCause = {
-      code: diagnostic.errorCode === null ? null : redactBugReportSensitiveText(diagnostic.errorCode),
-      name: redactBugReportSensitiveText(error instanceof Error ? error.name : 'UnknownThrownValue'),
-      message: redactBugReportSensitiveText(error instanceof Error ? error.message
-        : typeof error === 'string' ? error : 'Unknown Workspace Sync error'),
-    };
-    const failureCause = { ...diagnostic, errorCode: cause.code };
-    const projected = Object.assign(new RpcError(
-      `Workspace linking could not complete. ${cause.name}${cause.code ? ` (${cause.code})` : ''}: ${cause.message}`,
-      'workspace_sync_unavailable',
-    ), { cause, failureCause });
-    logger.warnLocalFile('[Workspace Sync] Relationship create failed', { method, requestId, cause, failureCause });
-    return projected;
+  const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+    && WORKSPACE_SYNC_RPC_ERROR_CODES.has(error.code) ? error.code : undefined;
+  if (code !== undefined || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
+    // Preserve the producer's closed cause, including a transported TARGET phase.
+    const carried = ActionFailureCauseV1Schema.safeParse(error instanceof Error
+      ? ('failureCause' in error ? error.failureCause : undefined)
+        ?? (error.cause && typeof error.cause === 'object' && 'failureCause' in error.cause ? error.cause.failureCause : undefined)
+      : undefined);
+    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
+      // Only this owner's admitted RPC vocabulary is an authored diagnostic code.
+      // OS/native details remain redacted diagnostics, never new protocol identity.
+      const projectedDiagnostic = carried.success ? carried.data
+        : projectActionFailureCauseV1(error, undefined, { allowUnknownErrorCode: code !== undefined });
+      const diagnostic = projectedDiagnostic.errorCode === null && code !== undefined
+        ? { ...projectedDiagnostic, errorCode: code } : projectedDiagnostic;
+      const cause: WorkspaceSyncRpcFailureCause = {
+        code: diagnostic.errorCode === null ? null : redactBugReportSensitiveText(diagnostic.errorCode),
+        name: redactBugReportSensitiveText(error instanceof Error ? error.name : 'UnknownThrownValue'),
+        message: redactBugReportSensitiveText(error instanceof Error ? error.message
+          : typeof error === 'string' ? error : 'Unknown Workspace Sync error'),
+      };
+      const failureCause = { ...diagnostic, errorCode: cause.code };
+      const projected = Object.assign(new RpcError(code === undefined || code === 'machine_manage_required'
+        ? `Workspace linking could not complete. ${cause.name}${cause.code ? ` (${cause.code})` : ''}: ${cause.message}`
+        : cause.message, code === undefined || code === 'machine_manage_required' ? 'workspace_sync_unavailable' : code, failureCause),
+      { ...(code === undefined || code === 'machine_manage_required' ? {} : { code }),
+        ...(error instanceof AggregateError ? { cause: projectAggregateCause(error) } : { cause }), failureCause });
+      logger.warnLocalFile('[Workspace Sync] Relationship create failed', { method, requestId, cause, failureCause });
+      return projected;
+    }
+    if (code !== undefined && error instanceof Error) {
+      return Object.assign(new RpcError(redactBugReportSensitiveText(error.message), code, carried.success ? carried.data : undefined),
+        { code, cause: error });
+    }
   }
   return error;
 }

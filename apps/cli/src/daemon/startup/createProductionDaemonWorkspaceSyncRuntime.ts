@@ -1223,9 +1223,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
 
   const readHandoffProjectSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext) => {
     const authorization = context?.callerInputAuthorization;
-    if (authorization && (authorization.binding.accountId !== context?.machineAdmission?.actorAccountId
-      || !authorization.binding.workspaceSyncAdmission
-        && (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()))) {
+    if (authorization && authorization.binding.accountId !== context?.machineAdmission?.actorAccountId) {
       throw compositionError('project_requester_authority_unavailable', 'The admitted requester is no longer current');
     }
     const requester = readRequesterAccountActionContext(authorization);
