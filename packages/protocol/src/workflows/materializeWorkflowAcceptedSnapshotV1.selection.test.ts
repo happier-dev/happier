@@ -284,6 +284,40 @@ describe('accepted Workflow selection bindings', () => {
         agentStartLeaves: [{ facts: { permissionMode: 'yolo' } }] });
   });
 
+  it.each(['profile', 'role'] as const)('keeps a binding-only participant Team model through %s admission and replay', async scenario => {
+    const agentTargetKey = buildBackendTargetKeyV2(agentTarget);
+    const teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'credential',
+      expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: 'team',
+      providerModelSelection: { agentTargetKey, modelId: 'team-model' } }];
+    const roleId = 'participant-role';
+    const launch = { executionTarget: { serverId: 'home-b', machineId: 'machine' },
+      directory: { kind: 'path', path: '/project' }, agentTarget, profileId: 'profile', teamCredentialBindings,
+      ...(scenario === 'role' ? { roleId } : {}) };
+    const profile = LaunchProfileV2Schema.parse({ ...emptyProfile('profile'),
+      preferredModelSelection: { v: 1, updatedAt: 1, ref: { providerConnectionId: 'profile-connection', agentTargetKey, modelId: 'profile-model' } } });
+    const authored = { version: 1, defaults: {},
+      roles: [{ roleId, name: 'Participant', instructions: 'Review', runsAs: { kind: 'session' }, profileId: profile.id }],
+      inputs: [{ name: 'chosen', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } }],
+      blocks: [{ ...definition.blocks[0], execution: { participant: { kind: 'input', name: 'chosen' } } }] };
+    const chosenContext = { ...context, inputs: { chosen: { kind: 'model', launch } } };
+    const accepted = await materialize({ definition: authored, context: chosenContext,
+      effects: { resolveTargetAvailability: available, readLaunchProfile: async () => profile } });
+    const expected = { ok: true, agentStartLeaves: [{ facts: {
+      modelSelection: { ref: { source: 'team_resource', modelId: 'team-model', resourceId: 'credential' } },
+    } }], snapshot: { materializedLeaves: [{
+      participant: { kind: 'model', launch: { teamCredentialBindings } },
+      selection: { teamCredentialBindings },
+      ...(scenario === 'role' ? { role: { roleId, engine: { modelId: 'team-model' } } } : {}),
+    }] } };
+    expect(accepted, accepted.ok ? undefined : JSON.stringify(accepted.error)).toMatchObject(expected);
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    expect(resolveWorkflowAcceptedStepSelectionV1(accepted.snapshot.materializedLeaves[0]!, undefined, accepted.snapshot.inputs)
+      .selection.teamCredentialBindings).toEqual(teamCredentialBindings);
+    expect(await materialize({ definition: authored, context: chosenContext, replay: { snapshot: accepted.snapshot },
+      roleSelection: { settingsOverrides: { [roleId]: { roleId, engine: { agentTargetKey, modelId: 'changed-model' } } } },
+    })).toMatchObject(expected);
+  });
+
   it('freezes ordinary role model, profile and effort without dropping Team binding intent', async () => {
     const teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'credential',
       expectedResourceRevision: 3, deliveryMode: 'brokered' }];

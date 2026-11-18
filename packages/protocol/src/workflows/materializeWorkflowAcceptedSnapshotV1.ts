@@ -725,6 +725,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                 const chosenLaunch = value.launch;
                 if (chosenLaunch.executionTarget.machineId !== input.context.machineId || chosenLaunch.directory.kind !== 'path'
                   || chosenLaunch.checkoutCreationDraft != null) return unavailable(leaf.id);
+                const authoredModel = readAuthoredSessionModelSelection(chosenLaunch);
                 let role: ResolvedRoleV1 | undefined;
                 if (chosenLaunch.roleId) {
                   if (accepted) {
@@ -734,12 +735,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const roleResult = resolveRoleSelectionV1({ ...await readRoleSelection(chosenLaunch.roleId), workflowRoles: definition.roles,
                       runOverrides: overrides.data, roleId: chosenLaunch.roleId,
                       defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(chosenLaunch.agentTarget),
-                        ...roleEngineModelFieldsV1(chosenLaunch.modelSelection?.ref) } });
+                        ...roleEngineModelFieldsV1(authoredModel?.ref) } });
                     if (!roleResult.ok) return { ok: false, error: { ...roleResult.refusal, blockId: leaf.id } };
                     role = roleResult.selection;
                   }
                   if (role.runsAs.kind !== 'session' || role.engine?.agentTargetKey !== buildBackendTargetKeyV2(chosenLaunch.agentTarget)
-                    || chosenLaunch.modelSelection !== undefined && role.engine.modelId !== chosenLaunch.modelSelection.ref.modelId
+                    || authoredModel && role.engine.modelId !== authoredModel.ref.modelId
                     || chosenLaunch.profileId !== undefined && role.profileId !== chosenLaunch.profileId
                     || chosenLaunch.configuration?.model.value && role.engine.modelId !== chosenLaunch.configuration.model.value
                     || chosenLaunch.configuration?.options.reasoning_effort?.value
@@ -748,7 +749,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                 let projected: unknown = role ? projectAgentStartSelectionV1(chosenLaunch,
                   { engine: role.engine!, ...(role.profileId ? { profileId: role.profileId } : {}) }, 'spawn_new',
                   { machineId: input.context.machineId, directory: input.context.workspaceTarget.project.directory },
-                  chosenLaunch.modelSelection) : chosenLaunch;
+                  authoredModel ?? undefined) : chosenLaunch;
                 if (accepted) {
                   if (accepted.participant.kind !== 'model') return invalidInput(leaf.id);
                   // A replay selects the host-opened effective launch, never a changed Profile catalog.
@@ -765,8 +766,9 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const key = buildBackendTargetKeyV2(current.agentTarget);
                     if (isLaunchProfileV2(profile) && Object.keys(profile.compatibilityByTargetKey).length > 0
                       && profile.compatibilityByTargetKey[key] !== true) return unavailable(leaf.id);
+                    const currentModel = readAuthoredSessionModelSelection(current);
                     const portable = profileSelection(profile, { agentTarget: current.agentTarget,
-                      ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
+                      ...(currentModel ? { modelSelection: currentModel } : {}),
                       ...(current.permissionMode ? { permissionMode: current.permissionMode } : {}),
                       ...(current.transcriptStorage ? { transcriptStorage: current.transcriptStorage } : {}) },
                     { kind: 'session' });
@@ -776,7 +778,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const permissionMode = parseAgentPermissionIntentV1Alias(permission);
                     if (!permissionMode) return unavailable(leaf.id);
                     projected = { ...current, permissionMode,
-                      ...(current.modelSelection === undefined && !current.configuration?.model.value && portable.modelSelection
+                      ...(currentModel === undefined && !current.configuration?.model.value && portable.modelSelection
                         ? { modelSelection: portable.modelSelection } : {}),
                       ...(current.transcriptStorage === undefined && portable.transcriptStorage
                         ? { transcriptStorage: portable.transcriptStorage } : {}) };
@@ -790,6 +792,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                   selection: { agentTarget: effectiveLaunch.data.agentTarget,
                     ...(effectiveLaunch.data.approvalProfileId === undefined ? {} : { approvalProfileId: effectiveLaunch.data.approvalProfileId }),
                     ...(effectiveLaunch.data.modelSelection ? { modelSelection: effectiveLaunch.data.modelSelection } : {}),
+                    ...(effectiveLaunch.data.teamCredentialBindings ? { teamCredentialBindings: effectiveLaunch.data.teamCredentialBindings } : {}),
                     ...(effectiveLaunch.data.permissionMode ? { permissionMode: effectiveLaunch.data.permissionMode } : {}),
                     ...(effectiveLaunch.data.connectedServices ? { connectedServices: effectiveLaunch.data.connectedServices } : {}),
                     ...(effectiveLaunch.data.capabilitySelection ? { capabilitySelection: effectiveLaunch.data.capabilitySelection } : {}),
