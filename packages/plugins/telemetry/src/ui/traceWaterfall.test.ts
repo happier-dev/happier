@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseCaptureSummaryV1 } from '@happier-dev/database-protocol';
-import { projectWaterfall, slowestSteps } from './traceWaterfall.js';
+import { failedStep, projectWaterfall, slowestSteps } from './traceWaterfall.js';
 
 const base = { worktree: 'w', source: 'otlp' as const, traceId: 't1' };
 function span(
@@ -94,5 +94,15 @@ describe('the captured request waterfall', () => {
       ['buildReceipt', 0.15],
     ]);
     expect(slowestSteps(projectWaterfall([], []))).toEqual([]);
+  });
+
+  // DESIGN-1118-B S2: the request a 500 ended is the frame, not the failure; the step that threw carries the mark.
+  it('marks only the step that failed, never the request it failed', () => {
+    const root = span('req', 0, 400, { spanKind: 2, endpointMethod: 'POST', endpointRoute: '/checkout', httpStatusCode: 500 });
+    const receipt = span('receipt', 330, 60, { parentSpanId: 'req', shape: 'buildReceipt', outcome: 'error' });
+    const stripe = span('stripe', 20, 300, { parentSpanId: 'req', shape: 'stripe.paymentIntents.create', spanKind: 3 });
+    const rows = projectWaterfall([root, receipt, stripe], []).rows;
+    expect(rows.filter(failedStep).map((row) => row.id)).toEqual(['receipt']);
+    expect(rows.find((row) => row.id === 'stripe')?.spanKind).toBe(3);
   });
 });

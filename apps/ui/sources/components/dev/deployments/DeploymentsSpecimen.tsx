@@ -15,9 +15,13 @@ import {
 
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectDeploymentsView } from '@/components/projects/deployments/ProjectDeploymentsBody';
+import { TelemetryCaptureInvokeContext } from '@/components/projects/deployments/telemetryCaptureReads';
+import { createTelemetryCaptureFixtureInvoke } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -29,6 +33,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
  * on the QA Account's real Environments.
  */
 const ACCOUNT = 'account-owner';
+const SPECIMEN_COLLECTOR_ID = 'machine-collector';
 const HOUR = 3_600_000;
 const SPECIMEN_NOW = Date.now();
 const SHOWN = Object.freeze({ mounted: true, visible: true, focused: true });
@@ -409,13 +414,17 @@ function transportFor(
   tabs: string,
   restore: string | undefined,
   preview: SpecimenPreview | null,
+  telemetry?: string,
 ): DeploymentReadTransportV1 {
   const base = createDeploymentEnvironmentDetailV1();
   const baseHeader = createDeploymentEnvironmentHeaderV1({
     updatedAtMs: SPECIMEN_NOW - 0.4 * HOUR,
   });
   const fixtures = tabFixtures(tabs, baseHeader.id);
-  const stagingHeader = fixtures.owner ? { ...baseHeader, owner: fixtures.owner } : baseHeader;
+  // `?telemetry=populated|offline`: the Environment keeps telemetry on a Machine of the Account (lab p7Flows-mark).
+  const ownedHeader = fixtures.owner ? { ...baseHeader, owner: fixtures.owner } : baseHeader;
+  // An Account without Machines keeps it on the specimen's fixture collector.
+  const stagingHeader = telemetry ? { ...ownedHeader, telemetryMachineId: machineId ?? SPECIMEN_COLLECTOR_ID } : ownedHeader;
   // `?state=reader`: a reader sees everything but Deploy; `?state=plugin`: a target with no Deploy producer.
   const staging = createDeploymentEnvironmentDetailV1({
     content: { ...base.content, name: 'Staging', bindings: SPECIMEN_BINDINGS,
@@ -684,7 +693,7 @@ const SPECIMEN_LIFETIME = {
 
 export function DeploymentsSpecimen(
   props: Readonly<{ state: string; receipt: string; deploy?: string; machine?: string; cancellable?: string; tabs?: string;
-    restore?: string; preview?: string; removal?: string }>,
+    restore?: string; preview?: string; removal?: string; telemetry?: string }>,
 ) {
   useSpecimenRemoval(props.removal);
   // A real Machine of the signed-in Account: `?machine=` names one, else the longest name (the hardest wrap).
@@ -721,12 +730,25 @@ export function DeploymentsSpecimen(
           accountId: ACCOUNT,
           projectSourceId: 'source-app',
         },
-        transport: transportFor(props.state, receiptState, machineId, cancellable, props.tabs ?? 'populated', props.restore, preview),
+        transport: transportFor(props.state, receiptState, machineId, cancellable, props.tabs ?? 'populated', props.restore, preview,
+          props.telemetry),
       }),
-    [props.state, receiptState, machineId, cancellable, props.tabs, props.restore, preview],
+    [props.state, receiptState, machineId, cancellable, props.tabs, props.restore, preview, props.telemetry],
   );
   React.useEffect(() => () => controller.retire(), [controller]);
-  return (
+  // An Account without Machines gets one fixture collector in this Home's store, online or (`?telemetry=offline`) not
+  // answering, so the tab's Machine name and presence come from the presence owner as on a real page.
+  React.useEffect(() => {
+    if (!props.telemetry || machineId) return;
+    const answering = props.telemetry !== 'offline';
+    void publishMachineInventoryForTest({ serverId: 'home', accountId: ACCOUNT }, [createMachineFixture({
+      id: SPECIMEN_COLLECTOR_ID, active: answering, activeAt: answering ? Date.now() : SPECIMEN_NOW - 26 * HOUR,
+      metadata: { ...createMachineMetadataFixture(), host: 'hetzner-fsn1', displayName: 'hetzner-fsn1' },
+    })]);
+  }, [props.telemetry, machineId]);
+  const telemetryInvoke = React.useMemo(() => props.telemetry
+    ? createTelemetryCaptureFixtureInvoke(props.telemetry === 'offline' ? 'offline' : 'populated') : null, [props.telemetry]);
+  const view = (
     <ProjectDeploymentsView
       controller={controller}
       actions={actions}
@@ -737,4 +759,8 @@ export function DeploymentsSpecimen(
       sourceId="source-app"
     />
   );
+  // The collector's answers stand in for the Action front door; the tab's own reads and views are the real ones.
+  return telemetryInvoke
+    ? <TelemetryCaptureInvokeContext.Provider value={telemetryInvoke}>{view}</TelemetryCaptureInvokeContext.Provider>
+    : view;
 }

@@ -11,7 +11,7 @@ export {
   type CapturePageMore,
 } from './CaptureViews.js';
 export {
-  CapturedLogLine,
+  CapturedLogLines,
   CapturedRequestLogs,
   CapturedRequestSlowest,
   CapturedRequestWaterfall,

@@ -21,6 +21,8 @@ export type WaterfallRowV1 = Readonly<{
   kind: 'request' | 'span' | 'query';
   /** The span's own id, so a consumer can mark the span an exception was recorded in. */
   spanId: string | null;
+  /** OpenTelemetry span kind (3 = an external call); null for a query or when the producer did not say. */
+  spanKind: number | null;
   repeated?: Readonly<{
     count: number;
     kind: DatabaseCaptureRepeatedQueryV1['kind'];
@@ -106,6 +108,7 @@ export function projectWaterfall(
       kind:
         item === root ? 'request' : item.kind === 'query' ? 'query' : 'span',
       spanId: item.spanId ?? null,
+      spanKind: item.spanKind ?? null,
       ...(group
         ? { repeated: { count: group.repetitionCount, kind: group.kind } }
         : {}),
@@ -154,4 +157,9 @@ export function slowestSteps(
     .map((row) => ({ row, share: Math.min(1, (row.end - row.start) / total) }))
     .sort((a, b) => b.share - a.share)
     .slice(0, count);
+}
+
+/** A step that failed carries the failure mark; the request a failure ended is the frame, never the mark. */
+export function failedStep(row: WaterfallRowV1): boolean {
+  return row.failed && row.kind !== 'request';
 }

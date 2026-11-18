@@ -18,10 +18,12 @@ import {
   formatHappierDuration,
   useHappierCollection,
   type CollectionAnatomy,
+  type CollectionField,
   type CollectionRowActions,
 } from '@happier-dev/plugin-ui/components';
 import {
   Button,
+  ItemGroup,
   Stack,
   Text,
   usePluginTranslation,
@@ -29,14 +31,13 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import {
-  captureClockOf,
   captureEndpointTitle,
-  captureSeverityWord,
   captureSummaryFailed,
   projectCaptureEndpoints,
   type CaptureEndpointView,
 } from './model.js';
 import { requestLabelOf } from '../traceWaterfall.js';
+import { CapturedLogLines, type CapturedLogBodyReader } from './CapturedRequest.js';
 import { formatTelemetryMetric } from '../widgets/telemetryWidgetModel.js';
 
 /** A share as every Telemetry surface states it ("2.4%", "38%"); unknown reads "—". */
@@ -107,6 +108,8 @@ function CaptureList<Item>(
     onOpen?: (item: Item) => void;
     useRowActions?: (item: Item) => CollectionRowActions;
     more?: CapturePageMore | null;
+    /** `table` for figures compared down a column (Endpoints); a phone recomposes it to the list. */
+    presentation?: 'table' | 'list';
   }>,
 ) {
   const { items, keyOf, onOpen } = props;
@@ -130,7 +133,7 @@ function CaptureList<Item>(
         accessibilityLabel={props.label}
         model={model}
         anatomy={props.anatomy}
-        presentation="list"
+        presentation={props.presentation ?? 'list'}
         collapsedGroups={EMPTY_SET}
         loading={props.loading && items.length === 0}
         {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
@@ -147,43 +150,20 @@ function CaptureList<Item>(
   );
 }
 
-function endpointFacts(
-  view: CaptureEndpointView,
-  locale: string,
-  text: PluginTranslate,
-  withService: boolean,
-): string {
+/** The phone's second line (lab p7Setup-tabp): "4,812 requests · 2.4% errors". */
+function endpointPhoneFacts(view: CaptureEndpointView, locale: string, text: PluginTranslate): string {
   return [
-    withService ? view.endpoint.serviceName || null : null,
     text('plugins.telemetry.capture.requestsCount', '{count} requests', {
       count: formatHappierDataValue(view.endpoint.requestCount, locale),
     }),
-    // Unthresholded numbers stay ink; only a failing saved check owns a warning colour.
-    text('plugins.telemetry.capture.errorsShare', '{share} errors', {
-      share: share(view.errorRate, locale),
-    }),
-    view.endpoint.errorCount > 0
-      ? text('plugins.telemetry.capture.failed', '{count} failed', {
-          count: formatHappierDataValue(view.endpoint.errorCount, locale),
-        })
-      : null,
-    view.databaseShare === null
-      ? null
-      : text(
-          'plugins.telemetry.capture.inDatabaseShare',
-          '{share} in the database',
-          {
-            share: share(view.databaseShare, locale),
-          },
-        ),
-  ]
-    .filter((part): part is string => part !== null && part.length > 0)
-    .join(' · ');
+    text('plugins.telemetry.capture.errorsShare', '{share} errors', { share: share(view.errorRate, locale) }),
+  ].join(' · ');
 }
 
 /**
- * Endpoints (D27 #9): each route with its requests, error share, failed count and time in the database, its mean time
- * at the row's end. Failing routes lead; healthy ones stay quiet.
+ * Endpoints (D27 #9): each route with its requests, error rate (and failed count), mean time and time in the database,
+ * compared down their columns (lab p7Flows-mark). Failing routes lead; unthresholded numbers stay ink. A phone
+ * recomposes each row to its route, "4,812 requests · 2.4% errors" and its mean time.
  */
 export function CaptureEndpoints(
   props: Readonly<{
@@ -196,56 +176,89 @@ export function CaptureEndpoints(
 ) {
   const text = usePluginTranslation();
   const { locale, actions } = props;
-  const views = React.useMemo(
-    () => projectCaptureEndpoints(props.items),
-    [props.items],
-  );
-  // The service only says something when the Environment runs more than one.
-  const withService = React.useMemo(
-    () => new Set(props.items.map((item) => item.serviceName)).size > 1,
-    [props.items],
-  );
+  const views = React.useMemo(() => projectCaptureEndpoints(props.items), [props.items]);
   const keyOf = React.useCallback(
-    (view: CaptureEndpointView) =>
-      `${view.endpoint.serviceName} ${captureEndpointTitle(view.endpoint)}`,
+    (view: CaptureEndpointView) => `${view.endpoint.serviceName} ${captureEndpointTitle(view.endpoint)}`,
     [],
   );
-  const anatomy = React.useMemo<CollectionAnatomy<CaptureEndpointView>>(
-    () => ({
+  const anatomy = React.useMemo<CollectionAnatomy<CaptureEndpointView>>(() => {
+    const fields: CollectionField<CaptureEndpointView>[] = [
+      {
+        key: 'requests',
+        title: text('plugins.telemetry.capture.requests', 'Requests'),
+        minWidth: 84,
+        priority: 4,
+        align: 'end',
+        render: (view) => <Text variant="body" value={formatHappierDataValue(view.endpoint.requestCount, locale)} />,
+      },
+      {
+        key: 'errors',
+        title: text('plugins.telemetry.capture.errorRate', 'Error rate'),
+        minWidth: 88,
+        priority: 3,
+        align: 'end',
+        render: (view) => (
+          <Stack gap="none" align="flex-end">
+            <Text variant="body" value={share(view.errorRate, locale)} />
+            {view.endpoint.errorCount > 0 ? (
+              <Text
+                variant="meta"
+                tone="secondary"
+                value={text('plugins.telemetry.capture.failed', '{count} failed', {
+                  count: formatHappierDataValue(view.endpoint.errorCount, locale),
+                })}
+              />
+            ) : null}
+          </Stack>
+        ),
+      },
+      {
+        key: 'mean',
+        // The endpoints contract counts total time per route, so the column is the mean (no per-route p95).
+        title: text('plugins.telemetry.capture.mean', 'Mean'),
+        minWidth: 76,
+        priority: 2,
+        align: 'end',
+        render: (view) => (
+          <Text variant="body" value={view.meanMs === null ? '—' : formatHappierDuration(view.meanMs, locale)} />
+        ),
+      },
+      {
+        key: 'database',
+        title: text('plugins.telemetry.capture.inDatabase', 'In database'),
+        minWidth: 92,
+        priority: 1,
+        align: 'end',
+        render: (view) => <Text variant="body" value={share(view.databaseShare, locale)} />,
+      },
+    ];
+    return {
       glyph: () => null,
       loadingGlyph: false,
       title: (view) => captureEndpointTitle(view.endpoint),
       titleIdentifier: true,
-      byline: (view) => endpointFacts(view, locale, text, withService),
-      titleMeta: (view) => <TimeMeta ms={view.meanMs} locale={locale} />,
-      titleMetaAlign: 'row',
-      accessibilityLabel: (view) =>
-        `${captureEndpointTitle(view.endpoint)}, ${endpointFacts(view, locale, text, true)}`,
-      testID: (view) =>
-        `telemetry.capture.endpoint.${view.endpoint.method} ${view.endpoint.route}`,
+      // The table names the service under the route; the phone's row says the figures its columns would.
+      byline: (view, layout) =>
+        layout?.fieldColumns === false ? endpointPhoneFacts(view, locale, text) : view.endpoint.serviceName || null,
+      listFact: (view) => <TimeMeta ms={view.meanMs} locale={locale} />,
+      fields,
+      // A route is a short code ("POST /checkout"): its columns keep their room on a page column, and a phone, where
+      // no column fits beside it, recomposes the rows to the list.
+      titleMinWidth: 220,
+      accessibilityLabel: (view) => `${captureEndpointTitle(view.endpoint)}, ${endpointPhoneFacts(view, locale, text)}`,
+      testID: (view) => `telemetry.capture.endpoint.${view.endpoint.method} ${view.endpoint.route}`,
       columnTitles: { title: text('plugins.telemetry.capture.route', 'Route') },
-    }),
-    [locale, text, withService],
-  );
+    };
+  }, [locale, text]);
   const useRowActions = React.useCallback(
     (view: CaptureEndpointView): CollectionRowActions =>
       actions && actions.length > 0
         ? {
-            secondaryActions: actions.map((action) => ({
-              id: action.id,
-              label: action.label,
-            })),
-            secondaryActionAccessibilityLabel: text(
-              'plugins.telemetry.capture.routeActions',
-              'Actions for {route}',
-              {
-                route: captureEndpointTitle(view.endpoint),
-              },
-            ),
-            onSecondaryAction: (id) =>
-              actions
-                .find((action) => action.id === id)
-                ?.onSelect(view.endpoint),
+            secondaryActions: actions.map((action) => ({ id: action.id, label: action.label })),
+            secondaryActionAccessibilityLabel: text('plugins.telemetry.capture.routeActions', 'Actions for {route}', {
+              route: captureEndpointTitle(view.endpoint),
+            }),
+            onSecondaryAction: (id) => actions.find((action) => action.id === id)?.onSelect(view.endpoint),
           }
         : {},
     [actions, text],
@@ -258,10 +271,8 @@ export function CaptureEndpoints(
       loading={props.loading}
       keyOf={keyOf}
       anatomy={anatomy}
-      empty={text(
-        'plugins.telemetry.capture.noRequests',
-        'Waiting for the first request',
-      )}
+      presentation="table"
+      empty={text('plugins.telemetry.capture.noRequests', 'Waiting for the first request')}
       {...(actions && actions.length > 0 ? { useRowActions } : {})}
       more={props.more ?? null}
     />
@@ -340,60 +351,41 @@ export function CaptureTraces(
   );
 }
 
-/** Logs: the lines the app wrote, newest first; each line's start, then its level, its own clock and its service. */
+/**
+ * Logs: the lines the app wrote, newest first, read as log lines (time · level · service · message, mono) on one
+ * card, the same lines a request's logs draw. A cut line opens its whole message through `readBody`.
+ */
 export function CaptureLogs(
   props: Readonly<{
     items: readonly DatabaseCaptureSummaryV1[];
     loading: boolean;
     locale: string;
+    readBody: CapturedLogBodyReader;
     more?: CapturePageMore | null;
   }>,
 ) {
   const text = usePluginTranslation();
-  const { locale } = props;
-  const anatomy = React.useMemo<
-    CollectionAnatomy<DatabaseCaptureSummaryV1>
-  >(() => {
-    const facts = (item: DatabaseCaptureSummaryV1) =>
-      [
-        captureSeverityWord(item.severityNumber),
-        captureClockOf(locale, item.at),
-        item.serviceName || null,
-      ]
-        .filter((part): part is string => part !== null)
-        .join(' · ');
-    const message = (item: DatabaseCaptureSummaryV1) =>
-      item.bodyPrefix
-        ? `${item.bodyPrefix}${item.bodyPrefixTruncated ? '…' : ''}`
-        : text(
-            'plugins.telemetry.exceptions.logEmpty',
-            'This line has no message.',
-          );
-    return {
-      glyph: () => null,
-      loadingGlyph: false,
-      title: message,
-      titleIdentifier: true,
-      byline: facts,
-      accessibilityLabel: (item) => `${facts(item)}, ${message(item)}`,
-      testID: (item) => `telemetry.capture.log.${item.id}`,
-      columnTitles: { title: text('plugins.telemetry.capture.line', 'Line') },
-    };
-  }, [locale, text]);
+  if (props.items.length === 0) {
+    return (
+      <Text
+        testID="telemetry.capture.logs.empty"
+        tone="secondary"
+        value={
+          props.loading
+            ? text('plugins.telemetry.capture.reading', 'Reading…')
+            : text('plugins.telemetry.capture.noLogs', 'No log lines in this window')
+        }
+      />
+    );
+  }
   return (
-    <CaptureList
-      testID="telemetry.capture.logs"
-      label={text('plugins.telemetry.capture.logs', 'Logs')}
-      items={props.items}
-      loading={props.loading}
-      keyOf={summaryKey}
-      anatomy={anatomy}
-      empty={text(
-        'plugins.telemetry.capture.noLogs',
-        'No log lines in this window',
-      )}
-      more={props.more ?? null}
-    />
+    <Stack gap="medium">
+      <ItemGroup testID="telemetry.capture.logs.card">
+        <CapturedLogLines logs={props.items} locale={props.locale} readBody={props.readBody} showService
+          testIDPrefix="telemetry.capture" />
+      </ItemGroup>
+      <MoreButton more={props.more} testID="telemetry.capture.logs.older" />
+    </Stack>
   );
 }
 

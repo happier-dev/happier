@@ -77,6 +77,18 @@ export function captureSeverityWord(
   return 'fatal';
 }
 
+/** A log level's tone: an error reads as one, warn is amber, every other level stays quiet. */
+export function captureSeverityTone(severity: number | null | undefined): 'danger' | 'warning' | 'secondary' {
+  const word = captureSeverityWord(severity);
+  return word === 'error' || word === 'fatal' ? 'danger' : word === 'warn' ? 'warning' : 'secondary';
+}
+
+/** What a request's step was: a database query, a call out of the app (span kind client), or work in the app. */
+export function captureStepKind(row: Readonly<{ kind: 'request' | 'span' | 'query'; spanKind: number | null }>): 'query' | 'external' | 'app' {
+  if (row.kind === 'query') return 'query';
+  return row.spanKind === 3 ? 'external' : 'app';
+}
+
 /** A log line's own clock, to the millisecond, in the reader's locale. */
 export function captureClockOf(locale: string, at: number): string {
   return new Intl.DateTimeFormat(locale, {

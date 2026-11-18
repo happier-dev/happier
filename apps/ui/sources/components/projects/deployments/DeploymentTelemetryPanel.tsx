@@ -149,12 +149,14 @@ type ListState = Readonly<{
 }>;
 
 /**
- * One page of the open list for the chosen window, read while the tab shows it. A different list or window starts from
- * loading; Retry re-reads the same one and keeps its rows until the answer lands. Show older appends the next page.
+ * One page of the open list for the chosen window, read while the tab shows it. Coming back to a list shows what it
+ * last read this visit while it reads again; Retry keeps the rows until the answer lands. Show older appends a page.
  */
 function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: TelemetryCaptureList, windowMs: number, attempt: number) {
   const key = `${list}\u0000${windowMs}`;
   const [state, setState] = React.useState<ListState>({ key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
+  // The last settled answer of each list and window this visit, shown again while that list re-reads.
+  const retained = React.useRef(new Map<string, Readonly<{ data: ListItems; readAt: number }>>());
   const windowRef = React.useRef<Readonly<{ since: number; until: number }>>({ since: 0, until: 0 });
   React.useEffect(() => {
     if (!reads) return;
@@ -162,14 +164,19 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
     const until = Date.now();
     const since = Math.max(0, until - windowMs);
     windowRef.current = { since, until };
+    const kept = retained.current.get(key);
     setState(current => current.key === key
       ? { ...current, reading: true }
-      : { key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
+      : { key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false });
     const read: Promise<ListItems> = list === 'endpoints'
       ? reads.endpoints(since, until, null, controller.signal).then(page => ({ list, ...page }))
       : reads.summaries(list, since, until, null, controller.signal).then(page => ({ list, ...page }));
     read.then(
-      data => { if (!controller.signal.aborted) setState({ key, data, readAt: until, reading: false, failure: null, loadingMore: false }); },
+      data => {
+        if (controller.signal.aborted) return;
+        retained.current.set(key, { data, readAt: until });
+        setState({ key, data, readAt: until, reading: false, failure: null, loadingMore: false });
+      },
       (error: unknown) => {
         if (controller.signal.aborted) return;
         const failure = error instanceof TelemetryCaptureFailure ? error.code : 'telemetry_unavailable';
@@ -178,7 +185,9 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
     );
     return () => controller.abort();
   }, [reads, list, key, windowMs, attempt]);
-  const shown = state.key === key ? state : { key, data: null, readAt: null, reading: true, failure: null, loadingMore: false };
+  const kept = retained.current.get(key);
+  const shown = state.key === key ? state
+    : { key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false };
   const more = React.useCallback(() => {
     const data = shown.data;
     if (!reads || !data?.nextCursor || shown.loadingMore) return;
@@ -225,6 +234,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const { state, more } = useTelemetryCaptureList(reads, tab, WINDOW_MS[windowId], attempt);
   const retry = React.useCallback(() => setAttempt(value => value + 1), []);
   const offline = collectorOnline === false;
+  const readLogBody = React.useCallback((id: string) => reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [reads]);
 
   const clear = React.useCallback(async () => {
     if (!reads) return;
@@ -270,7 +280,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     <CaptureTraces items={data.items} loading={state.reading} locale={locale} onOpen={setOpenTrace}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'logs' ? (
-    <CaptureLogs items={data.items} loading={state.reading} locale={locale}
+    <CaptureLogs items={data.items} loading={state.reading} locale={locale} readBody={readLogBody}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'queries' ? (
     <CaptureQueries items={data.items} loading={state.reading} locale={locale}
@@ -283,11 +293,6 @@ function DeploymentTelemetryTabs(props: Readonly<{
     <PageContentColumn testID="project-deployments.telemetry.recording">
     <View style={styles.panel}>
       <View style={styles.lines}>
-      <Text variant="meta" style={styles.facts}>
-        {props.savedThisVisit
-          ? `${t('deploymentTelemetry.recording.keptOn', { machine })} ${t('deploymentTelemetry.recording.nextDeploy')}`
-          : t('deploymentTelemetry.recording.keptOn', { machine })}
-      </Text>
       {failed && data !== null ? (
         <SurfaceFreshnessLine
           testID={offline ? 'project-deployments.telemetry.offline' : 'project-deployments.telemetry.stale'}
@@ -312,6 +317,12 @@ function DeploymentTelemetryTabs(props: Readonly<{
           />
         </View>
         <View style={styles.barEnd}>
+          {/* The tab's state, once, at the bar's trailing edge (lab p7Flows-mark "Receiving · 18:51"). */}
+          <Text variant="meta" style={styles.facts} numberOfLines={1} testID="project-deployments.telemetry.collector">
+            {props.savedThisVisit
+              ? `${t('deploymentTelemetry.recording.keptOn', { machine })} ${t('deploymentTelemetry.recording.nextDeploy')}`
+              : t('deploymentTelemetry.recording.keptOn', { machine })}
+          </Text>
           <SegmentedTabBar<WindowId>
             role="radiogroup"
             accessibilityLabel={t('deploymentTelemetry.window.label')}
@@ -411,9 +422,10 @@ function TelemetryRequestDetail(props: Readonly<{
   }, [reads, traceId, attempt]);
   const readBody = React.useCallback((id: string) => reads.logBody(id), [reads]);
   const queries = read.kind === 'ready' ? read.trace.summaries.filter(summary => summary.kind === 'query').length : null;
+  const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [
     request.serviceName ?? null,
-    request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode),
+    status,
     request.durationMs === null || request.durationMs === undefined ? null : formatHappierDuration(request.durationMs, locale),
     new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(request.at),
   ].filter((part): part is string => part !== null && part.length > 0);
@@ -422,9 +434,15 @@ function TelemetryRequestDetail(props: Readonly<{
       <View style={styles.detailHeader}>
         <TextLinkButton testID="project-deployments.telemetry.request.back" label={t('deploymentTelemetry.request.back')}
           onPress={props.onBack} tone="quiet" size="meta" />
-        <Text variant="heading" style={styles.mono} numberOfLines={2}>{requestLabelOf(request)}</Text>
-        <Text variant="meta" style={captureSummaryFailed(request) ? styles.factsFailed : styles.facts}>
-          {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].join(' · ')}
+        <Text variant="heading" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
+        <Text variant="meta" style={styles.facts}>
+          {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (
+            <React.Fragment key={index}>
+              {index === 0 ? null : ' · '}
+              {/* Only the failing status speaks; the rest of the line stays quiet (lab p7AddNow-trace "500"). */}
+              {part === status && captureSummaryFailed(request) ? <Text variant="meta" style={styles.failedStatus}>{part}</Text> : part}
+            </React.Fragment>
+          ))}
         </Text>
       </View>
       {read.kind === 'loading' ? (
@@ -447,9 +465,10 @@ function TelemetryRequestDetail(props: Readonly<{
 const styles = StyleSheet.create((theme) => ({
   panel: { gap: theme.space.s16 },
   // The tab's own lines stand on the edge its Collection and the page's sections inset to.
-  lines: { gap: theme.space.s16, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
+  // Its bar keeps the section gap under the page's own tabs (lab p7Flows-mark).
+  lines: { gap: theme.space.s16, paddingTop: theme.space.s16, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   facts: { color: theme.colors.text.secondary },
-  factsFailed: { color: theme.colors.state.danger.foreground },
+  failedStatus: { color: theme.colors.state.danger.foreground },
   bar: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -460,6 +479,8 @@ const styles = StyleSheet.create((theme) => ({
   tabs: { flexShrink: 1, minWidth: 0 },
   barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   detail: { gap: theme.space.s16 },
-  detailHeader: { gap: theme.space.s4 },
-  mono: Typography.mono(),
+  // The detail's header stands on the same edge as the tab bar and its sections.
+  detailHeader: { gap: theme.space.s4, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
+  // The request's identity in identifier type and the theme's ink, legible on either sheet.
+  requestTitle: { ...Typography.mono(), color: theme.colors.text.primary },
 }));

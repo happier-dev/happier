@@ -25,8 +25,8 @@ import type {
   DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
 
-import { projectWaterfall, slowestSteps } from '../traceWaterfall.js';
-import { captureClockOf, captureSeverityWord } from './model.js';
+import { failedStep, projectWaterfall, slowestSteps } from '../traceWaterfall.js';
+import { captureClockOf, captureSeverityTone, captureSeverityWord, captureStepKind } from './model.js';
 import { formatTelemetryMetric } from '../widgets/telemetryWidgetModel.js';
 
 export type CapturedTraceV1 = Extract<
@@ -52,6 +52,19 @@ function rowLabel(
   row: Readonly<{ label: string; repeated?: Readonly<{ count: number }> }>,
 ): string {
   return row.repeated ? `${row.label} × ${row.repeated.count}` : row.label;
+}
+
+function stepKindWord(
+  row: Parameters<typeof captureStepKind>[0] & Readonly<{ failed: boolean }>,
+  text: ReturnType<typeof usePluginTranslation>,
+): string {
+  const kind = captureStepKind(row);
+  const word = kind === 'query'
+    ? text('plugins.telemetry.request.kind.query', 'database query')
+    : kind === 'external'
+      ? text('plugins.telemetry.request.kind.external', 'external call')
+      : text('plugins.telemetry.request.kind.app', 'in the app');
+  return row.failed ? `${word} · ${text('plugins.telemetry.request.kind.failed', 'failed')}` : word;
 }
 
 /** "Where the time went": the request's slowest direct steps, each with its time and share of the request. */
@@ -82,12 +95,23 @@ export function CapturedRequestSlowest({
         <Item
           key={row.id}
           title={rowLabel(row)}
+          identifier
           titleNumberOfLines={1}
-          detail={`${formatHappierDuration(row.end - row.start, locale)} · ${text(
-            'plugins.telemetry.request.shareOfRequest',
-            '{share} of the request',
-            { share: formatTelemetryMetric('errorRate', share, locale) },
-          )}`}
+          // What the step was, so the slowest one reads at a glance (lab p7AddNow-trace).
+          subtitle={stepKindWord(row, text)}
+          // The step's time and its share of the request, at the row's end in the interface face (lab p7AddNow-trace).
+          accessory={
+            <Stack gap="none" align="flex-end">
+              <Text variant="body" value={formatHappierDuration(row.end - row.start, locale)} />
+              <Text
+                variant="meta"
+                tone="secondary"
+                value={text('plugins.telemetry.request.shareOfRequest', '{share} of the request', {
+                  share: formatTelemetryMetric('errorRate', share, locale),
+                })}
+              />
+            </Stack>
+          }
         />
       ))}
     </ItemGroup>
@@ -141,7 +165,8 @@ export function CapturedRequestWaterfall({
               depth: row.depth,
               start: row.start,
               end: row.end,
-              color: row.failed
+              // The step that failed carries the mark; the request it ended stays ink (lab p7AddNow-trace).
+              color: failedStep(row)
                 ? theme.colors.danger
                 : row.repeated?.kind === 'suspected_n_plus_one'
                   ? theme.colors.warning
@@ -168,44 +193,32 @@ export function CapturedRequestWaterfall({
 }
 
 /**
- * "Logs from this request": one mono line each, time · level · the start of its message, on one card with no
- * rules between lines. A cut line ends in "…" and opens its whole message through `readBody`; a whole line has
- * nothing more to open.
+ * Log lines as one card: one mono line each, time · level (error rose, warn amber) · service · the start of its
+ * message, with no rules between lines. A cut line ends in "…" and opens its whole message through `readBody`; a
+ * whole line has nothing more to open. The request's logs and the Environment's Logs tab draw these same lines.
  */
-export function CapturedRequestLogs({
-  trace,
+export function CapturedLogLines({
+  logs,
   locale,
   readBody,
-  testIDPrefix = 'telemetry.request',
+  showService = false,
+  testIDPrefix,
 }: Readonly<{
-  trace: CapturedTraceV1;
+  logs: readonly DatabaseCaptureSummaryV1[];
   locale: string;
   readBody: CapturedLogBodyReader;
-  testIDPrefix?: string;
-}>): React.ReactElement | null {
-  const text = usePluginTranslation();
-  const [bodies, setBodies] = React.useState<
-    Readonly<Record<string, BodyState>>
-  >({});
-  const logs = React.useMemo(
-    () =>
-      trace.summaries
-        .filter(
-          (summary): summary is DatabaseCaptureSummaryV1 =>
-            summary.kind === 'log',
-        )
-        .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)),
-    [trace],
-  );
+  /** The Logs tab names each line's service; a request's own lines share one. */
+  showService?: boolean;
+  testIDPrefix: string;
+}>): React.ReactElement {
+  const [bodies, setBodies] = React.useState<Readonly<Record<string, BodyState>>>({});
   const bodiesRef = React.useRef(bodies);
   const settle = (id: string, next: BodyState) => {
     bodiesRef.current = { ...bodiesRef.current, [id]: next };
     setBodies(bodiesRef.current);
   };
   // Which cut lines are open now. A second press closes a line; its body stays read for the next open.
-  const [openIds, setOpenIds] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [openIds, setOpenIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const open = (id: string) => {
     const wasOpen = openIds.has(id);
     setOpenIds((current) => {
@@ -223,66 +236,81 @@ export function CapturedRequestLogs({
       () => settle(id, { kind: 'unavailable' }),
     );
   };
+  return (
+    <Stack gap="xsmall" testID={`${testIDPrefix}.logs`} style={CAPTURE_LOG_LINES_INSET}>
+      {logs.map((log) => (
+        <CapturedLogLine
+          key={log.id}
+          log={log}
+          locale={locale}
+          showService={showService}
+          body={log.bodyPrefixTruncated === true && openIds.has(log.id) ? bodies[log.id] : undefined}
+          onOpen={log.bodyPrefixTruncated === true ? () => open(log.id) : undefined}
+          testID={`${testIDPrefix}.log.${log.id}`}
+        />
+      ))}
+    </Stack>
+  );
+}
+
+/** "Logs from this request": the request's own lines, oldest first. */
+export function CapturedRequestLogs({
+  trace,
+  locale,
+  readBody,
+  testIDPrefix = 'telemetry.request',
+}: Readonly<{
+  trace: CapturedTraceV1;
+  locale: string;
+  readBody: CapturedLogBodyReader;
+  testIDPrefix?: string;
+}>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const logs = React.useMemo(
+    () =>
+      trace.summaries
+        .filter((summary): summary is DatabaseCaptureSummaryV1 => summary.kind === 'log')
+        .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)),
+    [trace],
+  );
   if (logs.length === 0) return null;
   return (
     <ItemGroup
-      title={text(
-        'plugins.telemetry.exceptions.requestLogs',
-        'Logs from this request',
-      )}
+      title={text('plugins.telemetry.exceptions.requestLogs', 'Logs from this request')}
       description={text(
-        logs.length === 1
-          ? 'plugins.telemetry.exceptions.requestLogs.one'
-          : 'plugins.telemetry.exceptions.requestLogs.many',
+        logs.length === 1 ? 'plugins.telemetry.exceptions.requestLogs.one' : 'plugins.telemetry.exceptions.requestLogs.many',
         logs.length === 1 ? '1 line' : '{count} lines',
       ).replace('{count}', String(logs.length))}
     >
-      <Stack
-        gap="xsmall"
-        testID={`${testIDPrefix}.logs`}
-        style={CAPTURE_LOG_LINES_INSET}
-      >
-        {logs.map((log) => (
-          <CapturedLogLine
-            key={log.id}
-            log={log}
-            locale={locale}
-            body={
-              log.bodyPrefixTruncated === true && openIds.has(log.id)
-                ? bodies[log.id]
-                : undefined
-            }
-            onOpen={
-              log.bodyPrefixTruncated === true ? () => open(log.id) : undefined
-            }
-            testID={`${testIDPrefix}.log.${log.id}`}
-          />
-        ))}
-      </Stack>
+      <CapturedLogLines logs={logs} locale={locale} readBody={readBody} testIDPrefix={testIDPrefix} />
     </ItemGroup>
   );
 }
 
-/** One captured log line, as the request's log card and the Logs tab both draw it. */
-export function CapturedLogLine({
+/** One captured log line. */
+function CapturedLogLine({
   log,
   locale,
+  showService,
   body,
   onOpen,
   testID,
 }: Readonly<{
   log: DatabaseCaptureSummaryV1;
   locale: string;
+  showService: boolean;
   body?: BodyState;
   onOpen?: () => void;
   testID?: string;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const severity = captureSeverityWord(log.severityNumber);
-  const failing = severity === 'error' || severity === 'fatal';
+  const tone = captureSeverityTone(log.severityNumber);
+  const failing = tone === 'danger';
   const prefix = log.bodyPrefix ?? null;
   const truncated = log.bodyPrefixTruncated === true;
   const clock = captureClockOf(locale, log.at);
+  const service = showService && log.serviceName ? log.serviceName : null;
   // An open line reads its whole message in place of the cut start; a reading or failed open says so instead.
   const message =
     body === undefined
@@ -292,38 +320,18 @@ export function CapturedLogLine({
       : body.kind === 'loading'
         ? `${prefix ?? ''}…`
         : body.kind === 'unavailable'
-          ? text(
-              'plugins.telemetry.exceptions.logUnavailable',
-              'The collector didn’t return this line.',
-            )
-          : (body.body ??
-            text(
-              'plugins.telemetry.exceptions.logEmpty',
-              'This line has no message.',
-            ));
+          ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
+          : (body.body ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
   // Lines wrap rather than cut: on a phone the clock leaves the message room, so no line is a dead end.
   const line = (
-    <Text
-      variant="code"
-      selectable={!truncated}
-      tone={failing ? 'danger' : 'neutral'}
-    >
+    <Text variant="code" selectable={!truncated} tone={failing ? 'danger' : 'neutral'}>
       <Text variant="code" tone="secondary" value={`${clock}  `} />
-      <Text
-        variant="code"
-        tone={failing ? 'danger' : 'secondary'}
-        value={severity}
-      />
+      <Text variant="code" tone={tone} value={severity} />
+      {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
       {message === null ? null : (
         <Text
           variant="code"
-          tone={
-            body?.kind === 'unavailable'
-              ? 'secondary'
-              : failing
-                ? 'danger'
-                : 'neutral'
-          }
+          tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'}
           value={`  ${message}`}
         />
       )}
