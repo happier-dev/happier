@@ -48,24 +48,39 @@ export function resolveDeploymentLiveAddress(
   if (!serving || !servesLive(receipt)) return null;
   const observed = receipt.facts.urls?.[0];
   if (observed) return { url: observed, attention: null, domain: null };
-  const intent = receipt.content.sourceIntent;
-  const primaryService =
-    intent?.kind === 'repository'
-      ? intent.compose?.primaryService
-      : intent?.primaryService;
-  if (!receipt.content.platform && !primaryService) return null;
   const domain = domains.find(
-    (item) =>
-      isDeploymentDomainAttachedV1(item.domain, { runtimeTargetLinkId: receipt.deployment.targetLinkId }) &&
-      (item.domain.state === 'active' || item.domain.state === 'warning') &&
-      (receipt.content.platform ? item.content.target.kind === 'provider'
-        : item.content.target.kind !== 'provider' && item.content.target.service === primaryService),
+    (item) => routesReceipt(receipt, item) && (item.domain.state === 'active' || item.domain.state === 'warning'),
   );
   const url = domain ? readDeploymentDomainServingUrlV1(domain.content) : null;
   if (!domain || !url) return null;
   // A Domain that needs a look is still the address, but it is not plainly live: the Domains row's own line travels with it.
   return { url, attention: deploymentDomainAttention(domain, domain.domain.state, true),
     domain: { id: domain.domain.id, revision: domain.domain.revision } };
+}
+
+/**
+ * Whether a serving receipt has an address to wait for while it has none: a platform reports one, and a native
+ * release is reached only through a Domain routed to its primary service. Without either (a database on a Machine)
+ * there is no address coming, so no surface says "not available yet".
+ */
+export function deploymentAddressExpected(receipt: LiveReceipt, domains: readonly LiveDomain[], serving: boolean): boolean {
+  if (!serving || !servesLive(receipt)) return false;
+  if (receipt.content.platform || receipt.facts.urls?.[0]) return true;
+  // A Domain that failed or is being removed is not on its way; its own row says so.
+  return domains.some((item) => routesReceipt(receipt, item) && item.domain.state !== 'failed' && item.domain.state !== 'removing');
+}
+
+function primaryServiceOf(receipt: LiveReceipt): string | undefined {
+  const intent = receipt.content.sourceIntent;
+  return intent?.kind === 'repository' ? intent.compose?.primaryService : intent?.primaryService;
+}
+
+/** A Domain attached to this receipt's runtime link that routes the platform, or its primary service, in any state. */
+function routesReceipt(receipt: LiveReceipt, item: LiveDomain): boolean {
+  if (!isDeploymentDomainAttachedV1(item.domain, { runtimeTargetLinkId: receipt.deployment.targetLinkId })) return false;
+  if (receipt.content.platform) return item.content.target.kind === 'provider';
+  const primaryService = primaryServiceOf(receipt);
+  return primaryService !== undefined && item.content.target.kind !== 'provider' && item.content.target.service === primaryService;
 }
 
 /** The address as people say it: no scheme, no trailing slash. */

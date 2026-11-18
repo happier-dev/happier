@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import {
+  deploymentAddressExpected,
   deploymentLiveAddressDemand,
   resolveDeploymentLiveAddress,
 } from './deploymentLiveAddressFacts';
@@ -128,5 +129,20 @@ describe('the live address (FIRST-DEPLOY-URL-1112, DEPLOY-ACCEPT-143 A1/A2)', ()
     // The lifecycle word and the health cause speak together.
     expect(warning?.attention?.label).toContain('Needs a look');
     expect(warning?.attention?.label).toContain('DNS');
+  });
+
+  it('expects an address only where one is coming: a platform, or a Domain routed to this service', () => {
+    // A database on a Machine with no Domain has no address to wait for (PAGE-ACCEPT-176 P6).
+    const native = serving('succeeded');
+    expect(deploymentAddressExpected(native, [], true)).toBe(false);
+    const active = domain(native.deployment.targetLinkId, 'active');
+    const settingUp = { ...active, domain: { ...active.domain, state: 'pending' } } as unknown as typeof active;
+    expect(deploymentAddressExpected(native, [settingUp], true)).toBe(true);
+    expect(deploymentAddressExpected(native, [domain('another-link', 'active')], true)).toBe(false);
+    const base = serving('succeeded');
+    const platform = { ...base, content: { platform: {} }, facts: { ...base.facts, urls: [] } };
+    expect(deploymentAddressExpected(platform, [], true)).toBe(true);
+    // A historical receipt never waits for an address.
+    expect(deploymentAddressExpected(platform, [], false)).toBe(false);
   });
 });

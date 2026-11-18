@@ -75,7 +75,7 @@ import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
-import { deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { DomainStateLine } from './DeploymentDomainRow';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet, type DeploymentPromotionDestination } from './DeploymentPromotionSheet';
@@ -309,7 +309,9 @@ export const DeploymentReceiptDetail = React.memo(
       facts,
       // A succeeded receipt says its address in the outcome row; any other live one says it here.
       address: outcomeUrl && deployment.state !== 'succeeded' ? formatDeploymentLiveAddress(outcomeUrl) : null,
-      addressAvailable: outcomeUrl !== null,
+      // Only an address that is coming is "not available yet"; a database on a Machine has none to wait for.
+      addressPending: outcomeUrl === null
+        && deploymentAddressExpected({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving),
       // A version running without a health check has its notice below say so; the facts don't repeat it.
       healthSaidByNotice: deployment.state === 'running_unverified' && notice !== null,
       serving,
@@ -840,7 +842,7 @@ function failureConsequence(
 function receiptFacts(input: Readonly<{
   facts: DeploymentReceiptFactsV1;
   address: string | null;
-  addressAvailable: boolean;
+  addressPending: boolean;
   healthSaidByNotice: boolean;
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
@@ -850,7 +852,7 @@ function receiptFacts(input: Readonly<{
   if (input.serving) {
     if (!input.healthSaidByNotice) list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
       label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health, input.state) });
-    if (input.address || !input.addressAvailable) {
+    if (input.address || input.addressPending) {
       list.push({ key: 'address', label: t('projects.deployments.factAddress'),
         value: input.address ?? t('projects.deployments.factNotAvailable') });
     }
