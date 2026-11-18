@@ -672,11 +672,6 @@ export function DeploymentDatabasePage(
  * How apps reach a self-hosted database: its internal address, then whether the Environment exports it on a
  * private network or publicly (the Environment's saved exports), then its saved login as Reveal/Copy rows.
  */
-/** The Store catalog condition Data → Add opens with. */
-export const DEPLOYMENT_DATABASE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
-  category: Object.freeze({ include: ['database'], exclude: [] }),
-});
-
 /** P10: Add a service or database to this Environment, in place over it. Never routes to Store. */
 export type DeploymentAddSheetInput = Readonly<{
   detail: Detail;

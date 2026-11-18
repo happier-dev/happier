@@ -438,6 +438,27 @@ export const DeploymentReceiptDetail = React.memo(
         {menu}
       </View>
     );
+    // The canonical next action opens where the cause is fixed; it never retries anything.
+    const recoveryNext = recovery && props.onOpenRecoveryDestination ? {
+      label: recovery.nextAction.label,
+      testID: 'project-deployments.receipt.outcome.failed.recovery',
+      // The build Machine's setup, or this receipt itself for its failed step's logs.
+      onPress: () => {
+        const destination = recovery.nextAction.destination;
+        const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
+          : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! }
+          : destination === 'logs' ? { deploymentId: deployment.id } : null;
+        if (at) props.onOpenRecoveryDestination?.(destination, at);
+        else props.onOpenRecoveryDestination?.(destination);
+      },
+    } : null;
+    const againAction = bannerAgain ? {
+      label: t('projects.deployments.deployAgain'),
+      icon: 'arrow-clockwise' as const,
+      loading: againPress.running,
+      disabled: againPress.running || againPress.reviewPending,
+      onPress: pressAgain,
+    } : null;
     const outcomeBanner = (
       press: ReturnType<typeof useDeploymentPress>,
       copy: 'deploy' | 'rollback' | 'cancel',
@@ -525,29 +546,14 @@ export const DeploymentReceiptDetail = React.memo(
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: () => rollBack(retryRollbackTo),
-                } : bannerAgain ? {
-                  label: t('projects.deployments.deployAgain'),
-                  icon: 'arrow-clockwise',
-                  loading: againPress.running,
-                  disabled: againPress.running || againPress.reviewPending,
-                  onPress: pressAgain,
-                } : null}
+                } : recoveryNext ?? againAction}
                 // Recovery leads when there is one; finding out why is the way forward beside it.
                 control={investigateControl}
-                // The canonical next action opens where the cause is fixed; it never retries anything.
-                moreActions={recovery && props.onOpenRecoveryDestination ? [{
-                  label: recovery.nextAction.label,
-                  testID: 'project-deployments.receipt.outcome.failed.recovery',
-                  // The build Machine's setup, or this receipt itself for its failed step's logs.
-                  onPress: () => {
-                    const destination = recovery.nextAction.destination;
-                    const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
-                      : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! }
-                      : destination === 'logs' ? { deploymentId: deployment.id } : null;
-                    if (at) props.onOpenRecoveryDestination?.(destination, at);
-                    else props.onOpenRecoveryDestination?.(destination);
-                  },
-                }] : undefined}
+                // One way forward leads (lab envFail: Investigate, then the cause's fix, then a quiet Deploy again):
+                // beside a rollback the cause's fix stays quiet; beside the cause's fix, Deploy again does.
+                moreActions={rollbackTarget || retryRollbackTo ? (recoveryNext ? [recoveryNext] : undefined)
+                  : recoveryNext && againAction ? [{ ...againAction, testID: 'project-deployments.receipt.outcome.failed.deployAgain' }]
+                  : undefined}
                 details={facts.failure ? [facts.failure.code] : undefined}
               />
             ) : deployment.state === 'succeeded' ? (

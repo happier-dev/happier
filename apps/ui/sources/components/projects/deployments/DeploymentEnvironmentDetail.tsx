@@ -6,7 +6,7 @@ import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectT
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
-import { ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
+import { DEPLOYMENT_DATABASE_CATALOG_FILTER, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   DeploymentEnvironmentDestinationV1,
@@ -78,6 +78,7 @@ import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewR
 
 import {
   deploymentActorIsViewer,
+  deploymentActorLabel,
   deploymentDefinitionLabel,
   deploymentDurationMs,
   deploymentReceiptAtMs,
@@ -122,7 +123,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
-import { DEPLOYMENT_DATABASE_CATALOG_FILTER, showDeploymentAddSheet, showDeploymentTemplateUpdateSheet,
+import { showDeploymentAddSheet, showDeploymentTemplateUpdateSheet,
   showDeploymentAppSourcesSheet } from './DeploymentDatabasePage';
 import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
@@ -145,7 +146,8 @@ import {
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import {
   useDeploymentEnvironment,
   useDeploymentHistory,
@@ -470,7 +472,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             <ItemGroup testID="project-deployments.environment.recent" title={t('projects.deployments.recent')}>
               {history.result.items.slice(0, RECENT_COUNT).map((receipt) => (
                 <DeploymentReceiptRow key={receipt.id} receipt={receipt} live={false}
-                  byYou={deploymentActorIsViewer(receipt.actor, props.accountId)} phone={props.phone} onOpen={openReceipt} />
+                  actor={deploymentActorIsViewer(receipt.actor, props.accountId) ? t('projects.deployments.byYou') : null}
+                  phone={props.phone} onOpen={openReceipt} />
               ))}
             </ItemGroup>
           ) : null}
@@ -1247,6 +1250,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               environmentId={props.environmentId}
               demand={props.demand}
               accountId={props.accountId}
+              lifetime={props.lifetime ?? null}
               activeId={activeId}
               phone={props.phone}
               onOpen={openReceipt}
@@ -1658,7 +1662,8 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
     receipt: DeploymentReceiptHeaderV1 & Readonly<{ title?: string; failure?: DeploymentReceiptFailureV1 | null;
       source?: DeploymentReviewRevisionV1 | null; steps?: readonly DeploymentStepV1[] }>;
     live: boolean;
-    byYou: boolean;
+    /** Who acted, first on the facts line (dHist KEEP "by"): "by you", a name, an agent or a workflow; never guessed. */
+    actor: string | null;
     phone: boolean;
     /** Stable from the producer; the row binds its own id. */
     onOpen: (deploymentId: string) => void;
@@ -1672,7 +1677,7 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   // verified" is about what serves now, so only the live row says it; a superseded run reads as the run it was (D17).
   const settledPast = !props.live && receipt.state === 'running_unverified';
   const lead = receipt.title && !settledPast ? deploymentHistoryLead(receipt, receipt.failure) : null;
-  const facts = props.byYou ? [t('projects.deployments.byYou')] : [];
+  const facts = props.actor ? [props.actor] : [];
   // A phone keeps the title's width: duration and age join the facts line instead of a right column.
   if (props.phone) facts.push(...(duration !== null ? [formatElapsedDuration(duration)] : []), age);
   // A failed or running deploy shows where it is or stopped (dHist): the compact strip with its caption. A settled
@@ -1731,12 +1736,16 @@ const HISTORY_STATED_FIELDS: readonly string[] = Object.freeze(['state']);
 /** The History registry's field marks in the filter editor. */
 const HISTORY_FILTER_FIELD_ICONS = Object.freeze({ state: 'circle-half', actorAccountId: 'user-circle', operation: 'lightning' } as const);
 
+/** Read nothing without a lifetime: the actor hook is disabled then, so this scope is never queried. */
+const NO_ACTOR_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
+
 function DeploymentHistoryPage(
   props: Readonly<{
     controller: DeploymentReadControllerV1;
     environmentId: string;
     demand: DeploymentReadDemandV1;
     accountId: string;
+    lifetime: ServerAccountScopeLifetime | null;
     activeId: string | null;
     phone: boolean;
     onOpen: (deploymentId: string) => void;
@@ -1769,6 +1778,15 @@ function DeploymentHistoryPage(
   const filtered = Object.keys(filters).length > 0;
   const outcome: HistoryOutcome = filters.state === 'succeeded' || filters.state === 'failed' ? filters.state : 'all';
   const receipts = history.result.items;
+  // Who acted, through the one actor display owner (as Recent activity and the Services rows read it).
+  const actors = React.useMemo(() => receipts.map((receipt) => receipt.actor), [receipts]);
+  const presentations = useDeploymentActorPresentations({ actors, scope: props.lifetime?.scope ?? NO_ACTOR_SCOPE,
+    accountLifetime: props.lifetime, active: props.lifetime !== null });
+  const actorById = React.useMemo(() => new Map(receipts.map((receipt, index) => {
+    const presentation = presentations[index];
+    return [receipt.id, deploymentActorIsViewer(receipt.actor, props.accountId) ? t('projects.deployments.byYou')
+      : presentation ? deploymentActorLabel(presentation, receipt.actor, props.accountId) : null] as const;
+  })), [presentations, props.accountId, receipts]);
   // Newest first, by local day, through the one day-grouping owner the Session lists use.
   const days = React.useMemo(() => buildSessionListDateGroups({ items: receipts,
     readMeaningfulActivityAt: deploymentReceiptAtMs }), [receipts]);
@@ -1801,7 +1819,7 @@ function DeploymentHistoryPage(
               key={receipt.id}
               receipt={receipt}
               live={receipt.id === props.activeId}
-              byYou={deploymentActorIsViewer(receipt.actor, props.accountId)}
+              actor={actorById.get(receipt.id) ?? null}
               phone={props.phone}
               onOpen={props.onOpen}
             />

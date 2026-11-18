@@ -1,10 +1,16 @@
 import type { DeploymentEnvironmentDestinationV1, DeploymentEnvironmentSettingsSectionV1, DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
+import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 
 /**
  * Where an Environment's Automations live: they close its Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
  * The Environment page places them here and every link to them (Project defaults) opens here, so the two never disagree.
  */
 export const ENVIRONMENT_AUTOMATIONS_DESTINATION: DeploymentEnvironmentDestinationV1 = { tab: 'overview', section: 'automations' };
+
+/** The Store catalog condition for databases: Data → Add, a preview's database choice and Move's empty destination list open with it. */
+export const DEPLOYMENT_DATABASE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
+  category: Object.freeze({ include: ['database'], exclude: [] }),
+});
 
 /** The Services page: every app, database, domain and check this Account runs (formerly All deployments). */
 export const SERVICES_ROUTE = '/projects/deployments';

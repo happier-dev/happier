@@ -29,7 +29,7 @@ import { createDeploymentActions } from './deploymentActions';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentBackupCaptureChoices } from './deploymentRestore';
-import { DEPLOYMENT_DATABASE_CATALOG_FILTER } from './DeploymentDatabasePage';
+import { DEPLOYMENT_DATABASE_CATALOG_FILTER } from './deploymentNavigation';
 import { deploymentSheetStyles } from './deploymentSheet';
 
 type Selection = Extract<DeploymentPreviewDataSelectionV1, { kind: 'template' }>;

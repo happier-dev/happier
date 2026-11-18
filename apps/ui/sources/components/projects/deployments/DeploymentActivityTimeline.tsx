@@ -130,7 +130,6 @@ function activityContent(
   const lead = deploymentHistoryLead(receipt, receipt.failure);
   const duration = deploymentDurationMs(receipt);
   const detail = [
-    ...(sentence ? [] : byYou ? [t('projects.deployments.byYou')] : []),
     ...(duration !== null
       ? [
           t('projects.deployments.took', {
@@ -157,7 +156,8 @@ function activityContent(
       // Who, when the profile owner names them, then what the operation did to which version ("Rolled back to
       // 302cf72"), the same title History reads.
       <Text variant="reading" style={styles.sentence} emphasis="medium">
-        {actorName ? `${actorName} · ` : null}
+        {/* Actor first in every sentence (dEnvOv refinement 4): the viewer reads "You". */}
+        {byYou ? `${t('projects.deployments.overviewStatus.activityYou')} · ` : actorName ? `${actorName} · ` : null}
         {receipt.source
           ? deploymentReceiptTitle(receipt, version)
           : (receipt.title ?? deploymentStateLabel(receipt.state))}
