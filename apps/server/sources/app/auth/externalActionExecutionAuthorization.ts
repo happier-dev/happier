@@ -1,4 +1,3 @@
-import { WORKFLOW_VALIDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -1984,16 +1983,15 @@ async function readSetupReceiverSigner(binding: ExternalActionExecutionAuthoriza
     return receiver.id;
 }
 
-function isMachineDeploymentReferenceHttpPurpose(binding: ExternalActionExecutionAuthorizationV1['binding'],
+function isMachineRebootHttpPurpose(binding: ExternalActionExecutionAuthorizationV1['binding'],
     effectActionId: string, proof: ExternalActionExecutionRequestProof): boolean {
     if (effectActionId !== binding.actionId || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     const url = new URL(proof.path, 'http://localhost');
     if (url.pathname !== '/v1/deployments/machine-references') return false;
     const selection = MachineDeploymentReferencesInputV1Schema.safeParse(Object.fromEntries(url.searchParams));
     if (!selection.success || selection.data.homeId !== binding.serverIdentityId) return false;
-    return isManagedReferenceCensusActionIdV1(binding.actionId)
-        || MACHINE_REBOOT_ACTION_IDS.some(id => id === binding.actionId)
-            && binding.target.kind === 'machine' && selection.data.machineId === binding.target.machineId;
+    return MACHINE_REBOOT_ACTION_IDS.some(id => id === binding.actionId)
+        && binding.target.kind === 'machine' && selection.data.machineId === binding.target.machineId;
 }
 
 function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string; path: string; body?: unknown }>): boolean {
@@ -3908,6 +3906,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`;
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
+    const admittedReadRootRequesterGet = isAdmittedReadRootRequesterGet(verified, proof);
     const reviewedMachineSetupChild = verified.signedChildPurpose.reviewedMachineSetupChild
         && verified.reviewedChildAdmission?.actionId === verified.effectActionId;
     let managedGuestActivity: VerifiedExternalActionExecutionRequest['managedGuestActivity'];
@@ -4170,10 +4169,6 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if ((managedBoundSessionPurpose = await readManagedBoundSessionHttpPurpose(
         verified.binding, verified.effectActionId, proof)) !== null) {
         if (!managedBoundSessionPurpose) return refuse('managed_bound_session_setup');
-    } else if (verified.binding.actionId === WORKFLOW_VALIDATE_ACTION_ID_V1
-        && verified.effectActionId === verified.binding.actionId && proof.method.toUpperCase() === 'GET'
-        && proof.body === undefined && proof.path.split('?')[0] === '/v1/machines') {
-        // Workflow validation reads the inventory through the native route.
     } else if (verified.binding.actionId === MACHINE_LIST_ACTION_ID_V1) {
         if (verified.effectActionId !== verified.binding.actionId || proof.method.toUpperCase() !== 'GET'
             || proof.body !== undefined || proof.path.split('?')[0] !== '/v1/machines') return refuse('verification_purpose');
@@ -4190,18 +4185,18 @@ export async function verifyExternalActionDomainExecutionRequest(
             || proof.path !== path?.replace(':machineId', encodeURIComponent(target.machineId))) return refuse('verification_purpose');
     } else if (verified.binding.actionId === WIDGET_CATALOG_LIST_ACTION_ID_V1
         && verified.effectActionId === verified.binding.actionId
-        && (proof.method.toUpperCase() === 'GET' && proof.path === '/v1/machines' && proof.body === undefined
-            || proof.method.toUpperCase() === 'POST' && proof.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
-                && PluginAvailabilityMaterializationsReadActionInputV1Schema.safeParse(proof.body).success)) {
-        // Catalog preparation shares the native inventory; Session reads retain their ordinary route owner.
+        && proof.method.toUpperCase() === 'POST'
+        && proof.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
+        && PluginAvailabilityMaterializationsReadActionInputV1Schema.safeParse(proof.body).success) {
+        // Materializations is a POST read and remains outside the GET read-root rule.
     } else if (verified.binding.actionId === EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1) {
         const lookup = proof.method.toUpperCase() === 'POST' && proof.path === '/v2/sessions/lookup-by-tags'
             ? SessionLookupByTagsRequestV2Schema.safeParse(proof.body) : null;
         if (verified.effectActionId !== verified.binding.actionId
             || !isAccountEncryptionCurrentnessHttpRead(proof) && !(lookup?.success && lookup.data.matchExternalIdentity === true)) return refuse('verification_purpose');
-    } else if (isMachineDeploymentReferenceHttpPurpose(verified.binding, verified.effectActionId, proof)) {
+    } else if (isMachineRebootHttpPurpose(verified.binding, verified.effectActionId, proof)) {
         // The native deployment read route owns requester access to each reference.
-    } else if (managedRoot.success) {
+    } else if (managedRoot.success && !admittedReadRootRequesterGet) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
         const referencePurpose = isManagedReferenceCensusActionIdV1(verified.binding.actionId)
@@ -4419,7 +4414,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // read; no per-purpose table entry is needed.
     } else if (await isContributedRootEnvironmentRead(verified, proof)) {
         // Environment and Artifact routes retain the requester's access; this opens no content custody.
-    } else if (isAdmittedReadRootRequesterGet(verified, proof)) {
+    } else if (admittedReadRootRequesterGet) {
         // Every route retains the requester's own access; a read root gains no mutation.
     } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, { ...proof,
         onRefusal: phase => { accountHttpRefusal = phase; } }, snapshotBatch)) !== null) {
