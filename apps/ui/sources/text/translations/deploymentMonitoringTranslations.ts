@@ -77,6 +77,7 @@ const en = {
   widgetDescription: 'One saved check: its state, latest result and history',
   widgetChooseCheck: 'Choose a check to show here',
   widgetCheckMissing: 'This check is no longer saved',
+  widgetWhichCheck: 'Which check?',
 };
 type MonitoringCopy = typeof en;
 
@@ -156,6 +157,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Una comprovació desada: el seu estat, l’últim resultat i l’historial',
     widgetChooseCheck: 'Tria una comprovació per mostrar-la aquí',
     widgetCheckMissing: 'Aquesta comprovació ja no està desada',
+    widgetWhichCheck: 'Quina comprovació?',
   },
   de: {
     title: 'Überwachung',
@@ -231,6 +233,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Eine gespeicherte Prüfung: Zustand, letztes Ergebnis und Verlauf',
     widgetChooseCheck: 'Wähle eine Prüfung, die hier erscheinen soll',
     widgetCheckMissing: 'Diese Prüfung ist nicht mehr gespeichert',
+    widgetWhichCheck: 'Welche Prüfung?',
   },
   es: {
     title: 'Monitorización',
@@ -306,6 +309,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Una comprobación guardada: su estado, último resultado e historial',
     widgetChooseCheck: 'Elige una comprobación para mostrarla aquí',
     widgetCheckMissing: 'Esta comprobación ya no está guardada',
+    widgetWhichCheck: '¿Qué comprobación?',
   },
   fr: {
     title: 'Surveillance',
@@ -383,6 +387,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Une vérification enregistrée : son état, son dernier résultat et son historique',
     widgetChooseCheck: 'Choisissez une vérification à afficher ici',
     widgetCheckMissing: 'Cette vérification n’est plus enregistrée',
+    widgetWhichCheck: 'Quelle vérification ?',
   },
   it: {
     title: 'Monitoraggio',
@@ -458,6 +463,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Un controllo salvato: stato, ultimo risultato e cronologia',
     widgetChooseCheck: 'Scegli un controllo da mostrare qui',
     widgetCheckMissing: 'Questo controllo non è più salvato',
+    widgetWhichCheck: 'Quale controllo?',
   },
   ja: {
     title: 'モニタリング',
@@ -531,6 +537,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: '保存したチェック 1 件の状態、最新の結果、履歴',
     widgetChooseCheck: 'ここに表示するチェックを選んでください',
     widgetCheckMissing: 'このチェックは保存されていません',
+    widgetWhichCheck: 'どのチェックですか?',
   },
   pl: {
     title: 'Monitorowanie',
@@ -604,6 +611,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Jedno zapisane sprawdzenie: stan, ostatni wynik i historia',
     widgetChooseCheck: 'Wybierz sprawdzenie, które ma się tu pojawić',
     widgetCheckMissing: 'To sprawdzenie nie jest już zapisane',
+    widgetWhichCheck: 'Które sprawdzenie?',
   },
   pt: {
     title: 'Monitorização',
@@ -679,6 +687,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Uma verificação guardada: estado, último resultado e histórico',
     widgetChooseCheck: 'Escolha uma verificação para mostrar aqui',
     widgetCheckMissing: 'Esta verificação já não está guardada',
+    widgetWhichCheck: 'Qual verificação?',
   },
   ru: {
     title: 'Мониторинг',
@@ -753,6 +762,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: 'Одна сохранённая проверка: состояние, последний результат и история',
     widgetChooseCheck: 'Выберите проверку, чтобы показать её здесь',
     widgetCheckMissing: 'Эта проверка больше не сохранена',
+    widgetWhichCheck: 'Какая проверка?',
   },
   'zh-Hans': {
     title: '监控',
@@ -826,6 +836,7 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: '一项已保存的检查：状态、最新结果和历史',
     widgetChooseCheck: '选择要在这里显示的检查',
     widgetCheckMissing: '此检查已不再保存',
+    widgetWhichCheck: '哪项检查？',
   },
   'zh-Hant': {
     title: '監控',
@@ -899,5 +910,6 @@ export const deploymentMonitoringTranslations = {
     widgetDescription: '一項已儲存的檢查：狀態、最新結果和歷史',
     widgetChooseCheck: '選擇要在這裡顯示的檢查',
     widgetCheckMissing: '此檢查已不再儲存',
+    widgetWhichCheck: '哪項檢查？',
   },
 } satisfies Record<SupportedLanguage, MonitoringCopy>;

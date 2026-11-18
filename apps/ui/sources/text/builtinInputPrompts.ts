@@ -11,7 +11,7 @@ const BUILTIN_PROMPT_KEYS = {
   'Which workspace?': 'widgetAdd.prompts.workspace',
   'Which checkout?': 'widgetAdd.prompts.checkout',
   'Which machine?': 'widgetAdd.prompts.machine',
-  'Which check?': 'projects.deployments.monitoring.widgetChooseCheck',
+  'Which check?': 'projects.deployments.monitoring.widgetWhichCheck',
 } as const satisfies Record<string, TranslationKeyNoParams>;
 
 /**
