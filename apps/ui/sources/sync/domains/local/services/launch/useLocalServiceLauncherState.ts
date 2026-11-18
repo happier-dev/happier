@@ -25,6 +25,14 @@ export type LocalServiceLauncherSnapshotClient = (
     input: LocalServiceLauncherSnapshotClientInput,
 ) => Promise<LocalServiceLauncherSnapshotClientResult>;
 
+// Without a Machine target no read can start or publish a snapshot. Settle
+// unavailable; a later target publication will subscribe through the same hook.
+const UNAVAILABLE_LOCAL_SERVICE_LAUNCHER_STATE: LocalServiceLauncherState = {
+    ...EMPTY_LOCAL_SERVICE_LAUNCHER_STATE,
+    refreshStatus: 'error',
+    refreshError: 'unavailable',
+};
+
 export type UseLocalServiceLauncherStateInput = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
@@ -101,8 +109,9 @@ export function useLocalServiceLauncherStateController(
     }, [binding, enabled, storeKey]);
 
     const getSnapshot = React.useCallback(() => (
-        storeKey && binding?.isCurrent() ? getLocalServiceLauncherState(storeKey) : EMPTY_LOCAL_SERVICE_LAUNCHER_STATE
-    ), [binding, storeKey]);
+        !machineId ? UNAVAILABLE_LOCAL_SERVICE_LAUNCHER_STATE
+            : storeKey && binding?.isCurrent() ? getLocalServiceLauncherState(storeKey) : EMPTY_LOCAL_SERVICE_LAUNCHER_STATE
+    ), [binding, machineId, storeKey]);
 
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 

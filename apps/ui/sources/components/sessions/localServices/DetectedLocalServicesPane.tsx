@@ -746,7 +746,9 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     }
 
     if ((viewModel.status === 'error' || viewModel.status === 'unavailable' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
-        const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
+        const diagnosticCopy = launcherState.refreshError
+            ? resolveReasonCopy({ reasonCode: launcherState.refreshError, kind: 'localServiceLauncher' })
+            : firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
         // G16: a failed first read used to be terminal. The card's own primary-action slot is the
         // retry, so the failure recovers through the same invalidation the refresh control uses.
         return withFooter(

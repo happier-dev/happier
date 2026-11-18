@@ -2,6 +2,7 @@ import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfa
 import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import { t } from '@/text';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import type { PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
@@ -287,6 +288,7 @@ const LOCAL_SERVICE_ACTION_KEYS = {
     non_loopback_target: 'localServices.actions.failure.refused',
     permission_denied: 'localServices.actions.failure.refused',
     forbidden: 'localServices.actions.failure.refused',
+    [RPC_ERROR_CODES.FORBIDDEN]: 'localServices.actions.failure.refused',
     confirmation_nonce_invalid: 'localServices.actions.failure.refused',
     confirmation_required: 'localServices.actions.failure.refused',
     ownership_not_established: 'localServices.actions.failure.refused',
@@ -838,7 +840,8 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
             return key ? t(key) : null;
         }
         case 'localServiceLauncher': {
-            const key = LOCAL_SERVICE_LAUNCHER_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_LAUNCHER_KEYS];
+            const key = LOCAL_SERVICE_LAUNCHER_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_LAUNCHER_KEYS]
+                ?? LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
             return key ? t(key) : null;
         }
         case 'localServiceInventory': {

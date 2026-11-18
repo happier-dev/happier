@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices';
 import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionViewerMachineId } from '@/components/sessions/viewer/useSessionViewerMachine';
 import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
@@ -35,12 +35,12 @@ export type SessionRightPanelServicesViewProps = Readonly<{
 export function SessionRightPanelServicesView(props: SessionRightPanelServicesViewProps = {}): React.ReactElement {
     const sessionId = props.sessionId ?? '';
     const preferredServerId = usePreferredServerIdForSession({ serverId: props.serverId, sessionId });
-    const sessionMachineTarget = useSessionMachineTarget(sessionId, preferredServerId);
+    const sessionMachineId = useSessionViewerMachineId(sessionId, preferredServerId);
     // Keep the fallback hooks alive for standalone direct routes. A supplied
     // pane target, including explicit null, is already AppPane-authoritative.
     const machineId = props.machineId !== undefined
         ? props.machineId
-        : sessionMachineTarget?.machineId ?? null;
+        : sessionMachineId;
     const serverId = props.serverId !== undefined
         ? props.serverId
         : preferredServerId;

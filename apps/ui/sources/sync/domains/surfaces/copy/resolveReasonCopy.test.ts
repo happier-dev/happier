@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfaces/BrowserSurfaceFallback';
@@ -46,6 +47,11 @@ describe('Preview sharing policy refusal copy', () => {
 });
 
 describe('Service refusal recovery copy', () => {
+  it('explains the transport refusal in the launcher without discarding its code', () => {
+    const copy = resolveReasonCopy({ kind: 'localServiceLauncher', reasonCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(copy.body).toBe(t('localServices.actions.failure.refused'));
+    expect(copy.diagnosticCode).toBe(RPC_ERROR_CODES.FORBIDDEN);
+  });
   it('presents an ineligible people audience as a refusal rather than a retryable failure', () => {
     const copy = resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'audience_not_eligible' });
     expect(copy.body).toBe(t('localServices.actions.failure.unavailable'));

@@ -156,7 +156,7 @@ const store = createSharedSubscriptionStore<
         // Reconcile once, atomically at the shared owner's commit boundary.
         return (current: LocalServiceLauncherState) => {
             if (!result.ok) return readLocalServiceLauncherSnapshotTime(current) !== receivedAt
-                ? current : failRefresh(current, normalized, result.reason);
+                ? current : failRefresh(current, normalized, result.reasonCode ?? result.reason);
             const previousTime = readLocalServiceLauncherSnapshotTime(current);
             const next = applyLocalServiceLauncherSnapshot(current, result.snapshot);
             // Browser demand may outlive the launcher's scoped watch. Its first
