@@ -4,6 +4,7 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -601,7 +602,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         let receivedInput: unknown;
         let receivedTarget: unknown;
         let reviewedInput: unknown;
-        const confirmation = vi.fn(async (review: { input: unknown; preview: unknown }) => {
+        const confirmation = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(async review => {
             reviewedInput = review.input;
             reviewDigest = computeActionReviewDigestV1(actionId, { actionArgs: review.input, preview: review.preview });
             return decision === 'confirm';
