@@ -20,6 +20,8 @@ function withSeparatorBreaks(value: string): React.ReactNode {
   let start = 0;
   for (let index = 0; index < value.length - 1; index += 1) {
     if (value[index] !== '/' && value[index] !== '\\') continue;
+    // A run of separators (the `//` after a scheme) stays together; the break comes after the last one.
+    if (value[index + 1] === '/' || value[index + 1] === '\\') continue;
     segments.push(value.slice(start, index + 1));
     start = index + 1;
   }

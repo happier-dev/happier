@@ -103,7 +103,8 @@ it('reads ceiling decision context in both approval anatomies without borrowing 
         const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy} request={request}
             serverId={null} presentation={describeApprovalActionFields(request)} />);
         const text = screen.getTextContent();
-        expect(text).toContain('1 GB');
+        // Memory reads in binary units (the shared formatHappierDataBytes, kind 'memory').
+        expect(text).toContain('1 GiB');
         expect(text).toContain('Not reported');
         expect(text).toMatch(/stop.*resume/is);
         expect(text).not.toContain(String(2 ** 30));

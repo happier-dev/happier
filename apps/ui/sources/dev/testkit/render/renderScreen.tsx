@@ -173,12 +173,24 @@ function invokeChangeText(target: ReactTestInstance, testID: string, value: stri
     throw new Error(`Node "${testID}" does not expose onChangeText or onChange`);
 }
 
+/** A `<wbr>` only offers a line break: the text on both sides reads as one word, as it does in the DOM. */
+const WORD_BREAK_OPPORTUNITY = '\u0000wbr';
+
 function collectTextContent(value: unknown, parts: string[]): void {
     if (typeof value === 'string' || typeof value === 'number') {
+        if (parts.at(-1) === WORD_BREAK_OPPORTUNITY) {
+            parts.pop();
+            parts.push(`${parts.pop() ?? ''}${String(value).trimEnd()}`);
+            return;
+        }
         const text = String(value).trim();
         if (text.length > 0) {
             parts.push(text);
         }
+        return;
+    }
+    if (value && typeof value === 'object' && (value as { type?: unknown }).type === 'wbr') {
+        if (parts.length > 0) parts.push(WORD_BREAK_OPPORTUNITY);
         return;
     }
     if (Array.isArray(value)) {
