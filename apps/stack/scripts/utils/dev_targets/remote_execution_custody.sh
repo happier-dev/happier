@@ -34,7 +34,7 @@ if [ "$mode" = run ] && [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ]; then
   esac
   remote_script_missing() {
     if [ "$1" -gt 128 ]; then
-      printf '[preferred-execution] remote script frame did not arrive within %s s; the controller never sent it\n' "$remote_script_wait" >&2
+      printf '[preferred-execution] remote script frame did not arrive in full within %s s; the controller never sent it\n' "$remote_script_wait" >&2
     else
       printf '%s\n' "$2" >&2
     fi

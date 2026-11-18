@@ -795,21 +795,30 @@ test('a remote script cut short on stdin never runs, and a complete one leaves t
   await access(marker);
 });
 
-test('a remote script frame that never arrives fails fast with a named cause instead of hanging', { skip: process.platform === 'win32', timeout: 15000 }, async t => {
+// A connected controller that sends none, or only part, of its script while
+// keepalives hold the lifetime pipe open must still settle (a coalesced leader
+// hung 4.5 h this way, holding every joined entry-load).
+for (const [name, partial] of [['never arrives', false], ['arrives only in part', true]]) {
+test(`a remote script frame that ${name} fails fast with a named cause instead of hanging`, { skip: process.platform === 'win32', timeout: 15000 }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-script-wait-' });
-  // The controller holds the lifetime pipe open but never sends the frame.
+  const marker = join(root, 'payload-ran');
   const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/silent.pid'), 'silent', '/bin/bash', '-c'], {
     env: { ...process.env, HAPPIER_REMOTE_EXEC_SCRIPT_STDIN: '1', HAPPIER_REMOTE_EXEC_LIFELINE: '1',
       HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   t.after(() => { child.stdin.destroy(); if (child.exitCode === null) child.kill('SIGKILL'); });
+  // A partial frame declares more bytes than it sends.
+  const body = `: > ${quote(marker)}`;
+  if (partial) child.stdin.write(`${Buffer.byteLength(body) + 100}\n${body}`);
   let error = '';
   child.stderr.on('data', chunk => { error += chunk; });
   const [code] = await once(child, 'close');
   assert.equal(code, 255, error);
-  assert.match(error, /remote script frame did not arrive within 1 s/u);
+  assert.match(error, /remote script frame did not arrive in full within 1 s/u);
+  await assert.rejects(access(marker), { code: 'ENOENT' });
 });
+}
 
 test('control input reaches the admitted payload and EOF cancels its process tree', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-control-' });
