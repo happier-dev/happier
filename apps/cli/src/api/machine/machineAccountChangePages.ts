@@ -1,6 +1,5 @@
 import {
     projectPushedChangesPageAt,
-    PushedAccountChangesPageV1Schema,
     type ChangeKind,
     type ChangesResponse,
     type PushedAccountChangesPageV1,
@@ -15,13 +14,6 @@ export const MACHINE_ACCOUNT_CHANGE_KINDS = [
 
 /** A pushed page held until the feed owner applies it, scoped to the socket that received it. */
 export type QueuedPushedChangesPage = Readonly<{ transportGeneration: number; pushed: PushedAccountChangesPageV1 }>;
-
-/** The wake's pushed page, parsed explicitly; malformed is null and the wake reads the feed. */
-export function readPushedChangesPage(body: unknown): PushedAccountChangesPageV1 | null | undefined {
-    if (!body || typeof body !== 'object' || !('rows' in body)) return undefined;
-    const parsed = PushedAccountChangesPageV1Schema.safeParse((body as { rows: unknown }).rows);
-    return parsed.success ? parsed.data : null;
-}
 
 function usable(entry: QueuedPushedChangesPage, cursor: number, transportGeneration: number): boolean {
     return entry.transportGeneration === transportGeneration

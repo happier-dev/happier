@@ -68,6 +68,18 @@ describe('accountWakeNeedsHostChangesRead', () => {
         .toBe(true);
     } finally { release(); }
   });
+
+  it('reads the feed for a wake whose pushed page is malformed, since its rows are the wake\'s whole content', () => {
+    const release = registerAccountWakeConsumer('wake-malformed-token', {
+      sessionId: 's1', receivesWakes: () => true, sessionPushesCurrent: () => true,
+    });
+    try {
+      // The routing names no consumed kind, but the page (which may carry typed Settings rows) did not parse.
+      expect(accountWakeNeedsHostChangesRead({ token: 'wake-malformed-token',
+        wake: { body: { t: 'account-change', changeKinds: ['machine'], entityIds: ['m1'], rows: { v: 1, after: 'x' } } } }))
+        .toBe(true);
+    } finally { release(); }
+  });
 });
 
 describe('runSessionChangesSyncOnConnect', () => {

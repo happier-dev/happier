@@ -23,7 +23,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, isChangesPageFull, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, isChangesPageFull, readConnectedServicesAccountChangeV1, readPushedAccountChangesPageV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -275,7 +275,7 @@ import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machin
 import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
 import type { ExternalSessionTranscriptInvalidationV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionStatusDemandDaemonMessageV1, MachineLiveStreamRelayEnvelopeV1, MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, PeerTcpTunnelRelayEnvelope, ExactSessionTurnEndMutationV1, TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
-import { hasUsablePushedChangesPage, MACHINE_ACCOUNT_CHANGE_KINDS, readPushedChangesPage, takePushedChangesPage, type QueuedPushedChangesPage } from './machine/machineAccountChangePages';
+import { hasUsablePushedChangesPage, MACHINE_ACCOUNT_CHANGE_KINDS, takePushedChangesPage, type QueuedPushedChangesPage } from './machine/machineAccountChangePages';
 import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema, type ProjectAccountRowKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readAccountChangesCursor, writeAccountChangesCursor } from '@/persistence';
 import {
@@ -6334,7 +6334,7 @@ export class ApiMachineClient {
                     && data.body.connectedServices !== undefined
                 )
             ) {
-                const pushed = data.body.t === 'account-change' ? readPushedChangesPage(data.body) : undefined;
+                const pushed = data.body.t === 'account-change' ? readPushedAccountChangesPageV1(data.body) : undefined;
                 if (pushed === null) logger.warn('[API MACHINE] Malformed pushed Account change page; reading the feed');
                 this.startChangesSyncWithRetry({ reason: 'live',
                     ...(data.body.t === 'account-change' && Number.isSafeInteger(data.seq) && data.seq >= 0

@@ -3,7 +3,7 @@ import { fetchChanges } from '../changes';
 import { refreshCliActionAutomationsFromChangesV1 } from '../actionAutomations';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import {
-    isChangesPageFull, projectPushedChangesPageAt, PushedAccountChangesPageV1Schema, readSessionTranscriptChangeHintV1,
+    isChangesPageFull, projectPushedChangesPageAt, readPushedAccountChangesPageV1, readSessionTranscriptChangeHintV1,
     type ChangeKind, type ChangesResponse, type PushedAccountChangesPageV1,
 } from '@happier-dev/protocol/changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
@@ -45,12 +45,9 @@ type ChangesPage = Awaited<ReturnType<typeof fetchChanges>>;
 export const SESSION_CLIENT_ACCOUNT_CHANGE_KINDS = ['account', 'pluginDomain', 'session', 'share', 'automation', 'artifact'] as const satisfies readonly ChangeKind[];
 const SESSION_CLIENT_CHANGE_KINDS: ReadonlySet<unknown> = new Set(SESSION_CLIENT_ACCOUNT_CHANGE_KINDS);
 
-/** The wake's pushed page, parsed explicitly; absent or malformed is undefined and the wake keeps its routing only. */
-function readWakePushedChangesPage(wake: unknown): PushedAccountChangesPageV1 | undefined {
-    const body = wake && typeof wake === 'object' && 'body' in wake ? wake.body : null;
-    if (!body || typeof body !== 'object' || !('rows' in body)) return undefined;
-    const parsed = PushedAccountChangesPageV1Schema.safeParse(body.rows);
-    return parsed.success ? parsed.data : undefined;
+/** The wake's pushed page (`readPushedAccountChangesPageV1`): undefined when absent, null when malformed. */
+function readWakePushedChangesPage(wake: unknown): PushedAccountChangesPageV1 | null | undefined {
+    return readPushedAccountChangesPageV1(wake && typeof wake === 'object' && 'body' in wake ? wake.body : null);
 }
 
 /**
@@ -69,8 +66,11 @@ export function accountWakeNeedsSessionChangesRead(params: Readonly<{
     if (!body || typeof body !== 'object' || !('t' in body) || body.t !== 'account-change') return true;
     const routing = body as Readonly<{ changeKinds?: unknown; entityIds?: unknown; rowFactsPushedSessionId?: unknown }>;
     if (!Array.isArray(routing.changeKinds) || !Array.isArray(routing.entityIds) || routing.changeKinds.length === 0) return true;
-    // Pushed rows are the wake's whole content (including typed Settings rows its routing omits).
-    const pushedRows = readWakePushedChangesPage(params.wake)?.page.changes ?? [];
+    // Pushed rows are the wake's whole content (including typed Settings rows its routing omits),
+    // so a page that does not parse leaves the content unknown: read the feed.
+    const pushed = readWakePushedChangesPage(params.wake);
+    if (pushed === null) return true;
+    const pushedRows = pushed?.page.changes ?? [];
     const changeKinds: unknown[] = [...routing.changeKinds, ...pushedRows.map(change => change.kind)];
     const entityIds: unknown[] = [...routing.entityIds, ...pushedRows.map(change => change.entityId)];
     const consumedKinds = changeKinds.filter(kind => SESSION_CLIENT_CHANGE_KINDS.has(kind));

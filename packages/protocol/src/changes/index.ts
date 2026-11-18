@@ -641,6 +641,18 @@ export const PushedAccountChangesPageV1Schema = lazyZodSchema(() => z.strictObje
 export type PushedAccountChangesPageV1 = z.infer<typeof PushedAccountChangesPageV1Schema>;
 
 /**
+ * The pushed page an Account wake body carries, parsed explicitly: `undefined` when the wake
+ * carries none (a bare wake), `null` when it carries one that does not parse. A malformed page
+ * is unknown wake content (it may hold rows the wake's routing omits), so every consumer reads
+ * the feed for it rather than trusting the routing alone.
+ */
+export function readPushedAccountChangesPageV1(body: unknown): PushedAccountChangesPageV1 | null | undefined {
+  if (!body || typeof body !== 'object' || !('rows' in body)) return undefined;
+  const parsed = PushedAccountChangesPageV1Schema.safeParse((body as { rows: unknown }).rows);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * What a consumer at `cursor` applies from one pushed page, or null when the page does not cover
  * that cursor (`after <= cursor < nextCursor`): a gap the feed read covers, or a page already
  * applied. The page is the server's read of `(after, nextCursor]` for this socket, so a consumer
