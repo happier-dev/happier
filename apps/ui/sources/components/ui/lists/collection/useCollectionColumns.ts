@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
+import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { useCollectionColumnPreferences } from './useCollectionColumnPreferences';
 import { reorderNavigationPlacement, updateNavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import { buildPlacementReorderBinding } from '@/components/ui/navigation/placementReorderBinding';
@@ -21,9 +21,9 @@ export type CollectionColumnsController = Readonly<{
 /** One key-scoped read per bound Collection, never per row or cell. */
 export function useCollectionColumns(collectionId: string, columns: readonly CollectionColumnDeclaration[]): CollectionColumnsController {
     const preferences = useCollectionColumnPreferences(collectionId);
-    const write = useSettingActionWriter();
-    const commit = React.useCallback(async (value: typeof preferences | null) =>
-        (await write({ anchor: 'appearance.collectionColumns' }, { collectionId, preferences: value }, { confirmed: true })).ok, [collectionId, write]);
+    const { setSetting } = useSettingActionFeedback();
+    const commit = React.useCallback((value: typeof preferences | null) =>
+        setSetting({ anchor: 'appearance.collectionColumns' }, { collectionId, preferences: value }, { confirmed: true }), [collectionId, setSetting]);
     const resolved = React.useMemo(() => resolveCollectionColumns(columns, preferences), [columns, preferences]);
     return React.useMemo(() => ({ ...resolved, preferences, save: commit,
         setVisible: (id: string, visible: boolean) => columns.some(column => column.id === id && !column.primary)

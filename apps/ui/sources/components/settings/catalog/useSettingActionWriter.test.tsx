@@ -85,6 +85,21 @@ beforeEach(() => { previousAuth = getCurrentAuth(); });
 afterEach(() => { standardCleanup(); setCurrentAuth(previousAuth); storage.setState(originalState, true); routeParams.current = {}; native.os = 'web'; });
 
 describe('declared setting Action writer', () => {
+    it('presents failed column writes and withdraws their preview without losing saved choices', async () => {
+        const account = await createSecretSettingsTestHarness();
+        const columns = [{ id: 'name', title: 'Name', primary: true }, { id: 'state', title: 'State' }];
+        const hook = await renderHook(() => useCollectionColumns('happier.services.apps', columns));
+        try {
+            await act(async () => { expect(await hook.getCurrent().setVisible('state', false)).toBe(true); });
+            expect(hook.getCurrent().visibleIds).toEqual(['name']);
+            account.setRejectSettingsWrites(true);
+            vi.mocked(Modal.alert).mockClear();
+            await act(async () => { expect(await hook.getCurrent().reset()).toBe(false); });
+            expect(Modal.alert).toHaveBeenCalled();
+            expect(hook.getCurrent().visibleIds).toEqual(['name']);
+            expect(account.persistedSettings.collectionColumnPreferencesV1['happier.services.apps']).toMatchObject({ placements: { state: 'hidden' } });
+        } finally { standardCleanup(); await account.dispose(); }
+    });
     it.each([false, true])('commits a person’s column choices directly without creating an Inbox approval (configured Ask=%s)', async ask => {
         const sibling = { orderedIds: [], placements: { state: 'hidden' } };
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
