@@ -36,6 +36,7 @@ import {
 } from './telemetryWidgetParts.js';
 
 const TEST_ID = 'telemetry.metric';
+/** The line's floor: a glance line at a card's smallest room. */
 const LINE_HEIGHT = 44;
 
 type Translate = ReturnType<typeof usePluginTranslation>;
@@ -92,6 +93,12 @@ export function TelemetryMetricWidget(
     },
   });
   const label = telemetryMetricLabel(metric, text);
+  // The room left under the figure, measured once laid out; never shorter than the glance line.
+  const [lineHeight, setLineHeight] = React.useState(LINE_HEIGHT);
+  const onLineRoomLayout = React.useCallback((event: { nativeEvent: { layout: { height: number } } }) => {
+    const room = Math.max(LINE_HEIGHT, Math.floor(event.nativeEvent.layout.height));
+    setLineHeight((previous) => (previous === room ? previous : room));
+  }, []);
   const shown = React.useMemo(
     () =>
       state.kind !== 'ready'
@@ -128,11 +135,12 @@ export function TelemetryMetricWidget(
             testID={`${TEST_ID}.value`}
             value={formatTelemetryMetric(metric, shown.value, locale)}
           />
-          <Stack grow justify="flex-end" gap="none">
+          {/* The line takes the room under the figure, as the Machine metric's chart fills its card (lab p7Surfaces home). */}
+          <Stack grow justify="flex-end" gap="none" onLayout={onLineRoomLayout}>
             <TelemetryWidgetLine
               series={shown.series}
               variant="area"
-              height={LINE_HEIGHT}
+              height={lineHeight}
               testID={`${TEST_ID}.line`}
             />
           </Stack>

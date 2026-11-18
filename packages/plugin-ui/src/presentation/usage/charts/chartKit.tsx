@@ -3,13 +3,13 @@ import { View } from 'react-native';
 import { G, Text as SvgText } from 'react-native-svg';
 
 import type { HappierUiTheme } from '../../../environment/types.js';
-import { HappierPressable } from '../../interaction/Pressable.js';
 import { useWidgetPresentation } from '../../../components/WidgetPresentation.js';
 import type { HappierLayoutChangeEvent } from '../../portableTypes.js';
 import { HappierText } from '../../text/Text.js';
 import { HappierDataTable } from '../../data/DataRows.js';
 import { mixHappierColorOverPaper, type HappierDataColumn, type HappierDataValue } from '../../data/dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from '../../data/dataText.js';
+import { HappierDataValuesToggle } from '../../data/ValuesToggle.js';
 
 /**
  * Shared drawing helpers of the Usage chart bodies. Bodies are pure: the host supplies every label, the Agent
@@ -186,14 +186,12 @@ export function UsageChartValues(props: Readonly<{
   theme: HappierUiTheme; label: string; table: UsageChartValuesTable; labels: UsageChartValuesLabels; testID?: string;
 }>) {
   const [open, setOpen] = useState(false);
-  const text = useHappierDataTextStyles(props.theme);
   if (props.table.rows.length === 0) return null;
   return <View style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
-    <HappierPressable testID={props.testID ? `${props.testID}-values-toggle` : undefined} expanded={open}
+    <HappierDataValuesToggle theme={props.theme} testID={props.testID ? `${props.testID}-values-toggle` : undefined}
+      label={open ? props.labels.hide : props.labels.show} expanded={open}
       accessibilityLabel={`${props.label} · ${open ? props.labels.hide : props.labels.show}`} onPress={() => setOpen((value) => !value)}
-      style={{ alignSelf: 'flex-end' }}>
-      <HappierText style={text.captionStrong}>{open ? props.labels.hide : props.labels.show}</HappierText>
-    </HappierPressable>
+      style={{ alignSelf: 'flex-end' }} />
     {open ? <HappierDataTable testID={props.testID ? `${props.testID}-values` : undefined} theme={props.theme}
       label={props.label} columns={props.table.columns} rows={props.table.rows} rowLeads={props.table.rowLeads} /> : null}
   </View>;

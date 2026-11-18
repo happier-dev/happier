@@ -12,6 +12,7 @@ import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum, type HappierChartDatum } from './ChartDatum.js';
+import { HappierDataValuesToggle } from './ValuesToggle.js';
 import { useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
@@ -403,12 +404,9 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       accessibilityLiveRegion="polite" tabularNumbers>{describe(selected)}</HappierText> : null}
     {/* The plot already lists every interval as a selectable row; its exact table waits behind Details
         (as in StackedSeriesChart) instead of repeating the same runs as text. Without a plot the rows are the body. */}
-    {showPlot ? <HappierPressable testID={props.testID ? `${props.testID}-values-toggle` : undefined}
-      accessibilityLabel={valuesExpanded ? collapseLabel : valuesLabel}
-      expanded={valuesExpanded} onPress={() => setValuesExpanded((value) => !value)} style={{ alignSelf: 'flex-end' }}>
-      {/* The same quiet trailing meta as StackedSeriesChart's toggle. */}
-      <HappierText style={{ ...text.caption, color: props.theme.colors.secondaryText }}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
-    </HappierPressable> : null}
+    {showPlot ? <HappierDataValuesToggle theme={props.theme} testID={props.testID ? `${props.testID}-values-toggle` : undefined}
+      label={valuesExpanded ? collapseLabel : valuesLabel} expanded={valuesExpanded}
+      onPress={() => setValuesExpanded((value) => !value)} style={{ alignSelf: 'flex-end' }} /> : null}
     {showPlot && !valuesExpanded ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.intervals.map((interval) => interval.id)}

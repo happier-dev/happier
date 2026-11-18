@@ -17,6 +17,7 @@ import { HappierDataTable } from './DataRows.js';
 import { ChartDatum, useChartInteractionAvailable, type HappierChartDatumInteraction } from './ChartDatum.js';
 import { SeriesHistoryDatum } from './SeriesHistoryDatum.js';
 import { buildHappierSeriesPath, describeHappierSeriesBucket, describeHappierSeriesCoordinate, formatHappierDataValue, resolveHappierSeriesGeometry, resolveHappierSeriesRampColor, resolveHappierSeriesRampStep, type HappierSeries, type HappierSeriesBucket } from './dataModel.js';
+import { HappierDataValuesToggle } from './ValuesToggle.js';
 
 /** A line-chart fill between caller-produced bounds; it adds no values or forecast semantics. */
 export type StackedSeriesBand = Readonly<{
@@ -314,17 +315,14 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   // The values toggle is quiet meta: at the legend's trailing end when there is one, else on its own line
   // at the same trailing edge. On the leading edge it sat under the first axis label and read as one more.
   const toggleInLegend = showLegend && !props.summary;
-  const valuesToggle = valuesLabel ? <HappierPressable testID={props.testID ? `${props.testID}-values-toggle` : undefined}
-    accessibilityLabel={valuesExpanded ? collapseLabel : valuesLabel}
-    expanded={valuesExpanded} onPress={() => {
+  const valuesToggle = valuesLabel ? <HappierDataValuesToggle theme={props.theme}
+    testID={props.testID ? `${props.testID}-values-toggle` : undefined}
+    label={valuesExpanded ? collapseLabel : valuesLabel} expanded={valuesExpanded} onPress={() => {
       const expanded = !valuesExpanded;
       if (props.valuesExpanded === undefined) setUncontrolledValuesExpanded(expanded);
       props.onValuesExpandedChange?.(expanded);
     }}
-    style={toggleInLegend ? { marginLeft: 'auto' } : { alignSelf: 'flex-end', marginTop: HAPPIER_DATA_METRICS.blockGapPx }}>
-    {/* Quiet meta in the secondary ink, like the axis it sits by: never a bold word under the plot. */}
-    <HappierText style={{ ...text.caption, color: props.theme.colors.secondaryText }}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
-  </HappierPressable> : null;
+    style={toggleInLegend ? { marginLeft: 'auto' } : { alignSelf: 'flex-end', marginTop: HAPPIER_DATA_METRICS.blockGapPx }} /> : null;
   const height = Math.max(1, (props.viewportHeight ?? (inline ? 16 : props.size === 'tile' ? 64 : 150)));
   const peakInset = props.showPeakValue ? 32 : 0;
   // Stacked areas part on a thin paper seam (lab kitcharts "1.6px paper gap"), never a darker outline.
