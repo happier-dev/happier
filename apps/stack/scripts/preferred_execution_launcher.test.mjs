@@ -74,7 +74,30 @@ const executionNeutralEnv = Object.fromEntries(
   ].includes(key)),
 );
 
-async function executable(path, contents) {
+// hstack-exec sends a payload's remote script on SSH stdin ahead of the
+// lifetime pipe. Most SSH fakes observe or replay the remote command from argv,
+// so restore the argv form for them: read the frame, quote the script back
+// onto custody's final operand and re-execute. Custody's own stdin framing and
+// the argv limit it avoids are covered with rawTransport fakes.
+const sshScriptFrameDecoder = `case "$*" in
+  *HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1*)
+    IFS= read -r hstack_frame_bytes || exit 255
+    hstack_frame_script=$(dd bs=1 count="$hstack_frame_bytes" 2>/dev/null; printf x)
+    hstack_frame_script=$(printf '%s' "\${hstack_frame_script%x}" | sed "s/'/'\\"'\\"'/g"; printf x)
+    hstack_frame_count=$#; hstack_frame_index=0
+    for hstack_frame_argument do
+      hstack_frame_index=$((hstack_frame_index + 1))
+      if [ "$hstack_frame_index" -eq "$hstack_frame_count" ]; then hstack_frame_last=$hstack_frame_argument; else set -- "$@" "$hstack_frame_argument"; fi
+    done
+    shift "$hstack_frame_count"
+    exec "$0" "$@" "\${hstack_frame_last%%HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 *}\${hstack_frame_last#*HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 } '\${hstack_frame_script%x}'" ;;
+esac
+`;
+
+async function executable(path, contents, { rawTransport = false } = {}) {
+  if (path.endsWith('/ssh') && !rawTransport) {
+    contents = contents.replace(/^(#![^\n]*\n)/, `$1${sshScriptFrameDecoder}`);
+  }
   if (path.endsWith('/node')) {
     // These are internal policy/admission owners, even when their argv contains
     // a compiler or test payload that the external executable fixture handles.
@@ -5111,6 +5134,82 @@ test('native payload requires no SSH control directory when XDG_RUNTIME_DIR is r
   assert.equal(result.stdout, 'remote:ok\n');
   await assert.rejects(access(join(root, `happier-ssh-${process.getuid()}`)), { code: 'ENOENT' });
   await assert.rejects(readFile(masterPath), { code: 'ENOENT' });
+});
+
+test('native payload delivers a remote script whose shell quoting exceeds the per-argument exec limit', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-large-script-'));
+  const binDir = join(root, 'bin');
+  const stackDir = join(root, 'stack');
+  const configPath = join(stackDir, 'dev-targets.json');
+  const sshArgumentSizes = join(root, 'ssh-argument-sizes');
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(configPath, '{"version":1,"targets":[]}\n', 'utf8');
+  await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='error'",
+    "load_ttl_seconds='300'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='linux'",
+    "target_1_ssh='linux-host'",
+    "target_1_ssh_config=''",
+    `target_1_repo_dir='${repoRoot}'`,
+    `target_1_cli_home='${join(root, 'machine-home')}'`,
+    `target_1_remote_path='${binDir}:/usr/bin:/bin'`,
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'if [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"; fi',
+    'exit 0',
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "remote:%s:%s\\n" "$#" "$(printf "%s" "$*" | wc -c | tr -d " ")"\n');
+  // SSH is the OS boundary. The kernel, not this fake, enforces the per-argument
+  // exec limit (Linux MAX_ARG_STRLEN, 128 KiB) when the launcher executes it.
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 0.5 0.8 22000000 20 0 18000000 25000000 0 0 0 0 0 0 0 linux\\n" ;;',
+    '  *"&& command -v "*) exit 0 ;;',
+    '  *-O\\ check*) exit 1 ;;',
+    '  *-MNf*) exit 1 ;;',
+    '  *) remote_command=; for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
+    '     printf "%s\\n" "${#remote_command}" >> "$SSH_ARGUMENT_SIZES"',
+    '     /bin/sh -c "$remote_command" ;;',
+    'esac',
+    '',
+  ].join('\n'), { rawTransport: true });
+
+  // Each quoting level rewrites every single quote as five bytes, so a script
+  // well below the limit exceeds it once nested inside one SSH argument.
+  const words = Array.from({ length: 400 }, (_, index) => `file-'${index}'-${"'".repeat(40)}.test.ts`);
+  const result = spawnSync('/bin/sh', [launcher, '--target=linux', '--', 'probe-command', ...words], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_EXEC_CONFIG_PATH: configPath,
+      HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+      SSH_ARGUMENT_SIZES: sshArgumentSizes,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `remote:${words.length}:${words.join(' ').length}\n`);
+  const dispatchedSizes = (await readFile(sshArgumentSizes, 'utf8')).trim().split('\n').map(Number);
+  assert.ok(Math.max(...dispatchedSizes) < 4096, `SSH command arguments stay small: ${dispatchedSizes.join(', ')}`);
 });
 
 test('native launcher admits another remote heavyweight command while the worker has healthy pressure', async (t) => {

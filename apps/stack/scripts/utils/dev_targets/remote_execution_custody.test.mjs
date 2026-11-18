@@ -774,6 +774,27 @@ test('remote lifetime custody does not leak its private pipe descriptor to the p
   assert.equal(output, 'payload-complete\n', error);
 });
 
+test('a remote script cut short on stdin never runs, and a complete one leaves the following input unread', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-remote-script-frame-' });
+  const marker = join(root, 'partial-script-ran');
+  const script = `printf 'script-ran\\n'; read -r control; printf 'control=%s\\n' "$control"; : > ${quote(marker)}`;
+  // Without a lifetime pipe the payload reads custody's stdin directly, so it
+  // observes exactly the bytes that follow the declared script length.
+  const env = { ...process.env, HAPPIER_REMOTE_EXEC_SCRIPT_STDIN: '1' };
+  const run = (id, input) => spawnSync('/bin/bash', [custody, 'run', join(root, `remote-exec/${id}.pid`), id, '/bin/bash', '-c'],
+    { env, input, encoding: 'utf8' });
+
+  const truncated = run('truncated', `${Buffer.byteLength(script) + 1}\n${script}`);
+  assert.equal(truncated.status, 255, truncated.stderr);
+  assert.equal(truncated.stdout, '');
+  await assert.rejects(access(marker), { code: 'ENOENT' });
+
+  const complete = run('complete', `${Buffer.byteLength(script)}\n${script}following-input\n`);
+  assert.equal(complete.status, 0, complete.stderr);
+  assert.equal(complete.stdout, 'script-ran\ncontrol=following-input\n');
+  await access(marker);
+});
+
 test('control input reaches the admitted payload and EOF cancels its process tree', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-control-' });
   const pidFile = join(root, 'remote-exec/control-custody.pid');

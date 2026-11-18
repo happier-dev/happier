@@ -18,6 +18,25 @@ pid_file=$2
 execution_id=$3
 initiating_execution_id=$execution_id
 shift 3
+if [ "$mode" = run ] && [ "${HAPPIER_REMOTE_EXEC_SCRIPT_STDIN-0}" = 1 ]; then
+  # hstack-exec sends the command's final operand (its remote script) on stdin
+  # ahead of the lifetime pipe: the byte count on one line, then the bytes.
+  # Quoted into the SSH command it would exceed the per-argument exec limit
+  # (Linux MAX_ARG_STRLEN, 128 KiB). Read exactly that count so the lifeline
+  # stays unread; macOS bash 3.2 lacks read -N and reads byte by byte instead.
+  IFS= read -r remote_script_bytes || remote_script_bytes=
+  case "$remote_script_bytes" in
+    ''|*[!0-9]*) printf '%s\n' '[preferred-execution] remote script frame is malformed' >&2; exit 255 ;;
+  esac
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    LC_ALL=C IFS= read -r -N "$remote_script_bytes" remote_script
+  else
+    LC_ALL=C IFS= read -r -d '' -n "$remote_script_bytes" remote_script
+  fi || { printf '%s\n' '[preferred-execution] remote script ended before its declared length' >&2; exit 255; }
+  set -- "$@" "$remote_script"
+  unset remote_script remote_script_bytes
+fi
+unset HAPPIER_REMOTE_EXEC_SCRIPT_STDIN
 
 exec_worker_payload() {
   # All Linux worker payloads share scheduling, including unclassified commands
