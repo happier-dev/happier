@@ -64,6 +64,13 @@ connected-account metadata, and forge descriptors. Each source remains owned by
 its existing registry, Machine, target, connected-account, or SCM plugin owner.
 The catalog is a snapshot held by the caller for the suggestion round.
 
+The UI obtains forge descriptors from an own reachable Machine through the same
+Action with `{ projection: 'forges' }`. This projection reads only the activated
+SCM publishing-provider owner; the other catalog collections stay empty and no
+registry, connected-account, Machine inventory or setup-plan reads run. A failed
+publisher read retains its typed code in the `forges` issue. The default `{}`
+input continues to compose the full catalog.
+
 The dialog uses a read-only `task` run on the first eligible Machine whose Agent
 can run the `deploy_suggestion` task. Its input contains the person's description,
 the catalog snapshot, and, when variable metadata is supplied, names with secret flags rather than secret values.

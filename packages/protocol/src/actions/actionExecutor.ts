@@ -6569,7 +6569,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (actionId === DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1) {
           return { ok: true, result: await readDeploySuggestionCatalogV1(ctx, deps,
-            (childId, childInput) => executeHostChild(childId, childInput, ctx)) };
+            (childId, childInput) => executeHostChild(childId, childInput, ctx),
+            data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1]) };
         }
         if (actionId === DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1) {
           const input = parsed.data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1];

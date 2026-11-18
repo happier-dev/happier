@@ -6,6 +6,7 @@ import { MachineSetupCombinedPlanResultV1Schema } from '../../machines/managed/a
 import { readDeployHostReadiness } from '../../deployments/deployHostReadiness.js';
 import type { DeploySuggestionCatalogV1 } from '../../deployments/suggestions/deploySuggestionsV1.js';
 import type { ActionId } from '../actionIds.js';
+import type { AdmittedActionInputById } from '../actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 const machineRows = z.looseObject({ items: z.array(z.looseObject({ machineId: z.string(), label: z.string(),
@@ -14,7 +15,8 @@ type Section = NonNullable<DeploySuggestionCatalogV1['issues']>[number]['section
 
 /** One finite read composition. Catalog owners retain their original placement and transport. */
 export async function readDeploySuggestionCatalogV1(context: ActionExecutorContext, deps: ActionExecutorDeps,
-    execute: (id: ActionId, input: unknown) => Promise<ActionExecuteResult>): Promise<DeploySuggestionCatalogV1> {
+    execute: (id: ActionId, input: unknown) => Promise<ActionExecuteResult>,
+    input: AdmittedActionInputById['deployments.suggestions.catalog'] = {}): Promise<DeploySuggestionCatalogV1> {
     const catalog: DeploySuggestionCatalogV1 = { starters: [], apps: [], targets: [], stores: [], forges: [], machines: [], connectedAccounts: [], issues: [] };
     const issues = catalog.issues!;
     async function read(id: ActionId, input: unknown, section: Section) {
@@ -34,6 +36,11 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
                 ? error.code : 'action_failed';
             issues.push({ section, code }); return null;
         }
+    }
+    if (input.projection === 'forges') {
+        const forges = await descriptors('forges', deps.deploymentSuggestionForges);
+        if (forges) catalog.forges = forges;
+        return catalog;
     }
     const [starterPages, appPages, accounts, machines, targetRead, forgeRead] = await Promise.all([
         list('starter'), list('app'), read('connectedServices.accounts.list', {}, 'connectedAccounts'),

@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Starter forge catalog projection (unreleased 0.3)
+
+The closed `deployments.suggestions.catalog` input accepts optional
+`projection: 'forges'`; omission retains the full catalog. Its existing closed
+output is unchanged: the projection fills `forges` and its typed issues, leaving
+other collections empty. Matching development UI and daemon readers load
+together; earlier strict readers reject the input, and the UI retains that
+failure without retrying a full catalog. This changes no persisted format or
+wire epoch and adds no compatibility adapter. The inspected `../0.2` frontier
+at `73c533b470ac33a7605b50689b6cd93089a3ae6f` has no deployment suggestion
+Action contract.
+
 ## Compose App enrollment (unreleased 0.3)
 
 The existing `managedEnrollment` registration carrier accepts a `deploymentApp`

@@ -1,5 +1,5 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -30,6 +30,10 @@ import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protoco
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
+import { completeActionResult } from '@happier-dev/protocol/actions/actionExecutor';
+import { DeploySuggestionCatalogV1Schema } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 
 /** Both deployment roots route through the person's admitted checkout census. */
 /** Loose output members keep `errorCode` in their index signature, so `'errorCode' in` alone does not narrow them out. */
@@ -84,7 +88,7 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
 
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
 export function createUiDeploymentActionDeps(account: LazyActionAccountContext): Pick<ActionExecutorDeps,
-    'deploymentAction' | 'deploymentSuggestionTargets' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
+    'deploymentAction' | 'deploymentSuggestionTargets' | 'deploymentSuggestionForges' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
     | 'deploymentPrepare' | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'deploymentMoveToRepository'> & Readonly<{
         readEnvironmentCreateController(input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext):
             ReturnType<typeof resolveDeploymentPreviewExecutionMachineIdV1>;
@@ -197,6 +201,16 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             account.assertCurrent();
             if (read.kind !== 'available') throw Object.assign(new Error(read.code), { code: read.code });
             return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(read.declarations));
+        },
+        deploymentSuggestionForges: async context => {
+            const execution = completeActionResult(await createUiAccountAction({ account })({
+                actionId: DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, input: { projection: 'forges' }, context,
+            }));
+            requireActionSuccess(execution);
+            const catalog = DeploySuggestionCatalogV1Schema.parse(execution.result);
+            const issue = catalog.issues?.find(issue => issue.section === 'forges');
+            if (issue) throw Object.assign(new Error(issue.code), { code: issue.code });
+            return catalog.forges;
         },
         deploymentPrepare: async (input, context) => {
             const selected = await createUiDeploymentWorkspaceMachineReader(account, context)(input.workspace);

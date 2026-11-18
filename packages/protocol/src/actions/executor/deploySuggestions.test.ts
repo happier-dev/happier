@@ -15,6 +15,28 @@ const targets = DeploySuggestionCatalogV1Schema.parse({ starters: [], apps: [], 
 ] }).targets;
 
 describe('deploy suggestion read Actions', () => {
+  it.each(['available', 'unavailable'] as const)('reads only activated publishers for the forge projection (%s)', async status => {
+    const calls: string[] = [];
+    const executor = createActionExecutor({
+      deploymentSuggestionForges: async () => {
+        calls.push('forges');
+        if (status === 'unavailable') throw Object.assign(new Error('Publisher unavailable'), { code: 'hosting_unavailable' });
+        return forges;
+      },
+      registryActionExecute: async () => { calls.push('registry'); return { pages: [] }; },
+      connectedServiceAction: async () => { calls.push('accounts'); return { accounts: [], pools: [], healthBasis: 'credentials',
+        source: { completeness: 'complete', observedAtMs: 1 } }; },
+      machinesList: async () => { calls.push('machines'); return { items: [] }; },
+      deploymentSuggestionTargets: async () => { calls.push('targets'); return { targets: [], stores: [] }; },
+      machineSetupPlan: async () => { calls.push('setup'); return { ok: false, errorCode: 'machine_unreachable', error: 'machine_unreachable' }; },
+    });
+    expect(await executor.execute('deployments.suggestions.catalog', { projection: 'forges' }, context)).toEqual({ ok: true,
+      result: { starters: [], apps: [], targets: [], stores: [], machines: [], connectedAccounts: [],
+        forges: status === 'available' ? forges : [],
+        issues: status === 'available' ? [] : [{ section: 'forges', code: 'hosting_unavailable' }] } });
+    expect(calls).toEqual(['forges']);
+  });
+
   it('lists starter deploy facts without reading every starter', () => {
     const catalog = parseStarterCatalogV1({ schemaVersion: 1, starters: [{ itemId: 'website', starter: {
       repository: 'https://github.com/example/site', title: 'Website', description: 'Small website', tags: ['web'], buildGoal: 'Build it', deploy,
