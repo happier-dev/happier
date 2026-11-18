@@ -87,16 +87,21 @@ export function useBulkSessionControlTargets(
     return [...groups.entries()];
   }, [ready]);
 
+  const publishedTargets = React.useRef<readonly CrossSessionAuthoringControlTarget[] | undefined>(undefined);
   const targets = React.useMemo(() => {
     const resolved = ready.map((fact) =>
       targetsByKey.get(sessionAddressKey(fact.address)),
     );
-    return resolved.every(
+    if (!resolved.every(
       (target): target is CrossSessionAuthoringControlTarget =>
         target !== undefined,
-    )
-      ? resolved
-      : null;
+    )) return null;
+
+    // A Session fact can change before its probe reports newly resolved controls.
+    // Keep the intersection input stable while the ordered reports are unchanged.
+    const retained = retainShallow(publishedTargets.current, resolved);
+    publishedTargets.current = retained;
+    return retained;
   }, [ready, targetsByKey]);
   const leadFacts =
     machineGroups.length > 0
