@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
 
 import { createClaudePromptSubmitVerificationPolicy } from './claudePromptSubmitVerification';
+import { parseClaudeScreenState } from './tuiControls/screenState';
 
 describe('createClaudePromptSubmitVerificationPolicy', () => {
   it('hands a positively foreign composer back without submitting it, while ambiguous capture still waits', async () => {
@@ -174,6 +175,8 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       new URL('./tuiControls/__fixtures__/claude-2.1.327-scrolled-composer.txt', import.meta.url),
       'utf8',
     );
+    const topRule = '─── ↑ 1 more ───────────────────────────';
+    const bottomRule = '─'.repeat(topRule.length);
 
     it('submits the prompt once its visible window is staged', async () => {
       const policy = createClaudePromptSubmitVerificationPolicy();
@@ -232,6 +235,34 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       expect(() => policy.isPromptStagedBeforeSubmit({ promptText, screenText: foreignScreen }))
         .toThrow('Claude composer changed before prompt submission');
       expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText: foreignScreen })).toBe(false);
+    });
+
+    it.each([
+      ['an indented dash', '  —'],
+      ['a short rule', '─'],
+      ['a rule with different glyphs', '━'.repeat(topRule.length)],
+      ['a rule starting in a different column', `  ${bottomRule.slice(2)}`],
+      ['an interrupted rule', `${bottomRule.slice(2)} ─`],
+    ])('rejects an edited draft after %s inside the scrolled composer', (_description, draftRow) => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const screenText = [
+        topRule, '  Visible draft start', draftRow, '  Edited draft ending', bottomRule, '  Opus 5.5',
+      ].join('\n');
+      const authorizedPrompt = ['Hidden first line', 'Visible draft start', draftRow, 'Original draft ending'].join('\n');
+
+      expect(parseClaudeScreenState(screenText).composerContent)
+        .toBe(['Visible draft start', draftRow.trim(), 'Edited draft ending'].join('\n'));
+      expect(() => policy.isPromptStagedBeforeSubmit({ promptText: authorizedPrompt, screenText })).toThrow();
+    });
+
+    it('keeps the outer pipes on both table rows when staging a scrolled draft', () => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const table = ['| a | b |', '| a | b |'];
+      const screenText = [topRule, ...table.map((row) => `  ${row}`), bottomRule].join('\n');
+      const authorizedPrompt = ['Hidden first line', ...table].join('\n');
+
+      expect(parseClaudeScreenState(screenText).composerContent).toBe(table.join('\n'));
+      expect(policy.isPromptStagedBeforeSubmit({ promptText: authorizedPrompt, screenText })).toBe(true);
     });
   });
 
