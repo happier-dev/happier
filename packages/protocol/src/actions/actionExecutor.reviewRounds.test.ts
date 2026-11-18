@@ -1,11 +1,35 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor } from './actionExecutor.js';
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '../reviews/reviewArtifactV1.js';
 import { prepareReviewRoundV1 } from '../reviews/prepareReviewRoundV1.js';
 import { ReviewPrepareRoundInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
+import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 
 describe('Review round preparation', () => {
+  it.each(['native', 'workflow'] as const)('seals the selected comparison address at %s admission', async mode => {
+    const records = createInMemoryReviewRecordPortV1();
+    const starts = vi.spyOn(records, 'start');
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      resolveSessionMachineId: async () => 'capture-machine',
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async () => ({ runId: 'native-run', callId: 'call', sidechainId: 'sidechain' }),
+      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+    });
+    const result = await executor.execute('review.start', { sessionId: 'capture-session', cwd: '/original/worktree',
+      reviewers: Array.from({ length: mode === 'native' ? 1 : 2 }, () => ({ kind: 'engine', engineId: 'codex' })),
+      instructions: 'Inspect the selected comparison.', source: { kind: 'workingTree' }, comparisonId: 'a'.repeat(64),
+    }, { surface: 'ui' });
+    expect(result).toMatchObject(mode === 'native' ? { ok: true } : { ok: false, errorCode: 'content_unavailable' });
+    const admitted = starts.mock.calls[0]?.[0];
+    if (!admitted) throw new Error('Expected the durable Review admission');
+    expect((await records.read(admitted.reviewId))?.rounds[0]).toMatchObject({ comparisonCapture: {
+      target: { kind: 'machine', machineId: 'capture-machine' }, input: {
+        cwd: '/original/worktree', sessionId: 'capture-session', source: { kind: 'workingTree' }, comparisonId: 'a'.repeat(64),
+      },
+    } });
+  });
+
   it('routes an explicit native New round through its retained Session action owner', async () => {
     const receipt = { runId: 'next-native-run', callId: 'next-call', sidechainId: 'next-sidechain',
       reviewRound: { reviewId: 'same-review', roundOrdinal: 2 }, comparisonId: 'new-comparison' };
@@ -59,11 +83,15 @@ describe('Review round preparation', () => {
       reviewInput: { ...reviewInput, scope: 'changes', comparisonId: pinnedComparisonId },
       comparisonCapture: { cwd: '/workspace', source: { kind: 'workingTree' }, comparisonId: pinnedComparisonId },
       previousRoundContext: { runId: 'second-workflow' },
-    }), { reviewRecords: records, startedAt: 3,
+    }), { reviewRecords: records, startedAt: 3, comparisonTarget: { kind: 'machine', machineId: 'original-machine' },
       // The host SCM boundary reads a pinned capture, or captures the current tree without a pin.
       captureComparison: async capture => ({ id: capture.comparisonId ?? currentComparisonId, source: capture.source,
         repository: { rootPath: '/workspace' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } }),
     });
     expect(current).toMatchObject({ reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 3 }, comparisonId: currentComparisonId });
+    expect((await records.read(reviewRound.reviewId))?.rounds[2]).toMatchObject({ comparisonCapture: {
+      target: { kind: 'machine', machineId: 'original-machine' },
+      input: { cwd: '/workspace', source: { kind: 'workingTree' }, comparisonId: currentComparisonId },
+    } });
   });
 });

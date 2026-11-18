@@ -25,7 +25,8 @@ import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
-import { dispatchReviewRoundAction } from './rounds.js';
+import { dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
+import { ScmComparisonSourceSchema } from '../../../scm/comparison.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
 
 export function reviewScopeForInput(input: unknown): ReviewEngineScope {
@@ -276,6 +277,13 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         const reviewInput = data as ReviewStartInput;
+        const selectedSource = ScmComparisonSourceSchema.safeParse(reviewInput.source);
+        const comparisonCwd = reviewInput.cwd ?? ctx.agentStartContext?.baseline.directory;
+        const comparisonTarget = reviewInput.comparisonId
+          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId) : undefined;
+        const comparisonCapture = reviewInput.comparisonId && selectedSource.success && comparisonCwd && comparisonTarget
+          ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource.data,
+            comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
         if (requiresReviewWorkflowCompositionV1(reviewInput)) {
           // Workflow execution may happen on another host or after a restart.
           // Its concrete review.start leaves own source admission; only the
@@ -286,6 +294,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
             sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+            ...(comparisonCapture ? { comparisonCapture } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
@@ -453,6 +462,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
           sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+          ...(comparisonCapture ? { comparisonCapture } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
         const reviewGroupId = reviewRound.reviewId;
         const { reviewTranscriptEvidence: _inheritedTranscript, ...reviewLaunchOptions } = executionRunDispatchOpts ?? {};

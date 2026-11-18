@@ -8,6 +8,17 @@ import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } f
 import { resolveSessionIdFromInput } from '../sessionScope.js';
 import { readReviewRunActionPayload } from '../executionRuns.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
+import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArtifactV1.js';
+
+/** Retain the same Machine authority the Review's SCM operation uses. */
+export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
+  sessionId: string | null): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
+  if (ctx.externalActionTarget?.kind === 'machine') return ctx.externalActionTarget;
+  const machineId = ctx.executionRunTargetMachineId
+    ?? (sessionId ? await deps.resolveSessionMachineId?.(sessionId) : undefined)
+    ?? ctx.agentStartContext?.baseline.machineId ?? ctx.defaultSessionMachineId;
+  return machineId ? { kind: 'machine', machineId } : undefined;
+}
 
 type RoundActionInvocation = Readonly<{
   actionId: ActionId;
@@ -24,6 +35,8 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
     return { ok: true, result: await prepareReviewRoundV1(input, {
       reviewRecords: records, cwd: inv.ctx.agentStartContext?.baseline.directory,
+      comparisonTarget: await resolveReviewComparisonTargetV1(inv.deps, inv.ctx,
+        resolveSessionIdFromInput(input.reviewInput, inv.ctx)),
       startedAt: Date.now(), signal: inv.ctx.signal,
       captureComparison: async request => {
         const capture = await inv.executeHostChild('scm.diffSummary.capture', request, inv.ctx);
