@@ -26,8 +26,7 @@ import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/proj
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
-import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
-import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { projectDeploymentCancellationConsequenceV1, readDeploymentReceiptActionFactsV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
 import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { completeActionResult } from '@happier-dev/protocol/actions/actionExecutor';
@@ -248,17 +247,19 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
         if (actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && 'projection' in input && input.projection === 'investigation') {
-            const { projection: _projection, ...address } = DeploymentActionInputSchemasV1[actionId].parse(input);
+            const { projection, ...address } = DeploymentActionInputSchemasV1[actionId].parse(input);
             const read = await storage(actionId, address, context);
             if (isDeploymentActionFailure(read)) return read;
             const receipt = DeploymentReceiptGetResultV1Schema.parse(read);
             if (!receipt.ok) return receipt;
-            if (receipt.deployment.id !== address.deploymentId || address.environmentId !== undefined
-                && receipt.deployment.environmentId !== address.environmentId) return failure('target_mismatch');
-            const opened = readDeploymentReceiptArtifactV1(receipt.deployment,
-                await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: context.signal }));
-            if (!opened.ok) return failure(opened.error);
-            return { ...receipt, investigation: projectDeploymentReceiptInvestigationV1(opened.content) };
+            return readDeploymentReceiptActionFactsV1(receipt, { ...address, projection }, async deployment => {
+                const opened = readDeploymentReceiptArtifactV1(deployment,
+                    await account.readArtifactContent(deployment.contentArtifactId, { signal: context.signal }));
+                if (!opened.ok) return failure(opened.error);
+                const detail = { deployment, content: opened.content };
+                const cancellationConsequence = projectDeploymentCancellationConsequenceV1(detail);
+                return { ...detail, ...(cancellationConsequence ? { cancellationConsequence } : {}) };
+            });
         }
         let linkControllerMachineId: string | undefined;
         if (isDeploymentTargetLinkActionIdV1(actionId) && !('contentArtifactId' in input)) {

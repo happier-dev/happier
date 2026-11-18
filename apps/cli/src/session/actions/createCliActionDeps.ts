@@ -13,7 +13,8 @@ import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { requireExternalActionHeaders, createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
-import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { openDeploymentReceiptForHost } from '@/deployments/readReceiptForHost';
 import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDefaults';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
@@ -136,8 +137,8 @@ import { createCliDeploymentActionDeps } from '@/deployments/createCliDeployment
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
 import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -226,7 +227,7 @@ import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydra
 
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { prepareProjectSourceDeploymentRecipientsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployment-protocol/v1';
+import { prepareProjectSourceDeploymentRecipientsV1, readDeploymentReceiptActionFactsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployment-protocol/v1';
 import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 
 /** Private Session adapter receives IDs already resolved by Workflow/SCM admission. */
@@ -1332,6 +1333,19 @@ export function createCliActionDeps(params: CliActionDepsParams,
         // custody instead of re-entering controller placement from the SDK.
         const execution = await authorization.requesterAccountExecutor.execute(actionId, input, context);
         return execution.ok ? DeploymentActionOutputSchemasV1[actionId].parse(execution.result) : execution;
+      }
+      if (actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && 'projection' in input && input.projection === 'investigation') {
+        const { projection, ...address } = DeploymentActionInputSchemasV1[actionId].parse(input);
+        try {
+          const read = await deploymentStorage(actionId, address, context);
+          if ('errorCode' in read) return read;
+          const receipt = DeploymentReceiptGetResultV1Schema.parse(read);
+          if (!receipt.ok) return receipt;
+          return await readDeploymentReceiptActionFactsV1(receipt, { ...address, projection }, deployment =>
+            openDeploymentReceiptForHost(deployment, context, { open: openDeploymentArtifact, assertCurrent: assertDeploymentReadCurrent }));
+        } catch (error) {
+          return projectDeploymentException(error, context);
+        }
       }
       if (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 && 'mode' in input && input.mode === 'preview'
         && input.defaultsFor === 'alerts' && getActionSpec(actionId).safetyForInput?.(input) === 'safe') {

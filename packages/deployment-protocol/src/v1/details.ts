@@ -7,7 +7,10 @@ import { DeploymentIdentifierV1Schema } from './ids.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
 import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
-import { DeploymentControllerAvailabilityV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentControllerAvailabilityV1Schema, type DeploymentReceiptGetInputV1, type DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 import { DeploymentPendingDeployIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -94,6 +97,31 @@ export const DeploymentReceiptDetailV1Schema = z.strictObject({
     cancellationConsequence: z.optional(DeploymentCancellationConsequenceV1Schema),
 });
 export type DeploymentReceiptDetailV1 = z.infer<typeof DeploymentReceiptDetailV1Schema>;
+
+type DeploymentReceiptActionSuccessV1 = Extract<z.infer<typeof DeploymentReceiptGetResultV1Schema>, { ok: true }>;
+
+/** Open private Action facts for the exact receipt selected by the admitted Home read. */
+export async function readDeploymentReceiptActionFactsV1(
+    receipt: DeploymentReceiptActionSuccessV1,
+    address: Pick<DeploymentReceiptGetInputV1, 'deploymentId' | 'environmentId' | 'projection'>,
+    open: (deployment: DeploymentReceiptDetailV1['deployment']) => Promise<DeploymentReceiptDetailV1 | ActionExecuteFailure>,
+): Promise<DeploymentReceiptActionSuccessV1 | ActionExecuteFailure> {
+    const { deployment } = receipt;
+    if (deployment.id !== address.deploymentId || address.environmentId !== undefined
+        && deployment.environmentId !== address.environmentId) {
+        return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
+    }
+    const opened = await open(deployment);
+    if ('errorCode' in opened) return opened;
+    const projected = { ...receipt,
+        ...(address.projection === 'investigation' ? { investigation: projectDeploymentReceiptInvestigationV1(opened.content) } : {}),
+        ...(opened.cancellationConsequence ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
+    if (deployment.state !== 'failed') return projected;
+    const recorded = opened.content.failure;
+    if (!recorded) return { ...projected, failureSummary: null };
+    const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1(recorded);
+    return { ...projected, failureSummary: { phase: recorded.phase, code: recorded.code, requiredFact, remedy } };
+}
 
 /** One private-content projection for UI and agent reads; it grants no cancellation authority. */
 export function projectDeploymentCancellationConsequenceV1(receipt: Pick<DeploymentReceiptDetailV1, 'deployment' | 'content'>): DeploymentCancellationConsequenceV1 | undefined {

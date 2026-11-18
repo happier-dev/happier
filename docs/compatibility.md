@@ -10154,10 +10154,10 @@ The inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no `packages/protocol/src/plugins/ui/composer.ts`.
 
 Unreleased 0.3 `deployments.receipts.get` adds optional input
-`projection: investigation` and optional result `investigation`. UI and daemon
+`projection: investigation` and optional result `investigation`. UI, CLI and daemon
 Account hosts strip the projection before reading server metadata, open the exact
-receipt through the Account encryption owner, and project source revision identity
-and structural failure facts. The source and failure objects remain closed; no
+receipt through the Account encryption owner, and use the same projection for
+source revision identity, structural failure facts and cancellation consequences. The source and failure objects remain closed; no
 Compose document, selectors, logs or credentials enter this result. Omitted
 projection preserves the ordinary read path, and an absent result projection
 means those facts are unavailable. Matching strict Protocol, SDK, UI, daemon and

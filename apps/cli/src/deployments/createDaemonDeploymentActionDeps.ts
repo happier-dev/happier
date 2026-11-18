@@ -19,7 +19,6 @@ import { decodeBase64 } from '@/api/encryption';
 import type { TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
@@ -69,7 +68,7 @@ import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentAr
     isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
     readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, readDeploymentReceiptArtifactV1, createDeploymentReceiptArtifactHeaderV1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
+    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, readDeploymentReceiptActionFactsV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentContentV1,
     type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1,
@@ -1800,18 +1799,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const detail = DeploymentReceiptGetResultV1Schema.parse(result);
                     if (!detail.ok || projection === undefined && (detail.deployment.state === 'queued'
                         || detail.deployment.state === 'succeeded' || detail.deployment.state === 'running_unverified')) return detail;
-                    if (detail.deployment.id !== address.deploymentId || address.environmentId !== undefined
-                        && detail.deployment.environmentId !== address.environmentId) return failure('target_mismatch');
-                    const opened = await openReceipt(detail.deployment, context);
-                    const projected = { ...detail,
-                        ...(projection === 'investigation' ? { investigation: projectDeploymentReceiptInvestigationV1(opened.content) } : {}),
-                        ...(opened.cancellationConsequence
-                        ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
-                    if (detail.deployment.state !== 'failed') return projected;
-                    const recorded = opened.content.failure;
-                    if (!recorded) return { ...projected, failureSummary: null };
-                    const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1(recorded);
-                    return { ...projected, failureSummary: { phase: recorded.phase, code: recorded.code, requiredFact, remedy } };
+                    return await readDeploymentReceiptActionFactsV1(detail, { ...address, projection },
+                        deployment => openReceipt(deployment, context));
                 } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (actionId === 'deployments.observation.get') {

@@ -1,13 +1,14 @@
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import axios from 'axios';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createHash, randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { encodeBase64, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { encryptWithDataKey } from '@/api/encryption';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptArtifactHeaderV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema,
@@ -188,6 +189,51 @@ it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee'
 });
 
 describe('Deployment Actions through the default CLI Account front door', () => {
+  it('opens the exact retained receipt only when investigation is requested', async () => {
+    const receipt = createDeploymentReceiptDetailV1();
+    const deployment = { ...receipt.deployment, ...artifact };
+    const environment = createDeploymentEnvironmentHeaderV1({ id: deployment.environmentId, serverId: 'deployment-home' });
+    const receiptPath = `/v1/deployments/receipts/${deployment.id}`;
+    const reads = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const url = new URL(config.url!);
+      if (url.pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
+      if (url.pathname === `/v1/deployments/environments/${environment.id}`) {
+        return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+      }
+      expect(url.pathname).toBe(receiptPath);
+      return { status: 200, data: { ok: true, deployment } };
+    });
+    const artifactReads = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      expect(url).toBe(`https://deployment-home.test/v1/artifacts/${artifact.contentArtifactId}`);
+      return { status: 200, data: { id: artifact.contentArtifactId, ownerAccountId: 'deployment-account', access: 'owner',
+        publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        header: encodePlainArtifactStoredContent(createDeploymentReceiptArtifactHeaderV1('Receipt', receipt.content)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(receipt.content) }),
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+    });
+    const actions = executor();
+    const input = { serverId: 'deployment-home', environmentId: deployment.environmentId, deploymentId: deployment.id };
+    const context = { surface: 'cli', authority: 'present_user', serverId: input.serverId, actionCaller: { kind: 'host' } } as const;
+    expect(await actions.execute('deployments.receipts.get', input, context))
+      .toEqual({ ok: true, result: { ok: true, deployment } });
+    expect(artifactReads.mock.calls.filter(([url]) => url.includes('/v1/artifacts/'))).toHaveLength(0);
+
+    const source = receipt.content.sourceIntent;
+    if (source.kind !== 'repository') throw new Error('Expected repository receipt fixture');
+    expect(await actions.execute('deployments.receipts.get', { ...input, projection: 'investigation' }, context))
+      .toMatchObject({ ok: true, result: { ok: true, deployment, investigation: {
+        source: { kind: 'repository', projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha },
+      } } });
+    expect(artifactReads.mock.calls.filter(([url]) => url.includes('/v1/artifacts/'))).toHaveLength(1);
+    const receiptRequests = reads.mock.calls.map(([config]) => new URL(config.url!)).filter(url => url.pathname === receiptPath);
+    expect(receiptRequests.length).toBeGreaterThan(0);
+    expect(receiptRequests.every(url => !url.searchParams.has('projection'))).toBe(true);
+  });
+
   it('prepares combined setup from fresh host facts with zero fleet metadata openings', async () => {
     const secret = new Uint8Array(32).fill(7);
     const codec = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionVariant: 'legacy', encryptionKey: secret });

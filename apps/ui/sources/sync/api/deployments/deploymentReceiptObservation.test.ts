@@ -69,7 +69,9 @@ describe('deployment receipt observation routing', () => {
             'deployments.receipts.get', { ...input, projection: 'investigation' }, {}));
         const source = base.content.sourceIntent;
         if (source.kind !== 'repository') throw new Error('Expected repository receipt fixture');
-        expect(result).toEqual({ ok: true, deployment, investigation: {
+        expect(result).toEqual({ ok: true, deployment, failureSummary: expect.objectContaining({
+            phase: failure.phase, code: failure.code,
+        }), investigation: {
             source: { kind: 'repository', projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha },
             failure,
         } });
