@@ -3,7 +3,7 @@ import * as React from 'react';
 import { useMcpAlwaysAllow } from '@/components/tools/shell/permissions/useMcpAlwaysAllow';
 import { createRequestOwnedActionExecution } from '@/components/approvals/requestOwnedActionExecution';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { SessionPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { buildSessionPermissionChoiceActionAnswer, type SessionPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { listenDesktopWindowAction } from '@/utils/platform/desktopWindowActionBridge';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -20,7 +20,7 @@ export function DesktopActivityOverlayMcpPermission(props: Readonly<{
         ...(props.choice.followUp ? { followUp: props.choice.followUp, choiceId: props.choice.id } : {}),
         canWriteCatalog: true,
         answerForSession: async () => {
-            const { approved: _approved, ...response } = props.choice.response;
+            const response = buildSessionPermissionChoiceActionAnswer(props.choice);
             requireActionSuccess(await execute('session.permission.respond', { sessionId: props.sessionId,
                 requestId: props.requestId, ...(props.turnId ? { turnId: props.turnId } : {}), ...response }));
         },

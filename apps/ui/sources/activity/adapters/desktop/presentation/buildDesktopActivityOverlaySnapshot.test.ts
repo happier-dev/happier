@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 import { t } from '@/text';
 
@@ -160,10 +162,14 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         const actions = resolveDesktopActivityOverlayRequestCardActions(card);
         expect(actions.map(action => action.id)).toEqual(flavor === 'codex'
             ? ['allow', 'always_allow', 'deny', 'stop'] : ['allow', 'allow_all_edits', 'deny', 'stop']);
-        expect(actions.find(action => action.id === 'allow')?.data).toMatchObject({ decision: 'approved' });
+        const actionSchema = getActionSpec('session.permission.respond').inputSchema;
+        const allow = actionSchema.parse(actions.find(action => action.id === 'allow')?.data);
+        expect(buildSessionPermissionRespondRpcParamsV1({ id: allow.requestId ?? '', decision: allow.decision }))
+            .toEqual({ id: 'edit', approved: true, ...(flavor === 'codex' ? { decision: 'approved' } : {}) });
         expect(actions.find(action => action.id === 'stop')?.data).toMatchObject({ decision: flavor === 'codex' ? 'denied' : 'abort' });
-        expect(actions.find(action => action.id === (flavor === 'codex' ? 'always_allow' : 'allow_all_edits'))?.data)
-            .toMatchObject(flavor === 'codex' ? { decision: 'approved_for_session' } : { decision: 'approved', mode: 'acceptEdits' });
+        const scoped = actionSchema.parse(actions.find(action => action.id === (flavor === 'codex' ? 'always_allow' : 'allow_all_edits'))?.data);
+        expect(buildSessionPermissionRespondRpcParamsV1({ id: scoped.requestId ?? '', decision: scoped.decision, ...(scoped.mode ? { mode: scoped.mode } : {}) }))
+            .toEqual({ id: 'edit', approved: true, ...(flavor === 'codex' ? { decision: 'approved_for_session' } : { mode: 'acceptEdits' }) });
     });
     it('keeps the admitted pinned ask outside overview slots, with status-only privacy hiding it', () => {
         const session = createSessionFixture({ id: 'pinned', serverId: 'server-1', encryptionMode: 'plain',
@@ -188,7 +194,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             conversation: { ...params.conversation, reply: { state: 'hidden', messages: [] } },
             resolveCandidatePrivacyMode: () => 'status_only' });
         expect(hidden.permissionRequests).toHaveLength(0);
-        expect(hidden.conversation?.reply).toEqual({ state: 'hidden', text: null });
+        expect(hidden.conversation?.reply).toEqual({ state: 'hidden', messages: [] });
     });
     it('keeps reconciled lifecycle facts in a mixed-row desktop snapshot', () => {
         const base = createSessionFixture({ id: 'mixed-desktop', serverId: 'server-1',

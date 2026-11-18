@@ -22,6 +22,13 @@ export type SessionPermissionChoice = Readonly<{
     catalog?: Readonly<{ identity: ResolvedMcpToolIdentityV1; source?: string }>;
 }>;
 
+/** Project retained boolean answers into the Action's decision or native choice. */
+export function buildSessionPermissionChoiceActionAnswer({ response }: SessionPermissionChoice) {
+    const { approved, ...answer } = response;
+    if (answer.nativeChoice || answer.decision !== undefined || approved === undefined) return answer;
+    return { ...answer, decision: approved ? 'allow' as const : 'deny' as const };
+}
+
 /** The same option kind drives permission presentation and automatic plain decisions. */
 export function getSessionPermissionChoiceKind(choice: Pick<SessionPermissionChoice, 'decision' | 'scope' | 'response'>):
     'approve' | 'approve_for_session' | 'deny' | 'stop' {

@@ -1,6 +1,6 @@
 import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import type { DesktopActivityOverlayExpandedCard, DesktopActivityOverlaySessionRowModel } from './desktopActivityOverlayModelTypes';
 import type { DesktopActivityOverlaySnapshot } from '../snapshot/desktopActivityOverlaySnapshotTypes';
@@ -66,7 +66,7 @@ function buildPermissionActions(
     request: DesktopActivityOverlaySnapshot['permissionRequests'][number],
 ) {
     const actions = (request.permissionChoices ?? []).map((choice) => {
-        const { approved: _approved, ...response } = choice.response;
+        const response = buildSessionPermissionChoiceActionAnswer(choice);
         return {
             id: choice.id,
             label: choice.label,
