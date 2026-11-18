@@ -82,51 +82,74 @@ function closestNames(name, candidates) {
   return ranked.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1])).slice(0, 3).map(([, candidate]) => candidate);
 }
 
-/** Known names come from existing sources only: lane report and lane folder names under
- * .project/plans and .project/tmp, board senders (the board posted to and the archive), and
- * CHARTER leads. Ended lanes are those whose report in a report tree starts DONE/BLOCKED-ended. */
+/** Report surfaces, at fixed depths only: a post must never walk scratch trees (pnpm stores,
+ * isolated homes, checkout copies) under a lane folder or plan (2d48bf60bbc took ~7 min a post).
+ * Reports: .project/tmp/*.md, .project/tmp/p03-perf-areas/*.md, .project/plans/<plan>/lanes/*.md
+ * and .project/plans/<plan>/<sub>/lanes/*.md. Names also come from .project/tmp lane folders and
+ * .project/plans/<plan>/briefs/* file names. */
+async function listReportSurfaces() {
+  const list = async (directory) => {
+    try { return await fs.readdir(directory, { withFileTypes: true }); }
+    catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) return []; throw error; }
+  };
+  const tmp = path.join('.project', 'tmp');
+  const plans = path.join('.project', 'plans');
+  const reports = [];
+  const names = [];
+  const markdown = (directory, entries) => entries.filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => path.join(directory, entry.name));
+  const tmpEntries = await list(tmp);
+  reports.push(...markdown(tmp, tmpEntries));
+  names.push(...tmpEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+  const perfAreas = path.join(tmp, 'p03-perf-areas');
+  reports.push(...markdown(perfAreas, await list(perfAreas)));
+  const planDirectories = (await list(plans)).filter((entry) => entry.isDirectory()).map((entry) => path.join(plans, entry.name));
+  await Promise.all(planDirectories.map(async (plan) => {
+    const entries = await list(plan);
+    const subdirectories = entries.filter((entry) => entry.isDirectory());
+    const lanes = path.join(plan, 'lanes');
+    const briefs = path.join(plan, 'briefs');
+    const [laneEntries, briefEntries, nested] = await Promise.all([
+      subdirectories.some((entry) => entry.name === 'lanes') ? list(lanes) : [],
+      subdirectories.some((entry) => entry.name === 'briefs') ? list(briefs) : [],
+      // Orchestrator sub-programs (o-store/lanes): one ENOENT-cheap read per direct subdirectory.
+      Promise.all(subdirectories.filter((entry) => !['lanes', 'briefs'].includes(entry.name)).map(async (entry) => {
+        const directory = path.join(plan, entry.name, 'lanes');
+        return markdown(directory, await list(directory));
+      })),
+    ]);
+    reports.push(...markdown(lanes, laneEntries), ...nested.flat());
+    names.push(...briefEntries.filter((entry) => entry.isFile()).map((entry) => entry.name.replace(/\.[^.]+$/, '')));
+  }));
+  return { reports, names };
+}
+
+/** Known names come from existing sources only: report and lane-folder names on the report
+ * surfaces above, plan brief names, board senders (the board posted to and the archive), and
+ * CHARTER leads. Ended lanes are those whose report starts DONE/BLOCKED-ended. */
 async function inspectNames(board, exactNames) {
   const known = new Set();
   const suggestions = new Set();
   const ended = new Map();
-  // Restrict discovery to report trees, never the repository root.
-  let directories = ['.project/plans', '.project/tmp'];
-  while (directories.length) {
-    const listings = await Promise.all(directories.map(async (directory) => {
-      try { return { directory, entries: await fs.readdir(directory, { withFileTypes: true }) }; }
-      catch (error) { if (error.code === 'ENOENT') return { directory, entries: [] }; throw error; }
-    }));
-    directories = [];
-    for (const { directory, entries } of listings) {
-      for (const entry of entries) {
-        const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === 'node_modules' || entry.name === '.git') continue;
-          directories.push(file);
-          if (directory.startsWith(path.join('.project', 'tmp'))) known.add(nameKey(entry.name));
-          continue;
-        }
-        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-        const lane = path.basename(file, '.md');
-        known.add(nameKey(lane));
-        // Plan briefs and other plan documents name lanes but are not their reports.
-        if (file.startsWith(path.join('.project', 'plans') + path.sep) && path.basename(directory) !== 'lanes') continue;
-        suggestions.add(lane);
-        if (!exactNames.has(lane)) continue;
-        let handle;
-        try {
-          handle = await fs.open(file);
-          for await (const line of handle.readLines()) {
-            const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
-            if (/^(?:DONE\b|BLOCKED-ended\b)/.test(verdict)) ended.set(lane, { file, line });
-            break;
-          }
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
-        } finally {
-          await handle?.close();
-        }
+  const surfaces = await listReportSurfaces();
+  for (const name of surfaces.names) known.add(nameKey(name));
+  for (const file of surfaces.reports) {
+    const lane = path.basename(file, '.md');
+    known.add(nameKey(lane));
+    suggestions.add(lane);
+    if (!exactNames.has(lane)) continue;
+    let handle;
+    try {
+      handle = await fs.open(file);
+      for await (const line of handle.readLines()) {
+        const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
+        if (/^(?:DONE\b|BLOCKED-ended\b)/.test(verdict)) ended.set(lane, { file, line });
+        break;
       }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    } finally {
+      await handle?.close();
     }
   }
   const read = async (file) => {

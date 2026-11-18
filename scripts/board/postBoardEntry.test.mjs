@@ -310,15 +310,19 @@ test('refuses posts to ended lanes, naming a fresh successor, and drops ended na
     + '### 2026-11-18 07:00 UTC — VOICE-QA (fresh) → Voice ORCH — CLAIM — Voice QA matrix\nBody\n'
     + '### 2026-11-18 06:00 UTC — VOICE-QA → Voice ORCH — CLAIM — Voice QA matrix\nBody\n' + oldPost);
   await seed(f.directory, {
-    '.project/plans/program/nested/lanes/VOICE-QA.md': 'DONE — committed\n',
-    '.project/tmp/program/reports/STOPPED.md': 'BLOCKED-ended — no active run\n',
+    '.project/plans/program/o-voice/lanes/VOICE-QA.md': 'DONE — committed\n',
+    '.project/tmp/p03-perf-areas/STOPPED.md': 'BLOCKED-ended — no active run\n',
+    '.project/tmp/scratch/deep/reports/DEEP.md': 'DONE — scratch, not a report surface\n',
     '.project/plans/program/lanes/ACTIVE.md': 'IN_PROGRESS\n',
-    '.project/tmp/program/WAITING.md': 'BLOCKED — waiting for input\n',
+    '.project/tmp/WAITING.md': 'BLOCKED — waiting for input\n',
     '.project/plans/program/briefs/NOT-A-REPORT.md': 'DONE\n',
     '.project/tmp/program/node_modules/vendored/ACTIVE.md': 'DONE\n',
+    '.project/plans/program/briefs/DEEP-LANE-BRIEF.md': 'brief\n',
   });
   await refused(f, 'ACTIVE → VOICE-QA — ASK — matrix row', /VOICE-QA.*ended.*VOICE-QA \(fresh\)/);
   await refused(f, 'ACTIVE → STOPPED, VOICE-QA — ASK — two ended', /ended.*route to a live owner/s);
+  const deep = await post(f, 'ACTIVE → DEEP — ASK — scratch reports are not report surfaces');
+  assert.doesNotMatch(deep.stderr, /ended/);
   const { entry, stderr } = await post(f, 'ACTIVE → VOICE-QA, WAITING, STOPPED, NOT-A-REPORT, VOICE-QA (fresh) — ASK — route');
   assert.match(stderr, /dropped ended addressee VOICE-QA.*VOICE-QA \(fresh\)/);
   assert.match(stderr, /dropped ended addressee STOPPED/);
@@ -330,11 +334,11 @@ test('refuses posts to ended lanes, naming a fresh successor, and drops ended na
 test('refuses orchestrator-only RESULTs and keeps advisory warnings for other posts', async (t) => {
   const f = await fixture(t);
   await seed(f.directory, {
-    '.project/tmp/p03/P03-LANE.md': 'IN_PROGRESS\n',
-    '.project/tmp/l12/Lane 12 Main.md': 'IN_PROGRESS\n',
-    '.project/tmp/l12/Lane 12 lanes.md': 'IN_PROGRESS\n',
-    '.project/tmp/sys/Systemic.md': 'IN_PROGRESS\n',
-    '.project/tmp/orch/P03 ORCH.md': 'IN_PROGRESS\n',
+    '.project/tmp/p03-perf-areas/P03-LANE.md': 'IN_PROGRESS\n',
+    '.project/tmp/Lane 12 Main.md': 'IN_PROGRESS\n',
+    '.project/plans/l12/lanes/Lane 12 lanes.md': 'IN_PROGRESS\n',
+    '.project/tmp/Systemic/notes.txt': 'lane folder\n',
+    '.project/plans/orch/briefs/P03 ORCH.md': 'brief\n',
   });
   await refused(f, 'P03-LANE → P03 ORCH, Coordination — RESULT — done', /write this in your lane report/);
   for (const [heading, warning] of [
@@ -370,4 +374,31 @@ test('warns with the closest known names when a sender or addressee matches no l
   assert.match(stderr, /addressee Voice lanes/);
   assert.doesNotMatch(stderr, /addressee O-MACH\b[^H]/);
   assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry), 'name warnings never block');
+});
+
+test('name and ended-lane discovery reads only the report surfaces, never deep scratch trees', { timeout: 60000 }, async (t) => {
+  const f = await fixture(t);
+  await seed(f.directory, {
+    '.project/tmp/p03-perf-areas/LANE-A.md': 'IN_PROGRESS\n',
+    '.project/plans/program/lanes/LANE-B.md': 'DONE\n',
+    '.project/plans/program/o-sub/lanes/LANE-C.md': 'IN_PROGRESS\n',
+  });
+  // A deep scratch store (pnpm store, isolated home, checkout copy) under a lane folder and a plan.
+  for (const root of ['.project/tmp/LANE-A/store', '.project/plans/program/evidence/checkout']) {
+    for (let i = 0; i < 300; i += 1) {
+      const directory = path.join(f.directory, root, `a${i}`, 'b', 'c');
+      await fs.mkdir(directory, { recursive: true });
+      await Promise.all(Array.from({ length: 10 }, (_, j) => fs.writeFile(path.join(directory, `f${j}.md`), 'DONE\n')));
+    }
+  }
+  const readdir = fs.readdir.bind(fs);
+  const read = [];
+  t.mock.method(fs, 'readdir', (directory, options) => { read.push(String(directory)); return readdir(directory, options); });
+  await fs.writeFile(f.entryFile, '### 2026-11-18 13:00 UTC — LANE-A → LANE-B, LANE-C — ASK — walk\nBody\n');
+  const started = performance.now();
+  await postBoardEntry(f.board, f.entryFile);
+  const elapsed = performance.now() - started;
+  assert.deepEqual(read.filter((directory) => /store|checkout|[\\/]a\d+/.test(directory)), [], 'scratch trees are never listed');
+  assert.ok(read.length <= 12, `bounded report-surface listings, got ${read.length}: ${read.join(', ')}`);
+  assert.ok(elapsed < 1000, `post took ${Math.round(elapsed)} ms`);
 });
