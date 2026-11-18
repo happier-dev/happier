@@ -396,8 +396,7 @@ describe('createCliActionExecutorHarness', () => {
         onApprovalRequested: notification }, { ...createUnavailableActionTransportDeps(),
         runtimeActionExecute: native, approvalsGet: read });
       expect(await executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
-        { surface: 'cli' })).toEqual(delivery === 'notification' ? { ok: true, result: pending }
-          : delivery === 'refused' || delivery === 'rejected' ? failure : { ok: true, result: receipt });
+        { surface: 'cli' })).toEqual(delivery === 'refused' || delivery === 'rejected' ? failure : { ok: true, result: receipt });
       expect(notification).toHaveBeenCalledOnce();
       expect(native).toHaveBeenCalledOnce();
       expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
@@ -458,6 +457,56 @@ describe('createCliActionExecutorHarness', () => {
       for (const socket of wire.sockets) socket.update({ t: 'account-change' });
       await expect(pending).resolves.toEqual({ ok: true, result: receipt });
       expect(artifactReads).toBe(3);
+    } finally { lifetime.abort(); await pending.catch(() => undefined); restoreHttp(); await app.close(); }
+  });
+
+  it.each(['rejected', 'executed'] as const)('waits after a notification-only deferred approval until remote %s', async status => {
+    const artifactId = 'notification-only-deferred-approval';
+    const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
+    let request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'browser.diagnostics.snapshot',
+      actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
+      approval: { flow: 'deferred', result: 'required' }, status: 'open',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId: 'browser.diagnostics.snapshot', requestId: 'browser-request' } });
+    const lifetime = new AbortController();
+    let notify!: () => void;
+    const notified = new Promise<void>(resolve => { notify = resolve; });
+    const app = fastify();
+    app.get('/v1/artifacts/:id', async () => ArtifactHttpReadV1Schema.parse({
+      id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    }));
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'https://approval-home.example.test' });
+    const store = createCliApprovalsArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    // HTTP and daemon RPC are boundaries; the Artifact store and waiter remain real.
+    const native = vi.fn(async () => ({ kind: 'approval_request_created', artifactId, actionId: request.actionId }));
+    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test', onApprovalRequested: () => notify() },
+    { ...createUnavailableActionTransportDeps(), runtimeActionExecute: native, approvalsGet: store.approvalsGet });
+    const pending = harness.executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
+      { surface: 'cli', signal: lifetime.signal });
+    let settled = false;
+    let settledResult: unknown;
+    void pending.then(result => { settled = true; settledResult = result; }, error => { settled = true; settledResult = error; });
+    try {
+      await Promise.race([notified, pending.then(result => {
+        throw new Error(`Action completed before approval notification: ${JSON.stringify(result)}`);
+      })]);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled, JSON.stringify(settledResult)).toBe(false);
+      request = ApprovalRequestV2Schema.parse({ ...request, status, updatedAtMs: 2,
+        decision: { kind: status === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 },
+        ...(status === 'executed' ? { execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } } : {}) });
+      for (const socket of wire.sockets) socket.update({ t: 'account-change' });
+      await expect(pending).resolves.toEqual(status === 'rejected'
+        ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' }
+        : { ok: true, result: receipt });
+      expect(native).toHaveBeenCalledOnce();
     } finally { lifetime.abort(); await pending.catch(() => undefined); restoreHttp(); await app.close(); }
   });
 

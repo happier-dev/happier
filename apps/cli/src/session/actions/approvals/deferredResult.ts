@@ -145,7 +145,7 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
     if (settled.kind === 'observation' && !localDecision) return settled.execution;
     const decision = settled.kind === 'observation' ? await localDecision! : settled.decision;
     // Some hosts only present the approval id and leave the decision elsewhere.
-    if (!decision) return result;
+    if (!decision) return await observation;
     if (!decision.ok) return decision;
     if (decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
       const live = ActionExecuteResultSchema.safeParse(decision.result.liveExecution);
