@@ -8392,6 +8392,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} n’est pas connecté`,
       message: ({ agent }: { agent: string }) => `Connecte-toi à ${agent} ou choisis un compte ${agent}.`,
       action: "Se connecter ou choisir un compte",
     },

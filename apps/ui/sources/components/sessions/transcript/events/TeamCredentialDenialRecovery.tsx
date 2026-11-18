@@ -12,7 +12,6 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readTeamCredentialResourceCatalogs, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
-import { t } from '@/text';
 
 export const TEAM_CREDENTIAL_DENIAL_RECOVERY_TEST_ID = 'transcript-event-runtime-issue-recovery';
 
@@ -28,7 +27,6 @@ export function TeamCredentialDenialRecovery(props: Readonly<{
 }>) {
     const source = useSessionTranscriptSource();
     const viewerScope = source.useAuthorship().viewerScope;
-    const canSendMessages = source.useInteraction().canSendMessages === true;
     const picker = useSessionModelPickerEntry(props.address);
     const resourceId = props.issue.teamCredential?.resourceId ?? null;
     const accountId = viewerScope?.accountId ?? null;
@@ -44,24 +42,23 @@ export function TeamCredentialDenialRecovery(props: Readonly<{
     const credentialName = resourceId ? openedNames[resourceId] ?? null : null;
     const denial = presentSessionTeamCredentialDenial({ issue: props.issue, resolveResourceDisplayName: () => credentialName });
     if (!denial) return null;
-    const unavailable = !picker.offered && !canSendMessages;
-    if (!credentialName && !picker.offered && !unavailable) return null;
+    // Only a viewer who can change the model is offered the choice; a read-only viewer reads the refusal alone,
+    // never a disabled step they cannot take.
+    const offered = picker.offered;
+    if (!credentialName && !offered) return null;
     return (
         <View style={styles.footer}>
             {credentialName ? <Text variant="meta" selectable style={styles.name}>{credentialName}</Text> : null}
-            {picker.offered || unavailable ? (
+            {offered ? (
                 <RoundButton
                     testID={TEAM_CREDENTIAL_DENIAL_RECOVERY_TEST_ID}
                     size="small"
                     display="secondary"
                     title={denial.actionLabel}
-                    disabled={unavailable}
-                    accessibilityHint={unavailable ? t('session.sharing.noEditPermission') : undefined}
                     onPress={picker.open}
                     style={styles.action}
                 />
             ) : null}
-            {unavailable ? <Text variant="meta" style={styles.name}>{t('session.sharing.noEditPermission')}</Text> : null}
         </View>
     );
 }

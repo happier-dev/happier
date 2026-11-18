@@ -7061,6 +7061,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
           },
           agentAuthRequired: {
+            /** What failed, before the step that fixes it, on the transcript's failure line. */
+            title: ({ agent }: { agent: string }) => `${agent} 未登入`,
             message: ({ agent }: { agent: string }) => `請登入 ${agent}，或選擇一個 ${agent} 帳戶。`,
             action: "登入或選擇帳戶",
           },

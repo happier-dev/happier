@@ -8777,6 +8777,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} non ha effettuato l’accesso`,
       message: ({ agent }: { agent: string }) => `Accedi a ${agent} o scegli un account ${agent}.`,
       action: "Accedi o scegli un account",
     },

@@ -8658,6 +8658,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} não está conectado`,
       message: ({ agent }: { agent: string }) => `Entre em ${agent} ou escolha uma conta ${agent}.`,
       action: "Entrar ou escolher conta",
     },

@@ -9976,6 +9976,8 @@ const enSession = {
         'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable' | AgentIsolationLaunchMaterialFailureCode>, string> & Record<string, string>,
   },
   agentAuthRequired: {
+    /** What failed, before the step that fixes it, on the transcript's failure line. */
+    title: ({ agent }: { agent: string }) => `${agent} isn’t signed in`,
     message: ({ agent }: { agent: string }) => `Sign in to ${agent} or choose a ${agent} account.`,
     action: 'Sign in or choose account',
   },

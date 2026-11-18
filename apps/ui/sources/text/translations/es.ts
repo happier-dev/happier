@@ -8552,6 +8552,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} no tiene la sesión iniciada`,
       message: ({ agent }: { agent: string }) => `Inicia sesión en ${agent} o elige una cuenta de ${agent}.`,
       action: "Iniciar sesión o elegir cuenta",
     },

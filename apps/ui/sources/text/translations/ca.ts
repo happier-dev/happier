@@ -7856,6 +7856,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
           },
         },
         agentAuthRequired: {
+          /** What failed, before the step that fixes it, on the transcript's failure line. */
+          title: ({ agent }: { agent: string }) => `${agent} no té la sessió iniciada`,
           message: ({ agent }: { agent: string }) => `Inicia la sessió a ${agent} o tria un compte de ${agent}.`,
           action: "Inicia la sessió o tria un compte",
         },

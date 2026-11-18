@@ -150,7 +150,7 @@ describe('resolveTranscriptMessageDisplayText', () => {
             occurredAt: 1000, agentId: 'codex' } }) as AgentTextMessage['meta'];
         const providerText = 'codex turn failed: The Provider endpoint requires a credential. Add a Saved Secret to the Provider connection.';
         expect(resolveTranscriptMessageDisplayText(agent({ meta: issueMeta('auth_error'), text: providerText })).text)
-            .toBe('Sign in to Codex or choose a Codex account.');
+            .toMatch(/^Codex .+ · Sign in to Codex or choose a Codex account\.$/u);
         expect(resolveTranscriptMessageDisplayText(agent({ meta: issueMeta('agent_session_error'), text: providerText })).text)
             .toBe(providerText);
     });
@@ -223,11 +223,16 @@ describe('failure line anatomy', () => {
         expect(text).toBeTruthy();
         expect(text).not.toContain('\n');
         expect(text).toMatch(/[.!?。！？]$/u);
+        // One capitalisation rule: every part Happier words after " · " starts as a sentence does ("· Resets Wed …");
+        // the Agent's own quoted words stay as written (startupRefusal's "stage=exec …").
+        if (_name !== 'startupRefusal') for (const part of text!.split(' · ').slice(1)) expect(part[0]).toBe(part[0]!.toLocaleUpperCase());
     });
 
     it('puts what failed before its cause on the same line', () => {
         expect(rows.modelNotFound?.split(' · ')).toHaveLength(2);
         expect(rows.modelTransition?.split(' · ')).toHaveLength(2);
+        // A sign-in refusal says what failed too, not only the step that fixes it (WAVE-ACCEPT-1117C).
+        expect(rows.agentSignIn?.split(' · ')).toHaveLength(2);
         expect(rows.startupRefusal).toContain(' · stage=exec errno=EACCES');
     });
 });

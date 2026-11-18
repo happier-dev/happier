@@ -8569,6 +8569,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
           },
         },
         agentAuthRequired: {
+          /** What failed, before the step that fixes it, on the transcript's failure line. */
+          title: ({ agent }: { agent: string }) => `${agent} ist nicht angemeldet`,
           message: ({ agent }: { agent: string }) => `Melde dich bei ${agent} an oder wähle ein ${agent}-Konto.`,
           action: "Anmelden oder Konto wählen",
         },

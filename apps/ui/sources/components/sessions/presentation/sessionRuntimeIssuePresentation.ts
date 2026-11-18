@@ -268,12 +268,12 @@ const SENTENCE_END = /[.!?。！？]$/u;
 /**
  * The one failure line every transcript failure row draws: what failed, then its cause or next step, joined by
  * " · " on a single line, and ending as a sentence. A cause owner's two-line pair ("Title\nNext step.") reads as
- * "Title · Next step."; every part starts as a sentence does ("· Resets Wed 01:31 AM"), and a line whose last part is
+ * "Title · Next step."; every part after " · " starts as a sentence does ("· Resets Wed 01:31 AM"), and a line whose last part is
  * a label or a fact takes the locale's end. `quoted` is the Agent's own words, kept as written for Find and copy.
  */
 export function formatSessionFailureLine(parts: readonly (string | null | undefined)[], quoted?: string | null): string | null {
     const segments = parts.flatMap(part => part?.split('\n') ?? []).map(part => part.trim()).filter(Boolean)
-        .map(part => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`);
+        .map((part, index) => index === 0 ? part : `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`);
     const words = quoted?.trim();
     if (words) segments.push(words);
     if (segments.length === 0) return null;

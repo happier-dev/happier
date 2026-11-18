@@ -247,13 +247,12 @@ describe('MessageView Team credential denial row', () => {
     }
   });
 
-  it('keeps the action visible but disabled, with its reason, for a viewer who cannot change the model', async () => {
+  it('offers a viewer who cannot change the model no action and no apology: the refusal stands alone', async () => {
+    // WAVE-ACCEPT-1117C: a disabled "Choose another credential" told a read-only viewer about a step they cannot take.
     const screen = await renderRow(projectFailure(teamIssueMeta), 'read-only');
-    const action = screen.findByTestId(RECOVERY);
-    expect(action?.props.disabled).toBe(true);
-    expect(screen.getTextContent()).toContain(
-      'session.sharing.noEditPermission',
-    );
+    expect(screen.findByTestId(RECOVERY)).toBeNull();
+    expect(screen.getTextContent()).not.toContain('session.sharing.noEditPermission');
+    expect(screen.getTextContent()).toContain('teams.credentials.sessionDeniedTitle');
   });
 
   it('offers no action where the Session has no composer to pick from', async () => {

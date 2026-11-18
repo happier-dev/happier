@@ -95,7 +95,7 @@ export function prepareTranscriptMessageBody(
         // Worded like the usage card's cause; the card owns the recovery action.
         ? formatSessionFailureLine([usageLimitIssue.summary, usageLimitIssue.reset])
         : runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
-        ? formatSessionFailureLine([presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage])
+        ? formatSessionFailureLine([presentSessionRuntimeIssue(runtimeIssue).message], runtimeIssue?.failureCause?.providerErrorMessage)
         // A refused model change reads as its status; the Agent's own words wait in the row's Details.
         : readSessionModelTransitionFailureStatus(runtimeIssue?.code) !== null
             ? presentSessionRuntimeIssue(runtimeIssue).message
@@ -107,7 +107,7 @@ export function prepareTranscriptMessageBody(
         : runtimeIssue ? unexplainedRuntimeIssueSummary(runtimeIssue) : null;
     let text: string | null;
     if (teamDenial) text = formatSessionFailureLine([teamDenial.title, teamDenial.body]);
-    else if (agentAuth) text = formatSessionFailureLine([agentAuth.message]);
+    else if (agentAuth) text = formatSessionFailureLine([agentAuth.title, agentAuth.message]);
     else if (runtimeFailure) text = runtimeFailure;
     else if (message.kind === 'user-text' && message.displayText !== undefined) text = message.displayText;
     else if (isLegacyVoiceAgentTurn) text = normalizeVoiceAgentTurnTranscriptText(message.text);

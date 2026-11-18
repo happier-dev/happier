@@ -8239,6 +8239,8 @@ export const zhHans: TranslationStructure = {
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} 未登录`,
       message: ({ agent }: { agent: string }) => `请登录 ${agent}，或选择一个 ${agent} 账户。`,
       action: "登录或选择账户",
     },

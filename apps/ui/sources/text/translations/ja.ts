@@ -8858,6 +8858,8 @@ localTailscale: {
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} にサインインしていません`,
       message: ({ agent }: { agent: string }) => `${agent} にサインインするか、${agent} のアカウントを選択してください。`,
       action: "サインインまたはアカウントを選択",
     },

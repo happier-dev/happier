@@ -8388,6 +8388,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent} nie jest zalogowany`,
       message: ({ agent }: { agent: string }) => `Zaloguj się w ${agent} lub wybierz konto ${agent}.`,
       action: "Zaloguj się lub wybierz konto",
     },

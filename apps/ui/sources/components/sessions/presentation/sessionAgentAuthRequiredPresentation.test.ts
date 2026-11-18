@@ -37,7 +37,7 @@ describe('native Agent authentication required', () => {
 
     it('names the Agent and asks for sign-in or an account, never a Provider secret', () => {
         const native = presentSessionAgentAuthRequired(issue({}));
-        expect(native).toEqual({ agentId: 'codex', message: 'Sign in to Codex or choose a Codex account.' });
+        expect(native).toEqual({ agentId: 'codex', title: 'Codex isn’t signed in', message: 'Sign in to Codex or choose a Codex account.' });
         expect(presentSessionRuntimeIssue(issue({})).message).toBe(native?.message);
     });
 

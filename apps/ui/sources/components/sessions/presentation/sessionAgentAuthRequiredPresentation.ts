@@ -7,6 +7,8 @@ import { t } from '@/text';
 
 export type SessionAgentAuthRequiredPresentation = Readonly<{
     agentId: string;
+    /** What failed ("Codex isn't signed in"), the failure line's lead before its next step. */
+    title: string;
     message: string;
 }>;
 
@@ -24,9 +26,11 @@ export function presentSessionAgentAuthRequired(
 ): SessionAgentAuthRequiredPresentation | null {
     const agentId = readSessionRuntimeIssueNativeAuthAgentId(issue);
     if (!agentId) return null;
+    const agent = resolveAgentCatalogTitle(agentId);
     return {
         agentId,
-        message: t('session.agentAuthRequired.message', { agent: resolveAgentCatalogTitle(agentId) }),
+        title: t('session.agentAuthRequired.title', { agent }),
+        message: t('session.agentAuthRequired.message', { agent }),
     };
 }
 

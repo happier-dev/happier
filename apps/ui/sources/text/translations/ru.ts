@@ -9006,6 +9006,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       },
     },
     agentAuthRequired: {
+      /** What failed, before the step that fixes it, on the transcript's failure line. */
+      title: ({ agent }: { agent: string }) => `${agent}: вход не выполнен`,
       message: ({ agent }: { agent: string }) => `Войдите в ${agent} или выберите учётную запись ${agent}.`,
       action: "Войти или выбрать учётную запись",
     },
