@@ -178,6 +178,8 @@ const recoveries = {
     not_found: recovery('A selected deployment item is no longer available. Reload the review and choose an available item.', 'review', 'Reload deployment choices'),
     outside_root: recovery('The deployment files extend outside the selected source folder. Choose a source folder that contains the app files.', 'source', 'Check source folder'),
     unavailable: recovery('The requested deployment information is unavailable. Open history to check the last recorded result.', 'history', 'Check last result'),
+    // A Link that persisted, whose follow-up failure observation could not be set up: nothing to retry.
+    failure_observer_unavailable: recovery('The target is linked. Happier could not turn on automatic failure notices for it, so a failed deployment will not notify you. Check deployment history after you deploy.', 'history', 'Review deployment history'),
     request_headers_too_large: recovery('The deployment request was rejected because its HTTP headers were too large. Ask the Home owner to update Happier, then check deployment history before trying again.', 'history', 'Review request failure'),
     auth_failed: recovery('The service rejected the connected account. Reconnect that account before preparing the deployment again.', 'connectedAccounts', 'Reconnect service account'),
     // A referenced private service reached through the Happier network (NET-FWD's typed forward failures).

@@ -161,6 +161,8 @@ const reachableFailures = [
     ['not_found', 'review'],
     ['outside_root', 'source'],
     ['unavailable', 'history'],
+    // A completed Link whose follow-up failure observation could not be set up.
+    ['failure_observer_unavailable', 'history'],
     ['request_headers_too_large', 'history'],
     ['auth_failed', 'connectedAccounts'],
     // A Happier network forward behind a referenced private service (NET-FWD-1110's typed forward failures).

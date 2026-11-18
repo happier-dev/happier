@@ -29,6 +29,8 @@ type EnrollmentStep = 'lease_acquire' | 'event_resolve' | 'lease_release' | 'env
     | 'watcher_materialization_unavailable' | 'credential_principal_unavailable' | 'transport_unavailable'
     | 'setup' | 'setup_result_invalid' | 'source_config_invalid' | 'enroll';
 const phase = (step: EnrollmentStep) => `target_link.failure_observer.${step}`;
+// The Link already persisted; the recovery owner says observation is off rather than "retry this change".
+const observerRecovery = () => projectDeploymentFailureRecoveryV1({}, 'failure_observer_unavailable');
 const unavailable = (step: EnrollmentStep, errorCode = 'source_unavailable'): Extract<ActionExecuteResult, { ok: false }> => ({
     ok: false, errorCode, error: errorCode, failureCause: projectActionFailureCauseV1(new Error(errorCode), phase(step)),
 });
@@ -181,11 +183,11 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
                 const enrolled = await enroll({ ...input, targetLinkId: linked.targetLinkId }, context, value => { readBack = value; });
                 if (!enrolled) return linked;
                 if (enrolled.ok) return { ...linked, failureObserver: enrolled.result };
-                return { ...linked, failureObserver: { status: 'unavailable', ...projectDeploymentFailureRecoveryV1({}), ...(readBack ? { readBack } : {}), errorCode: enrolled.errorCode, failureCause: enrolled.failureCause
+                return { ...linked, failureObserver: { status: 'unavailable', ...observerRecovery(), ...(readBack ? { readBack } : {}), errorCode: enrolled.errorCode, failureCause: enrolled.failureCause
                     ? enrolled.failureCause
                     : projectActionFailureCauseV1(new Error(enrolled.errorCode), 'target_link.failure_observer') } };
             } catch (error) {
-                return { ...linked, failureObserver: { status: 'unavailable', ...projectDeploymentFailureRecoveryV1({}), ...(readBack ? { readBack } : {}),
+                return { ...linked, failureObserver: { status: 'unavailable', ...observerRecovery(), ...(readBack ? { readBack } : {}),
                     failureCause: error instanceof EnrollmentStepError ? error.failureCause
                         : normalizeActionExecutorThrownError(error, 'target_link.failure_observer').failureCause } };
             }

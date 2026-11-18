@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { createPlatformFailureEnrollmentForHost } from './platformFailureEnrollment';
 import { createPlatformFailureNoticeFixture } from './platformFailureNotices.testkit';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
@@ -140,6 +141,9 @@ it.each([
             requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
             failureCause: withCause ? failureCause : { phase: 'target_link.failure_observer.setup.dependency_failed',
                 errorClass: 'Error', errorCode, httpStatus: null } } });
+        // The Link persisted: the person is told observation is off, never to retry a change that worked.
+        expect(result).toMatchObject({ failureObserver: { remedy: readDeploymentFailureRecoveryV1('failure_observer_unavailable').remedy } });
+        expect(result).not.toMatchObject({ failureObserver: { remedy: readDeploymentFailureRecoveryV1('future_failure').remedy } });
         expect(JSON.stringify(result)).not.toContain('private child response');
     } finally { await app.close(); }
 });
