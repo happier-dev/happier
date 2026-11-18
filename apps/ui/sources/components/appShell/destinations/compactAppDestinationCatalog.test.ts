@@ -475,10 +475,12 @@ describe('resolveCompactAppDestinations', () => {
             // Bots last of Together, with its rail pins under it (lab `b-rail A`).
             ['bots', { kind: 'rail', region: 'app' }],
             ['deployments', { kind: 'rail', region: 'app' }],
+            ['monitoring', { kind: 'rail', region: 'app' }],
             // Boards (INT §5.1): its own column listing the user's boards.
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
             ['artifacts', { kind: 'rail', region: 'app' }],
+            ['reviews', { kind: 'rail', region: 'app' }],
             // The bulk composer's page: hidden, catalogued for its tab and title (BULK-COMPOSE-1117).
             ['sessions.compose', { kind: 'column', column: 'sessions' }],
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
@@ -489,6 +491,7 @@ describe('resolveCompactAppDestinations', () => {
             ['settings', { kind: 'rail', region: 'account' }],
             ['personalize', { kind: 'rail', region: 'account' }],
             ['bot-template', { kind: 'rail', region: 'account' }],
+            ['team-setup', { kind: 'rail', region: 'account' }],
         ]);
         expect(destinations.find((destination) => destination.id === 'machines'))
             .toMatchObject({ column: 'machines', routePath: '/machines', activation: 'navigate', railControl: 'footer' });
@@ -498,17 +501,19 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'boards')).toMatchObject({ column: 'boards', routePath: '/boards' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).toMatchObject({ routePath: '/artifacts', activation: 'navigate' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
+        expect(destinations.find((destination) => destination.id === 'reviews'))
+            .toMatchObject({ routePath: '/reviews', activation: 'navigate', band: 'library' });
         // Feature-disabled built-ins are omitted, including the Bots roster.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'deployments', 'boards', 'artifacts', 'sessions.compose', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
+            .toEqual(['sessions', 'search', 'projects', 'deployments', 'monitoring', 'boards', 'artifacts', 'reviews', 'sessions.compose', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template', 'team-setup']);
         const everything = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, friends: true, discussions: true }, pages: [pageWith('notes', { requestedPlacement: { kind: 'rail' } })] });
         expect(everything.filter(destination => destination.placement.kind === 'rail')
             .map(destination => [destination.id, resolveAppRailBand(destination)])).toEqual([
             ['sessions', 'work'], ['search', 'work'], ['inbox', 'work'], ['projects', 'work'], ['workflows', 'work'],
             ['discussions', 'together'], ['friends', 'together'], ['bots', 'together'],
-            ['deployments', 'library'], ['boards', 'library'], ['artifacts', 'library'],
+            ['deployments', 'library'], ['monitoring', 'library'], ['boards', 'library'], ['artifacts', 'library'], ['reviews', 'library'],
             ['plugins', 'plugins'], ['plugin:acme.notes:notes', 'plugins'],
-            ['machines', 'account'], ['settings', 'account'], ['personalize', 'account'], ['bot-template', 'account'],
+            ['machines', 'account'], ['settings', 'account'], ['personalize', 'account'], ['bot-template', 'account'], ['team-setup', 'account'],
         ]);
     });
 

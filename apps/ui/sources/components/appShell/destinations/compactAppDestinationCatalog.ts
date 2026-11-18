@@ -374,6 +374,11 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         activation: 'navigate', routePath: '/artifacts', currentRoutePatterns: ['/artifacts/[...rest]'],
     },
     {
+        id: 'reviews', titleKey: 'homeSettings.groups.reviews', icon: 'check-square',
+        placement: { kind: 'rail', region: 'app' }, band: 'library',
+        activation: 'navigate', routePath: '/reviews', currentRoutePatterns: ['/reviews/[...rest]'],
+    },
+    {
         // The bulk composer's page (opened from a selection, never from navigation): catalogued only so its tab
         // and title read as Compose beside the Sessions column instead of as a session.
         id: 'sessions.compose', titleKey: 'session.participants.bulk.pageTitle', icon: 'pencil-simple',
