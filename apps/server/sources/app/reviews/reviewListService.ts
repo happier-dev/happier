@@ -1,6 +1,6 @@
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Prisma } from '@prisma/client';
-import { readArtifactCandidateAccess } from '@/app/artifacts/artifactAccessService';
+import { readArtifactCandidateAccess, resolveArtifactAccessBatchInTx } from '@/app/artifacts/artifactAccessService';
 import { artifactVisibleWhere } from '@/app/artifacts/artifactClassification';
 import { mergeResourceGrantArmPages } from '@/app/teams/resourceGrantAccess';
 import { resolveTeamArtifactQueryInTx } from '@/app/artifacts/artifactTeamResourceQuery';
@@ -10,6 +10,7 @@ import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { artifactOrdinarySqlPredicate } from '@/app/artifacts/artifactClassification';
 import { ReviewCommentOperationError } from './comments/errors';
+import { readAdmittedReviewNeedsYouInTx } from './reviewHumanService';
 import { REVIEW_TRIAGE_NEEDS_DECISION_STATUSES_V1, REVIEW_COMMENT_TERMINAL_DECISION_STATES_V1 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewListItemV1Schema, ReviewWorkflowHistoryResponseV1Schema,
     type ReviewListRequestV1, type ReviewListResponseV1, type ReviewHistoryRequestV1,
@@ -86,9 +87,18 @@ export async function listReviewsInTx(tx: Tx, input: ReviewListRequestV1 & { act
         .map(row => { const { artifactId: _artifactId, ...metadata } = row.reviewMetadata!; return { ...metadata, reviewId: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt }; });
     const page = rows.slice(0, parsed.limit);
     const byId = await readAdmittedReviewCountsInTx(tx, page.map(row => row.reviewId));
+    const capabilities = await resolveArtifactAccessBatchInTx(tx, { actorAccountId, artifactIds: page.map(row => row.reviewId) });
+    const needsYou = await readAdmittedReviewNeedsYouInTx(tx, { actorAccountId,
+        reviews: page.flatMap(row => {
+            const access = capabilities.get(row.reviewId);
+            return access ? [{ ...access, reviewId: row.reviewId }] : [];
+        }),
+        facts: new Map(page.map(row => [row.reviewId, { currentRoundOrdinal: row.currentRoundOrdinal,
+            pendingDecisionCount: byId.get(row.reviewId)?.needsDecision ?? 0 }])),
+    });
     const last = page.at(-1);
-    return ReviewListResponseV1Schema.parse({ items: page.map(row => ({ ...row, startedAt: millis(row.startedAt), finishedAt: row.finishedAt === null ? null : millis(row.finishedAt),
-        createdAt: millis(row.createdAt), updatedAt: millis(row.updatedAt), counts: byId.get(row.reviewId) ?? { total: 0, needsDecision: 0 } })),
+    return ReviewListResponseV1Schema.parse({ items: page.filter(row => needsYou.has(row.reviewId)).map(row => ({ ...row, startedAt: millis(row.startedAt), finishedAt: row.finishedAt === null ? null : millis(row.finishedAt),
+        createdAt: millis(row.createdAt), updatedAt: millis(row.updatedAt), counts: byId.get(row.reviewId) ?? { total: 0, needsDecision: 0 }, needsYou: needsYou.get(row.reviewId) })),
         cursor: rows.length > parsed.limit && last ? Buffer.from(JSON.stringify({ filters: filters(parsed), id: last.reviewId, updatedAt: millis(last.updatedAt) })).toString('base64url') : null });
 }
 

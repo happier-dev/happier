@@ -30,6 +30,26 @@ describe('Review read Actions through authenticated HTTP', () => {
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
 
+    it.each(['plain', 'e2ee'] as const)('reads the admitted aggregate and refuses another Account (%s)', async encryptionMode => {
+        const owner = await db.account.create({ data: { encryptionMode } });
+        const outsider = await db.account.create({ data: { encryptionMode } });
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: 'repository', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: new Date(1000), finishedAt: new Date(2000) } } } });
+        const executeFor = async (accountId: string) => {
+            const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+            return createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }))
+                .execute('review.get', { reviewId }, { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true });
+        };
+        expect(await executeFor(owner.id)).toMatchObject({ ok: true, result: {
+            review: { reviewId, currentRoundOrdinal: 1, state: 'completed', counts: { total: 0, needsDecision: 0 } },
+            human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou: { needsYou: false } },
+        } });
+        expect(await executeFor(outsider.id)).toMatchObject({ ok: false, errorCode: 'review_not_found' });
+    });
+
     it('reads persisted findings beyond one page and only the current requested-person verdict', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reviewId = randomUUID();

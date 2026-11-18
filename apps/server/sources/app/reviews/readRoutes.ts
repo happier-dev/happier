@@ -53,7 +53,7 @@ export function registerReviewReadRoutes(app: Fastify) {
             return reply.send(await inReadSnapshot(tx => listReviewsInTx(tx, {
                 ...request.body, actorAccountId: request.userId,
             })));
-        } catch (error) { sendReadError(reply, error); return; }
+        } catch (error) { sendReadError(reply, error); return reply; }
     });
 
     app.post(homeDomainActionPathForMethod('review.get', 'POST'), {
@@ -68,10 +68,11 @@ export function registerReviewReadRoutes(app: Fastify) {
                 if (!access) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
                 const review = await readAdmittedReviewDetailInTx(tx, access.reviewId);
                 if (!review) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
-                const human = await readAdmittedReviewHumanStateInTx(tx, { actorAccountId: request.userId, access });
+                const human = await readAdmittedReviewHumanStateInTx(tx, { actorAccountId: request.userId, access,
+                    facts: { currentRoundOrdinal: review.currentRoundOrdinal, pendingDecisionCount: review.counts.needsDecision } });
                 return { review, human };
             }));
-        } catch (error) { sendReadError(reply, error); return; }
+        } catch (error) { sendReadError(reply, error); return reply; }
     });
 
     app.post(homeDomainActionPathForMethod('review.history.list', 'POST'), {
@@ -84,6 +85,6 @@ export function registerReviewReadRoutes(app: Fastify) {
             return reply.send(await inReadSnapshot(tx => readReviewHistoryInTx(tx, {
                 ...request.body, actorAccountId: request.userId,
             })));
-        } catch (error) { sendReadError(reply, error); return; }
+        } catch (error) { sendReadError(reply, error); return reply; }
     });
 }

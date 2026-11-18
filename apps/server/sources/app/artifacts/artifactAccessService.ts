@@ -132,6 +132,12 @@ export async function resolveArtifactAudienceInTx(tx: Tx, artifactId: string): P
     return resolveResourceGrantAudienceInTx(tx, artifactGrantStorageAdapter, artifactId);
 }
 
+/** Project recipient audiences as a set without repeating admission for each requested person. */
+export async function resolveArtifactAudiencesInTx(tx: Tx, artifactIds: readonly string[]): Promise<ReadonlyMap<string, readonly string[]>> {
+    const facts = await artifactGrantStorageAdapter.readAccessFactsBatchInTx(tx, artifactIds);
+    return new Map([...facts].map(([id, row]) => [id, resolveResourceGrantAudienceFromFacts(row)]));
+}
+
 /** A retained recipient key or public link still exposes replacement bytes. */
 export async function isArtifactAudienceContainedInTx(tx: Tx, input: Readonly<{
     artifactId: string; actorAccountId: string;

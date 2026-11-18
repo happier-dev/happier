@@ -13,6 +13,8 @@ import type { ReviewAccessCapability } from './reviewAccess';
 import { readAdmittedReviewCountsInTx } from './reviewListService';
 import type { Tx } from '@/storage/inTx';
 import type { ReviewReviewersSetInputV1, ReviewVerdictSubmitInputV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { resolveArtifactAudiencesInTx } from '@/app/artifacts/artifactAccessService';
 
 type HumanRows = Readonly<{
     requests: readonly ReviewRequestedReviewerV1[];
@@ -26,50 +28,85 @@ function projectRequest(row: Readonly<{
     principal: unknown;
     required: boolean;
     eligibleAccounts: readonly Readonly<{ accountId: string }>[];
-}>): ReviewRequestedReviewerV1 {
+}>, audience: ReadonlySet<string>): ReviewRequestedReviewerV1 {
     const principal = PrincipalRefV1Schema.parse(row.principal);
     return { id: row.id, roundOrdinal: row.roundOrdinal, principal, required: row.required,
-        // Reviewer eligibility is a round fact; resource-key access is admitted by
-        // the Artifact owner when the person opens the Review. Keep this explicit.
-        needsAccess: true };
+        needsAccess: row.eligibleAccounts.some(account => !audience.has(account.accountId)) };
 }
-async function readHumanRowsInTx(tx: Tx, input: Readonly<{
+function groupByReview<T extends { reviewId: string }>(rows: readonly T[]): ReadonlyMap<string, readonly T[]> {
+    const result = new Map<string, T[]>();
+    for (const row of rows) {
+        const group = result.get(row.reviewId);
+        if (group) group.push(row); else result.set(row.reviewId, [row]);
+    }
+    return result;
+}
+
+type AdmittedReviewAttentionFact = Readonly<{ currentRoundOrdinal: number; pendingDecisionCount: number }>;
+type HumanReadInput = Readonly<{
     actorAccountId: string;
-    access: ReviewAccessCapability;
-}>): Promise<HumanRows> {
-    const metadata = await tx.reviewMetadata.findUnique({
-        where: { artifactId: input.access.reviewId },
-        select: { currentRoundOrdinal: true },
-    });
-    if (!metadata) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
-    const [requestRows, verdictRows, counts] = await Promise.all([
-        tx.reviewRequestedReviewer.findMany({
-            where: { reviewId: input.access.reviewId },
-            orderBy: [{ roundOrdinal: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-            select: { id: true, roundOrdinal: true, principal: true, required: true,
-                eligibleAccounts: { select: { accountId: true } } },
-        }),
-        tx.reviewVerdict.findMany({
-            where: { reviewId: input.access.reviewId },
-            orderBy: [{ roundOrdinal: 'asc' }, { accountId: 'asc' }],
-            select: { accountId: true, roundOrdinal: true, verdict: true, content: true, revision: true, submittedAt: true },
-        }),
-        readAdmittedReviewCountsInTx(tx, [input.access.reviewId]),
-    ]);
-    const currentRequests = requestRows.some(row => row.roundOrdinal === metadata.currentRoundOrdinal)
-        ? requestRows.filter(row => row.roundOrdinal === metadata.currentRoundOrdinal)
-        : requestRows.filter(row => row.roundOrdinal === Math.max(0, ...requestRows.map(row => row.roundOrdinal)) && row.required)
-            .map(row => ({ ...row, roundOrdinal: metadata.currentRoundOrdinal }));
-    const requests = currentRequests.map(projectRequest);
+    reviews: readonly ReviewAccessCapability[];
+    /** Metadata and counts already read in this admitted list snapshot. */
+    facts?: ReadonlyMap<string, AdmittedReviewAttentionFact>;
+}>;
+
+async function readHumanRowsInTx(tx: Tx, input: HumanReadInput): Promise<ReadonlyMap<string, HumanRows>> {
+    const result = new Map<string, HumanRows>();
+    if (input.reviews.length === 0) return result;
+    const counts = input.facts === undefined ? await readAdmittedReviewCountsInTx(tx, input.reviews.map(row => row.reviewId)) : undefined;
+    for (const accesses of portableQueryChunks({ values: input.reviews, bindingsPerValue: 1 })) {
+        const reviewIds = accesses.map(access => access.reviewId);
+        const [metadataRows, requestRows, verdictRows] = await Promise.all([
+            input.facts === undefined
+                ? tx.reviewMetadata.findMany({ where: { artifactId: { in: reviewIds } }, select: { artifactId: true, currentRoundOrdinal: true } })
+                : Promise.resolve(accesses.map(access => ({ artifactId: access.reviewId, currentRoundOrdinal: input.facts!.get(access.reviewId)!.currentRoundOrdinal }))),
+            tx.reviewRequestedReviewer.findMany({
+                where: { reviewId: { in: reviewIds } },
+                orderBy: [{ roundOrdinal: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+                select: { reviewId: true, id: true, roundOrdinal: true, principal: true, required: true,
+                    eligibleAccounts: { select: { accountId: true } } },
+            }),
+            tx.reviewVerdict.findMany({
+                where: { reviewId: { in: reviewIds } },
+                orderBy: [{ roundOrdinal: 'asc' }, { accountId: 'asc' }],
+                select: { reviewId: true, accountId: true, roundOrdinal: true, verdict: true, content: true, revision: true, submittedAt: true },
+            }),
+        ]);
+        const metadataById = new Map(metadataRows.map(row => [row.artifactId, row]));
+        const requestsById = groupByReview(requestRows);
+        const verdictsById = groupByReview(verdictRows);
+        const audiences = await resolveArtifactAudiencesInTx(tx, [...requestsById.keys()]);
+        for (const access of accesses) {
+            const metadata = metadataById.get(access.reviewId);
+            if (!metadata) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
+            result.set(access.reviewId, projectHumanRows({ actorAccountId: input.actorAccountId, access,
+                currentRoundOrdinal: metadata.currentRoundOrdinal,
+                pendingDecisionCount: input.facts?.get(access.reviewId)?.pendingDecisionCount ?? counts?.get(access.reviewId)?.needsDecision ?? 0,
+                audience: new Set(audiences.get(access.reviewId) ?? []),
+                requestRows: requestsById.get(access.reviewId) ?? [], verdictRows: verdictsById.get(access.reviewId) ?? [] }));
+        }
+    }
+    return result;
+}
+
+function projectHumanRows(input: Readonly<{
+    actorAccountId: string; access: ReviewAccessCapability; currentRoundOrdinal: number; pendingDecisionCount: number;
+    audience: ReadonlySet<string>;
+    requestRows: readonly Readonly<{ id: string; roundOrdinal: number; principal: unknown; required: boolean;
+        eligibleAccounts: readonly Readonly<{ accountId: string }>[] }>[];
+    verdictRows: readonly Readonly<{ accountId: string; roundOrdinal: number; verdict: string; content: unknown; revision: number; submittedAt: Date }>[];
+}>): HumanRows {
+    const { requestRows, verdictRows } = input;
+    const currentRequests = requestRows.filter(row => row.roundOrdinal === input.currentRoundOrdinal);
+    const requests = currentRequests.map(row => projectRequest(row, input.audience));
     const verdicts = verdictRows.map(row => ({ accountId: row.accountId, roundOrdinal: row.roundOrdinal,
         verdict: row.verdict as ReviewVerdictV1['verdict'], content: row.content === null ? undefined : StoredJsonContentEnvelopeSchema.parse(row.content),
         submittedAt: row.submittedAt.getTime(), revision: row.revision }));
     const canRead = true;
     const canDecide = input.access.level !== 'view';
-    const pendingDecisionCount = counts.get(input.access.reviewId)?.needsDecision ?? 0;
     const needsYou = projectReviewNeedsYouV1({ reviewId: input.access.reviewId,
-        roundOrdinal: metadata.currentRoundOrdinal, actorAccountId: input.actorAccountId, canRead, canDecide,
-        pendingDecisionCount, requests: currentRequests.map(request => ({ roundOrdinal: request.roundOrdinal,
+        roundOrdinal: input.currentRoundOrdinal, actorAccountId: input.actorAccountId, canRead, canDecide,
+        pendingDecisionCount: input.pendingDecisionCount, requests: currentRequests.map(request => ({ roundOrdinal: request.roundOrdinal,
             eligibleAccountIds: request.eligibleAccounts.map(account => account.accountId) })),
         verdicts });
     return { requests, verdicts, needsYou };
@@ -79,24 +116,19 @@ async function readHumanRowsInTx(tx: Tx, input: Readonly<{
 export async function readAdmittedReviewHumanStateInTx(tx: Tx, input: Readonly<{
     actorAccountId: string;
     access: ReviewAccessCapability;
+    /** Already read by the composed detail owner in this admitted snapshot. */
+    facts?: AdmittedReviewAttentionFact;
 }>): Promise<ReviewHumanStateV1> {
-    const rows = await readHumanRowsInTx(tx, input);
+    const rows = (await readHumanRowsInTx(tx, { actorAccountId: input.actorAccountId, reviews: [input.access],
+        facts: input.facts === undefined ? undefined : new Map([[input.access.reviewId, input.facts]]) })).get(input.access.reviewId)!;
     return ReviewHumanStateV1Schema.parse({ reviewId: input.access.reviewId,
         roundOrdinal: rows.needsYou.roundOrdinal, requests: rows.requests, verdicts: rows.verdicts,
         needsYou: rows.needsYou });
 }
 
 /** Batch projection used by list and Inbox consumers; it performs no per-review access lookup. */
-export async function readAdmittedReviewNeedsYouInTx(tx: Tx, input: Readonly<{
-    actorAccountId: string;
-    reviews: readonly ReviewAccessCapability[];
-}>): Promise<ReadonlyMap<string, ReviewNeedsYouV1>> {
-    const result = new Map<string, ReviewNeedsYouV1>();
-    for (const access of input.reviews) {
-        const rows = await readHumanRowsInTx(tx, { actorAccountId: input.actorAccountId, access });
-        result.set(access.reviewId, rows.needsYou);
-    }
-    return result;
+export async function readAdmittedReviewNeedsYouInTx(tx: Tx, input: HumanReadInput): Promise<ReadonlyMap<string, ReviewNeedsYouV1>> {
+    return new Map([...(await readHumanRowsInTx(tx, input))].map(([reviewId, rows]) => [reviewId, rows.needsYou]));
 }
 
 export async function setAdmittedReviewersInTx(tx: Tx, input: Readonly<{
