@@ -126,7 +126,9 @@ describe('artifactBrowserModel', () => {
         projectArtifactBrowserTree(artifacts, { query: '', kind: 'prompt', sort: 'title_asc' }, {
             folders: { v: 1, folders: [{ id: 'empty', name: 'Empty', parentId: null }] },
         });
-        expect(headerReads).toBeLessThan(500);
+        // One measured projection reads two headers per prompt (kind and organization).
+        // A second inventory projection doubles this work to four per prompt.
+        expect(headerReads).toBeLessThanOrEqual(artifacts.length * 2);
     });
 
     it('keeps malformed retained folder topology visible without inventing a persistence repair', () => {
