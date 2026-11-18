@@ -509,6 +509,7 @@ const deploymentSettingsTranslations = {
     privateSharingAddress: "Adres hosta",
     privateSharingHostPort: "Publikowany port hosta",
     privateSharingReview: "Sprawdź udostępnianie",
+    privateSharingNeeds: ({ field }) => `Uzupełnij „${field}”, aby sprawdzić udostępnianie.`,
     privateSharingReviewBody: "Następne wdrożenie przypisze ten adres i port. Inne aplikacje będą mogły używać tego prywatnego eksportu.",
     privateSharingInvalid: "Sprawdź usługę, nazwę eksportu, schemat i oba porty.",
     privateSharingHappierNetwork: "Sieć Happier",

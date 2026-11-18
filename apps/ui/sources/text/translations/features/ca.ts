@@ -512,6 +512,7 @@ const deploymentSettingsTranslations = {
     privateSharingAddress: "Adreça de l’amfitrió",
     privateSharingHostPort: "Port publicat de l’amfitrió",
     privateSharingReview: "Revisar accés",
+    privateSharingNeeds: ({ field }) => `Omple «${field}» per revisar l’accés.`,
     privateSharingReviewBody: "El pròxim desplegament farà servir aquesta adreça i port. Altres aplicacions podran utilitzar aquesta exportació privada.",
     privateSharingInvalid: "Comprova el servei, el nom d’exportació, l’esquema i els dos ports.",
     privateSharingHappierNetwork: "Xarxa Happier",

@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
   CollectionDraftRow,
@@ -28,7 +28,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { selectDeploymentSingleDataMachineV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentRailState, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel, deploymentEnvironmentRowState } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentStepCaption } from './DeploymentStepStrip';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -214,13 +214,14 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   const anyPlatform = items.some((item) => item.runtimeTargetLink?.source.kind === 'plugin');
   const platformTitle = useDeploymentPlatformTargetTitles(lifetime, anyPlatform);
   const nowMs = Date.now();
-  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress }) => {
+  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress, healthAggregate }) => {
     // An unknown Machine drops out of the line rather than reading "a machine".
     const member = selectDeploymentSingleDataMachineV1(runtimeTargetLink ?? null);
     const name = member ? machineNames[member.machineId] ?? null : null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
     const machine = name ? keepNamesWhole(name) : null;
-    const latest = currentDeployment ? deploymentRailState(currentDeployment.state) : null;
+    // Live health and the latest attempt through the one Environment state rule the page also reads (D11).
+    const latest = deploymentEnvironmentRowState({ currentDeployment, healthAggregate });
     // Compose and runtime Machine names belong to native runtime membership, never to its controller.
     const compose = runtimeTargetLink?.targetKind === 'ownServer' ? t('projects.deployments.compose') : null;
     const platform = runtimeTargetLink?.source.kind === 'plugin' ? platformTitle(runtimeTargetLink.source) : null;
@@ -324,15 +325,19 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   emptyTitle: string;
   emptyBody: string;
 }>) {
+  const { theme } = useUnistyles();
   const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true });
   const items = (collection.snapshot.value?.items ?? []).filter(props.eligible);
   const rows = useDeploymentEnvironmentRowSelection(items, row => row.environment.id, props.onSelect);
   const failure = collection.snapshot.failure;
   return (
     <ItemGroup title={props.title}>
+      {/* The chosen destination carries its check, so a lone option still reads as chosen or not (D23). */}
       {rows.map(row => <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
         title={row.title} accessibilityRole="radio" selected={props.selectedId === row.environment.id} disabled={props.disabled}
-        showChevron={false} onPress={row.onPress} />)}
+        showChevron={false} onPress={row.onPress}
+        rightElement={props.selectedId === row.environment.id
+          ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />)}
       {collection.hasPreviousPage ? <SectionActionButton testID={`${props.testID}.previous`}
         icon="caret-left" title={t('common.previous')} disabled={props.disabled} onPress={collection.previousPage} /> : null}
       {collection.hasNextPage ? <SectionActionButton testID={`${props.testID}.next`}

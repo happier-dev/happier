@@ -22,6 +22,7 @@ import type { createDeploymentActions } from './deploymentActions';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentDatabaseMoveDestination } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
@@ -52,6 +53,7 @@ export function showDeploymentDatabaseMoveSheet(input: Input): void {
 }
 
 function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = useDeploymentEnvironmentRecord(props.controller, selectedId, { mounted: true, visible: true, focused: true });
   const destination = selected.snapshot.value;
@@ -143,7 +145,18 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
             ? t('projects.deployments.databaseMoveBackupsRequired') : t('projects.deployments.databaseMoveSelectionUnavailable')
           : t('projects.deployments.loading')}
         diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
-        reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined} /> : null}
+        reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined}
+        // A prerequisite leads to where it is met: the destination's own Settings › Backups (PAGE-ACCEPT-176 D23).
+        {...(destinationRefusal === 'backup_required' && destination ? { action: {
+          label: t('projects.deployments.settingsSections.setupTitle'),
+          testID: 'project-deployments.move.destination.setUpBackups',
+          onPress: () => {
+            props.onClose();
+            router.push(deploymentEnvironmentRoute({ serverId: destination.environment.serverId,
+              projectSourceId: destination.environment.projectSourceId, environmentId: destination.environment.id,
+              tab: 'settings', section: 'backups' }) as never);
+          },
+        } } : {})} /> : null}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
         title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
           : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter')

@@ -76,6 +76,42 @@ it('names the runtime platform for healthy releases and previews without present
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
 
+it('D11: a live health arrival changes only that row\'s state, from the one state rule every Environment list reads', async () => {
+  let items: EnvironmentItem[] = ['api', 'worker', 'db'].map(id => ({
+    environment: createDeploymentEnvironmentHeaderV1({ id, updatedAtMs: 1000 }), title: id,
+    currentDeployment: createDeploymentReceiptHeaderV1({ state: 'running_unverified' }) }));
+  let publish: (next: EnvironmentItem[]) => void = () => {};
+  const renders = new Map<string, number>();
+  let rows: RowParts[] = [];
+  const Consumer = React.memo(function Consumer({ row }: { row: RowParts }) {
+    renders.set(row.environmentId, (renders.get(row.environmentId) ?? 0) + 1);
+    return <Item testID={`row.${row.environmentId}`} title={row.title} subtitleLeading={row.subtitleLeading} mode="info" />;
+  });
+  function Producer() {
+    const [value, setValue] = React.useState(items);
+    publish = setValue;
+    rows = useDeploymentEnvironmentRowParts(value, 'health');
+    return <>{rows.map(row => <Consumer key={row.environmentId} row={row} />)}</>;
+  }
+  const screen = await renderScreen(<Producer />);
+  try {
+    expect(rows.find(row => row.environmentId === 'db')?.state?.tone).toBe('warning');
+    renders.clear();
+    // Live health says the database is down while its receipt is unchanged: that row reads Down, nothing else renders.
+    items = items.map(item => item.environment.id === 'db'
+      ? { ...item, healthAggregate: { status: 'down', n: 1, up: 0, down: 1, degraded: 0, unknown: 0 } } as EnvironmentItem : item);
+    await act(async () => publish(items));
+    expect(rows.find(row => row.environmentId === 'db')?.state).toMatchObject({ tone: 'danger' });
+    expect(renders.get('db')).toBe(1);
+    expect([...renders].filter(([id]) => id !== 'db')).toEqual([]);
+    // Verified healthy live: "Running, not verified" is no longer true, so the row is quiet.
+    items = items.map(item => item.environment.id === 'api'
+      ? { ...item, healthAggregate: { status: 'up', n: 1, up: 1, down: 0, degraded: 0, unknown: 0 } } as EnvironmentItem : item);
+    await act(async () => publish(items));
+    expect(rows.find(row => row.environmentId === 'api')?.state).toBeNull();
+  } finally { await screen.unmount(); }
+});
+
 it('E500: two unrelated arrivals and thirteen receipt batches render zero unaffected rows; a changed row renders once', async () => {
   let items = fixture(500);
   let publish: (next: EnvironmentItem[]) => void = () => {};

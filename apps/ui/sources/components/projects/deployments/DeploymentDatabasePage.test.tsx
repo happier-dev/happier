@@ -806,11 +806,16 @@ describe('Environment → Database → Move', () => {
       expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
       expect(view.effects.some(effect => effect.actionId === 'deployments.backups.run')).toBe(false);
+      // The prerequisite leads to where it is met: the destination's Settings › Backups (PAGE-ACCEPT-176 D23).
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination.setUpBackups');
+      expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({
+        deploymentEnvironment: 'database-dedicated', deploymentTab: 'settings', deploymentSection: 'backups' }) }));
     } finally { await view.dispose(); }
   });
 
   it('says a refused Move start in the sheet, with its code under Technical details, never as a bare alert (D25)', async () => {
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true, refuseWorkflowStart: true });
+    routerMock.spies.push.mockClear();
     try {
       await view.settle(`${page}.move`);
       await view.screen.pressByTestIdAsync(`${page}.move`);

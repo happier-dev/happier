@@ -40,7 +40,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup, withItemGroupDividers } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HappyError } from '@/utils/errors/errors';
@@ -175,7 +175,8 @@ export function DeploymentBackupControls(props: Readonly<{
   const verification = ready?.history?.lastVerification;
   const backups = (ready?.history?.history?.entries ?? []).filter(entry => entry.action === 'backup')
     .sort((a, b) => b.completedAt - a.completedAt);
-  return (
+  // The rows part by the section's own row rule even though this component, not the section, lists them.
+  return withItemGroupDividers(
     <>
       {operations.result ? <Item testID={`${props.testID}.result`} title={operations.result} mode="info" /> : null}
       {operations.change.outcome ? <DeployOutcomeBanner controller={operations.change.banner}
@@ -191,7 +192,7 @@ export function DeploymentBackupControls(props: Readonly<{
           verified={verification?.backupOperationId === entry.operationId && verification.result === 'verified'}
           testID={`${props.testID}.history.${entry.operationId}`} />
       ))}
-    </>
+    </>,
   );
 }
 

@@ -261,6 +261,25 @@ export function deploymentStateNotice(
 }
 
 /**
+ * One Environment's state in every list of Environments (rail, Projects tree, Services, chooser, counts), the
+ * Environment page's attention order in small (D11): a failed, unknown or working latest attempt speaks first;
+ * then live health, which says Down or Degraded over a settled receipt; "Running, not verified" only while no live
+ * health has verified it. One rule, so a list never disagrees with the page.
+ */
+export function deploymentEnvironmentRowState(item: Readonly<{
+  currentDeployment?: Pick<DeploymentReceiptHeaderV1, 'state'> | null;
+  healthAggregate?: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
+}>): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
+  const state = item.currentDeployment?.state ?? null;
+  if (state === 'failed' || state === 'outcome_unknown' || state === 'queued' || state === 'running') return deploymentRailState(state);
+  const health = item.healthAggregate?.status;
+  if (health === 'down') return { tone: 'danger', text: t('projects.deployments.healthDown') };
+  if (health === 'degraded') return { tone: 'warning', text: t('projects.deployments.healthDegraded') };
+  if (health === 'up' && state === 'running_unverified') return null;
+  return state ? deploymentRailState(state) : null;
+}
+
+/**
  * What the rail says about an Environment's latest attempt (lab d1 rail): trouble only when there is
  * trouble, and work in progress by name. A settled success or cancellation says nothing.
  */

@@ -35,7 +35,7 @@ import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTe
 import { useDeploymentInventory } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
-import { deploymentRailState } from './deploymentPresentation';
+import { deploymentEnvironmentRowState } from './deploymentPresentation';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
 import { useServiceCheckSelection } from './ServiceCheckList';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
@@ -451,7 +451,7 @@ export function AllDeploymentsGroups(
 
 /** The Apps rows that need the person: a failed or unconfirmed latest deploy (the readiness owner's tone). */
 function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
-  return items.filter((item) => item.currentDeployment && deploymentRailState(item.currentDeployment.state)?.tone).length;
+  return items.filter((item) => deploymentEnvironmentRowState(item)?.tone).length;
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
@@ -462,7 +462,7 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, to
   let needYou = 0;
   let deploying = 0;
   for (const item of items) {
-    const state = item.currentDeployment ? deploymentRailState(item.currentDeployment.state) : null;
+    const state = deploymentEnvironmentRowState(item);
     if (state?.tone) needYou += 1;
     else if (state) deploying += 1;
   }

@@ -137,6 +137,7 @@ export type DeploymentSettingsTranslations = Readonly<{
   privateSharingAddress: string;
   privateSharingHostPort: string;
   privateSharingReview: string;
+  privateSharingNeeds: (params: { field: string }) => string;
   privateSharingReviewBody: string;
   privateSharingInvalid: string;
   privateSharingHappierNetwork: string;
@@ -272,6 +273,7 @@ export const deploymentSettingsTranslations = {
     privateSharingAddress: "Host address",
     privateSharingHostPort: "Published host port",
     privateSharingReview: "Review sharing",
+    privateSharingNeeds: ({ field }) => `Fill in “${field}” to review sharing.`,
     privateSharingReviewBody: "The next deployment binds this host address and port. Other apps can then use this private export.",
     privateSharingInvalid: "Check the service, export name, scheme and both ports.",
     privateSharingHappierNetwork: "Happier network",

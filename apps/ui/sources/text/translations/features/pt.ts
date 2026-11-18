@@ -512,6 +512,7 @@ const deploymentSettingsTranslations = {
     privateSharingAddress: "Endereço do anfitrião",
     privateSharingHostPort: "Porta publicada do anfitrião",
     privateSharingReview: "Rever partilha",
+    privateSharingNeeds: ({ field }) => `Preencha «${field}» para rever a partilha.`,
     privateSharingReviewBody: "A próxima implementação usará este endereço e porta. Outras aplicações poderão usar esta exportação privada.",
     privateSharingInvalid: "Verifique o serviço, nome da exportação, esquema e ambas as portas.",
     privateSharingHappierNetwork: "Rede Happier",

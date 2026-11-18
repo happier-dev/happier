@@ -505,6 +505,7 @@ const deploymentSettingsTranslations = {
     privateSharingAddress: "主機位址",
     privateSharingHostPort: "發布的主機連接埠",
     privateSharingReview: "檢查共享",
+    privateSharingNeeds: ({ field }) => `填寫「${field}」後即可檢查共享。`,
     privateSharingReviewBody: "下次部署將綁定此主機位址和連接埠。其他應用程式隨後可使用此私人匯出。",
     privateSharingInvalid: "請檢查服務、匯出名稱、通訊協定和兩個連接埠。",
     privateSharingHappierNetwork: "Happier 網路",

@@ -282,7 +282,8 @@ export function DeploymentDomainsPanel(
       // Every address the list shows counts, the platform's built-in one too.
       title={addressCount > 0 ? t('projects.deployments.editors.domainsCount', { count: addressCount }) : t('projects.deployments.tabDomains')}
       description={t('projects.deployments.editors.domainsLede')}
-      action={addAction}
+      // An empty list's invitation carries Add a domain; the title doesn't repeat it (one action per state).
+      action={domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) === 0 ? undefined : addAction}
       surface="none"
     >
       {unavailableDockerDesktop ? (
@@ -344,7 +345,8 @@ export function DeploymentDomainsPanel(
         : domains.result.status === 'empty' ? <EmptyState testID="project-deployments.environment.domains.empty"
           layout="page" scene="shipped" title={t('projects.deployments.domainsEmpty')}
           {...(canAdd ? { primaryAction: { label: t('projects.deployments.domainAddTitle'),
-            testID: 'project-deployments.environment.domains.empty.add', onPress: () => setAdding(true) } } : {})} />
+            // The one Add a domain while the list is empty: the title's action steps aside for it.
+            testID: 'project-deployments.environment.domains.add', onPress: () => setAdding(true) } } : {})} />
         : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"

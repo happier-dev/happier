@@ -20,21 +20,19 @@ import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { COLLECTION_SPACE_KIND_PRESENTATION } from '@/components/settings/session/collectionSpaceKindPresentation';
-import { deploymentRailState } from './deploymentPresentation';
+import { deploymentEnvironmentRowState } from './deploymentPresentation';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 
 /**
  * What a Services row is doing, as its filter reads it, from the same readiness owner its State mark draws
- * (`deploymentRailState`): a failed or unverified deploy needs the person, a queued or running one deploys, a settled one
+ * (`deploymentEnvironmentRowState`, live health included): a failed or unverified deploy needs the person, a queued or running one deploys, a settled one
  * is deployed, and an Environment nothing was deployed to says so.
  */
 export function deploymentEnvironmentListFilterFacts(
   item: EnvironmentItem,
 ): DeploymentEnvironmentListFilterFactsV1 {
-  const latest = item.currentDeployment
-    ? deploymentRailState(item.currentDeployment.state)
-    : null;
+  const latest = deploymentEnvironmentRowState(item);
   return {
     projectSourceId: item.environment.projectSourceId,
     state: !item.currentDeployment

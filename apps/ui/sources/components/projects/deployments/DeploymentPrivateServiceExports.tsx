@@ -22,6 +22,7 @@ import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettin
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { Text } from '@/components/ui/text/Text';
 import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
   type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
@@ -137,6 +138,10 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     editing.onChanged(); onClose();
   });
   const canReview = Boolean(service && key.trim() && scheme.trim() && containerPort && hostPort && (happier || hostAddress));
+  const missingField = canReview ? null : !key.trim() ? t('projects.deployments.settingsSections.privateSharingKey')
+    : !containerPort ? t('projects.deployments.settingsSections.privateSharingPort')
+    : !scheme.trim() ? t('projects.deployments.settingsSections.privateSharingScheme')
+    : !hostPort ? t('projects.deployments.settingsSections.privateSharingHostPort') : null;
   const reach = (): PrivateServiceExportReach | null => {
     if (happier) return { kind: 'happierNetwork' };
     if (!selectedNetwork?.networkIdentity || !hostAddress || !selectedNetwork.addresses.includes(hostAddress)) return null;
@@ -210,6 +215,9 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
           label={t('projects.deployments.settingsSections.privateSharingAddress')}
           items={selectedNetwork.addresses.map(value => ({ id: value, title: value }))} selectedId={hostAddress} onSelect={setAddress} fill /></FieldItem> : null}
       {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort)}
+      {/* Review sharing says what it still needs instead of staying disabled without a reason (PAGE-ACCEPT-176 D29). */}
+      {missingField ? <Text testID={`${id}.needs`} style={deploymentSheetStyles.lead}>
+        {t('projects.deployments.settingsSections.privateSharingNeeds', { field: missingField })}</Text> : null}
       </>}
     </>}
     {invalid ? <SurfaceStateCard testID={`${id}.invalid`} size="line" kind="error"

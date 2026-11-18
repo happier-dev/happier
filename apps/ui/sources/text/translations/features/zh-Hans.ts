@@ -504,6 +504,7 @@ const deploymentSettingsTranslations = {
     privateSharingAddress: "主机地址",
     privateSharingHostPort: "发布的主机端口",
     privateSharingReview: "检查共享",
+    privateSharingNeeds: ({ field }) => `填写“${field}”后即可检查共享。`,
     privateSharingReviewBody: "下次部署将绑定此主机地址和端口。其他应用随后可使用此私有导出。",
     privateSharingInvalid: "请检查服务、导出名称、协议和两个端口。",
     privateSharingHappierNetwork: "Happier 网络",
