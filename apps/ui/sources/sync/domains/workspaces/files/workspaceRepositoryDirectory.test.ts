@@ -1,33 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const workspaceListDirectoryMock = vi.fn();
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-vi.mock('@/sync/ops/workspaceFileSystem/directoryBrowsing', () => ({
-    workspaceListDirectory: (...args: unknown[]) => workspaceListDirectoryMock(...args),
-}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const listDirectoryOnMachine = vi.fn();
 
 /**
  * Two workspaces reached through two different servers. Same machine id, same root path — a
  * machine id is only unique within its server — so these must not share a cache entry, and
  * they must each be listed through their own server.
  */
-const SCOPE_A = { serverId: 'server-a', machineId: 'm1', rootPath: '/repo' } as const;
-const SCOPE_B = { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' } as const;
+const SCOPE_A = { serverId: '', machineId: 'm1', rootPath: '/repo' };
+const SCOPE_B = { ...SCOPE_A };
+
+async function answerDirectoryReads(scope: typeof SCOPE_A) {
+    await answerExternalActionAccountForHome(homes, scope.serverId, {
+        actionId: 'daemon.filesystem.listDirectory', machineId: scope.machineId, tokenEpoch: 0,
+        execute: input => listDirectoryOnMachine(scope.serverId, input),
+    });
+}
+
+beforeEach(async () => {
+    await homes.reset();
+    listDirectoryOnMachine.mockReset();
+    SCOPE_A.serverId = await homes.addHome({ name: 'Tree A', serverUrl: 'https://tree-a.test',
+        serverIdentityId: 'srv_files_tree_a', accountId: 'tree-account-a', currentAccount: true });
+    const { clearCachedWorkspaceRepositoryDirectoryEntries } = await import('./workspaceRepositoryDirectory');
+    const { buildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+    clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey: buildWorkspaceCacheKey(SCOPE_A) });
+    await answerDirectoryReads(SCOPE_A);
+});
 
 describe('workspaceRepositoryDirectory', () => {
-    beforeEach(() => {
-        vi.resetModules();
-        workspaceListDirectoryMock.mockReset();
-    });
-
     it('caches directory entries by workspace scope + directoryPath, and lists through that scope\'s server', async () => {
-        workspaceListDirectoryMock.mockResolvedValue({
+        SCOPE_B.serverId = await homes.addHome({ name: 'Tree B', serverUrl: 'https://tree-b.test',
+            serverIdentityId: 'srv_files_tree_b', accountId: 'tree-account-b', currentAccount: true, active: false });
+        await answerDirectoryReads(SCOPE_B);
+        listDirectoryOnMachine.mockResolvedValue({
             success: true,
-            path: '/repo',
             truncated: false,
             entries: [
-                { name: 'src', path: '/repo/src', type: 'directory' },
-                { name: 'README.md', path: '/repo/README.md', type: 'file', size: 10, modified: 1 },
+                { name: 'src', type: 'directory' },
+                { name: 'README.md', type: 'file', size: 10, modified: 1 },
             ],
         });
 
@@ -52,21 +68,19 @@ describe('workspaceRepositoryDirectory', () => {
         });
         expect(res2.ok).toBe(true);
 
-        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(listDirectoryOnMachine).toHaveBeenCalledTimes(2);
         // Each read went out on the server its own scope names — the entry cannot be filed
         // under one server while being read through another.
-        const serverIds = workspaceListDirectoryMock.mock.calls
-            .map(([scope]) => (scope as Readonly<{ serverId: string }>).serverId);
-        expect(serverIds).toEqual(['server-a', 'server-b']);
+        const serverIds = listDirectoryOnMachine.mock.calls.map(([serverId]) => serverId);
+        expect(serverIds).toEqual([SCOPE_A.serverId, SCOPE_B.serverId]);
     });
 
     it('clears cached entries for a workspace', async () => {
-        workspaceListDirectoryMock.mockResolvedValue({
+        listDirectoryOnMachine.mockResolvedValue({
             success: true,
-            path: '/repo',
             truncated: false,
             entries: [
-                { name: 'a', path: '/repo/a', type: 'file' },
+                { name: 'a', type: 'file' },
             ],
         });
 
@@ -76,7 +90,7 @@ describe('workspaceRepositoryDirectory', () => {
             scope: SCOPE_A,
             directoryPath: '',
         });
-        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(1);
+        expect(listDirectoryOnMachine).toHaveBeenCalledTimes(1);
 
         // The key-addressed clear must name the same entry the scope-addressed warm filled;
         // both go through `tryBuildWorkspaceCacheKey`, and this is where that agreement holds.
@@ -89,7 +103,7 @@ describe('workspaceRepositoryDirectory', () => {
             scope: SCOPE_A,
             directoryPath: '',
         });
-        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(listDirectoryOnMachine).toHaveBeenCalledTimes(2);
     });
 
     it('prunes cached descendants when a refreshed parent no longer contains their directory', async () => {
@@ -100,7 +114,7 @@ describe('workspaceRepositoryDirectory', () => {
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src', entries: [{ name: 'old.ts', type: 'file' }] });
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src/deep', entries: [{ name: 'stale.ts', type: 'file' }] });
         mod.setCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src-other', entries: [{ name: 'keep.ts', type: 'file' }] });
-        workspaceListDirectoryMock.mockResolvedValue({ success: true, path: '/repo', entries: [] });
+        listDirectoryOnMachine.mockResolvedValue({ success: true, entries: [] });
         await mod.listWorkspaceRepositoryDirectoryEntries({ scope: SCOPE_A, directoryPath: '' });
         expect(mod.getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src' })).toBeNull();
         expect(mod.getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src/deep' })).toBeNull();
@@ -111,8 +125,8 @@ describe('workspaceRepositoryDirectory', () => {
 
 describe('workspace directory Git ignore metadata', () => {
     it('preserves classification through the canonical workspace cache', async () => {
-        workspaceListDirectoryMock.mockReset().mockResolvedValue({ success: true, path: '/repo', truncated: false, gitIgnoreAvailable: true,
-            entries: [{ name: 'node_modules', path: '/repo/node_modules', type: 'directory', gitIgnored: true }, { name: '.env.example', path: '/repo/.env.example', type: 'file', gitIgnored: false }],
+        listDirectoryOnMachine.mockResolvedValue({ success: true, truncated: false, gitIgnoreAvailable: true,
+            entries: [{ name: 'node_modules', type: 'directory', gitIgnored: true }, { name: '.env.example', type: 'file', gitIgnored: false }],
         });
         const mod = await import('./workspaceRepositoryDirectory');
         const input = { scope: SCOPE_A, directoryPath: 'classified' };
@@ -121,8 +135,8 @@ describe('workspace directory Git ignore metadata', () => {
         expect(await mod.warmWorkspaceRepositoryDirectoryCache(input)).toEqual(result);
     });
     it('keeps old daemon entries unclassified and visible', async () => {
-        workspaceListDirectoryMock.mockReset().mockResolvedValue({ success: true, path: '/repo', truncated: false,
-            entries: [{ name: 'node_modules', path: '/repo/node_modules', type: 'directory' }],
+        listDirectoryOnMachine.mockResolvedValue({ success: true, truncated: false,
+            entries: [{ name: 'node_modules', type: 'directory' }],
         });
         const mod = await import('./workspaceRepositoryDirectory');
         expect(await mod.listWorkspaceRepositoryDirectoryEntries({ scope: SCOPE_A, directoryPath: 'legacy' })).toMatchObject({ ok: true, gitIgnoreAvailable: false, entries: [{ name: 'node_modules' }] });
@@ -130,36 +144,25 @@ describe('workspace directory Git ignore metadata', () => {
 });
 
 describe('workspace directory cache across an Account change on one Home', () => {
-    const scope = { serverId: 'account-change-tree', machineId: 'shared-machine', rootPath: '/repo' } as const;
-    const location = { serverUrl: 'https://account-change-tree', serverId: scope.serverId };
-    const response = (name: string) => ({ success: true, path: '/repo', truncated: false, entries: [{ name, path: `/repo/${name}`, type: 'file' }] });
-
-    async function signIn(accountId: string) {
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-        expect(await TokenStorage.setCredentialsForServerUrl(location.serverUrl, { serverId: location.serverId },
-            { token: createAccountTokenForTests(accountId) })).toBe(true);
-    }
+    const response = (name: string) => ({ success: true, truncated: false, entries: [{ name, type: 'file' }] });
 
     it('withdraws the previous Account tree, wakes mounted trees, and retains no read still in flight', async () => {
         const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
         const { getCachedWorkspaceRepositoryDirectoryEntries, listWorkspaceRepositoryDirectoryEntries, warmWorkspaceRepositoryDirectoryCache } = await import('./workspaceRepositoryDirectory');
         const { subscribeWorkspaceRepositoryDirectoryRevision } = await import('./workspaceRepositoryDirectoryRevision');
-        const workspaceCacheKey = tryBuildWorkspaceCacheKey(scope)!;
-        await signIn('tree-account-a');
-        workspaceListDirectoryMock.mockReset();
-        workspaceListDirectoryMock.mockResolvedValueOnce(response('a-private.txt'));
-        await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath: '' });
+        const workspaceCacheKey = tryBuildWorkspaceCacheKey(SCOPE_A)!;
+        listDirectoryOnMachine.mockResolvedValueOnce(response('a-private.txt'));
+        await listWorkspaceRepositoryDirectoryEntries({ scope: SCOPE_A, directoryPath: '' });
         expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })?.[0]?.name).toBe('a-private.txt');
 
         const woken = vi.fn();
         const stop = subscribeWorkspaceRepositoryDirectoryRevision(workspaceCacheKey, woken);
         let settleHeld = (_value: unknown) => {};
-        workspaceListDirectoryMock.mockImplementationOnce(() => new Promise(resolve => { settleHeld = resolve; }));
-        const held = warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath: 'src' });
-        await vi.waitFor(() => expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2));
+        listDirectoryOnMachine.mockImplementationOnce(() => new Promise(resolve => { settleHeld = resolve; }));
+        const held = warmWorkspaceRepositoryDirectoryCache({ scope: SCOPE_A, directoryPath: 'src' });
+        await vi.waitFor(() => expect(listDirectoryOnMachine).toHaveBeenCalledTimes(2));
 
-        await signIn('tree-account-b');
+        await homes.switchAccount(SCOPE_A.serverId, 'tree-account-b', { currentAccount: true });
         expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })).toBeNull();
         expect(woken).toHaveBeenCalled();
 

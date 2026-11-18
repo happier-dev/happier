@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonWorkspaceFileListRequestSchema, DaemonWorkspaceFileListResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
+import { FilesystemListDirectoryInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDirectoryRevision';
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 const machineRipgrepMock = vi.fn();
-const workspaceListDirectoryMock = vi.fn();
+const listDirectoryOnMachine = vi.fn();
 let activeAccountLifetime: ReturnType<typeof createAccountLifetimeFixture> | null = null;
 
 function createAccountLifetimeFixture(accountId: string) {
@@ -48,10 +50,6 @@ vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({
     },
 }));
 
-vi.mock('@/sync/ops/workspaceFileSystem/directoryBrowsing', () => ({
-    workspaceListDirectory: (...args: unknown[]) => workspaceListDirectoryMock(...args),
-}));
-
 const credentialHarness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(credentialHarness);
 
@@ -62,6 +60,13 @@ installHomeGovernanceBoundaries(credentialHarness);
  */
 const SCOPE_A = { serverId: 'server-a', machineId: 'm1', rootPath: '/repo' };
 const SCOPE_B = { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' };
+
+async function answerDirectoryReads() {
+    await answerExternalActionAccountForHome(credentialHarness, SCOPE_A.serverId, {
+        actionId: 'daemon.filesystem.listDirectory', machineId: SCOPE_A.machineId, tokenEpoch: 0,
+        execute: (input, context) => listDirectoryOnMachine(FilesystemListDirectoryInputSchema.parse(input), context.authorization.binding.accountId),
+    });
+}
 
 /**
  * THE SIGNATURE GUARD — this one is enforced by the COMPILER, not by a runtime assertion.
@@ -93,11 +98,12 @@ describe('workspaceFileSearch', () => {
         // workspace dependency graph inside each test's execution budget.
         workspaceFileSearchCache.clearAll();
         machineRipgrepMock.mockReset();
-        workspaceListDirectoryMock.mockReset();
-        workspaceListDirectoryMock.mockResolvedValue({ success: false });
+        listDirectoryOnMachine.mockReset();
+        listDirectoryOnMachine.mockResolvedValue({ success: false, error: 'Directory unavailable' });
         activeAccountLifetime = null;
         await credentialHarness.reset();
-        SCOPE_A.serverId = await credentialHarness.addHome({ name: 'Files A', serverUrl: 'https://files-a.test', accountId: 'account-a' });
+        SCOPE_A.serverId = await credentialHarness.addHome({ name: 'Files A', serverUrl: 'https://files-a.test',
+            serverIdentityId: 'srv_files_search_a', accountId: 'account-a', currentAccount: true });
         SCOPE_B.serverId = await credentialHarness.addHome({ name: 'Files B', serverUrl: 'https://files-b.test', accountId: 'account-b', active: false });
     });
 
@@ -136,7 +142,8 @@ describe('workspaceFileSearch', () => {
         });
         else {
             machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
-            workspaceListDirectoryMock.mockResolvedValue({ success: true, entries: paths.map(name => ({ name, type: 'file' })) });
+            await answerDirectoryReads();
+            listDirectoryOnMachine.mockResolvedValue({ success: true, entries: paths.map(name => ({ name, type: 'file' })) });
         }
         const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
         const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'prmptMapper', resultType: 'file', includeCoverage: true });
@@ -501,7 +508,7 @@ describe('workspaceFileSearch', () => {
 
     it('throws a typed unavailable error only when ripgrep and directory traversal both fail', async () => {
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        workspaceListDirectoryMock.mockResolvedValue({ success: false });
+        await answerDirectoryReads();
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 }))
@@ -510,29 +517,32 @@ describe('workspaceFileSearch', () => {
 
     it('returns a successful empty result when directory traversal answers with an empty workspace', async () => {
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        workspaceListDirectoryMock.mockResolvedValue({ success: true, entries: [] });
+        await answerDirectoryReads();
+        listDirectoryOnMachine.mockResolvedValue({ success: true, entries: [] });
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
-        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(1);
+        expect(listDirectoryOnMachine).toHaveBeenCalledTimes(1);
     });
 
     it('returns a successful empty result from ripgrep without consulting traversal', async () => {
         machineRipgrepMock.mockResolvedValue({ success: true, stdout: '', stderr: '', exitCode: 0 });
+        await answerDirectoryReads();
 
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: '', limit: 50 })).resolves.toEqual([]);
         expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
-        expect(workspaceListDirectoryMock).not.toHaveBeenCalled();
+        expect(listDirectoryOnMachine).not.toHaveBeenCalled();
     });
 
     it('preserves a successful directory fallback when ripgrep is unavailable', async () => {
         activeAccountLifetime = createAccountLifetimeFixture('account-a');
         machineRipgrepMock.mockResolvedValue({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        workspaceListDirectoryMock.mockResolvedValueOnce({
+        await answerDirectoryReads();
+        listDirectoryOnMachine.mockResolvedValueOnce({
             success: true,
             entries: [{ name: 'README.md', type: 'file' }],
         });
@@ -540,22 +550,19 @@ describe('workspaceFileSearch', () => {
         const mod = await import('./workspaceFileSearch');
         await expect(mod.searchWorkspaceFiles({ scope: SCOPE_A, query: 'readme', limit: 50 }))
             .resolves.toEqual([expect.objectContaining({ fullPath: 'README.md', fileType: 'file' })]);
-        expect(workspaceListDirectoryMock).toHaveBeenCalledWith(
-            SCOPE_A,
-            '',
-            expect.objectContaining({ accountId: 'account-a' }),
-        );
+        expect(listDirectoryOnMachine).toHaveBeenCalledWith({ rootPath: '/repo', path: '/repo' }, 'account-a');
     });
 
     it.each(['refused', 'thrown'] as const)('retains readable siblings and marks fallback coverage partial after a %s child read', async failure => {
         machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
-        workspaceListDirectoryMock.mockImplementation(async (_scope: typeof SCOPE_A, directory: string) => {
-            if (directory === '') return { success: true, entries: [
+        await answerDirectoryReads();
+        listDirectoryOnMachine.mockImplementation(async ({ path }: { path: string }) => {
+            if (path === '/repo') return { success: true, entries: [
                 { name: 'unreadable', type: 'directory' }, { name: 'readable', type: 'directory' },
             ] };
-            if (directory === 'unreadable') {
+            if (path === '/repo/unreadable') {
                 if (failure === 'thrown') throw new Error('Directory read failed');
-                return { success: false, errorCode: 'permission_denied' };
+                return { success: false, errorCode: 'permission_denied', error: 'Directory read refused' };
             }
             return { success: true, entries: [{ name: 'keep.ts', type: 'file' }] };
         });
@@ -599,7 +606,8 @@ describe('workspaceFileSearch', () => {
         );
 
         machineRipgrepMock.mockResolvedValueOnce({ success: false, stdout: '', stderr: 'missing', exitCode: 127 });
-        workspaceListDirectoryMock
+        await answerDirectoryReads();
+        listDirectoryOnMachine
             .mockResolvedValueOnce({
                 success: true,
                 entries: [
@@ -615,7 +623,7 @@ describe('workspaceFileSearch', () => {
             resultType: 'file',
         });
         expect(hiddenFallback).toEqual([expect.objectContaining({ fullPath: '.github/ci.yml' })]);
-        expect(workspaceListDirectoryMock).toHaveBeenCalledTimes(2);
+        expect(listDirectoryOnMachine).toHaveBeenCalledTimes(2);
     });
 
     /**

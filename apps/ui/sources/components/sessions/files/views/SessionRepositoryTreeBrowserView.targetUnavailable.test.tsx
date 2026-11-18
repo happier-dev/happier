@@ -10,9 +10,6 @@ installSessionFilesViewCommonModuleMocks({ storage: async (importOriginal) => im
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: vi.fn(async () => ({ success: false, errorCode: 'BACKEND_UNAVAILABLE', error: 'offline' })),
 }));
-vi.mock('@/sync/ops/workspaceFileSystem/directoryBrowsing', () => ({
-    workspaceListDirectory: vi.fn(async () => ({ success: false, error: 'offline' })),
-}));
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
     return createExpoVectorIconsMock();

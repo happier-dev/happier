@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FilesystemListDirectoryInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { DaemonFilesystemListDirectoryRequestSchema } from '@happier-dev/protocol/machines/fileBrowser';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -12,7 +14,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { answerExternalActionAccountForHome, createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 const homes = createHomeGovernanceHarness();
@@ -658,15 +660,46 @@ describe('shared workspace filesystem Action admission', () => {
         })]);
     });
 
-    it('addresses the repository tree at the workspace root through the admitted directory Action', async () => {
+    it('lists only guest entries in the Files tree and search when the controller has the same root path', async () => {
         const { listWorkspaceRepositoryDirectoryEntries } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
-        filesystem.response = { success: true, entries: [{ name: 'guest-only.txt', type: 'file', gitIgnored: false }],
-            gitIgnoreAvailable: true };
-        const result = await listWorkspaceRepositoryDirectoryEntries({ scope: target, directoryPath: 'src' });
-        expect(filesystem.calls).toEqual([expect.objectContaining({
-            method: 'listDirectory', payload: { rootPath: '/repo', path: '/repo/src', includeGitIgnore: true },
-        })]);
-        expect(result).toMatchObject({ ok: true, entries: [{ name: 'guest-only.txt', gitIgnored: false }] });
+        const { searchWorkspaceFiles, workspaceFileSearchCache } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
+        const { machineFilesystemListDirectory } = await import('@/sync/ops/machineFileBrowser');
+        workspaceFileSearchCache.clearCache(target);
+
+        const rootPath = target.rootPath;
+        const guestEntries = [{ name: 'guest-only.txt', type: 'file', gitIgnored: false }] as const;
+        const controllerEntries = [{ name: 'controller-only.txt', type: 'file' }] as const;
+        const machine = { machineId: target.machineId, tokenEpoch: 0 };
+        // The receiving Machine has a registered guest at this root. Its unrooted
+        // browse Action still sees the controller filesystem at the very same path.
+        await answerExternalActionAccountForHome(homes, serverId, {
+            ...machine, actionId: 'daemon.filesystem.listDirectory',
+            execute: (input, { target: recipient }) => {
+                const request = FilesystemListDirectoryInputSchema.parse(input);
+                const placed = recipient.machineId === machine.machineId && request.rootPath === rootPath;
+                return { success: true, entries: request.path === rootPath ? placed ? guestEntries : controllerEntries : [],
+                    gitIgnoreAvailable: true };
+            },
+        });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            ...machine, actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory,
+            execute: input => {
+                const { path } = DaemonFilesystemListDirectoryRequestSchema.parse(input);
+                const entries = path === rootPath ? controllerEntries.map(entry => ({ ...entry, path: `${path}/${entry.name}` })) : [];
+                return { ok: true, path, entries, truncated: false };
+            },
+        });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            ...machine, actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles,
+            execute: () => ({ ok: false, errorCode: 'ripgrep_unavailable' }),
+        });
+
+        const controller = await machineFilesystemListDirectory(target.machineId, { path: rootPath }, { serverId });
+        expect(controller).toMatchObject({ ok: true, entries: [{ name: 'controller-only.txt' }] });
+        const tree = await listWorkspaceRepositoryDirectoryEntries({ scope: target, directoryPath: '' });
+        expect(tree).toMatchObject({ ok: true, entries: [{ name: 'guest-only.txt', gitIgnored: false }] });
+        const search = await searchWorkspaceFiles({ scope: target, query: '', resultType: 'file' });
+        expect(search.map(entry => entry.fullPath)).toEqual(['guest-only.txt']);
     });
 
     it('routes bounded directory reads through the same Action policy choke point', async () => {
