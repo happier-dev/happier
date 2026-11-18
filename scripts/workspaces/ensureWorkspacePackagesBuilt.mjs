@@ -23,7 +23,7 @@ import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
 import { resolveWorkspaceToolBinDirs } from '../../apps/stack/scripts/utils/proc/workspace_tool_bins.mjs';
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
-import { resolvePnpmCommandInvocation } from './execPnpmCommand.mjs';
+import { resolvePnpmCommandInvocation, resolvePnpmInvocation } from './execPnpmCommand.mjs';
 import { withWorkspaceOutputScriptArgs } from './workspaceOutputScriptArgs.mjs';
 import { resolveTypeScriptCliInvocation, requiresTypeScriptAdmission } from './resolveTypeScriptCliInvocation.mjs';
 import {
@@ -1085,6 +1085,11 @@ async function prepareWorkspaceBuildEnv(packageDir, envIn) {
   const env = { ...(envIn && typeof envIn === 'object' ? envIn : process.env) };
   env.REDISMS_DISABLE_POSTINSTALL ??= '1';
   prependPathEntry(env, dirname(process.execPath));
+  // Node's bin dir can hold a global pnpm. Nested `pnpm` in package scripts must stay the pinned
+  // pnpm that runs this build, otherwise it self-switches to packageManager (a download into
+  // $HOME that fails with ENOEXEC on macOS) once per script.
+  const pnpm = resolvePnpmInvocation(env.npm_execpath).command;
+  if (isAbsolute(pnpm)) prependPathEntry(env, dirname(pnpm));
   const workspaceToolBinDirs = await resolveWorkspaceToolBinDirs(packageDir);
   for (const workspaceToolBinDir of workspaceToolBinDirs.reverse()) {
     prependPathEntry(env, workspaceToolBinDir);

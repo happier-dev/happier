@@ -5605,3 +5605,25 @@ for (const entry of ['names', 'component']) for (const recurring of [false, true
     assert.equal(attempts, 2, 'the existing convergence owner allows exactly one trailing phase');
   });
 }
+
+test('a package build resolves nested pnpm to the invoking pinned pnpm, not a global pnpm beside node', async (t) => {
+  // mac-host 2026-11-17: node's own bin dir carried a global pnpm 11. Prepended ahead of the
+  // pinned pnpm, every nested `pnpm run` in a package script self-switched to packageManager's
+  // pnpm (a download into $HOME) and failed with ENOEXEC; under a fake HOME it downloaded each time.
+  const root = mkdtempSync(join(tmpdir(), 'p03-pinned-pnpm-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pinnedDir = join(root, 'toolchain', 'bin');
+  mkdirSync(pinnedDir, { recursive: true });
+  const pinned = join(pinnedDir, 'pnpm');
+  writeFileSync(pinned, '#!/bin/sh\nexit 0\n');
+  chmodSync(pinned, 0o755);
+  const packageDir = join(root, 'pkg');
+  mkdirSync(packageDir);
+  const env = await defaultWorkspaceBuildBoundary.prepareEnv(packageDir, {
+    PATH: [pinnedDir, '/usr/bin'].join(delimiter),
+    npm_execpath: pinned,
+  });
+  const entries = env.PATH.split(delimiter);
+  assert.ok(entries.indexOf(pinnedDir) >= 0 && entries.indexOf(pinnedDir) < entries.indexOf(dirname(process.execPath)),
+    `pinned pnpm dir must precede node's bin dir: ${env.PATH}`);
+});
