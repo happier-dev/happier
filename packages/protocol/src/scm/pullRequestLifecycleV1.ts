@@ -20,7 +20,9 @@ export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.stri
     baseRepository: ScmHostingRepositoryIdentityV1Schema,
     /** A retained PR can outlive its source repository. */
     headRepository: z.nullable(ScmHostingRepositoryIdentityV1Schema),
-    author: z.strictObject({ id: z.string().check(z.regex(/^[1-9][0-9]*$/)), login: z.string().check(z.minLength(1)),
+    // Forge author ids include numeric ids, GUIDs and opaque Account ids. Some
+    // lifecycle payloads identify the author without publishing a login.
+    author: z.strictObject({ id: z.string().check(z.minLength(1)), login: z.nullable(z.string().check(z.minLength(1))),
         kind: z.enum(['human', 'bot', 'unsupported']) }),
     /** Providers without association evidence and retained occurrences require approval. */
     authorAssociation: z._default(ScmHostingPullRequestAuthorAssociationV1Schema, 'unknown'),
