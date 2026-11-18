@@ -328,7 +328,7 @@ export const DeploymentReceiptDetail = React.memo(
     const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
     // A narrow banner stacks its ways forward; the split controls stack with them at the same width.
     const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => agentActionsPending ? (
-      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone || stacked} emphasis={investigateEmphasis}
+      <InvestigationAgentActionButtons actions={waitingAgentActions} pending={false} waiting compact={phone || stacked} emphasis={investigateEmphasis}
         onLaunch={() => {}} />
     ) : (
       <InvestigationAgentActionButtons

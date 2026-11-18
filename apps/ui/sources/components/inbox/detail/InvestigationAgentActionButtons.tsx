@@ -31,6 +31,11 @@ export function declaredSubjectAgentActions(subject: string): readonly Investiga
 export function InvestigationAgentActionButtons(props: Readonly<{
   actions: readonly InvestigationAgentActionButtonModel[];
   pending: boolean;
+  /**
+   * The subject's catalog hasn't answered yet: its declared records stand with their names, not pressable, instead of
+   * as nameless spinners (a catalog that never answers, its Machine offline, would spin forever; PAGE-ACCEPT-176 R2-D14).
+   */
+  waiting?: boolean;
   compact: boolean;
   /**
    * Whether the first record leads (filled, the default: a failure page's one next step) or the surrounding view's own
@@ -53,6 +58,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
       onLaunch={(mode) => { props.onLaunch(mode, action.actionId); }}
       {...(openEditor === null ? {} : { onEdit: () => { openEditor(action.actionId); } })}
       pending={props.pending}
+      {...(props.waiting === true ? { disabled: true } : {})}
       compact={props.compact}
       emphasis={index === 0 ? props.emphasis : 'secondary'}
     />

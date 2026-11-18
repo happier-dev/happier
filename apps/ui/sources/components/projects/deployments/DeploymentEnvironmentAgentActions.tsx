@@ -41,7 +41,7 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   const content = (
     <View style={styles.actions}>
       {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare" /> : null}
-      <InvestigationAgentActionButtons actions={actions} pending={waiting || investigation.pending} compact={props.compact}
+      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} waiting={waiting} compact={props.compact}
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
       {investigation.showOutcome && investigation.outcome ? (
