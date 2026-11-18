@@ -32,7 +32,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     const settings: Settings = {
         ...settingsDefaults,
         commandPaletteEnabled: true,
@@ -41,26 +41,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],
     };
-    const readSnapshot = () => ({ sessions: {}, settings });
-    const storage = Object.assign(
-        ((selector?: (state: ReturnType<typeof readSnapshot>) => unknown) => {
-            const snapshot = readSnapshot();
-            return typeof selector === 'function' ? selector(snapshot) : snapshot;
-        }),
-        {
-            getState: readSnapshot,
-            getInitialState: readSnapshot,
-            setState: () => undefined,
-            subscribe: () => () => undefined,
-            destroy: () => undefined,
-        },
-    );
-    return createStorageModuleStub({ storage });
+    return createStorageModuleStub({ storage: createStorageStoreMock({ settings }) });
 });
-
-vi.mock('zustand/react/shallow', () => ({
-    useShallow: <T,>(selector: T) => selector,
-}));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
