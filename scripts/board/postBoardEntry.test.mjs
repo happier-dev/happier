@@ -32,7 +32,7 @@ test('rejects forbidden NEW heading types and broadcasts without changing histor
 test('accepts every allowed type, unrestricted body length, and duplicate posts', async (t) => {
   const { board, entryFile } = await fixture(t);
   for (const type of ['CLAIM', 'RESULT', 'ASK', 'URGENT', 'RULING', 'HOLD']) {
-    const addressee = ['URGENT', 'RULING', 'HOLD'].includes(type) ? 'ALL leads' : 'Coordination';
+    const addressee = ['URGENT', 'RULING', 'HOLD'].includes(type) ? 'ALL leads' : 'LANE-A';
     const entry = `### 2026-11-02 12:00 UTC — Writer → ${addressee} — ${type} — ${'long subject '.repeat(20)}\n${'body '.repeat(10000)}\n`;
     await fs.writeFile(entryFile, entry);
     await postBoardEntry(board, entryFile);
@@ -50,7 +50,7 @@ async function fixture(t, contents = header + newPost + oldPost) {
   const board = path.join(directory, 'HANDOFF.md');
   const entryFile = path.join(directory, 'entry.md');
   await fs.writeFile(board, contents);
-  await fs.writeFile(entryFile, '### 2026-10-31 13:00 UTC — Writer → Coordination — RESULT — added\nNew body.\n\n');
+  await fs.writeFile(entryFile, '### 2026-10-31 13:00 UTC — Writer → LANE-A — RESULT — added\nNew body.\n\n');
   return { directory, board, entryFile };
 }
 
@@ -94,7 +94,7 @@ test('two concurrent processes reread under the lock and both entries land', asy
   const { directory, board, entryFile } = await fixture(t);
   const before = await fs.readFile(board);
   const secondEntry = path.join(directory, 'second.md');
-  await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → Coordination — RESULT — second\nSecond body.\n\n');
+  await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → LANE-A — RESULT — second\nSecond body.\n\n');
   const lock = `${board}.lock`;
   await fs.mkdir(lock);
   const holder = path.join(lock, 'test-holder.json');
@@ -134,7 +134,7 @@ for (const format of ['directory', 'legacy PID file']) {
       await fs.writeFile(lock, stdout);
     }
     const secondEntry = path.join(directory, 'second.md');
-    await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → Coordination — RESULT — second\nSecond body.\n\n');
+    await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → LANE-A — RESULT — second\nSecond body.\n\n');
     const writers = [startWriter(board, entryFile), startWriter(board, secondEntry)];
     t.after(() => { for (const { child } of writers) child.kill(); });
     await Promise.all(writers.map(({ done }) => done));
@@ -269,44 +269,79 @@ for (const corruption of ['heading', 'body']) {
 }
 
 
-test('warns for ended addressees in known report trees while the post still lands', async (t) => {
-  const f = await fixture(t);
-  const reports = {
-    '.project/plans/program/nested/lanes/ENDED.md': 'DONE — committed',
-    '.project/tmp/program/reports/STOPPED.md': 'BLOCKED-ended — no active run',
-    '.project/plans/program/lanes/ACTIVE.md': 'IN_PROGRESS',
-    '.project/tmp/program/WAITING.md': 'BLOCKED — waiting for input',
-    '.project/plans/program/lanes/ENDED-OTHER.md': 'DONE',
-    '.project/plans/program/briefs/NOT-A-REPORT.md': 'DONE',
-    '.project/tmp/program/node_modules/vendored/ACTIVE.md': 'DONE',
-  };
-  for (const [name, line] of Object.entries(reports)) {
-    const file = path.join(f.directory, name);
+async function seed(directory, files) {
+  for (const [name, contents] of Object.entries(files)) {
+    const file = path.join(directory, name);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, line + '\nbody\n');
+    await fs.writeFile(file, contents);
   }
-  const entry = '### 2026-11-15 16:31 UTC — Writer → ENDED, STOPPED, ACTIVE, WAITING, MISSING, NOT-A-REPORT — ASK — route\nBody\n';
+}
+
+async function post(f, heading) {
+  const entry = `### 2026-11-18 08:00 UTC — ${heading}\nBody\n`;
   await fs.writeFile(f.entryFile, entry);
-  const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
-  const warnings = stderr.trim().split('\n');
-  assert.equal(warnings.length, 2);
-  assert.match(warnings[0], /ENDED.*DONE/);
-  assert.match(warnings[1], /STOPPED.*BLOCKED-ended/);
-  assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry));
+  return { entry, ...await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory }) };
+}
+
+async function refused(f, heading, message) {
+  const before = await fs.readFile(f.board);
+  await assert.rejects(post(f, heading), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, message, heading);
+    return true;
+  });
+  assert.deepEqual(await fs.readFile(f.board), before, 'a refused post never lands');
+}
+
+test('the Lane 12 handoff board is a read-only archive', async (t) => {
+  const f = await fixture(t);
+  const archive = path.join(f.directory, '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md');
+  await seed(f.directory, { '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md': header + oldPost });
+  const before = await fs.readFile(archive);
+  await assert.rejects(run(process.execPath, [writer, archive, f.entryFile], { cwd: f.directory }), (error) => {
+    assert.match(error.stderr, /read-only archive since 2026-11-18; post to \.project\/plans\/2026-10-26-implementation\/BOARD\.md/);
+    return true;
+  });
+  assert.deepEqual(await fs.readFile(archive), before);
 });
 
-test('warns, without blocking, on orchestrator-only RESULTs, informal ALL-leads posts and QA swap HOLDs', async (t) => {
+test('refuses posts to ended lanes, naming a fresh successor, and drops ended names from mixed lists', async (t) => {
+  const f = await fixture(t, header
+    + '### 2026-11-18 07:00 UTC — VOICE-QA (fresh) → Voice ORCH — CLAIM — Voice QA matrix\nBody\n'
+    + '### 2026-11-18 06:00 UTC — VOICE-QA → Voice ORCH — CLAIM — Voice QA matrix\nBody\n' + oldPost);
+  await seed(f.directory, {
+    '.project/plans/program/nested/lanes/VOICE-QA.md': 'DONE — committed\n',
+    '.project/tmp/program/reports/STOPPED.md': 'BLOCKED-ended — no active run\n',
+    '.project/plans/program/lanes/ACTIVE.md': 'IN_PROGRESS\n',
+    '.project/tmp/program/WAITING.md': 'BLOCKED — waiting for input\n',
+    '.project/plans/program/briefs/NOT-A-REPORT.md': 'DONE\n',
+    '.project/tmp/program/node_modules/vendored/ACTIVE.md': 'DONE\n',
+  });
+  await refused(f, 'ACTIVE → VOICE-QA — ASK — matrix row', /VOICE-QA.*ended.*VOICE-QA \(fresh\)/);
+  await refused(f, 'ACTIVE → STOPPED, VOICE-QA — ASK — two ended', /ended.*route to a live owner/s);
+  const { entry, stderr } = await post(f, 'ACTIVE → VOICE-QA, WAITING, STOPPED, NOT-A-REPORT, VOICE-QA (fresh) — ASK — route');
+  assert.match(stderr, /dropped ended addressee VOICE-QA.*VOICE-QA \(fresh\)/);
+  assert.match(stderr, /dropped ended addressee STOPPED/);
+  const board = await fs.readFile(f.board, 'utf8');
+  assert.ok(!board.includes(entry), 'the ended names do not land');
+  assert.ok(board.includes('### 2026-11-18 08:00 UTC — ACTIVE → WAITING, NOT-A-REPORT, VOICE-QA (fresh) — ASK — route\nBody\n'));
+});
+
+test('refuses orchestrator-only RESULTs and keeps advisory warnings for other posts', async (t) => {
   const f = await fixture(t);
-  const cases = [
-    ['P03-LANE → P03 ORCH, Coordination — RESULT — done', /RESULT is addressed only to orchestrators/],
-    ['Lane 12 Main → Lane 12 lanes, ALL leads using agent-qa-l12-main — RESULT — reload 144', /ALL leads.*URGENT, RULING, HOLD or LIFTED/],
+  await seed(f.directory, {
+    '.project/tmp/p03/P03-LANE.md': 'IN_PROGRESS\n',
+    '.project/tmp/l12/Lane 12 Main.md': 'IN_PROGRESS\n',
+    '.project/tmp/l12/Lane 12 lanes.md': 'IN_PROGRESS\n',
+    '.project/tmp/sys/Systemic.md': 'IN_PROGRESS\n',
+    '.project/tmp/orch/P03 ORCH.md': 'IN_PROGRESS\n',
+  });
+  await refused(f, 'P03-LANE → P03 ORCH, Coordination — RESULT — done', /write this in your lane report/);
+  for (const [heading, warning] of [
     ['Lane 12 Main → Lane 12 lanes — HOLD — reload 144 swap: c87aa975c7e7 prepared, short drop starting', /final READY/],
     ['Lane 12 Main → Lane 12 lanes — HOLD — LIFTED: agent-qa-l12-main on reload 144', /final READY/],
-  ];
-  for (const [heading, warning] of cases) {
-    const entry = `### 2026-11-16 08:00 UTC — ${heading}\nBody\n`;
-    await fs.writeFile(f.entryFile, entry);
-    const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
+  ]) {
+    const { entry, stderr } = await post(f, heading);
     assert.match(stderr, warning, heading);
     assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry), 'the post still lands');
   }
@@ -314,9 +349,25 @@ test('warns, without blocking, on orchestrator-only RESULTs, informal ALL-leads 
     'P03-LANE → Lane 12 Main, P03 ORCH — RESULT — 1a2b3c4d5e6 committed; Lane 12 Main: reload',
     'Systemic → ALL leads — HOLD — repo-dev restart for migration 20261116',
     'Lane 12 Main → Lane 12 lanes — RESULT — READY145: agent-qa-l12-main at c87aa975c7e7',
-  ]) {
-    await fs.writeFile(f.entryFile, `### 2026-11-16 08:01 UTC — ${heading}\nBody\n`);
-    const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
-    assert.equal(stderr.trim(), '', heading);
-  }
+  ]) assert.equal((await post(f, heading)).stderr.trim(), '', heading);
+});
+
+test('warns with the closest known names when a sender or addressee matches no lane or orchestrator', async (t) => {
+  const f = await fixture(t, header
+    + '### 2026-11-18 07:00 UTC — REVIEWS-1117-04S-WIRING → P03 ORCH — ASK — wiring\nBody\n'
+    + '### 2026-11-18 06:00 UTC — P03 ORCH → ALL leads — RULING — one board\nBody\n' + oldPost);
+  await seed(f.directory, {
+    '.project/tmp/p03-perf-areas/P03-BOARD-HYGIENE.md': 'IN_PROGRESS\n',
+    '.project/plans/2026-10-26-implementation/CHARTER.md': '| Lead | Session |\n|---|---|\n| **O-MACH** | s1 |\n',
+  });
+  const known = await post(f, 'P03-BOARD-HYGIENE → O-MACH, REVIEWS-1117-04S-WIRING, P03 ORCH — ASK — known names');
+  assert.equal(known.stderr.trim(), '');
+  const { entry, stderr } = await post(f, 'P03-BORD-HYGIENE → O-MACHH, 04S-WIRING, Voice lanes (O-MACH, ADMITX) — ASK — typos');
+  assert.match(stderr, /sender P03-BORD-HYGIENE.*P03-BOARD-HYGIENE/);
+  assert.match(stderr, /addressee O-MACHH.*O-MACH/);
+  assert.match(stderr, /addressee 04S-WIRING.*REVIEWS-1117-04S-WIRING/);
+  assert.match(stderr, /addressee ADMITX/);
+  assert.match(stderr, /addressee Voice lanes/);
+  assert.doesNotMatch(stderr, /addressee O-MACH\b[^H]/);
+  assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry), 'name warnings never block');
 });

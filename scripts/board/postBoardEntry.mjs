@@ -5,7 +5,151 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+/** The one coordination board (owner ruling 2026-11-18, "Board hygiene"). */
+export const BOARD_PATH = '.project/plans/2026-10-26-implementation/BOARD.md';
+/** The Lane 12 handoff board: a read-only archive since 2026-11-18. */
+export const ARCHIVED_BOARD_PATH = '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md';
+const CHARTER_PATH = path.join(path.dirname(BOARD_PATH), 'CHARTER.md');
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+/** The canonical board in the checkout that holds this script. */
+export const defaultBoard = path.join(repoRoot, BOARD_PATH);
+
+function refuseArchivedBoard(board) {
+  const archived = path.sep + path.normalize(ARCHIVED_BOARD_PATH);
+  if (path.resolve(board).endsWith(archived)) {
+    throw new Error(`This board is a read-only archive since 2026-11-18; post to ${BOARD_PATH}`);
+  }
+}
+
+/** One board heading: `### <UTC> — SENDER → ADDRESSEES — TYPE — subject`. */
+export function parseBoardHeading(heading) {
+  const match = /^### .*? — (.+?) → (.+?) — ([^—]+?) — (.*)$/.exec(heading);
+  if (!match) return undefined;
+  const [, sender, to, kind, subject] = match;
+  return { sender: sender.trim(), to, entries: addresseeEntries(to), kind, subject };
+}
+
+/** Comma-separated addressees, keeping parenthesized lists whole. Each entry designates its
+ * exact text and, for a list (`Voice lanes (ADMIT, SWEEP)`), the group and each member. `base`
+ * drops a trailing parenthetical (`Voice ORCH (fresh)` → `Voice ORCH`) for name lookups only. */
+export function addresseeEntries(to) {
+  const raws = [];
+  let depth = 0;
+  let current = '';
+  for (const character of to) {
+    if (character === '(') depth += 1;
+    if (character === ')') depth = Math.max(0, depth - 1);
+    if (character === ',' && depth === 0) { raws.push(current); current = ''; } else current += character;
+  }
+  raws.push(current);
+  return raws.map((raw) => raw.trim()).filter(Boolean).map((raw) => {
+    const list = /^(.*?)\s*\(([^()]*)\)$/.exec(raw);
+    const members = list?.[2].includes(',') ? list[2].split(',').map((name) => name.trim()).filter(Boolean) : [];
+    const base = list ? list[1] : raw;
+    // Only a list designates its parts; `LANE (fresh)` is not LANE.
+    return { raw, base, members, names: new Set(members.length ? [raw, base, ...members] : [raw]) };
+  });
+}
+
+const isAllLeads = (entry) => entry.raw.toLowerCase() === 'all leads';
+const nameKey = (name) => name.replace(/\s*\([^()]*\)$/, '').replace(/\/.*$/, '').trim().toLowerCase();
+
+function editDistance(a, b) {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function closestNames(name, candidates) {
+  const key = nameKey(name);
+  const ranked = [];
+  for (const candidate of candidates) {
+    const other = nameKey(candidate);
+    if (!other) continue;
+    const [shorter, longer] = other.length < key.length ? [other, key] : [key, other];
+    // A truncated name (`04S-WIRING`) ranks before typos; a short fragment suggests nothing.
+    const distance = shorter.length >= 5 && longer.includes(shorter) ? (longer.length - shorter.length) / 100 : editDistance(key, other);
+    if (distance <= Math.max(2, Math.floor(key.length / 3))) ranked.push([distance, candidate]);
+  }
+  return ranked.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1])).slice(0, 3).map(([, candidate]) => candidate);
+}
+
+/** Known names come from existing sources only: lane report and lane folder names under
+ * .project/plans and .project/tmp, board senders (the board posted to and the archive), and
+ * CHARTER leads. Ended lanes are those whose report in a report tree starts DONE/BLOCKED-ended. */
+async function inspectNames(board, exactNames) {
+  const known = new Set();
+  const suggestions = new Set();
+  const ended = new Map();
+  // Restrict discovery to report trees, never the repository root.
+  let directories = ['.project/plans', '.project/tmp'];
+  while (directories.length) {
+    const listings = await Promise.all(directories.map(async (directory) => {
+      try { return { directory, entries: await fs.readdir(directory, { withFileTypes: true }) }; }
+      catch (error) { if (error.code === 'ENOENT') return { directory, entries: [] }; throw error; }
+    }));
+    directories = [];
+    for (const { directory, entries } of listings) {
+      for (const entry of entries) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.git') continue;
+          directories.push(file);
+          if (directory.startsWith(path.join('.project', 'tmp'))) known.add(nameKey(entry.name));
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+        const lane = path.basename(file, '.md');
+        known.add(nameKey(lane));
+        // Plan briefs and other plan documents name lanes but are not their reports.
+        if (file.startsWith(path.join('.project', 'plans') + path.sep) && path.basename(directory) !== 'lanes') continue;
+        suggestions.add(lane);
+        if (!exactNames.has(lane)) continue;
+        let handle;
+        try {
+          handle = await fs.open(file);
+          for await (const line of handle.readLines()) {
+            const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
+            if (/^(?:DONE\b|BLOCKED-ended\b)/.test(verdict)) ended.set(lane, { file, line });
+            break;
+          }
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        } finally {
+          await handle?.close();
+        }
+      }
+    }
+  }
+  const read = async (file) => {
+    try { return await fs.readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
+  };
+  const claims = [];
+  for (const file of [board, ARCHIVED_BOARD_PATH]) {
+    // Newest first on each board; the board posted to precedes the archive.
+    for (const heading of (await read(file)).match(/^### [^\r\n]*/gm) ?? []) {
+      const parsed = parseBoardHeading(heading);
+      if (!parsed) continue;
+      known.add(nameKey(parsed.sender));
+      suggestions.add(parsed.sender);
+      if (parsed.kind === 'CLAIM') claims.push(parsed.sender);
+    }
+  }
+  for (const [, lead] of (await read(CHARTER_PATH)).matchAll(/^\| \*\*(.+?)\*\* \|/gm)) {
+    known.add(nameKey(lead));
+    suggestions.add(lead);
+  }
+  const successor = (lane) => claims.find((sender) => sender.toLowerCase() === `${lane} (fresh)`.toLowerCase());
+  return { isKnown: (name) => known.has(nameKey(name)), suggestions, ended, successor };
+}
 
 function validateEntry(entry) {
   // OWNER-RULINGS: Usage economy and board conventions (2026-10-31).
@@ -24,19 +168,49 @@ function validateEntry(entry) {
 // Orchestrators read their lanes' reports; the board is for another lane's action.
 const isOrchestrator = (name) => /(^|[\s-])ORCH(?![a-z])|orchestrator|^Coordination$/i.test(name);
 
-/** Advisory checks for OWNER-RULINGS 2026-10-31 (13) and the 2026-11-16 reload
- * convention. They never block: the writer cannot know every live need. */
-function warnNonActionable(entry) {
-  for (const heading of entry.toString('utf8').match(/^### [^\r\n]*/gm) ?? []) {
-    const match = /^### .+? — .+? → (.+?) — ([A-Z]+) — (.+)$/.exec(heading);
-    if (!match) continue;
-    const [, to, kind, subject] = match;
-    const addressees = to.split(',').map((name) => name.trim());
-    if (kind === 'RESULT' && addressees.every(isOrchestrator)) {
-      console.error('Warning: this RESULT is addressed only to orchestrators; it belongs in your lane report unless another lane must act (OWNER-RULINGS 2026-10-31 (13)). Post will still land.');
+/** OWNER-RULINGS 2026-11-18 "Board hygiene" (2)-(3) and 2026-10-31 (13): refuse posts nobody
+ * live must act on, drop ended names from mixed lists, and flag names that match no known lane.
+ * Returns the entry to publish. */
+async function screenEntry(board, entry) {
+  let text = entry.toString('utf8');
+  const headings = (text.match(/^### [^\r\n]*/gm) ?? []).map((heading) => [heading, parseBoardHeading(heading)]);
+  let names;
+  try {
+    names = await inspectNames(board, new Set(headings.flatMap(([, parsed]) => parsed?.entries.map((item) => item.raw) ?? [])));
+  } catch (error) {
+    console.error(`Warning: could not inspect lane names and reports (${error.code ?? error.name}); name and ended-lane checks skipped.`);
+  }
+  for (const [heading, parsed] of headings) {
+    if (!parsed) continue;
+    const { sender, kind, subject } = parsed;
+    let { entries } = parsed;
+    if (names) {
+      const endedEntries = entries.filter((item) => names.ended.has(item.raw));
+      const describe = (item) => {
+        const report = names.ended.get(item.raw);
+        const successor = names.successor(item.raw);
+        return `${item.raw} has ended (${report.file}: ${report.line})${successor ? `; its successor is ${successor}` : ''}`;
+      };
+      if (endedEntries.length && endedEntries.length === entries.length) {
+        throw new Error(`Refusing a post whose addressees have all ended: ${endedEntries.map(describe).join('; ')}. Address the successor or route to a live owner.`);
+      }
+      if (endedEntries.length) {
+        entries = entries.filter((item) => !endedEntries.includes(item));
+        for (const item of endedEntries) console.error(`Warning: dropped ended addressee ${describe(item)}.`);
+        const rewritten = heading.replace(` → ${parsed.to} — `, ` → ${entries.map((item) => item.raw).join(', ')} — `);
+        text = text.replace(heading, () => rewritten);
+      }
+      const unknown = [[`sender`, sender], ...entries.filter((item) => !isAllLeads(item)).flatMap((item) => [
+        ...(names.isKnown(item.raw) || names.isKnown(item.base) ? [] : [['addressee', item.raw === item.base || item.members.length ? item.base : item.raw]]),
+        ...item.members.filter((member) => !names.isKnown(member)).map((member) => ['addressee', member]),
+      ])].filter(([role, name]) => role !== 'sender' || !names.isKnown(name));
+      for (const [role, name] of unknown) {
+        const closest = closestNames(name, names.suggestions);
+        console.error(`Warning: ${role} ${name} matches no known lane or orchestrator${closest.length ? `; did you mean ${closest.join(', ')}?` : ''} Use the exact board name (session titles start with it). Post will still land.`);
+      }
     }
-    if (addressees.some((name) => /^all leads\b/i.test(name)) && !['URGENT', 'RULING', 'HOLD'].includes(kind)) {
-      console.error('Warning: address ALL leads only with URGENT, RULING, HOLD or LIFTED (a HOLD); name the lanes that must act. Post will still land.');
+    if (kind === 'RESULT' && entries.every((item) => isOrchestrator(item.raw))) {
+      throw new Error('Refusing a RESULT addressed only to orchestrators: write this in your lane report; post a RESULT only when another lane must act (OWNER-RULINGS 2026-10-31 (13)).');
     }
     // Shared-DB restarts (repo-dev, migrations) keep HOLD/LIFTED. A QA stack
     // reload prepares beside its incumbent, so its lanes need only the READY.
@@ -44,51 +218,7 @@ function warnNonActionable(entry) {
       console.error('Warning: a stack reload that does not restart the shared DB posts only its final READY (or NOT_READY), addressed to that stack\'s lanes; keep HOLD/LIFTED for repo-dev and shared-DB restarts. Post will still land.');
     }
   }
-}
-
-async function warnEndedAddressees(entry) {
-  const addressees = new Set([...entry.toString('utf8').matchAll(/^### .*? → (.+?) — /gm)]
-    .flatMap((match) => match[1].split(',').map((name) => name.trim())));
-  const ended = new Map();
-  // Restrict discovery to report trees, never the repository root or plan briefs.
-  let directories = ['.project/plans', '.project/tmp'];
-  while (directories.length) {
-    const listings = await Promise.all(directories.map(async (directory) => {
-      try { return { directory, entries: await fs.readdir(directory, { withFileTypes: true }) }; }
-      catch (error) { if (error.code === 'ENOENT') return { directory, entries: [] }; throw error; }
-    }));
-    directories = [];
-    for (const { directory, entries } of listings) {
-      for (const entry of entries) {
-        const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'node_modules' && entry.name !== '.git') directories.push(file);
-          continue;
-        }
-        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-        if (file.startsWith(path.join('.project', 'plans') + path.sep) && path.basename(directory) !== 'lanes') continue;
-        const lane = path.basename(file, '.md');
-        if (!addressees.has(lane)) continue;
-        let handle;
-        try {
-          handle = await fs.open(file);
-          for await (const line of handle.readLines()) {
-            const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
-            if (/^(?:DONE\b|BLOCKED-ended\b)/.test(verdict)) ended.set(lane, { file, line });
-            break;
-          }
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
-        } finally {
-          await handle?.close();
-        }
-      }
-    }
-  }
-  for (const lane of addressees) {
-    const report = ended.get(lane);
-    if (report) console.error(`Warning: addressee ${lane} has an ended report (${report.file}: ${report.line}); route to a live owner. Post will still land.`);
-  }
+  return Buffer.from(text, 'utf8');
 }
 
 function holderIsAlive(holder) {
@@ -210,11 +340,9 @@ async function replaceBoard(board, current, candidate, archived, mode, minimumBy
 
 /** Post raw entry bytes; optional rotation archives older posts under the same lock. */
 export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
-  const entry = await fs.readFile(entryFile);
-  validateEntry(entry);
-  warnNonActionable(entry);
-  try { await warnEndedAddressees(entry); }
-  catch (error) { console.error(`Warning: could not inspect addressee reports (${error.code ?? error.name}); post will still land.`); }
+  refuseArchivedBoard(board);
+  validateEntry(await fs.readFile(entryFile));
+  const entry = await screenEntry(board, await fs.readFile(entryFile));
   let cutoff;
   if (rotateBefore !== undefined) {
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(rotateBefore)
@@ -227,6 +355,7 @@ export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
     }
   }
   const boardPath = await fs.realpath(board);
+  refuseArchivedBoard(boardPath);
   const lockPath = `${boardPath}.lock`;
   const release = await acquireLock(lockPath);
   try {
@@ -278,11 +407,14 @@ export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [board, entryFile, option, ...extra] = process.argv.slice(2);
+  const positional = process.argv.slice(2);
+  // `<entry-file>` alone posts to the canonical board.
+  if (positional.length === 1 || (positional.length === 2 && positional[1].startsWith('--'))) positional.unshift(defaultBoard);
+  const [board, entryFile, option, ...extra] = positional;
   const rotateBefore = option?.startsWith('--rotate-before=') ? option.slice('--rotate-before='.length) : undefined;
   const operation = board && entryFile && !extra.length && (!option || rotateBefore !== undefined)
     ? postBoardEntry(board, entryFile, { rotateBefore })
-    : Promise.reject(new Error('Usage: node scripts/board/postBoardEntry.mjs <board> <entry-file> [--rotate-before=YYYY-MM-DDTHH:mm:ssZ] (YYYY-MM-DD also accepted)'));
+    : Promise.reject(new Error('Usage: node scripts/board/postBoardEntry.mjs [<board>] <entry-file> [--rotate-before=YYYY-MM-DDTHH:mm:ssZ] (YYYY-MM-DD also accepted)'));
   operation.catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

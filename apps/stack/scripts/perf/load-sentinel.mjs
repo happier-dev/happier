@@ -375,7 +375,8 @@ function formatPost(graph, state, details, notice, recipient) {
   if (state === 'broken') return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ${recipient} — URGENT — ${graph} broken [${process.pid}:${notice}]\n`
     + `- ${recipient === 'ALL leads' ? 'Still red: inspect' : `${recipient}: your write is the likely cause; inspect`} the named import path and repair the shared-source load break.\n`
     + `${details}\n`;
-  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ORCH-TOP — RESULT — ${graph} cleared [${process.pid}:${notice}]\n`
+  // An ASK: ORCH-TOP must act, and the board writer refuses orchestrator-only RESULTs.
+  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ORCH-TOP — ASK — ${graph} cleared [${process.pid}:${notice}]\n`
     + '- ORCH-TOP: release any reload hold for this cleared break.\n'
     + `${details}\n`;
 }

@@ -237,7 +237,7 @@ test('a break goes to the attributed writer first, escalates to ALL leads only w
   await writeFile(entry, 'export {};');
   await sentinel.request();
   assert.equal(posts.length, 3);
-  assert.match(posts[2].split('\n')[0], /→ ORCH-TOP — RESULT — protocol-import-cycles cleared/);
+  assert.match(posts[2].split('\n')[0], /→ ORCH-TOP — ASK — protocol-import-cycles cleared/);
 });
 
 test('a writer that repairs its own break inside the window gets no clear and nobody else is woken', async t => {
@@ -285,11 +285,11 @@ test('real graph load transitions post one failure and one clear; unchanged fail
   await sentinel.request();
   assert.equal(posts.length, 2);
   assert.match(posts[1], /cleared/);
-  assert.match(posts[1], /— RESULT —/);
+  assert.match(posts[1], /— ASK —/);
   assert.doesNotMatch(posts[1], /URGENT/);
 });
 
-test('real board writer accepts the sentinel break and cleared RESULT', async t => {
+test('real board writer accepts the sentinel break and cleared ASK', async t => {
   const { fixture, graph, entry } = await fixtureGraph(t);
   const board = fixture.path('HANDOFF.md');
   const postFile = fixture.path('notice.md');
@@ -306,7 +306,7 @@ test('real board writer accepts the sentinel break and cleared RESULT', async t 
   await sentinel.request();
   const published = await readFile(board, 'utf8');
   assert.equal((published.match(/— URGENT —/g) ?? []).length, 1);
-  assert.equal((published.match(/— RESULT —/g) ?? []).length, 1);
+  assert.equal((published.match(/— ASK —/g) ?? []).length, 1);
 });
 
 for (const failedState of ['broken', 'cleared']) test(`a failed ${failedState} board write preserves announced state and sampling`, async t => {

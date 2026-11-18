@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { attributeBreakLane } from '../../apps/stack/scripts/perf/break-attribution.mjs';
+import { ARCHIVED_BOARD_PATH, BOARD_PATH } from '../board/postBoardEntry.mjs';
 
 // Posts the failing files of the latest nightly v0.3 journey run (tests-dispatch.yml on v0.3,
 // dispatched by the default branch's schedule) to the board: one ASK per owning lane, attributed
 // by the load sentinel's owner (board post naming the file's last commit). Run once after the
 // nightly finishes: node scripts/ci/postNightlyJourneyFailures.mjs [--run <id>] [--dry-run]
 
-const BOARD = '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md';
 const SENDER = 'NIGHTLY-JOURNEYS';
 const FALLBACK_LANE = 'P03 ORCH';
 
@@ -68,7 +68,12 @@ async function main(argv) {
   for (const file of files) {
     let mtimeMs = 0;
     try { mtimeMs = statSync(resolve(repoDir, file)).mtimeMs; } catch { /* deleted since the run: attribute by history */ }
-    const owner = await attributeBreakLane({ repoDir, board: resolve(repoDir, BOARD), files: [{ path: file, mtimeMs }], module: file });
+    let owner = null;
+    // Commits posted before 2026-11-18 are named on the archived handoff board.
+    for (const board of [BOARD_PATH, ARCHIVED_BOARD_PATH]) {
+      owner = await attributeBreakLane({ repoDir, board: resolve(repoDir, board), files: [{ path: file, mtimeMs }], module: file });
+      if (owner) break;
+    }
     attributions.push({ file, lane: owner?.lane ?? null, basis: owner?.basis ?? null });
   }
   const posts = formatNightlyPosts({ at: new Date(), runUrl: run.url, attributions });
@@ -81,7 +86,7 @@ async function main(argv) {
     for (const [index, post] of posts.entries()) {
       const entry = join(scratch, `post-${index}.md`);
       writeFileSync(entry, `${post}\n`);
-      execFileSync('node', ['scripts/board/postBoardEntry.mjs', BOARD, entry], { cwd: repoDir, stdio: 'inherit' });
+      execFileSync('node', ['scripts/board/postBoardEntry.mjs', BOARD_PATH, entry], { cwd: repoDir, stdio: 'inherit' });
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

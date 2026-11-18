@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
+import { ARCHIVED_BOARD_PATH, BOARD_PATH } from '../board/postBoardEntry.mjs';
 
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
 /** App workspaces the rolling HEAD typecheck follows, one scope each. */
@@ -422,7 +423,6 @@ export function formatCommitPackageTypecheck(result) {
 
 export const commitPackageTypecheckRefuses = result => !result.skipped && (result.fresh.length > 0 || result.incomplete.length > 0);
 
-const BOARD = '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md';
 const ROLLING_HEAD = 'rolling-head';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -461,7 +461,7 @@ function postBoardEntry(repo, entry) {
   const temp = mkdtempSync(join(tmpdir(), 'happier-rolling-typecheck-post-'));
   try {
     writeFileSync(join(temp, 'entry.md'), entry);
-    execFileSync(process.execPath, [join(repo, 'scripts/board/postBoardEntry.mjs'), join(repo, BOARD), join(temp, 'entry.md')], { cwd: repo, stdio: ['ignore', 'ignore', 'inherit'] });
+    execFileSync(process.execPath, [join(repo, 'scripts/board/postBoardEntry.mjs'), join(repo, BOARD_PATH), join(temp, 'entry.md')], { cwd: repo, stdio: ['ignore', 'ignore', 'inherit'] });
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
@@ -493,7 +493,7 @@ function rollingBase(repo, recorded, head) {
  * The caller holds the worktree lock and, when anything compiles, compiler admission.
  */
 export async function rollingHeadTypecheckPass({ repo, env = process.env, log = message => process.stderr.write(`${message}\n`),
-  compile, bootstrap, remote, post = entry => postBoardEntry(repo, entry), boardPaths = [join(repo, BOARD)], scope = 'packages',
+  compile, bootstrap, remote, post = entry => postBoardEntry(repo, entry), boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(board => join(repo, board)), scope = 'packages',
   attribute = true, pending = null }) {
   const started = Date.now();
   const git = gitAt(repo);

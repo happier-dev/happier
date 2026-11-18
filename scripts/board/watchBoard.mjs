@@ -2,8 +2,9 @@ import fs from 'node:fs/promises';
 import { watch } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { defaultBoard, parseBoardHeading } from './postBoardEntry.mjs';
 
-const usage = 'Usage: node scripts/board/watchBoard.mjs --board <path> [--board <path>] --name <caller> [--name <watched-lane>] [--self-name <sender-alias>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
+const usage = 'Usage: node scripts/board/watchBoard.mjs [--board <path> (default: the canonical BOARD.md; the archived handoff board only when named)] --name <caller> [--name <watched-lane>] [--self-name <sender-alias>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
 
 async function main() {
   const { values } = parseArgs({ options: {
@@ -14,8 +15,8 @@ async function main() {
     'wake-on-backlog': { type: 'boolean' },
   } });
   const heartbeat = Number(values['heartbeat-ms']);
-  if (!values.board?.length || !values.name?.length || !values.seen || !Number.isSafeInteger(heartbeat) || heartbeat <= 0) throw new Error(usage);
-  const boards = [...new Set(values.board.map((board) => path.resolve(board)))];
+  if (!values.name?.length || !values.seen || !Number.isSafeInteger(heartbeat) || heartbeat <= 0) throw new Error(usage);
+  const boards = [...new Set((values.board ?? [defaultBoard]).map((board) => path.resolve(board)))];
   const roots = [...new Set((values.reports ?? ['lanes/*.md']).map((root) => path.resolve(root.replace(/[\\/]\*\.md$/, ''))))];
   const names = new Set(values.name);
   // Recipient subscriptions include watched lanes; they are not caller identities.
@@ -89,21 +90,23 @@ async function main() {
     for (const board of boards) {
       const headings = (await read(board)).match(/^### [^\r\n]*/gm) ?? [];
       for (const heading of headings) {
-        const match = /^### .*? — (.+?) → (.+?) — ([^—]+?) — /.exec(heading);
-        if (!match) continue;
-        const addressees = match[2].split(',').map((name) => name.trim());
-        const broadcast = addressees.some((name) => name.toLowerCase() === 'all leads') && ['URGENT', 'RULING', 'HOLD'].includes(match[3]);
-        if (!broadcast && !addressees.some((name) => names.has(name))) continue;
+        const parsed = parseBoardHeading(heading);
+        if (!parsed) continue;
+        const { sender, entries, kind } = parsed;
+        // Exact names only: a post that merely mentions a lane never reaches it.
+        const addressed = (entry) => entry !== undefined && [...entry.names].some((name) => names.has(name));
+        const broadcast = entries.some((entry) => entry.raw.toLowerCase() === 'all leads') && ['URGENT', 'RULING', 'HOLD'].includes(kind);
+        if (!broadcast && !entries.some(addressed)) continue;
         if (seen.has(heading)) continue;
         await record({ heading });
         seen.add(heading);
         if (silent) continue;
         process.stdout.write(heading + '\n');
         // Informational cc posts remain delivered/seen, but cannot end this watch alone.
-        const informationalCc = !names.has(addressees[0]) && ['RESULT', 'CLAIM'].includes(match[3]);
-        const wakesNow = !informationalCc && (names.has(addressees[0])
-          || ['ASK', 'URGENT', 'HOLD', 'LIFTED', 'RULING'].includes(match[3]) || wakeRegex?.test(heading));
-        if (!selfNames.has(match[1].trim()) && wakesNow) wake = true;
+        const informationalCc = !addressed(entries[0]) && ['RESULT', 'CLAIM'].includes(kind);
+        const wakesNow = !informationalCc && (addressed(entries[0])
+          || ['ASK', 'URGENT', 'HOLD', 'LIFTED', 'RULING'].includes(kind) || wakeRegex?.test(heading));
+        if (!selfNames.has(sender) && wakesNow) wake = true;
       }
     }
     // Persist initialization even when there were no current items to record.
