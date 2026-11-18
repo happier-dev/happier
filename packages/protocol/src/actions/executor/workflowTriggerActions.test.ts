@@ -2280,7 +2280,7 @@ describe('workflow trigger Automation composition', () => {
     const prepared = await actions.prepareSessionInitialTriggers({ preparedFinalSessionId: 'prepared-session', project, initialTriggers: [{
       target: { kind: 'workflow', ref },
       ...(ref === 'builtin:review-and-converge'
-        ? { inputs: { engines: ['agent:happier.agent.claude/claude'] } } : {}),
+        ? { inputs: { reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.claude/claude' }] } } : {}),
       trigger: { kind: 'sessionLifecycle', enabled: true, events: [event], policy: { kind: 'everyMatch' } },
     }], caller: { ...ownCaller, serverIdentityId: 'portable-home', approvalProfileId: 'profile:inherited-birth' } }).catch((error: unknown) => {
       if (error instanceof Error && 'details' in error) {
