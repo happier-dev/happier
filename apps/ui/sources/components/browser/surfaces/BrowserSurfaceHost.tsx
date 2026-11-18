@@ -41,7 +41,7 @@ import { BrowserDiagnosticsElementPickerResultV1Schema, type BrowserDiagnosticsE
 import type { ImagePointV1 } from '@happier-dev/protocol';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
-import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
+import { resolveExternalUrlTargetFromInput, selectActiveBrowserView } from '@/sync/domains/browser/shell';
 import { resolveBrowserViewIdentityForTarget } from '@/sync/domains/browser/store';
 import { useSession } from '@/sync/domains/state/storage';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
@@ -747,15 +747,28 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
         props.pluginBrowserActionContext?.serverId, props.pluginBrowserActionContext?.sessionId,
         unavailableReason]);
 
-    const onCommand = React.useCallback((command: BrowserCommandV1, engineOverride?: BrowserOpenEngineOverride) =>
-        executeBrowserAction(browserControlActionId(command),
+    const onCommand = React.useCallback(async (command: BrowserCommandV1, engineOverride?: BrowserOpenEngineOverride) => {
+        const result = await executeBrowserAction(browserControlActionId(command),
             engineOverride && (command.kind === 'openView' || command.kind === 'setTarget') ? { ...command, engineOverride } : command, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: browserActionAccountLifetime?.scope.serverId,
         expectedAccountId: browserActionAccountLifetime?.scope.accountId,
         defaultSessionId: props.pluginBrowserActionContext?.sessionId ?? undefined,
         externalActionTarget: browserActionTarget,
-    }), [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
+        });
+        if (result.ok && browserActionAccountLifetime
+            && (command.kind === 'openView' || command.kind === 'setTarget' || command.kind === 'navigate')) {
+            const dispatched = BrowserCommandDispatchResultV1Schema.safeParse(result.result);
+            const openedTarget = surfaceStateRef.current.browserState.viewsById[command.viewId]?.target;
+            // Address resolution owns Service identity; managed streams reopen the requested page.
+            const requestedTarget = command.kind === 'navigate' ? resolveExternalUrlTargetFromInput(command.url) : command.target;
+            const recentTarget = openedTarget?.kind === 'localServicePreview' ? openedTarget : requestedTarget;
+            if (dispatched.success && dispatched.data.status === 'dispatched' && openedTarget && recentTarget) {
+                rememberOpenedBrowserTarget(browserActionAccountLifetime.scope, recentTarget);
+            }
+        }
+        return result;
+    }, [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
 
     // The Machine that runs this browser receives the sign-ins; the sheet reads its sources only while open.
     const onImportLogins = React.useMemo(() => (browserOperationScope && browserMachineId
@@ -839,9 +852,9 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     // materializes / retargets the view in THIS host. This is the canonical current-tab seam the
     // launchpad/new-tab URL entry uses; it NEVER spawns a sibling workspace tab. Only EXTERNAL
     // surfaces (Services rows, session-header button) create a new tab via `props.onOpenTarget`.
-    const navigateCurrentTabInPlace = React.useCallback(async (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
+    const navigateCurrentTabInPlace = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
         const identity = resolveBrowserViewIdentityForTarget(target, { browserSessionId: props.browserSessionId });
-        const result = await onCommand({
+        return onCommand({
             kind: 'openView',
             commandId: `browser_command:${identity.viewId}:open:${Date.now()}`,
             ...identity,
@@ -852,18 +865,8 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             focus: true,
             ...(options?.engineOverride ? { engineOverride: options.engineOverride } : {}),
         });
-        const dispatched = result.ok ? BrowserCommandDispatchResultV1Schema.safeParse(result.result) : null;
-        const openedTarget = surfaceStateRef.current.browserState.viewsById[identity.viewId]?.target;
-        if (dispatched?.success && dispatched.data.status === 'dispatched' && openedTarget && browserActionAccountLifetime) {
-            // Address resolution may open a Service preview. A managed stream is its
-            // presentation identity; history reopens the requested page instead.
-            rememberOpenedBrowserTarget(browserActionAccountLifetime.scope,
-                openedTarget.kind === 'streamedBrowser' ? target : openedTarget);
-        }
-        return result;
     }, [
         onCommand,
-        browserActionAccountLifetime,
         props.browserSessionId,
         props.platform,
     ]);

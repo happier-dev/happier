@@ -2891,6 +2891,11 @@ describe('BrowserSurfaceHost', () => {
         expect(opens).toEqual([]);
         expect(browserRecentsState.read(serverAccountScopeKeySuffix(getActiveServerAccountScope()!)))
             .toEqual([expect.objectContaining({ target: previewTarget })]);
+        await act(async () => { screen.changeTextByTestId(addressId, 'https://docs.happier.test/recents-followup'); });
+        await act(async () => { screen.findByTestId(addressId)?.props.onSubmitEditing?.(); });
+        await vi.waitFor(() => expect(screen.findByType('iframe').props.src).toBe('https://docs.happier.test/recents-followup'));
+        expect(browserRecentsState.read(serverAccountScopeKeySuffix(getActiveServerAccountScope()!))?.[0]?.target)
+            .toMatchObject({ kind: 'externalUrl', url: 'https://docs.happier.test/recents-followup' });
     });
 
     it('opens desktop external URL launchpad rows through the reusable host with policy and native WebView context', async () => {
