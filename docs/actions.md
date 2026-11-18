@@ -11506,6 +11506,8 @@ Existing-Session composer Send retains the Session input owner's mode, interrupt
 and draft handling, then delegates delivery to the same Home Action transport.
 Its authored message metadata uses the canonical Session metadata schema;
 protected provenance is stripped before the receiving owner stamps admission.
+The receiving input owner preserves authored `sentFrom` display context;
+legacy CLI authoring retains its `cli` default.
 Effective configuration travels through admitted Action fields. The canonical
 full `modelSelection` preserves Team source and binding revision; it cannot be
 combined with the legacy flat model aliases. Model grants are enforced before

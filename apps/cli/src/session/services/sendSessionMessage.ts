@@ -1760,7 +1760,6 @@ export async function sendSessionMessage(
   delete callerMeta[SESSION_MESSAGE_PROVENANCE_META_KEY];
   const baseMeta = {
     ...callerMeta,
-    sentFrom: 'cli',
     // Important: `source: 'cli'` is reserved for CLI-authored transcript traffic that
     // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
     // A `happier session send` prompt is user intent and must be delivered to the runtime
@@ -1771,7 +1770,7 @@ export async function sendSessionMessage(
   } as const;
   const inputRecord = protectedAdmission
     ? buildProtectedSessionInputTextRecordV1({ text: params.message, admission: protectedAdmission, meta: baseMeta })
-    : { role: 'user', content: { type: 'text', text: params.message }, meta: baseMeta } as const;
+    : { role: 'user', content: { type: 'text', text: params.message }, meta: { ...baseMeta, sentFrom: 'cli' } } as const;
   const record = {
     ...inputRecord,
     meta: withParticipantRecipientV1(modelResolution.selection

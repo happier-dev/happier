@@ -1,4 +1,5 @@
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
+import { SentFromSchema } from '../../sentFrom.js';
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -732,7 +733,7 @@ export function buildProtectedSessionInputTextRecordV1(params: Readonly<{
     content: { type: 'text', text: params.text },
     meta: {
       ...params.meta,
-      sentFrom: 'cli',
+      sentFrom: params.meta?.sentFrom === undefined ? 'cli' : SentFromSchema.parse(params.meta.sentFrom),
       source: params.admission.request.producer === 'automation' ? 'automation' : 'ui',
       [SESSION_MESSAGE_PROVENANCE_META_KEY]: params.admission.provenance,
       [SESSION_INPUT_REQUEST_META_KEY]: params.admission.request,

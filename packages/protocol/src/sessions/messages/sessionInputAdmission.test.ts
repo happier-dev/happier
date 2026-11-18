@@ -952,6 +952,21 @@ describe('session input admission metadata', () => {
   });
 
   it.each([
+    { surface: 'ui' as const, sentFrom: 'web', expectedSentFrom: 'web' },
+    { surface: 'voice' as const, sentFrom: undefined, expectedSentFrom: 'cli' },
+  ])('preserves display source and admitted provenance for $surface protected input', ({ surface, sentFrom, expectedSentFrom }) => {
+    const admission = protocol.buildTrustedHostSessionInputAdmissionV1(surface);
+    const record = protocol.buildProtectedSessionInputTextRecordV1({ text: 'Authored prompt', admission,
+      meta: { ...(sentFrom ? { sentFrom } : {}), source: 'cli',
+        happierProvenanceV1: { v: 1, kind: 'voice' },
+        happierInputRequestV1: { v: 1, producer: 'voiceInput', caller: { kind: 'host' }, permission: {} } } });
+    expect(record).toMatchObject({ role: 'user', content: { type: 'text', text: 'Authored prompt' }, meta: {
+      sentFrom: expectedSentFrom, source: 'ui', happierProvenanceV1: admission.provenance,
+      happierInputRequestV1: admission.request,
+    } });
+  });
+
+  it.each([
     ['owner', 'owner'],
     ['sharedEditor', 'sharedCollaborator'],
     ['sharedAdmin', 'sharedCollaborator'],
