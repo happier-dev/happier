@@ -10,6 +10,7 @@ import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentUpdateInpu
   DeploymentReceiptResultV1Schema, DeploymentActionInputSchemasV1, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
   DeploymentAccountChangeHintV1Schema, buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1,
   readDeploymentActionOperationRequestIdV1, readDeploymentEnvironmentOperationRequestIdV1 } from './deploymentActionsV1.js';
+import { resolveDeploymentEnvironmentExecutionMachineIdV1 } from './deploymentActionsV1.js';
 import { bindHomeDomainHttpRequestV1 } from '../actions/homeDomainHttpBinding.js';
 import { getActionSpec, listActionSpecsForSurface, resolveActionPermissionChangingV1,
   resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
@@ -35,6 +36,52 @@ import { projectExternalActionDeploymentNativeEnvelopeAdmissionV1, ExternalActio
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '../actions/externalActionExecutionAuthorization.js';
 import { createDeploymentDomainContentArtifactIdV1, projectDeploymentNativeAdmissionV1,
   isDeploymentDomainNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
+
+describe('Environment controller placement', () => {
+  const domainRemove = {
+    serverId: 'home', environmentId: 'environment', domainId: 'domain',
+    expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'remove-domain',
+  };
+  it('reads the current controller once per invocation', async () => {
+    let reads = 0;
+    const options = { readEnvironmentController: async () => ({
+      ok: true as const, machineId: ++reads === 1 ? 'first-controller' : 'new-controller',
+    }) };
+    expect(await resolveDeploymentEnvironmentExecutionMachineIdV1('deployments.domains.remove', domainRemove, options))
+      .toEqual({ ok: true, machineId: 'first-controller' });
+    expect(reads).toBe(1);
+    expect(await resolveDeploymentEnvironmentExecutionMachineIdV1('deployments.domains.remove', domainRemove, options))
+      .toEqual({ ok: true, machineId: 'new-controller' });
+    expect(reads).toBe(2);
+  });
+
+  it('passes an explicit caller machine to Home without reading the Environment', async () => {
+    let reads = 0;
+    const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1('deployments.domains.remove', domainRemove, {
+      explicitMachineId: 'other',
+      readEnvironmentController: async () => {
+        reads += 1;
+        return { ok: true, machineId: 'controller' };
+      },
+    });
+    expect(selected).toEqual({ ok: true, machineId: 'other' });
+    expect(reads).toBe(0);
+  });
+
+  it('does not read when the Action already carries its controller', async () => {
+    let reads = 0;
+    const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1('deployments.environments.create', {
+      serverId: 'home', projectSourceId: 'source', mode: 'apply', requestKey: 'request',
+      name: 'App', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      controllerMachineId: 'controller',
+    }, { readEnvironmentController: async () => {
+      reads += 1;
+      return { ok: true, machineId: 'other' };
+    } });
+    expect(selected).toEqual({ ok: true, machineId: 'controller' });
+    expect(reads).toBe(0);
+  });
+});
 
 it('admits an opaque next-page cursor for branch reads while branch mutations stay closed', () => {
   const credentialRef = { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'token' };

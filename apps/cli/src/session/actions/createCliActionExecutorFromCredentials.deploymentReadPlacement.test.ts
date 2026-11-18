@@ -1,10 +1,12 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 vi.mock('undici', async importOriginal => {
     const actual = await importOriginal<typeof import('undici')>();
@@ -44,6 +46,78 @@ describe('deployment read placement from a CLI on another Machine', () => {
             expect(calls.some(call => call.includes('/v1/machines/controller-machine')), evidence).toBe(true);
             expect(calls.some(call => call.includes('/v1/machines/own-machine')
                 || call.includes('/actions/root/execute')), evidence).toBe(false);
+        });
+    });
+
+    it.each([undefined, 'own-machine'])('places an Environment child using the recorded controller or explicit Machine (%s)', async machineId => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-deployment-child-placement-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const calls: string[] = [];
+            vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false, errorCode: 'probe', error: 'probe' })));
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                calls.push(`axios.get ${url}`);
+                return { status: 418, data: { ok: false, error: 'probe' } };
+            });
+            vi.spyOn(axios, 'post').mockResolvedValue({ status: 418, data: { ok: false, error: 'probe' } });
+            vi.spyOn(axios, 'request').mockImplementation(async config => {
+                calls.push(`axios.request ${String(config.url)}`);
+                if (new URL(String(config.url)).pathname === '/v1/deployments/environments/env') {
+                    return { status: 200, data: { ok: true, environment: createDeploymentEnvironmentHeaderV1({
+                        id: 'env', serverId: configuration.activeServerId, controllerMachineId: 'controller-machine',
+                    }), targetLinks: [] } };
+                }
+                return { status: 418, data: { ok: false, error: 'probe' } };
+            });
+            const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+            const executor = createCliActionExecutorFromCredentials({ credentials, ...(machineId ? { machineId } : {}),
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: {
+                    getActionsSettings: () => actionsSettings,
+                    getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: actionsSettings }),
+                } });
+            const result = await executor.execute('deployments.domains.add', {
+                serverId: configuration.activeServerId, environmentId: 'env', domainId: 'domain',
+                expectedRevision: 1, requestKey: 'add-domain', targetLinkId: 'link', expectedTargetLinkRevision: 1,
+                content: { hostname: 'example.test', target: { service: 'web', containerPort: 3000 } },
+            }, { surface: 'cli' });
+            const evidence = `${JSON.stringify(result)}\n${calls.join('\n')}`;
+            expect(calls.filter(call => call.includes('/v1/deployments/environments/env')), evidence).toHaveLength(machineId ? 0 : 1);
+            expect(evidence).toContain(`/v1/machines/${machineId ?? 'controller-machine'}`);
+            expect(evidence).not.toContain(`/v1/machines/${machineId ? 'controller-machine' : 'own-machine'}`);
+        });
+    });
+
+    it('keeps a CI API token out of the full Environment read during placement', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-ci-placement-' }, async () => {
+            const calls: URL[] = [];
+            const record = (url: unknown) => calls.push(new URL(String(url), 'https://home.test'));
+            vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+                record(url);
+                return Response.json({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' }, { status: 403 });
+            }));
+            for (const method of ['get', 'post'] as const) {
+                vi.spyOn(axios, method).mockImplementation(async url => {
+                    record(url);
+                    return { status: 403, data: { ok: false, error: 'action_forbidden' } };
+                });
+            }
+            vi.spyOn(axios, 'request').mockImplementation(async config => {
+                record(config.url);
+                return { status: 403, data: { ok: false, error: 'action_forbidden' } };
+            });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token: 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43),
+                    encryption: null, credentialProvenance: 'api_token' },
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+            });
+            await executor.execute('deployments.deploy', { serverId: 'srv_home', environmentId: 'env',
+                targetLinkId: 'link' }, { surface: 'cli' });
+            expect(calls.length).toBeGreaterThan(0);
+            expect(calls.map(url => url.pathname)).not.toContain('/v1/deployments/environments/env');
         });
     });
 });

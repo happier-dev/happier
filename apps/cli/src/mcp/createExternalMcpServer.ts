@@ -23,7 +23,7 @@ import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpB
 import { cacheMcpToolList } from '@/mcp/server/cacheMcpToolList';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
-import { isControllerDeploymentMutationAction } from '@/session/actions/createCliActionDeps';
+import { isControllerDeploymentAction } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -237,7 +237,7 @@ export function createExternalMcpServer(params: Readonly<{
                 invocation, authority: invocation.authority, ...(context?.signal ? { signal: context.signal } : {}) });
               if (selected) return await selected();
             }
-            if (isControllerDeploymentMutationAction(actionId, input)) {
+            if (isControllerDeploymentAction(actionId, input)) {
               const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
               if (!deps.deploymentAction) return { ok: false as const, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' };

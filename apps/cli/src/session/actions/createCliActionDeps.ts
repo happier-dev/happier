@@ -136,9 +136,13 @@ import { createCliDeploymentActionDeps } from '@/deployments/createCliDeployment
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
 import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
+  DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_RESTART_ACTION_ID_V1,
+  isDeploymentDomainChildActionIdV1, isDeploymentDomainDnsActionIdV1,
+  type DeploymentDomainChildActionIdV1, type DeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -298,6 +302,22 @@ export function isControllerDeploymentMutationAction(actionId: string, input: un
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
       && getActionSpec(DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1).safetyForInput?.(input) !== 'safe';
+}
+
+export type ControllerDeploymentActionId = ControllerDeploymentMutationActionId
+  | DeploymentDomainChildActionIdV1 | DeploymentDomainDnsActionIdV1 | typeof DEPLOYMENT_RESTART_ACTION_ID_V1
+  | typeof DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
+  | typeof DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 | typeof DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
+
+/** Original roots with no authored Machine operand that need installed deployment dispatch. */
+export function isControllerDeploymentAction(actionId: string, input: unknown): actionId is ControllerDeploymentActionId {
+  if (actionId === 'deployments.teardown') {
+    return getActionSpec(actionId).executionPlacementForInput?.(input) === 'machine';
+  }
+  return isControllerDeploymentMutationAction(actionId, input)
+    || isDeploymentDomainChildActionIdV1(actionId) || isDeploymentDomainDnsActionIdV1(actionId)
+    || actionId === DEPLOYMENT_RESTART_ACTION_ID_V1 || actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
+    || actionId === DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
 }
 
 export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>> & Readonly<{
@@ -1372,16 +1392,25 @@ export function createCliActionDeps(params: CliActionDepsParams,
       }
       const nativeRead = isDeploymentReadActionIdV1(actionId);
       const linkPreparation = actionId === 'deployments.targets.link';
-      if (!isControllerDeploymentMutationAction(actionId, input) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
+      if (!isControllerDeploymentAction(actionId, input) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
       if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
-      const loaded = await deploymentStorage('deployments.environments.get', {
-        serverId: input.serverId, environmentId: input.environmentId,
-      }, context);
-      if ('errorCode' in loaded || 'kind' in loaded) return loaded;
-      const opened = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-      if (!opened.ok) return opened;
+      let opened: ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse> | undefined;
+      const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, input, {
+        ...(context.externalActionTarget?.kind === 'machine' && actionId !== DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1
+          ? { explicitMachineId: context.externalActionTarget.machineId } : {}),
+        readEnvironmentController: async request => {
+          const loaded = await deploymentStorage('deployments.environments.get', request, context);
+          if ('errorCode' in loaded) return loaded;
+          opened = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+          return opened.ok
+            ? { ok: true, machineId: opened.environment.controllerMachineId }
+            : executionRunActionFailure(opened.error);
+        },
+      });
+      if (!selected.ok) return selected;
       // The same original-root owner retains requester review for every controller dispatch.
       if (actionId === DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1) {
+        if (!opened?.ok) return executionRunActionFailure('invalid_action_output');
         const health = DeploymentActionInputSchemasV1[actionId].safeParse(input);
         if (!health.success) return executionRunActionFailure('invalid_parameters');
         // Settle placement before Home is asked to admit a read no Machine can serve.
@@ -1389,8 +1418,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         if (placement) return placement;
       }
       const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, async () => ({ ok: true,
-        machineId: nativeRead && 'machineId' in input && typeof input.machineId === 'string'
-          ? input.machineId : opened.environment.controllerMachineId }));
+        machineId: selected.machineId }));
       if (!execution.ok) return execution;
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
       if (approval.success && approval.data.actionId === actionId) return approval.data;

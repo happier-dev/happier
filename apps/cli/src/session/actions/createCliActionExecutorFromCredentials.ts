@@ -18,8 +18,9 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
+import { hasDeploymentPlacementOperand, resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
@@ -108,7 +109,7 @@ import type {
 } from './createCliActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliTeamCredentialUsageExportAction } from './teamCredentialUsageExportAction';
-import { isControllerDeploymentMutationAction } from './createCliActionDeps';
+import { isControllerDeploymentAction, isControllerDeploymentMutationAction } from './createCliActionDeps';
 import { consumeDeferredCliApprovalResult, isUnpreservableOriginalCliApproval, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
 import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
 import { executeOriginalAccountCliApprovalRequest } from './approvals/originalAccountRequest';
@@ -1972,12 +1973,27 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const allowsDaemonIngress = spec.originalExecution?.daemonIngressSurfaces === undefined || declaredDaemonIngress;
       // An external client's Machine-placed Action keeps its signed original
       // carrier; UI-only ingress declarations narrow Session delivery below.
-      const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
+      const environmentPlacement = originalCliCaller
+        && (executionPlacement === 'machine' || isControllerDeploymentAction(actionId, admittedInput))
+        && hasDeploymentPlacementOperand(actionId, admittedInput)
+        // These actions retain their existing workspace, template or read receiver.
+        && actionId !== DEPLOYMENT_PREPARE_ACTION_ID_V1
+        && actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        && actionId !== DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+        && !isDeploymentReadActionIdV1(actionId);
+      let selectedOriginalMachine = (environmentPlacement || requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)
-        && (executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
+        && (environmentPlacement || executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
         ? resolveSelectedExternalActionMachineTarget({ actionId: spec.id, rawInput: admittedInput,
           target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId, context }) : null;
+      if (environmentPlacement && !selectedOriginalMachine) {
+        const selected = await resolveRequesterDeploymentMachine({ actionId, input: admittedInput, credentials,
+          serverApiUrl: resolveActionServerApiUrl(), serverId: approvalServerId,
+          context: { ...context, signal: combineInvocationSignals(invocationSignal, context.signal) } });
+        if (!selected.ok) return { context, invocation: createOneShotPatInvocation(async () => selected) };
+        selectedOriginalMachine = { kind: 'ready', machineId: selected.machineId };
+      }
       if (selectedOriginalMachine && (selectedOriginalMachine.kind === 'rejected'
         || params.machineId && params.machineId !== selectedOriginalMachine.machineId)) return { context,
           invocation: createOneShotPatInvocation(async () => routingFailure(actionId,

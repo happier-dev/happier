@@ -1113,6 +1113,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 () => installationBoundary.getStore() ?? readS0Installation(home));
             const controllerMachineId = home.machineId;
             const controllerInstallationId = home.installationId;
+            const controllerInstallation = readS0Installation(home);
             const controllerCredentials = readS0ControllerCredentials(home);
             const enrollment: { daemon?: Awaited<ReturnType<typeof createS0DeploymentDaemonIngress>>;
                 native?: EnrollmentJourneyNativeBoundary } = {};
@@ -1969,11 +1970,20 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             };
             const domainBasis = await readEnvironment();
             const journeyDomainId = randomUUID();
-            const journeyDomain = await invoke('deployments.domains.add', { serverId: home.serverId,
-                environmentId: environment.environmentId, domainId: journeyDomainId,
-                expectedRevision: domainBasis.environment.revision, targetLinkId: domainBasis.target.id,
-                expectedTargetLinkRevision: domainBasis.target.revision, requestKey: randomUUID(),
-                content: { hostname: 'journey.example.test', target: { service: 'web', containerPort: 3000 } } });
+            expect(domainBasis.environment.controllerMachineId).toBe(home.machineId);
+            expect(controllerMachineId).not.toBe(home.machineId);
+            const sourceExecutor = createCliActionExecutorFromCredentials({ credentials: controllerCredentials,
+                readCredentials: async () => controllerCredentials, serverId: home.serverId,
+                serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
+            const invokeFromSource = (name: string, input: unknown) => installationBoundary.run(controllerInstallation, () =>
+                sourceExecutor.execute(name, input, { surface: 'cli', serverId: home.serverId,
+                    actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId: ActionIdSchema.parse(name) } }));
+            const domainInput = { serverId: home.serverId, environmentId: environment.environmentId,
+                domainId: journeyDomainId, expectedRevision: domainBasis.environment.revision,
+                targetLinkId: domainBasis.target.id, expectedTargetLinkRevision: domainBasis.target.revision,
+                requestKey: randomUUID(),
+                content: { hostname: 'journey.example.test', target: { service: 'web', containerPort: 3000 } } };
+            const journeyDomain = await settlePublicApproval(invokeRaw, await invokeFromSource('deployments.domains.add', domainInput));
             expect(journeyDomain).toMatchObject({ ok: true, result: { ok: true } });
             const domainRead = await invoke('deployments.domains.get', { serverId: home.serverId,
                 environmentId: environment.environmentId, domainId: journeyDomainId });

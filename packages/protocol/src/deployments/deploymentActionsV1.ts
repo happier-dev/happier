@@ -1,6 +1,7 @@
 import { DeploymentEnvironmentTelemetrySetInputV1Schema, DeploymentEnvironmentTelemetrySetSuccessV1Schema,
   DeploymentTelemetryTokenHashV1Schema } from './deploymentTelemetryV1.js';
 export * from './deploymentTelemetryV1.js';
+import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentReadActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsResultV1Schema } from './deploymentDomainDnsV1.js';
 import { DeploymentDomainTunnelDispositionV1Schema } from './deploymentDomainProviderResultV1.js';
 export * from './deploymentDomainDnsV1.js';
@@ -900,6 +901,39 @@ export async function resolveDeploymentPreviewExecutionMachineIdV1(
     return failure('target_mismatch');
   return { ok: true, machineId: selected.machineId, ...(environment ? { environment } : {}) };
 }
+
+/** Places a validated Action operand. Home still authorizes the selected receiver. */
+export async function resolveDeploymentEnvironmentExecutionMachineIdV1(
+  actionId: string,
+  input: unknown,
+  options: Readonly<{
+    readEnvironmentController(input: Readonly<{ serverId: string; environmentId: string }>):
+      Promise<Readonly<{ ok: true; machineId: string }> | ActionExecuteFailure>;
+    explicitMachineId?: string;
+    knownControllerMachineId?: string;
+  }>,
+): Promise<Readonly<{ ok: true; machineId: string }> | ActionExecuteFailure> {
+  if (options.explicitMachineId) return { ok: true, machineId: options.explicitMachineId };
+  if (!input || typeof input !== 'object') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  if (options.knownControllerMachineId) return { ok: true, machineId: options.knownControllerMachineId };
+  if ('controllerMachineId' in input && typeof input.controllerMachineId === 'string') {
+    return { ok: true, machineId: input.controllerMachineId };
+  }
+  if (actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && 'machineId' in input && typeof input.machineId === 'string') {
+    return { ok: true, machineId: input.machineId };
+  }
+  if (!('serverId' in input) || typeof input.serverId !== 'string'
+    || !('environmentId' in input) || typeof input.environmentId !== 'string') {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  }
+  const controller = await options.readEnvironmentController({ serverId: input.serverId, environmentId: input.environmentId });
+  if (!controller.ok) return controller;
+  // Selected native reads may be served by a member of the Environment.
+  return isDeploymentReadActionIdV1(actionId) && 'machineId' in input && typeof input.machineId === 'string'
+    ? { ok: true, machineId: input.machineId }
+    : controller;
+}
+
 export type DeploymentReceiptListInputV1 = z.infer<typeof DeploymentReceiptListInputV1Schema>;
 export type DeploymentActionInputV1 = z.infer<typeof DeploymentActionInputSchemasV1[DeploymentTransportActionIdV1]>;
 export type DeploymentActionOutputV1 = z.infer<typeof DeploymentActionOutputSchemasV1[DeploymentTransportActionIdV1]>;
