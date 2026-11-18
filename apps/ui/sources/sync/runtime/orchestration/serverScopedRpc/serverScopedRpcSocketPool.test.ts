@@ -1,5 +1,8 @@
+import { createServer } from 'node:http';
+import { Server } from 'socket.io';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, type SessionConsumptionReplaceAckV1, type SessionConsumptionReplaceV1 } from '@happier-dev/protocol/sessions';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
@@ -50,6 +53,53 @@ function createFakeSocket(options: Readonly<{
 }
 
 describe('serverScopedRpcSocketPool', () => {
+    it.each([
+        { scope: 'Account relay', sessionId: undefined },
+        { scope: 'Session relay', sessionId: 'session-relay' },
+    ])('restores an observed $scope after a transport drop', async ({ sessionId }) => {
+        const http = createServer();
+        const home = new Server(http, { path: '/v1/updates/' });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing Home listener');
+        const declarations: Array<{ socketId: string; sessionIds: readonly string[] }> = [];
+        home.on('connection', socket => {
+            socket.on(SESSION_CONSUMPTION_REPLACE_EVENT,
+                (declaration: SessionConsumptionReplaceV1, ack: (result: SessionConsumptionReplaceAckV1) => void) => {
+                    declarations.push({ socketId: socket.id, sessionIds: declaration.liveSessionIds });
+                    ack({ ok: true, ...declaration });
+                });
+        });
+        const pool = createServerScopedRpcSocketPool({
+            readIdleDisconnectMs: () => 0,
+            reachability: {
+                startReachability: async () => {},
+                waitForReachable: async () => {},
+                subscribeNetworkAllowed: () => () => {},
+            },
+        });
+        try {
+            const client = await pool.acquire({ serverUrl: `http://127.0.0.1:${address.port}`,
+                token: 'relay-test', sessionId, timeoutMs: 2_000 });
+            const original = client.getSocketId();
+            expect(declarations).toEqual(sessionId ? [{ socketId: original, sessionIds: [sessionId] }] : []);
+            const replacements: string[] = [];
+            client.on('connect', () => { replacements.push(client.getSocketId()); });
+            home.sockets.sockets.get(original)!.conn.close();
+            await expect.poll(() => replacements).toHaveLength(1);
+            expect(replacements[0]).not.toBe(original);
+            expect(declarations).toEqual(sessionId ? [
+                { socketId: original, sessionIds: [sessionId] },
+                { socketId: replacements[0], sessionIds: [sessionId] },
+            ] : []);
+            client.disconnect();
+            await expect.poll(() => home.sockets.sockets.size).toBe(0);
+        } finally {
+            await pool.stopAll();
+            pool.resetForTests();
+            await home.close();
+        }
+    });
 
     it('keeps one-shot background sockets outside foreground pause and socket reuse', async () => {
         vi.useFakeTimers();

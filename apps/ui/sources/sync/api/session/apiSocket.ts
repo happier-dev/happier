@@ -481,13 +481,6 @@ class ApiSocket {
                             return { status: 'server_unreachable', errorMessage: error instanceof Error ? error.message : String(error) };
                         }
                     },
-                    classifyTransportErrorToProbeResult: (error) => {
-                        // The canonical server Socket.IO rejection carries this structured data.
-                        if (!error || typeof error !== 'object' || !('data' in error)) return null;
-                        const data = error.data;
-                        if (!data || typeof data !== 'object' || !('statusCode' in data) || data.statusCode !== 401) return null;
-                        return { status: 'auth_failed', statusCode: 401 };
-                    },
                     onAuthFailed: () => { if (this.config === config && config.isCurrent?.() !== false) config.onCredentialRejected?.(); },
                     onStateChange: (state) => { if (this.config === config) this.applyManagedConnectionState(state); },
                 });

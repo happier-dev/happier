@@ -2,6 +2,7 @@ import { createHappierSocket, createSocketTransportAdapter, createSocketRpcAbort
 import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, type ScopedRpcSocketConnectionPhase } from '@happier-dev/protocol/rpcErrors';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+import { createSocketConnectionSupervisor } from '@/sync/runtime/connectivity/createSocketConnectionSupervisor';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     buildAccountStoredContentCompatibilitySocketAuthV1,
@@ -85,7 +86,8 @@ type PoolEntry = {
     transport: ReturnType<typeof createSocketTransportAdapter>;
     sessionId: string | null;
     sessionConsumption: { controller: AbortController; result: Promise<void>; admitted: boolean } | null;
-    sessionConnectedListeners: Set<() => void>;
+    connectedListeners: Set<() => void>;
+    liveRecovery: ReturnType<typeof createSocketConnectionSupervisor> | null;
     inUseCount: number;
     connectInFlight: { result: Promise<void>; controller: AbortController; waiters: number; progress: { phase: ScopedRpcSocketConnectionPhase } } | null;
     idleDisconnectTimer: ReturnType<typeof setTimeout> | null;
@@ -218,11 +220,18 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         }
     };
 
+    const stopLiveRecovery = (entry: PoolEntry): void => {
+        const recovery = entry.liveRecovery;
+        entry.liveRecovery = null;
+        if (recovery) void recovery.stop();
+    };
+
     const stopEntrySocket = (entry: PoolEntry, remove: boolean, failure?: unknown): Promise<void> => {
         entry.teardownRequested ||= remove;
         if (entry.teardownInFlight) return entry.teardownInFlight;
 
         const run = (async () => {
+            stopLiveRecovery(entry);
             if (entry.idleDisconnectTimer) {
                 clearTimeout(entry.idleDisconnectTimer);
                 entry.idleDisconnectTimer = null;
@@ -235,7 +244,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             await disconnectEntrySocket(entry);
             if (entry.teardownRequested) {
                 await entry.transport.destroy();
-                entry.sessionConnectedListeners.clear();
+                entry.connectedListeners.clear();
             }
             const releaseReachability = entry.reachabilityRelease;
             if (releaseReachability) {
@@ -329,7 +338,8 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             transport,
             sessionId,
             sessionConsumption: null,
-            sessionConnectedListeners: new Set(),
+            connectedListeners: new Set(),
+            liveRecovery: null,
             inUseCount: 0,
             connectInFlight: null,
             idleDisconnectTimer: null,
@@ -340,7 +350,12 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             teardownInFlight: null,
         };
 
-        if (sessionId !== null) {
+        const emitConnected = () => {
+            for (const listener of entry.connectedListeners) listener();
+        };
+        if (sessionId === null) {
+            transport.onConnected(emitConnected);
+        } else {
             const declareConsumption = () => {
                 const controller = new AbortController();
                 const consumption = { controller, result: Promise.resolve(), admitted: false };
@@ -353,7 +368,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                     if (controller.signal.aborted) throw createSocketRpcAbortError();
                     if (!result.fullyAdmitted) throw new Error('session_consumption_partial_admission');
                     consumption.admitted = true;
-                    for (const listener of entry.sessionConnectedListeners) listener();
+                    emitConnected();
                 });
                 fireAndForget(consumption.result, { onError: error => {
                     if (controller.signal.aborted) return;
@@ -457,7 +472,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             });
         } finally {
             connection.waiters -= 1;
-            if (entry.connectInFlight === connection && connection.waiters === 0 && !isEntryReady(entry)) {
+            if (entry.connectInFlight === connection && connection.waiters === 0 && !isEntryReady(entry) && !entry.liveRecovery) {
                 // No caller still owns a dial budget. A retained stream may keep
                 // the entry alive, but must not retain a stalled handshake for
                 // every later RPC. Reset through this same pool connection owner;
@@ -564,10 +579,20 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         }
 
         let released = false;
+        let connectedListeners: Map<() => void, () => void> | undefined;
+        const removeConnectedListener = (listener: () => void) => {
+            if (!connectedListeners) return;
+            const callback = connectedListeners.get(listener);
+            if (!callback) return;
+            connectedListeners.delete(listener);
+            entry.connectedListeners.delete(callback);
+            if (entry.connectedListeners.size === 0) stopLiveRecovery(entry);
+        };
         const releaseOnce = () => {
             if (released) return;
             released = true;
             params.signal?.removeEventListener('abort', releaseOnce);
+            connectedListeners?.forEach((_callback, listener) => removeConnectedListener(listener));
             releaseEntryUse(entry);
         };
 
@@ -593,11 +618,24 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             timeout: (ms: number) => entry.socket.timeout(ms),
             emit: (event: string, payload: any) => entry.socket.emit(event, payload),
             on: (event: string, listener: (...args: any[]) => void) => {
-                if (entry.sessionId !== null && event === 'connect') entry.sessionConnectedListeners.add(listener);
-                else entry.socket.on(event, listener);
+                if (event !== 'connect') {
+                    entry.socket.on(event, listener);
+                    return;
+                }
+                if (released || entry.teardownRequested || connectedListeners?.has(listener)) return;
+                connectedListeners ??= new Map();
+                const callback = () => listener();
+                connectedListeners.set(listener, callback);
+                entry.connectedListeners.add(callback);
+                if (entry.liveRecovery) return;
+                entry.liveRecovery = createSocketConnectionSupervisor({
+                    // The entry lends the single-flight dial to the supervisor and owns socket/carrier teardown.
+                    createTransport: () => ({ ...entry.transport, disconnect: async () => {}, destroy: async () => {} }),
+                });
+                fireAndForget(entry.liveRecovery.start(), { tag: 'scoped-rpc-live-recovery' });
             },
             off: (event: string, listener: (...args: any[]) => void) => {
-                if (entry.sessionId !== null && event === 'connect') entry.sessionConnectedListeners.delete(listener);
+                if (event === 'connect') removeConnectedListener(listener);
                 else entry.socket.off(event, listener);
             },
             getSocketId: () => entry.sessionId !== null && !isEntryReady(entry) ? '' : entry.socket.id ?? '',
@@ -620,6 +658,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         detachNetworkAllowedListener?.();
         detachNetworkAllowedListener = null;
         for (const entry of entriesByKey.values()) {
+            stopLiveRecovery(entry);
             if (entry.idleDisconnectTimer) clearTimeout(entry.idleDisconnectTimer);
         }
         entriesByKey.clear();
