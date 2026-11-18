@@ -1580,6 +1580,58 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('displayName='));
     });
 
+    it('opens the second discovered draft when Connect replaces the first on the same Machine', async () => {
+        const candidates = [11434, 22434].map(port => ({
+            v: 1 as const, machineId: machine.id, contributionKey: 'plugin/ollama',
+            providerName: `Ollama on ${port}`, endpointTemplateId: 'native',
+            normalizedEndpointUrl: `http://127.0.0.1:${port}/`,
+            candidateId: `discovery-candidate:v1:${port}`,
+            evidence: { kind: 'attributed_listener' as const }, ownership: 'adopted' as const,
+            connection: { status: 'requires_named_connection' as const },
+        }));
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        query.data = createProviderConnectionsDescribeFixture({
+            ...query.data,
+            discoveryCandidates: candidates,
+            available: [{
+                contributionKey: 'plugin/ollama', name: 'Ollama', kind: 'local', provenance: 'external',
+                icon: null, credential: null, endpointTemplates: [],
+            }],
+        });
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const { NewProviderConnectionRoute } = await import('@/app/(app)/settings/providers/new');
+        navigationState.pathname = '/settings/providers/pc_a';
+        const rail = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" />);
+        await showFound(rail);
+
+        const connect = async (candidate: typeof candidates[number]) => {
+            await waitForHomeGovernance(() => expect(findConnectAction(rail, candidate.providerName)).toBeDefined());
+            routerReplace.mockClear();
+            await React.act(async () => { findConnectAction(rail, candidate.providerName)!.props.onPress?.(); });
+            expect(routerReplace).toHaveBeenCalledWith(expect.stringContaining('/settings/providers/new?'));
+            const href: string = routerReplace.mock.lastCall![0];
+            navigationState.pathname = '/settings/providers/new';
+            navigationState.params = Object.fromEntries(new URLSearchParams(href.split('?')[1]));
+        };
+        await connect(candidates[0]);
+        const authoring = await renderScreen(<NewProviderConnectionRoute />);
+        const expectPreview = (candidate: typeof candidates[number]) => waitForHomeGovernance(() =>
+            expect(providerConnectionReads().findLast(request =>
+                Boolean((request.payload as { authoringPreview?: unknown }).authoringPreview),
+            )).toMatchObject({
+                machineId: machine.id,
+                payload: { authoringPreview: { selectedCandidateId: candidate.candidateId } },
+            }));
+        await expectPreview(candidates[0]);
+        expect(authoring.findByTestId('settings-provider-authoring-name')?.props.value).toContain(candidates[0].providerName);
+
+        await connect(candidates[1]);
+        await authoring.update(<NewProviderConnectionRoute />);
+
+        await expectPreview(candidates[1]);
+        expect(authoring.findByTestId('settings-provider-authoring-name')?.props.value).toContain(candidates[1].providerName);
+    });
+
     it('preserves the daemon candidate identity when credential recovery opens authoring', async () => {
         const query = state.describeReply as { data: { discoveryCandidates: unknown[] } };
         query.data.discoveryCandidates = [{

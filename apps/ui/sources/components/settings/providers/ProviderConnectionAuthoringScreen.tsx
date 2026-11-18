@@ -178,6 +178,12 @@ export type ProviderConnectionAuthoringScreenProps = Readonly<{
 export const ProviderConnectionAuthoringScreen = React.memo(function ProviderConnectionAuthoringScreen(
     props: ProviderConnectionAuthoringScreenProps,
 ) {
+    // The rail can replace the candidate on a retained New Provider route.
+    // A different candidate starts a new draft, including its preview and save lifecycle.
+    return <ProviderConnectionDraft key={props.candidateId} {...props} />;
+});
+
+function ProviderConnectionDraft(props: ProviderConnectionAuthoringScreenProps) {
     const router = useRouter();
     const navigation = useNavigation();
     const { theme } = useUnistyles();
@@ -946,7 +952,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             }}
         />
     );
-});
+}
 
 /**
  * A saved custom connection reopened in the custom editor (F08), from its detail page. The editor is

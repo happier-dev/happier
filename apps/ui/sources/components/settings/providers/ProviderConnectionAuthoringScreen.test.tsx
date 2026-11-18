@@ -809,9 +809,8 @@ describe('ProviderConnectionAuthoringScreen', () => {
         })));
         const accountARequestCount = providerHarness.state.requests.length;
 
-        // The incumbent reset retires Account A's lifetime, then Account B
-        // mounts on the same route. The changed displayName prop forces the
-        // memoized screen to re-run under B's freshly captured lifetime.
+        // The incumbent reset retires Account A's lifetime while the same
+        // candidate route stays open. Change a non-identity prop to rerender under B.
         await React.act(async () => {
             await account.restore({ accountId: 'account-b', serverIdentityId: 'srv_provider_screen', machines: [machine] });
             await account.home.selectHomes([account.serverId]);
@@ -821,6 +820,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         await screen.update(
             <ProviderConnectionAuthoringScreen
                 contributionKey="acme.plugin/ollama"
+                candidateId="discovery-candidate:v1:account-a"
                 displayName="account-b-render"
             />,
         );
