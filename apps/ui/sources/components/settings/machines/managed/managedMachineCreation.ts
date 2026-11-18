@@ -125,7 +125,8 @@ export async function runManagedMachineCreation(input: Readonly<{
     let agentUpdate: SessionAgentUpdateNoticeV1 | undefined;
     let setupMachine: ManagedMachineReadSnapshotV1 | undefined;
     const fail = (code: string, retryInstallationAvailable?: boolean, diagnosticDetail?: string, failure?: ActionExecuteFailure): ManagedMachineCreationResult => {
-        diagnosticDetail ??= failure ? describeManagedActionFailureDiagnostic(code, failure.details, failure.requestId, failure.failureCause) : undefined;
+        const error = failure ?? (observedOperation?.error?.errorCode === code ? observedOperation.error : undefined);
+        diagnosticDetail ??= error ? describeManagedActionFailureDiagnostic(code, error.details, error.requestId, error.failureCause) : undefined;
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
         if (input.isCurrent()) input.onProgress({ kind: 'failed', code,
             ...(diagnosticDetail ? { diagnosticDetail } : {}),
@@ -251,7 +252,6 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (current()) input.onAcquisitionChange(acquisition);
     }
     if (!current()) return fail('continuation_retired');
-    let operationFailure: string | null = null;
     const awaitingSetupWithoutGuestOperation = alreadyAdmitted?.machineSetup
         && (alreadyAdmitted.machineSetup.state === 'pending' || alreadyAdmitted.machineSetup.state === 'running')
         && !alreadyAdmitted.machineSetup.operation;
@@ -319,15 +319,16 @@ export async function runManagedMachineCreation(input: Readonly<{
             if (found.operation.state === 'accepted' || found.operation.state === 'running') {
                 return acquisition.managedId ? { kind: 'pending', managedId: acquisition.managedId } : fail('managed_response_invalid');
             }
-            operationFailure = found.operation.state === 'failed' ? found.operation.error?.errorCode ?? 'installation_failed'
-                : found.operation.state === 'cancelled' ? 'creation_canceled' : null;
             break;
         }
     }
     machine ??= await read();
     if (!current()) return fail('continuation_retired');
     if (!machine) return fail(readFailureCode, undefined, undefined, readFailure);
-    if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return fail('enrollment_retired');
+    const operationError = observedOperation?.state === 'failed' ? observedOperation.error : undefined;
+    if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') {
+        return fail(operationError?.errorCode ?? 'enrollment_retired');
+    }
     setupMachine = machine;
     const bootstrapFailure = isManagedMachineBootstrapIncomplete(machine) ? machine.observation : undefined;
     const bootstrapFailureCode = bootstrapFailure ? bootstrapFailure.reason?.slice('bootstrap.'.length) || 'installation_failed' : undefined;
@@ -358,6 +359,8 @@ export async function runManagedMachineCreation(input: Readonly<{
         input.onProgress({ kind: 'idle' });
         return { kind: 'delete_requested', managedId: machine.id };
     }
+    const operationFailure = observedOperation?.state === 'failed' ? operationError?.errorCode ?? 'installation_failed'
+        : observedOperation?.state === 'cancelled' ? 'creation_canceled' : null;
     if (operationFailure) return fail(machine.machineSetup?.state === 'failed' ? machine.machineSetup.errorCode ?? operationFailure : operationFailure,
         canRetryManagedInstallation(machine));
     if (bootstrapFailureCode) return fail(bootstrapFailureCode, canRetryManagedInstallation(machine),

@@ -10,6 +10,42 @@ import { Modal } from '@/modal';
 import { runManagedMachineCreation } from './managedMachineCreation';
 
 describe('owner managed creation prompts', () => {
+    it('preserves a terminal install refusal when no guest was allocated', async () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const machine: ManagedMachineFullV1 = { id: 'paid', homeId: 'home', custodianAccountId: 'owner', controller, launch,
+            allocation: 'confirmed-absent', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const refusal = { errorCode: 'guest_payload_missing', error: 'guest_payload_missing', requestId: 'install-refusal' };
+        const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'install', revision: 2,
+            actionId: 'machines.managed.acquire', state: 'failed', scope: { accountId: 'owner', machineId: controller.machineId },
+            title: 'Install', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported', error: refusal,
+            domainRef: { kind: 'managedMachine', id: machine.id, controller } };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+            'machines.managed.acquire': ['ui'], 'machines.managed.get': ['ui'], 'action.operations.get': ['ui'],
+        } });
+        const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            readActionsSettings: () => settings,
+            managedMachineAction: async request => request.actionId === 'machines.managed.get' ? machine
+                : { managedId: machine.id, operation: { operationId: operation.operationId } },
+            actionOperationAction: async () => ({ kind: 'found', operation }),
+        }), 'owner', settings);
+        const draft = createManagedMachineSelectionDraft({ enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            selection: { kind: 'one-off', homeId: 'home', launch, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const progress = vi.fn();
+        const result = await runManagedMachineCreation({ draft,
+            acquisition: { requestId: 'owner-add', selection: draft.selection },
+            scope: { serverId: 'server', accountId: 'owner' }, signal: new AbortController().signal, isCurrent: () => true,
+            executeAction: createFrontDoorActionExecute(executor), onAcquisitionChange: () => {}, onProgress: progress,
+            onApprovalPending: () => { throw new Error('Unexpected approval'); } });
+        expect(result).toEqual({ kind: 'failed', code: refusal.errorCode });
+        expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({
+            kind: 'failed', code: refusal.errorCode, diagnosticDetail: expect.stringContaining(refusal.requestId),
+        }));
+    });
+
     it.each([false, true])('answers one-off host trust through the existing prompt and response owners (retained=%s)', async retained => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };

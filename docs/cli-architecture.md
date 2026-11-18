@@ -7099,9 +7099,10 @@ opt in to exporting its producer archives; Create retains the advertised target
 list and archive hashes in its existing admission, and Update/Retry captures a new
 snapshot for its own operation. The guest verifies the selected archive hash before
 extracting or running it. See [source guest payloads](binary-runtime.md#runtime-contract).
-Missing Home
-payloads or transports without Home-payload transfer settle as
-`guest_payload_missing`. Explicit Retry install replaces a retained native-process
+Missing Home payloads or transports without Home-payload transfer settle as
+`guest_payload_missing`. When creation settles with a typed install failure
+before allocation, its progress disclosure keeps that cause and the Action's
+request ID. Explicit Retry install replaces a retained native-process
 guest's payload before restarting its daemon; ordinary boot recovery only repairs
 the retained boot configuration. The guest keeps its enrolled Machine identity.
 
