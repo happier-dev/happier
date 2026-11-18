@@ -220,7 +220,8 @@ pub(crate) fn ensure_pet_overlay_window<R: Runtime>(
         let _ = window.set_always_on_top(always_on_top);
         let _ = window.set_visible_on_all_workspaces(true);
         apply_pet_overlay_macos_mouse_settings(&window)?;
-        navigate_pet_overlay_window_to_route(&window)?;
+        // The route is supplied during creation. Avoid reading WKWebView.URL()
+        // while the hidden webview may still be loading its initial document.
         return Ok(window);
     }
 
@@ -248,7 +249,6 @@ pub(crate) fn ensure_pet_overlay_window<R: Runtime>(
         .set_background_color(spec.background_color)
         .map_err(|error| error.to_string())?;
     apply_pet_overlay_macos_mouse_settings(&window)?;
-    navigate_pet_overlay_window_to_route(&window)?;
     Ok(window)
 }
 
@@ -301,20 +301,6 @@ pub(crate) fn set_pet_overlay_window_frame<R: Runtime>(
         .map_err(|error| error.to_string())?;
     window
         .set_position(LogicalPosition::new(position.x, position.y))
-        .map_err(|error| error.to_string())
-}
-
-pub(crate) fn navigate_pet_overlay_window_to_route<R: Runtime>(
-    window: &WebviewWindow<R>,
-) -> Result<(), String> {
-    let current_url = window.url().map_err(|error| error.to_string())?;
-    let target_url = build_pet_overlay_window_navigation_url(&current_url)?;
-    if current_url.as_str() == target_url.as_str() {
-        return Ok(());
-    }
-
-    window
-        .navigate(target_url)
         .map_err(|error| error.to_string())
 }
 

@@ -20,6 +20,7 @@ use diagnostics::{
     DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES,
 };
 use std::path::{Component, Path, PathBuf};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 #[cfg(test)]
 use std::sync::Arc;
 use std::sync::{Arc as StdArc, Mutex, Weak};
@@ -47,6 +48,17 @@ struct NativeCapturedSnapshot {
 }
 type PendingNativeCapture =
     tokio::sync::oneshot::Receiver<Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode>>;
+
+fn read_wry_url<F>(read: F) -> Result<Option<String>, String>
+where
+    F: FnOnce() -> Result<String, String>,
+{
+    match catch_unwind(AssertUnwindSafe(read)) {
+        Ok(Ok(url)) => Ok(Some(url)),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Ok(None),
+    }
+}
 
 pub(crate) trait DesktopBrowserWebViewHandle {
     fn login_cookies_available(&self) -> Result<(), login_cookies::LoginImportCode> {
@@ -1845,10 +1857,7 @@ impl DesktopBrowserWebViewHandle for WryDesktopBrowserView {
         cookie_store::set(&self.webview, cookie, completion)
     }
     fn current_url(&self) -> Result<Option<String>, String> {
-        self.webview
-            .url()
-            .map(Some)
-            .map_err(|error| error.to_string())
+        read_wry_url(|| self.webview.url().map_err(|error| error.to_string()))
     }
     fn navigation_state(&self) -> Result<(bool, bool), String> {
         Ok((
@@ -2124,6 +2133,20 @@ fn capture_wry_webview_snapshot(
     _completion: NativeSnapshotCompletion,
 ) -> Result<(), String> {
     Err("desktop browser capture is unsupported on this platform".to_string())
+}
+
+#[cfg(test)]
+mod wry_url_tests {
+    use super::*;
+
+    #[test]
+    fn an_unloaded_wry_webview_reports_url_unavailable_after_native_panic() {
+        let result = read_wry_url(|| -> Result<String, String> {
+            panic!("WKWebView.URL is unavailable while the document is loading")
+        });
+
+        assert_eq!(result, Ok(None));
+    }
 }
 
 #[cfg(test)]

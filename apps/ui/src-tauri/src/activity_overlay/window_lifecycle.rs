@@ -361,7 +361,9 @@ pub(crate) fn ensure_overlay_window<R: Runtime>(
     if let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
         #[cfg(target_os = "linux")]
         super::linux_layer::initialize(&window)?;
-        navigate_overlay_window_to_route(&window)?;
+        // The route is supplied to WebviewWindowBuilder below and the runtime
+        // config is applied by the webview bootstrap. Querying WKWebView.URL()
+        // here can panic while a newly-created webview is still loading.
         return Ok(window);
     }
 
@@ -399,7 +401,6 @@ pub(crate) fn ensure_overlay_window<R: Runtime>(
     window
         .set_background_color(resolve_overlay_window_background_color())
         .map_err(|error| error.to_string())?;
-    navigate_overlay_window_to_route(&window)?;
     #[cfg(target_os = "windows")]
     super::native_display::watch_window(&window)?;
     Ok(window)
@@ -496,20 +497,6 @@ pub(crate) fn build_overlay_window_navigation_url(
         }
     }
     Ok(next)
-}
-
-pub(crate) fn navigate_overlay_window_to_route<R: Runtime>(
-    window: &WebviewWindow<R>,
-) -> Result<(), String> {
-    let current_url = window.url().map_err(|error| error.to_string())?;
-    let target_url = build_overlay_window_navigation_url(&current_url)?;
-    if current_url.as_str() == target_url.as_str() {
-        return Ok(());
-    }
-
-    window
-        .navigate(target_url)
-        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
