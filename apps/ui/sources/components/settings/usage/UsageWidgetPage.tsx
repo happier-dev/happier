@@ -474,15 +474,13 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         homeUnavailable={homeUnavailable} phone={phone}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
-          keeps choosing a view but not arranging one (D23): no + and no ⋯ (rename, reorder, delete). */}
-      {session ? null : <WidgetAreaLayoutBar
+          shows the selected view without the chooser and its + (D23): arranging dashboards is desktop work. */}
+      {session || phone ? null : <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}
-        onCreate={phone ? null : bar.create}
-        actions={phone ? null : bar.personalActions}
-        // Under the page's own "Usage" title the phone's view name speaks at the section step.
-        heading={phone ? 'section' : 'page'}
+        onCreate={bar.create}
+        actions={bar.personalActions}
         // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
         testID="usage-views"

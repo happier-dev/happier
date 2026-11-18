@@ -140,17 +140,14 @@ async function renderUsagePage() {
   );
 }
 
-// D23: arranging dashboards is desktop work, but choosing a view is not arranging one. A phone keeps the
-// view chooser without its + and ⋯ (create, rename, reorder); a wide window keeps both.
-it('keeps the view chooser on a phone without the arranging controls', async () => {
+// D23 (owner 11-09): the dashboard chooser and its + leave the phone; it shows the selected view under its
+// filters. A wide window keeps them.
+it('leaves the dashboard chooser off a phone and keeps it on a wide window', async () => {
   const phone = await renderUsagePage();
   await waitForHomeGovernance(() =>
     expect(phone.findAllByType(UsageFilterBar)).toHaveLength(1),
   );
-  const [phoneBar] = phone.findAllByType(WidgetAreaLayoutBar);
-  expect(phoneBar?.props.layouts.length).toBeGreaterThan(1);
-  expect(phoneBar?.props.onCreate).toBeNull();
-  expect(phoneBar?.props.actions).toBeNull();
+  expect(phone.findAllByType(WidgetAreaLayoutBar)).toHaveLength(0);
   await phone.unmount();
   await home?.dispose();
   home = undefined;
