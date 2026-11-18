@@ -1264,6 +1264,7 @@ function isWorkflowDiscussionPreparationEffect(rootActionId: string, effectActio
  * (createDeploymentApprovalScopeResolverV1) reads that step's Environment or receipt metadata as the
  * requester. Only those two metadata reads cross; a foreign custodian Machine gains no requester read.
  */
+// Not the admitted read-root rule: the read effect differs from its Run root, so it crosses the effect family here.
 function isWorkflowDeploymentApprovalScopeReadEffect(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string): boolean {
     return binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && 'authentication' in binding
@@ -2670,6 +2671,7 @@ async function isAdmittedDeclaredDeploymentReadInScope(
  * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
  * Account can read, as readDeploymentReferenceHttpPurpose does.
  */
+// Not the admitted read-root rule: action.invoke is not a read root, and a foreign custodian reads only its own Environments.
 async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const binding = verified.binding;
@@ -2692,6 +2694,26 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
     }
     return binding.custodianAccountId === binding.accountId || (await loadDeploymentEnvironmentInTx(db,
         binding.custodianAccountId, binding.serverIdentityId, environmentId)).ok;
+}
+
+/**
+ * A read-only Account root (its ActionSpec declares sideEffectClass 'read' and the effect is the
+ * root itself) makes the GET reads its effect needs with the requester's own Account credential.
+ * Every route still applies the requester's own access, so this equals the requester's bearer read,
+ * decided once here instead of a purpose entry per route. API-token bindings keep their grant-scoped
+ * purposes, and a foreign custodian Machine gains no read of the requester's resources here.
+ * (A contributed provider read stays isContributedRootEnvironmentRead: action.invoke is not a read
+ * root, and that read adds the custodian's own Environment access.)
+ */
+function isAdmittedReadRootRequesterGet(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    const binding = verified.binding;
+    const root = ActionIdSchema.safeParse(binding.actionId);
+    if (!root.success || verified.effectActionId !== binding.actionId || !('authentication' in binding)
+        || binding.custodianAccountId !== binding.accountId) return false;
+    const spec = getActionSpec(root.data);
+    return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'
+        && proof.method.toUpperCase() === 'GET' && proof.body === undefined;
 }
 
 /** A Discussion operation admits only its resource-codec preparation phases. */
@@ -4396,6 +4418,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         // read; no per-purpose table entry is needed.
     } else if (await isContributedRootEnvironmentRead(verified, proof)) {
         // Environment and Artifact routes retain the requester's access; this opens no content custody.
+    } else if (isAdmittedReadRootRequesterGet(verified, proof)) {
+        // Every route retains the requester's own access; a read root gains no mutation.
     } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, { ...proof,
         onRefusal: phase => { accountHttpRefusal = phase; } }, snapshotBatch)) !== null) {
         // A specialized refusal is terminal before generic Session reads.
