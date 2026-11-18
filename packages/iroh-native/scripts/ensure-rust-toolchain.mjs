@@ -84,6 +84,15 @@ export function resolveRustCargoBinDir(env = process.env) {
   return join(env.CARGO_HOME || join(env.HOME || env.USERPROFILE || homedir(), '.cargo'), 'bin');
 }
 
+function isRustToolchainReady({ rustup, channel, targets, env }) {
+  if (spawnSync(rustup, ['run', channel, 'rustc', '--version'], { env, stdio: 'ignore' }).status !== 0) return false;
+  if (targets.length === 0) return true;
+  const listed = spawnSync(rustup, ['target', 'list', '--toolchain', channel, '--installed'], { env, encoding: 'utf8' });
+  if (listed.status !== 0) return false;
+  const installed = new Set(String(listed.stdout).split(/\r?\n/u).map(line => line.trim()));
+  return targets.every(target => installed.has(target));
+}
+
 export function prepareRustToolchain({ platform, channel, env = process.env }) {
   const cargoBin = resolveRustCargoBinDir(env);
   const rustup = spawnSync('rustup', ['--version'], { env, stdio: 'ignore' }).status === 0
@@ -101,9 +110,11 @@ export function prepareRustToolchain({ platform, channel, env = process.env }) {
     return;
   }
 
-  if (platform === 'host' && hasRustup
-    && spawnSync(rustup, ['run', channel, 'rustc', '--version'], { env, stdio: 'ignore' }).status === 0) {
-    process.stderr.write(`[iroh-native] Rust ${channel} ready for native host\n`);
+  // A provisioned compiler with every requested target is reused offline:
+  // `toolchain install` re-syncs the channel manifest over the network even
+  // when nothing is missing, which fails a host without outbound access.
+  if (hasRustup && isRustToolchainReady({ rustup, channel, targets: plan.targets, env })) {
+    process.stderr.write(`[iroh-native] Rust ${channel} ready for ${platform}\n`);
     return;
   }
 

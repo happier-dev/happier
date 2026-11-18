@@ -125,6 +125,40 @@ esac
   assert.equal(await readFile(join(cargoHome, 'installs'), 'utf8'), installs, 'a ready compiler must not be reinstalled');
 });
 
+test('a provisioned toolchain with every requested target is reused offline, not re-synced', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-native-rust-targets-' });
+  const cargoHome = join(root, 'cargo');
+  await mkdir(join(cargoHome, 'bin'), { recursive: true });
+  await mkdir(join(root, 'empty-path'));
+  const channel = readPinnedRustChannel(await read(packageRoot, 'rust-toolchain.toml'));
+  // rustup is the external executable boundary. Any channel sync or target add
+  // reaches the network (windows2-linux has none), so the fixture records them.
+  await writeFile(join(cargoHome, 'bin/rustup'), `#!/bin/sh
+case "$*" in
+  --version) echo fixture-rustup ;;
+  'run ${channel} rustc --version') echo fixture-rustc ;;
+  'target list --toolchain ${channel} --installed') while IFS= read -r line; do echo "$line"; done < "$CARGO_HOME/installed-targets" ;;
+  'toolchain install '*|'target add '*) printf '%s\\n' "$*" >> "$CARGO_HOME/network" ;;
+  *) exit 79 ;;
+esac
+`, { mode: 0o755 });
+  const run = () => spawnSync(process.execPath, [fileURLToPath(new URL('./ensure-rust-toolchain.mjs', import.meta.url)), '--platform', 'session-targets'], {
+    encoding: 'utf8', env: { ...process.env, CARGO_HOME: cargoHome, PATH: join(root, 'empty-path') },
+  });
+  const [missing, ...present] = IROH_RUST_TARGETS['session-targets'];
+  await writeFile(join(cargoHome, 'installed-targets'), `x86_64-unknown-linux-gnu\n${present.join('\n')}\n`);
+  const partial = run();
+  assert.equal(partial.status, 0, partial.stderr);
+  assert.match(await readFile(join(cargoHome, 'network'), 'utf8'), new RegExp(`target add --toolchain ${channel} .*${missing}`, 'u'),
+    'a missing target is still installed');
+  await writeFile(join(cargoHome, 'network'), '');
+  await writeFile(join(cargoHome, 'installed-targets'), `x86_64-unknown-linux-gnu\n${IROH_RUST_TARGETS['session-targets'].join('\n')}\n`);
+  const ready = run();
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.equal(ready.stdout, '', 'toolchain progress must not write to stdout');
+  assert.equal(await readFile(join(cargoHome, 'network'), 'utf8'), '', 'a ready toolchain and targets must not reach the network');
+});
+
 test('the declared targets are exactly the ones the Iroh build scripts compile', async () => {
   const [ios, android] = await Promise.all([
     read(packageRoot, 'scripts/build-rust-ios.sh'),
