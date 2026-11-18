@@ -1,4 +1,5 @@
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { PROJECT_FINITE_ACTION_IDS_V1, isProjectFiniteActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -43,9 +44,9 @@ export function registerProjectFiniteRpcHandlers(registrar: RpcHandlerRegistrar,
     createActionExecutor?: (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => RpcActionExecutor | Promise<RpcActionExecutor>;
 }>): void {
     registerActionSpecRpcHandlers({ rpcHandlerManager: registrar, targetMachineId: input.machineId, defaultMachineTarget: true,
-        actionIds: ['projects.prepare', 'projects.script.run', 'projects.compute.exec'],
+        actionIds: PROJECT_FINITE_ACTION_IDS_V1,
         mapRequestForMethod: async ({ actionId, input: raw }) => {
-            if (actionId !== 'projects.prepare' && actionId !== 'projects.script.run' && actionId !== 'projects.compute.exec') return { accepted: false, response: failure('unsupported_action') };
+            if (!isProjectFiniteActionIdV1(actionId)) return { accepted: false, response: failure('unsupported_action') };
             // The generic registrar remains the owner of opening and validating the target wrapper.
             const envelope = TargetedActionRpcRequestV1Schema.safeParse(raw);
             const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(envelope.success ? envelope.data.input : raw);
