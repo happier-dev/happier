@@ -1000,7 +1000,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               hitReach={sheet ? 0 : gap / 2}
               testID={tileTestID}
               accessibilityRole={selectionAccessibilityRole}
-              accessibilityLabel={[option.title, hasSubtitle ? option.subtitle : null, option.status ?? null].filter(Boolean).join(', ')}
+              // The badge is visible text that qualifies the choice ("Recommended"), so it is part of the name too.
+              accessibilityLabel={[option.title, option.badge ?? null, hasSubtitle ? option.subtitle : null, option.status ?? null].filter(Boolean).join(', ')}
               accessibilityState={props.selectionMode === 'multiple'
                 ? { checked: selected, disabled }
                 : { checked: selected, selected, disabled }}
