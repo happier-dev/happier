@@ -2,7 +2,7 @@ import { projectRemoteGuestCliPayloadEnvironment } from '../../runtime/shared/so
 export { projectRemoteGuestCliPayloadEnvironment };
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1460,7 +1460,7 @@ resolve_native_command_policy() {
     fi
     native_payload_policy=$(
       eval "\${explicit_remote_environment-}"
-      node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@"
+      node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --output-fd=3 --package-policy "$repo_root" "$native_policy_request_cwd" "$@" 3>&1 1>&2
     ) || return $?
     eval "$native_payload_policy"
     native_test_policy_resolved=1
@@ -1670,7 +1670,7 @@ native_resolve_command_policy_arguments() {
         # classify the actual payload at that directory as usual.
         native_result=$(
           eval "\${explicit_remote_environment-}"
-          node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --binary-cwd "$repo_root" "$native_result" pnpm --filter "$policy_workspace" exec "$@"
+          node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --output-fd=3 --binary-cwd "$repo_root" "$native_result" pnpm --filter "$policy_workspace" exec "$@" 3>&1 1>&2
         ) || return $?
       fi
       # Positional custody restores caller cwd overrides after recursion.
@@ -3017,15 +3017,23 @@ export function buildSshWorkerArgs(
 
 export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
   const args = [...argv];
+  // Shell consumers eval or parse this result. They read it from its own
+  // descriptor (--output-fd=3 with 3>&1 1>&2), so anything this process or a
+  // dependency prints on stdout stays plain output instead of shell code.
+  let output = text => process.stdout.write(text);
+  if (args[0]?.startsWith('--output-fd=')) {
+    const fd = Number(args.shift().slice('--output-fd='.length));
+    output = text => writeSync(fd, text);
+  }
   if (args[0] === '--source-web-export-workers') {
     const { explicit, workers } = resolveExpoExportWorkers(args.slice(2), process.env, { interactive: args[1] === '1' });
     // Opt-outs and interactive/default-Metro commands do not consume a fitted
     // injected count. Keep their prior conservative reservation instead.
-    process.stdout.write(`${explicit || workers === null ? 'explicit' : 'managed'} ${workers ?? 0}\n`);
+    output(`${explicit || workers === null ? 'explicit' : 'managed'} ${workers ?? 0}\n`);
     return 0;
   }
   if (args[0] === '--workspace-locks') {
-    process.stdout.write(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4], commandClass: args[5] }, args[1])));
+    output(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4], commandClass: args[5] }, args[1])));
     return 0;
   }
   const sourceTestTools = args[0] === '--source-test-tools';
@@ -3041,21 +3049,21 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
       const context = normalizeCommandArguments(commandArgs, cwd, repoRoot).binaryContext;
       if (!context) throw new Error('expected a package binary invocation');
       const directory = await resolveCommandPackageDirectory(context, repoRoot);
-      process.stdout.write((directory ?? context.cwd) + '\n');
+      output((directory ?? context.cwd) + '\n');
       return 0;
     }
     if (sourceTestTools) {
-      process.stdout.write(resolveSourceTestRequiredTools(repoRoot, cwd, commandArgs[0] ?? '') + '\n');
+      output(resolveSourceTestRequiredTools(repoRoot, cwd, commandArgs[0] ?? '') + '\n');
       return 0;
     }
     if (vitestPolicy || packagePolicy) {
       const policy = await resolvePackageCommandPolicy(commandArgs, { repoRoot, cwd });
-      process.stdout.write(Object.entries(policy).map(([key, value]) => `policy_${key}=${posixQuote(value)}`).join('\n') + '\n');
+      output(Object.entries(policy).map(([key, value]) => `policy_${key}=${posixQuote(value)}`).join('\n') + '\n');
       return 0;
     }
     if (publisherPolicy) {
       const policy = await resolveCommandPublisherPolicy(commandArgs, { repoRoot, cwd });
-      process.stdout.write(`${policy.selfPublisher} ${policy.heavyClass || '-'} ${policy.requiredTools || '-'}\n`);
+      output(`${policy.selfPublisher} ${policy.heavyClass || '-'} ${policy.requiredTools || '-'}\n`);
       return 0;
     }
     const probe = selfPublishing ? isSelfPublishingPackageCommand : isSelfDispatchingPackageCommand;

@@ -201,7 +201,8 @@ resolve_self_publisher_policy() {
     # Reuse the validated, shell-quoted payload environment transport only in
     # this metadata child. It must not alter the controller's environment.
     eval "${explicit_remote_environment-}"
-    run_dependency_free_node "$projection_command_policy" --package-policy "$self_publisher_repo" "$self_publisher_cwd" "$@"
+    # The result has its own descriptor; process stdout goes to stderr.
+    run_dependency_free_node "$projection_command_policy" --output-fd=3 --package-policy "$self_publisher_repo" "$self_publisher_cwd" "$@" 3>&1 1>&2
   ) || exit $?
   # The same manifest owner resolves aliases, preparation and admission. Its
   # shell-quoted assignments preserve package paths and tool unions verbatim.
@@ -513,7 +514,7 @@ run_local() {
     # local placement even when a local parent's token has a host identity.
     if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then heavyweight_local_machine=local; fi
     if [ -n "${policy_workspaceLock-}" ] || [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = dependency-input-writer ]; then
-      local_workspace_locks=$(run_dependency_free_node "$projection_command_policy" --workspace-locks "${command_repo_root:-$repo_root}" "$policy_workspaceLock" "$policy_bootstrap" "$policy_validation" "$policy_commandClass") || exit $?
+      local_workspace_locks=$(run_dependency_free_node "$projection_command_policy" --output-fd=3 --workspace-locks "${command_repo_root:-$repo_root}" "$policy_workspaceLock" "$policy_bootstrap" "$policy_validation" "$policy_commandClass" 3>&1 1>&2) || exit $?
       exec "$launcher_path" --heavyweight-admission "--admission-root=$heavyweight_local_root" \
         "--class=$heavyweight_local_class" "--machine=$heavyweight_local_machine" "--workspace-locks=$local_workspace_locks" -- "$@"
     fi
@@ -2347,7 +2348,7 @@ remote_workspace_lock_argument=
 if [ "${policy_selfPublisher-0}" != 1 ] && { [ -n "${policy_workspaceLock-}" ] || [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = dependency-input-writer ]; }; then
   # Physical dependency lock identity belongs to the worker filesystem/env,
   # not the controller's spelling of that remote repository path.
-  remote_setup_script="$remote_setup_script remote_workspace_locks=\$(node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_commands.mjs") --workspace-locks $(quote_remote "$remote_repo") $(quote_remote "$policy_workspaceLock") $(quote_remote "$policy_bootstrap") $(quote_remote "$policy_validation") $(quote_remote "$policy_commandClass"));"
+  remote_setup_script="$remote_setup_script remote_workspace_locks=\$(node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_commands.mjs") --output-fd=3 --workspace-locks $(quote_remote "$remote_repo") $(quote_remote "$policy_workspaceLock") $(quote_remote "$policy_bootstrap") $(quote_remote "$policy_validation") $(quote_remote "$policy_commandClass") 3>&1 1>&2);"
   remote_workspace_lock_argument=' "--workspace-locks=$remote_workspace_locks"'
 fi
 admission_failure_id=$execution_id

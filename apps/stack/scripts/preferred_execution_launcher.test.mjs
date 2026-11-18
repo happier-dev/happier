@@ -4044,6 +4044,35 @@ test('automatic local execution does not pin descendant commands to the local ho
   assert.equal(result.stdout, 'unset\n');
 });
 
+test('command policy output stays shell data when its process also writes to stdout', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-policy-channel-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const binDir = join(root, 'bin');
+  await mkdir(binDir, { recursive: true });
+  // Node is the external process boundary. Model a policy process whose
+  // dependencies print to stdout (a Prisma client regenerated after a
+  // dependency refresh printed "Generated Prisma Client (v7…)" on nl1).
+  const noise = `✔ Generated Prisma Client (v7.10.1) to './gen dir' in "12ms"`;
+  await writeFile(join(binDir, 'node'), [
+    '#!/bin/sh',
+    `case " $* " in *" --package-policy "*|*" --binary-cwd "*) printf '%s\\n' ${JSON.stringify(noise).replaceAll('$', '\\$')} ;; esac`,
+    `exec ${JSON.stringify(process.execPath)} "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  await executable(join(binDir, 'npx'), '#!/bin/sh\nprintf "payload:%s\\n" "$*"\n');
+  const result = spawnSync('/bin/sh', [launcher, '--local', '--', 'npx', 'vitest', 'run', 'src/policy (channel) "x".test.ts'], {
+    cwd: join(repoRoot, 'apps/cli'),
+    env: { ...executionNeutralEnv, HOME: root, HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+      HAPPIER_DEV_TARGET_EXECUTION: '1', PATH: `${binDir}:/usr/bin:/bin` },
+    encoding: 'utf8',
+  });
+  assert.doesNotMatch(result.stderr, /eval|Syntax error|invalid package command policy/u);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'payload:vitest run src/policy (channel) "x".test.ts\n');
+  assert.ok(result.stderr.includes(noise), 'the policy process output stays observable on stderr');
+});
+
+
 test('explicit local execution is selected per invocation without consulting target configuration', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-explicit-local-'));
   const binDir = join(root, 'bin');

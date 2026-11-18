@@ -839,7 +839,7 @@ resolve_native_command_policy() {
     fi
     native_payload_policy=$(
       eval "${explicit_remote_environment-}"
-      node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@"
+      node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --output-fd=3 --package-policy "$repo_root" "$native_policy_request_cwd" "$@" 3>&1 1>&2
     ) || return $?
     eval "$native_payload_policy"
     native_test_policy_resolved=1
@@ -1049,7 +1049,7 @@ native_resolve_command_policy_arguments() {
         # classify the actual payload at that directory as usual.
         native_result=$(
           eval "${explicit_remote_environment-}"
-          node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --binary-cwd "$repo_root" "$native_result" pnpm --filter "$policy_workspace" exec "$@"
+          node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --output-fd=3 --binary-cwd "$repo_root" "$native_result" pnpm --filter "$policy_workspace" exec "$@" 3>&1 1>&2
         ) || return $?
       fi
       # Positional custody restores caller cwd overrides after recursion.
