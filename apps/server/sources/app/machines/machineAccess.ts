@@ -276,6 +276,42 @@ async function readRecipientAccessMaterialInTx(tx: Tx, actorAccountId: string, m
     return { recipient, readiness, envelopes };
 }
 
+/** Read the existing key tuples for exact admitted Machine/recipient pairs in sets. */
+async function readRecipientAccessMaterialsInTx(tx: Tx, targets: readonly MachineActor[]) {
+    const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
+    const materials = new Map<string, Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>>();
+    const recipientIds = [...new Set(targets.map(target => target.actorAccountId))];
+    const recipients: NonNullable<Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>['recipient']>[] = [];
+    if (recipientIds.length > 0 && dialect === 'postgres') {
+        const fields = Object.keys(RECIPIENT_READINESS_SELECT).map(field => `"${field}"`).join(', ');
+        recipients.push(...await tx.$queryRawUnsafe<typeof recipients>(`SELECT ${fields} FROM "Account" WHERE "id" = ANY($1::text[])`, recipientIds));
+    } else for (const ids of portableQueryChunks({ values: recipientIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        recipients.push(...await tx.account.findMany({ where: { id: { in: [...ids] } }, select: RECIPIENT_READINESS_SELECT }));
+    }
+    for (const recipient of recipients) materials.set(recipient.id, { recipient,
+        readiness: deriveAccountRecipientEnvelopeReadinessFromRow(recipient), envelopes: new Map() });
+    for (const accountId of recipientIds) if (!materials.has(accountId)) materials.set(accountId, { recipient: null, readiness: null, envelopes: new Map() });
+    const envelopeIds = [...new Map(targets
+        .filter(target => materials.get(target.actorAccountId)?.readiness?.status === 'available')
+        .map(target => {
+            const id = { machineId: target.machineId, recipientAccountId: target.actorAccountId };
+            return [JSON.stringify(id), id];
+        })).values()];
+    const envelopes: MachineKeyEnvelope[] = [];
+    if (envelopeIds.length > 0 && dialect === 'postgres') {
+        envelopes.push(...await tx.$queryRawUnsafe<MachineKeyEnvelope[]>(
+            `SELECT e.* FROM "MachineKeyEnvelope" e
+             JOIN jsonb_to_recordset($1::jsonb) AS requested("machineId" text, "recipientAccountId" text)
+             ON e."machineId" = requested."machineId" AND e."recipientAccountId" = requested."recipientAccountId"`, JSON.stringify(envelopeIds)));
+    } else for (const ids of portableQueryChunks({ values: envelopeIds, bindingsPerValue: 2, fixedBindings: 1 })) {
+        envelopes.push(...await tx.machineKeyEnvelope.findMany({ where: { OR: [...ids] } }));
+    }
+    for (const envelope of envelopes) {
+        materials.get(envelope.recipientAccountId)?.envelopes.set(envelope.machineId, envelope);
+    }
+    return materials;
+}
+
 async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: string,
     material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
     resolvedRole?: MachineAccessRoleV1 | null): Promise<MachineAccessFacts | null> {
@@ -501,34 +537,7 @@ export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readon
         return row && row.accountId !== target.actorAccountId && resourceMode(row) === 'e2ee'
             && roles.get(row.id)?.get(target.actorAccountId);
     });
-    const materials = new Map<string, Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>>();
-    const recipientIds = [...new Set(encrypted.map(target => target.actorAccountId))];
-    const recipients: NonNullable<Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>['recipient']>[] = [];
-    if (recipientIds.length > 0 && dialect === 'postgres') {
-        const fields = Object.keys(RECIPIENT_READINESS_SELECT).map(field => `"${field}"`).join(', ');
-        recipients.push(...await tx.$queryRawUnsafe<typeof recipients>(`SELECT ${fields} FROM "Account" WHERE "id" = ANY($1::text[])`, recipientIds));
-    } else for (const ids of portableQueryChunks({ values: recipientIds, bindingsPerValue: 1, fixedBindings: 1 })) {
-        recipients.push(...await tx.account.findMany({ where: { id: { in: [...ids] } }, select: RECIPIENT_READINESS_SELECT }));
-    }
-    for (const recipient of recipients) materials.set(recipient.id, { recipient,
-        readiness: deriveAccountRecipientEnvelopeReadinessFromRow(recipient), envelopes: new Map() });
-    for (const accountId of recipientIds) if (!materials.has(accountId)) materials.set(accountId, { recipient: null, readiness: null, envelopes: new Map() });
-    const envelopeIds = [...new Map(encrypted.map(target => {
-        const id = { machineId: target.machineId, recipientAccountId: target.actorAccountId };
-        return [JSON.stringify(id), id];
-    })).values()];
-    const envelopes: MachineKeyEnvelope[] = [];
-    if (envelopeIds.length > 0 && dialect === 'postgres') {
-        envelopes.push(...await tx.$queryRawUnsafe<MachineKeyEnvelope[]>(
-            `SELECT e.* FROM "MachineKeyEnvelope" e
-             JOIN jsonb_to_recordset($1::jsonb) AS requested("machineId" text, "recipientAccountId" text)
-             ON e."machineId" = requested."machineId" AND e."recipientAccountId" = requested."recipientAccountId"`, JSON.stringify(envelopeIds)));
-    } else for (const ids of portableQueryChunks({ values: envelopeIds, bindingsPerValue: 2, fixedBindings: 1 })) {
-        envelopes.push(...await tx.machineKeyEnvelope.findMany({ where: { OR: [...ids] } }));
-    }
-    for (const envelope of envelopes) {
-        materials.get(envelope.recipientAccountId)?.envelopes.set(envelope.machineId, envelope);
-    }
+    const materials = await readRecipientAccessMaterialsInTx(tx, encrypted);
     const admissions: MachineAdmission[] = [];
     for (const target of targets) admissions.push(await machineAdmissionFromFactsWithRoleInTx(tx, facts.get(target.machineId) ?? null,
         target, roles.get(target.machineId)?.get(target.actorAccountId) ?? null, materials.get(target.actorAccountId)));
@@ -810,9 +819,14 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     const current = await readFactsInTx(tx, row.id);
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
     const recipients = source?.accountIds.filter(id => id !== row.accountId) ?? [];
-    const roles = current ? await machineRolesInTx(tx, [current], recipients) : new Map();
-    const states = current ? await Promise.all(recipients.map(id => accessFromFactsInTx(tx, current, id, undefined,
-        roles.get(current.id)?.get(id) ?? null))) : [];
+    const roles = current ? (await machineRolesInTx(tx, [current], recipients)).get(current.id) : undefined;
+    const encrypted = current && classifyMachineAvailabilityState(current) === 'available'
+        && resourceMode(current) === 'e2ee' && resourceContentMatchesMode(current, 'e2ee')
+        ? recipients.filter(accountId => roles?.get(accountId)).map(actorAccountId => ({ actorAccountId, machineId: row.id }))
+        : [];
+    const materials = await readRecipientAccessMaterialsInTx(tx, encrypted);
+    const states = current ? await Promise.all(recipients.map(id => accessFromFactsInTx(tx, current, id, materials.get(id),
+        roles?.get(id) ?? null))) : [];
     return { kind: 'saved', grant: { machineId: row.id, principal, level: input.level }, ...grantReadiness(states) };
 }
 

@@ -71,6 +71,34 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
             }
         });
 
+    it('saves an encrypted Team grant with a set read for recipient readiness', async () => {
+        const { owner, machine } = await fixture();
+        const team = await db.team.create({ data: { name: 'Batch grant readiness' } });
+        const recipients = await Promise.all(Array.from({ length: 8 }, account));
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            ...recipients.map(recipient => ({ teamId: team.id, accountId: recipient.id, role: 'member' as const })),
+        ] });
+        await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machineKeyEnvelope']);
+            const envelopeSql: string[] = [];
+            const traced = new Proxy(observed.tx, { get(target, property, receiver) {
+                const value = Reflect.get(target, property, receiver);
+                if (property !== '$queryRawUnsafe') return value;
+                return (...args: unknown[]) => {
+                    if (typeof args[0] === 'string' && args[0].includes('FROM "MachineKeyEnvelope"')) {
+                        envelopeSql.push(args[0]);
+                    }
+                    return Reflect.apply(value, target, args);
+                };
+            } });
+            expect(await access.setMachineAccessGrantInTx(traced, {
+                actorAccountId: owner.id, machineId: machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view',
+            })).toMatchObject({ kind: 'saved', readiness: 'key_pending', canPrepareKeys: true });
+            expect(observed.reads.length + envelopeSql.length).toBe(1);
+        });
+    });
+
     it('acquires structural audience through the shared membership read without opening content or keys', async () => {
         const f = await fixture();
         const recipient = await account();
