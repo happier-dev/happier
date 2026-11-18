@@ -23,6 +23,10 @@ test('the scheme is a secure standard origin so storage and crypto.subtle work',
     assert.equal(BUNDLE_SCHEME_PRIVILEGES.secure, true);
 });
 
+test('the scheme keeps a V8 code cache so a relaunch does not recompile the entry bundle', () => {
+    assert.equal(BUNDLE_SCHEME_PRIVILEGES.codeCache, true);
+});
+
 test('a request path always resolves inside the served bundle directory', () => {
     const root = '/srv/dist';
     for (const requestPath of [

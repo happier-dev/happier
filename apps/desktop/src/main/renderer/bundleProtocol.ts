@@ -21,7 +21,9 @@ export const BUNDLE_ORIGIN = `${BUNDLE_SCHEME}://localhost`;
 /**
  * `standard` gives the scheme an origin (required for storage and relative URLs), `secure` makes it
  * a secure context (`crypto.subtle`), and the fetch/stream privileges let the bundle load its own
- * chunks and stream large assets.
+ * chunks and stream large assets. `codeCache` lets V8 keep compiled code for the bundle's scripts
+ * across launches; without it a custom scheme gets no code cache and every relaunch recompiles the
+ * multi-megabyte entry script before first paint.
  */
 export const BUNDLE_SCHEME_PRIVILEGES = {
     standard: true,
@@ -29,6 +31,7 @@ export const BUNDLE_SCHEME_PRIVILEGES = {
     supportFetchAPI: true,
     corsEnabled: true,
     stream: true,
+    codeCache: true,
 } as const;
 
 const CONTENT_TYPES = new Map<string, string>([

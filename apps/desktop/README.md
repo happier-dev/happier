@@ -61,7 +61,7 @@ the value; `HAPPIER_DESKTOP_SERVER_URL` is the equivalent here.
 The bundle references its assets by absolute path, so it cannot load from `file://`. The first
 implementation served it from `http://127.0.0.1:8899`, and the app then offered *its own asset
 server* as the relay — because `getWebSameOriginServerUrl` treats an `http(s)` page origin as a
-relay candidate. Serving from `happier://localhost` (registered standard, secure, fetch- and
+relay candidate. Serving from `happier://localhost` (registered standard, secure, code-cached, fetch- and
 stream-capable) reproduces what Tauri does with `tauri://localhost`, keeps the origin stable so the
 signed-in session survives a restart, and keeps the app's relay resolution identical across targets.
 
