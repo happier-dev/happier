@@ -101,7 +101,7 @@ export function DatabaseIdentity(
   const translate = usePluginTranslation();
   const access = props.descriptor.access;
   return (
-    <Row gap="small" align="start">
+    <Row gap="small" align="flex-start">
       {/* The database's mark leads its name; the facts and access stand under the name (lab dbRail). */}
       <Icon name="database" tone="secondary" />
       <Stack gap="xsmall" grow>

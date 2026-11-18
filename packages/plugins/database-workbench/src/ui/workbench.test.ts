@@ -167,7 +167,8 @@ it('keeps typed filters, full FK Back state and loaded-only export on the same c
 it('projects target facts from the connection and Machine owners without inventing a catalogue count', async () => {
     const { describeDatabaseConnection } = await import('../connection.js');
     let known = true;
-    const selected = { ...descriptor, ...describeDatabaseConnection('postgresql://alice:private@localhost:5432/billing?token=private') };
+    const selected = { ...descriptor, ...describeDatabaseConnection('postgresql://alice:private@localhost:5432/billing?token=private') ,
+        capabilities: [...descriptor.capabilities] };
     const unexpected = async (): Promise<never> => { throw new Error('Listing must not open a database'); };
     const client: WorkbenchClient = {
         targets: async () => ({ targets: [known ? selected : descriptor], completeness: { complete: true } }),
