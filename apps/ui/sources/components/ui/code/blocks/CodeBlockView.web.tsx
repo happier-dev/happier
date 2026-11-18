@@ -8,7 +8,7 @@ import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighl
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
 import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlighting/evaluateCodeHighlightingBudget';
 import type { ShikiInlineToken } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
-import { shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
+import { readShikiTokenizedLines, shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
@@ -66,10 +66,15 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         && Boolean(syntax.language)
         && budget.withinBudget;
 
-    const [tokensByLine, setTokensByLine] = React.useState<readonly (readonly ShikiInlineToken[])[] | null>(null);
-    const [tokensRevision, setTokensRevision] = React.useState(0);
+    const [loadedTokensByLine, setTokensByLine] = React.useState<readonly (readonly ShikiInlineToken[])[] | null>(null);
 
     const lines = budget.lines;
+    // With the highlighter and grammar already loaded (any block after the first), the block mounts with its
+    // colors: no plain first pass, no redraw of the frame, no row re-measure.
+    const readyTokensByLine = React.useMemo(() => shikiEnabled && lines && syntax.language
+        ? readShikiTokenizedLines({ isDark, language: syntax.language, lines, colors: theme.colors })?.tokensByLine ?? null
+        : null, [isDark, lines, shikiEnabled, syntax.language, theme.colors]);
+    const tokensByLine = readyTokensByLine ?? loadedTokensByLine;
     const hasFindRanges = Boolean(findRanges?.length);
     // Shiki consumes normalized lines; Find's ranges retain the original UTF-16 source offsets.
     const sourceLineOffsets = React.useMemo(() => {
@@ -97,6 +102,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             setTokensByLine(null);
             return;
         }
+        if (readyTokensByLine) return;
 
         let cancelled = false;
         fireAndForget((async () => {
@@ -104,7 +110,6 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 const { tokensByLine: out } = await shikiTokenizeLines({ isDark, language: lang, lines, colors: theme.colors });
                 if (cancelled) return;
                 setTokensByLine(out);
-                setTokensRevision((v) => v + 1);
             } catch {
                 if (cancelled) return;
                 setTokensByLine(null);
@@ -114,7 +119,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         return () => {
             cancelled = true;
         };
-    }, [isDark, lines, shikiEnabled, syntax.language, theme.colors]);
+    }, [isDark, lines, readyTokensByLine, shikiEnabled, syntax.language, theme.colors]);
 
     const webWhitespaceStyle: TextStyle | null = React.useMemo(() => {
         // React Native Web supports CSS `white-space` and `word-break`, but React Native's `TextStyle` typing does not.
@@ -125,7 +130,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     }, [wrap]);
 
     const content = shikiEnabled && lines && tokensByLine ? (
-        <View collapsable={false} data-happier-codeblock-rev={String(tokensRevision)}>
+        <View collapsable={false}>
                     <Text
                         selectable={selectable}
                         style={[

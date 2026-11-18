@@ -173,36 +173,34 @@ export async function shikiTokenizeScopeLines(params: Readonly<{
     });
 }
 
-export async function shikiTokenizeLines(params: Readonly<{
+type ShikiTokenizeLinesParams = Readonly<{
     isDark: boolean;
     language: string;
     lines: readonly string[];
     colors?: Record<string, unknown> | null;
-}>): Promise<Readonly<{ tokensByLine: readonly (readonly ShikiInlineToken[])[]; fg: string }>> {
+}>;
+type ShikiTokenizedLines = Readonly<{ tokensByLine: readonly (readonly ShikiInlineToken[])[]; fg: string }>;
+
+function resolveTokenizationInput(params: ShikiTokenizeLinesParams) {
     const languageId = resolveShikiLanguageId(params.language) as unknown as string;
     const themeId = resolveHappierShikiThemeId({ isDark: params.isDark, colors: params.colors });
     const code = params.lines.join('\n');
-    const tokenizationCacheKey = buildShikiTokenizationCacheKey({ code, languageId, themeId });
-    const cachedTokens = shikiTokenizationCache.get(tokenizationCacheKey);
-    if (cachedTokens) return cachedTokens;
+    return { languageId, themeId, code, cacheKey: buildShikiTokenizationCacheKey({ code, languageId, themeId }) };
+}
 
-    const { highlighter } = await getShikiHighlighterForTheme({ themeId, isDark: params.isDark, colors: params.colors, languageId });
-
-    const cachedEntry = highlighterCache.get(buildShikiHighlighterCacheKey({ themeId, languageId }));
-    if (cachedEntry) {
-        await ensureLanguageLoaded({ highlighter: cachedEntry.highlighter, loadedLanguageIds: cachedEntry.loadedLanguageIds, languageId });
-    }
-
-    const res = highlighter.codeToTokens(code, {
-        lang: languageId as unknown as BundledLanguage,
-        theme: themeId,
+/** Tokenizing with a highlighter that already holds the language is synchronous. */
+function tokenizeWithLoadedHighlighter(highlighter: ShikiHighlighter, lines: readonly string[],
+    input: ReturnType<typeof resolveTokenizationInput>): ShikiTokenizedLines {
+    const res = highlighter.codeToTokens(input.code, {
+        lang: input.languageId as unknown as BundledLanguage,
+        theme: input.themeId,
     }) as unknown as TokensResult;
 
     const fg = typeof (res as any).fg === 'string' ? (res as any).fg : '#000';
     const tokens2d = ((res as any).tokens ?? []) as ShikiCodeToTokensResult['tokens'];
 
     const out: Array<readonly ShikiInlineToken[]> = [];
-    for (let i = 0; i < params.lines.length; i++) {
+    for (let i = 0; i < lines.length; i++) {
         const row = tokens2d[i] ?? [];
         out.push(row.map((t) => ({
             text: t.content ?? '',
@@ -211,6 +209,35 @@ export async function shikiTokenizeLines(params: Readonly<{
     }
 
     const result = { tokensByLine: out, fg };
-    shikiTokenizationCache.set(tokenizationCacheKey, result);
+    shikiTokenizationCache.set(input.cacheKey, result);
     return result;
+}
+
+/**
+ * The tokens a block can draw in the render that mounts it: already tokenized, or tokenized now because the
+ * theme's highlighter already holds the language. Null while the highlighter or grammar still has to load;
+ * `shikiTokenizeLines` then loads it.
+ */
+export function readShikiTokenizedLines(params: ShikiTokenizeLinesParams): ShikiTokenizedLines | null {
+    const input = resolveTokenizationInput(params);
+    const cachedTokens = shikiTokenizationCache.get(input.cacheKey);
+    if (cachedTokens) return cachedTokens;
+    const loaded = highlighterCache.get(buildShikiHighlighterCacheKey({ themeId: input.themeId, languageId: input.languageId }));
+    if (!loaded || !loaded.loadedLanguageIds.has(input.languageId)) return null;
+    return tokenizeWithLoadedHighlighter(loaded.highlighter, params.lines, input);
+}
+
+export async function shikiTokenizeLines(params: ShikiTokenizeLinesParams): Promise<ShikiTokenizedLines> {
+    const input = resolveTokenizationInput(params);
+    const cachedTokens = shikiTokenizationCache.get(input.cacheKey);
+    if (cachedTokens) return cachedTokens;
+
+    const { highlighter } = await getShikiHighlighterForTheme({ themeId: input.themeId, isDark: params.isDark, colors: params.colors, languageId: input.languageId });
+
+    const cachedEntry = highlighterCache.get(buildShikiHighlighterCacheKey({ themeId: input.themeId, languageId: input.languageId }));
+    if (cachedEntry) {
+        await ensureLanguageLoaded({ highlighter: cachedEntry.highlighter, loadedLanguageIds: cachedEntry.loadedLanguageIds, languageId: input.languageId });
+    }
+
+    return tokenizeWithLoadedHighlighter(highlighter, params.lines, input);
 }

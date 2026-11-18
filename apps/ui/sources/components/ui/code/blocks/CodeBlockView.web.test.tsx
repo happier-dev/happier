@@ -80,10 +80,13 @@ const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     }),
 }));
 
-vi.mock('shiki', () => ({
-    bundledLanguages: { ts: {}, js: {}, python: {} },
-    createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
+// Shiki is the external syntax engine. The tokenizer builds its highlighter through `shiki/core`.
+vi.mock('shiki/core', () => ({
+    createBundledHighlighter: () => (...args: any[]) => createHighlighterSpy(...args),
 }));
+// The generated grammar inventory references packaged `.json.bundle` assets, which only a bundler can load; the
+// faked engine above takes no grammars.
+vi.mock('@/components/ui/code/highlighting/shiki/generatedShikiGrammarAssets', () => ({ SHIKI_LANGUAGE_ASSETS: {} }));
 
 async function flushReactAsyncWork(): Promise<void> {
     await flushHookEffects({ cycles: 10, turns: 25 });
@@ -162,6 +165,28 @@ describe('CodeBlockView (web)', () => {
         expect(createHighlighterSpy.mock.calls[0]?.[0]?.themes?.[0]?.name).toMatch(/^happier-light-/);
         expect(hasRed).toBe(true);
         expect(JSON.stringify(tree.toJSON())).toContain('const');
+    });
+
+    it('mounts a block with its tokens once the highlighter is ready, without a plain first pass', async () => {
+        // A Session switch or a recycled transcript row mounts code blocks whose language is already loaded:
+        // they draw their colors in the commit that mounts them instead of mounting plain text and redrawing.
+        const { CodeBlockView } = await import('./CodeBlockView.web');
+        const warm = await renderScreen(<CodeBlockView code={'const warm = 1;'} language={'typescript'} showCopyButton={false} />);
+        await flushReactAsyncWork();
+        await warm.unmount();
+
+        const commits: string[] = [];
+        const screen = await renderScreen(<React.Profiler id="block" onRender={(_id, phase) => { commits.push(phase); }}>
+            <CodeBlockView code={'const fresh = 2;'} language={'typescript'} showCopyButton={false} />
+        </React.Profiler>);
+        await flushReactAsyncWork();
+        const red = screen.findAllByType('Text').filter((n) => {
+            const style = n.props?.style;
+            return (Array.isArray(style) ? style.flat() : [style]).some((s: any) => s?.color === '#f00');
+        });
+        expect(red.length).toBeGreaterThan(0);
+        expect(commits).toEqual(['mount']);
+        await screen.unmount();
     });
 
     it('does not invoke Shiki when highlighting is off', async () => {

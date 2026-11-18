@@ -69,14 +69,12 @@ const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     }),
 }));
 
-vi.mock('shiki', () => ({
-    bundledLanguages: {
-        ts: {},
-        js: {},
-        python: {},
-    },
-    createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
+// Shiki is the external syntax engine. The tokenizer builds its highlighter through `shiki/core`; the generated
+// grammar inventory references packaged `.json.bundle` assets, which only a bundler can load.
+vi.mock('shiki/core', () => ({
+    createBundledHighlighter: () => (...args: any[]) => createHighlighterSpy(...args),
 }));
+vi.mock('@/components/ui/code/highlighting/shiki/generatedShikiGrammarAssets', () => ({ SHIKI_LANGUAGE_ASSETS: {} }));
 
 // Vite's cold module graph is setup, not part of the first layout scenario's deadline.
 await import('./CodeLinesViewCore');
