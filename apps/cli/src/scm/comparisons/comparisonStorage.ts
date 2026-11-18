@@ -7,7 +7,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { ScmComparisonSchema, ScmComparisonFileSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol';
+import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 import { projectCapturedComparisonFileIndex } from './projectCapturedComparison';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
