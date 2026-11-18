@@ -1556,6 +1556,11 @@ function ListCells<Item>(props: Readonly<{
   listColumns: readonly CollectionField<Item>[];
   /** The row draws the one list-row rule under it (every list row but a page sheet's, whose sheet divides its rows). */
   rule: boolean;
+  /**
+   * A page sheet's row that another row of its sheet follows (the sheet's divided rows): its cells draw the same rule,
+   * because only they know whether the row has a second line this time (DESIGN.md one list-row rule, owner 11-15/11-17).
+   */
+  divided: boolean;
   /** A page directory's row: its mark stands on its section title's edge (`catalogDirectoryRowContentStyle`). */
   directory: boolean;
 }>): ReactElement {
@@ -1777,8 +1782,9 @@ function ListCells<Item>(props: Readonly<{
           <ListColumnValue value={field.render(item)} textStyle={secondLine} />
         </View>
       ))}
-      {props.rule ? (
+      {props.rule || props.divided ? (
         <CollectionListRowRule
+          {...(props.rule ? {} : { followed: true })}
           // The row's text column: its content inset, then its glyph column and gap when it leads with one.
           startPx={(page ? pageRowInsetPx - 1
             : props.directory ? DIRECTORY_ROW_INSET - 1
@@ -1788,8 +1794,9 @@ function ListCells<Item>(props: Readonly<{
             + (leadingControl === null && glyph === null && badge === null ? 0
               : (catalog ? CATALOG_ROW.markBox : page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : TABLE.glyphWidth - TABLE.gap)
                 + (page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : TABLE.gap))}
-          // A one-line list (nothing beneath the title) parts its rows by spacing alone.
-          multiline={!singleLine}
+          // A one-line list (nothing beneath the title), or a row with nothing beneath its name this time, parts its
+          // rows by spacing alone.
+          multiline={!singleLine && !lineEmpty}
         />
       ) : null}
     </View>
@@ -1797,12 +1804,14 @@ function ListCells<Item>(props: Readonly<{
 }
 
 /** A list row's rule, drawn while its list says another row follows and neither it nor the next row is filled. */
-function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean }>): ReactElement | null {
+function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean; followed?: boolean }>): ReactElement | null {
   // The list-row rule's ink every list and column row uses (the palette's `listRowRule`, else its `rowDivider`).
   const theme = useHappierUiTheme();
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
   const color = palette.listRowRule ?? palette.rowDivider;
-  const followed = useContext(HappierListRowFollowedContext);
+  const followedInList = useContext(HappierListRowFollowedContext);
+  // A page sheet says itself which of its rows another row follows.
+  const followed = props.followed ?? followedInList;
   const selection = useContext(ListItemSelectionContext);
   const open = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
@@ -1955,6 +1964,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         beneath={beneath}
         listColumns={stage.listColumns}
         rule={stage.dividedKeys === null}
+        divided={stage.dividedKeys?.has(itemKey) === true}
         directory={stage.directoryRow !== null}
       />
       {travel === null ? null : (

@@ -3827,6 +3827,18 @@ describe('row hairlines', () => {
     expect(ruled(view)).toEqual({ a: true, b: false, c: false });
     view.unmount();
   });
+
+  it('rules a page list\'s two-line rows that another row follows, from their cells (D10, owner 2026-11-15/17)', () => {
+    // Services → Apps: the second line is the Collection's own cells, so the sheet's item divider never knew of it and
+    // two-line rows stood unruled. The last row ends the sheet and draws none.
+    const view = mount({ presentation: 'list', scroll: 'page', grouped: false });
+    try {
+      view.measure(1440);
+      expect(ruled(view)).toEqual({ a: true, b: true, c: false });
+    } finally {
+      view.unmount();
+    }
+  });
 });
 
 describe('the title suffix', () => {
