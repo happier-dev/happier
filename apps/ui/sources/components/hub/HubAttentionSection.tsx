@@ -23,7 +23,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn, projectSignInFacts } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
@@ -150,13 +149,11 @@ function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
                 : <Icon name="key" size={MARK_SIZE} color={theme.colors.text.secondary} />,
             title: joinHappierFacts(service, accountName, presentConnectedAccountSignedOut().state),
             actionLabel: presentConnectedAccountSignedOut().action,
-            onAction: (event?: unknown) => {
-                const anchor = resolvePressTriggerAnchor(event);
+            onAction: () => {
                 fireAndForget(presentConnectSheet({
                     service: account.service,
                     intent: account.accountId ? 'reconnect' : 'add',
                     ...(account.accountId ? { account: { service: account.service, accountId: account.accountId } } : {}),
-                    ...(anchor ? { anchor } : {}),
                 }), { tag: 'HubAttentionSection.reconnect' });
             },
         };

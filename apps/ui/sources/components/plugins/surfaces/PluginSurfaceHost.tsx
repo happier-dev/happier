@@ -3000,7 +3000,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     const readActionInputAnchor = React.useCallback(() => pressTriggerAnchor.current, []);
     const openConnectedAccounts = React.useCallback(async (request: PluginUiOpenConnectedAccountsRequestV1) => {
         return openPluginConnectedAccountSheet({ request, scope: accountLifetime?.scope ?? null,
-            machineId, serverId, anchor: pressTriggerAnchor.current });
+            machineId, serverId });
     }, [accountLifetime, machineId, serverId]);
     const controllerBindingWithConnectedAccounts = React.useMemo<BoundPluginSurfaceBinding>(() => Object.freeze({
         ...(controllerBinding ?? {}),

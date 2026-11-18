@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { Pressable, View, type GestureResponderEvent } from 'react-native';
-import type { PopoverAnchor } from '@/components/ui/popover';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
@@ -96,9 +94,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const rootRef = React.useRef<View>(null);
     const { onOpenChange, onRequestHandled, onConnected, request } = props;
 
-    const openSheet = React.useCallback((target: ConnectedServiceSetupTarget, anchor?: PopoverAnchor) => {
+    const openSheet = React.useCallback((target: ConnectedServiceSetupTarget) => {
         const service = target.kind === 'catalog' ? undefined : parseQualifiedPluginContributionKey(target.serviceKey) ?? undefined;
-        fireAndForget(presentConnectSheet({ scope, service, intent: 'add', ...(anchor ? { anchor } : {}), ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
+        fireAndForget(presentConnectSheet({ scope, service, intent: 'add', ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
             ? { intent: 'reconnect', account: { service, accountId: target.accountId } } : {}) }).then(result => {
             if (result.kind !== 'dismissed') onConnected(result.account, buildQualifiedPluginContributionKey(result.account.service), result);
         }), { tag: 'ConnectedServicesConnectMore.connect' });
@@ -154,9 +152,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const items: SetupBlockItem[] = visibleOffers.map((entry) => ({
         id: entry.serviceKey,
         renderTile: ({ open }) => {
-            const start = (event?: unknown) => {
+            const start = () => {
                 if (phone && !props.renderServiceFlow) {
-                    openSheet({ kind: 'service', serviceKey: entry.serviceKey }, resolvePressTriggerAnchor(event));
+                    openSheet({ kind: 'service', serviceKey: entry.serviceKey });
                     return;
                 }
                 setTarget({ kind: 'service', serviceKey: entry.serviceKey });
@@ -197,9 +195,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     if (hasBrowse || openId === CONNECT_MORE_BROWSE_ID) {
         const rest = addable.filter((entry) => !offered.includes(entry));
         const marked = (props.layout === 'firstRun' ? rest : tools.length > 0 ? tools : rest).slice(0, 3);
-        const browse = (open: () => void) => (event?: GestureResponderEvent) => {
+        const browse = (open: () => void) => () => {
             if (phone && !props.renderServiceFlow) {
-                openSheet({ kind: 'catalog' }, resolvePressTriggerAnchor(event));
+                openSheet({ kind: 'catalog' });
                 return;
             }
             setTarget({ kind: 'catalog' });

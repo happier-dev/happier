@@ -1,4 +1,3 @@
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -280,8 +279,7 @@ function RegistrySourceTokenRow(props: Readonly<{ source: RegistryRemoteSourceDe
       .catch(() => setFailed(true))
       .finally(() => setBusy(false));
   }, [mutations, source.id, source.token]);
-  const choose = React.useCallback((event?: unknown) => picker.pick({
-    anchor: resolvePressTriggerAnchor(event),
+  const choose = React.useCallback(() => picker.pick({
     selectedId: currentRef,
     includeNoneRow: currentRef !== null,
     onSelectId: (secretRef) => {
@@ -886,8 +884,8 @@ function RegistryAddForm(
                 size="small"
                 display="secondary"
                 title={token === null ? t('capabilities.registries.detail.tokenAdd') : t('capabilities.registries.detail.tokenChange')}
-                onPress={(event) =>
-                  picker.pick({ anchor: resolvePressTriggerAnchor(event), selectedId: token, includeNoneRow: false, onSelectId: (secretRef) => setToken(secretRef) })
+                onPress={() =>
+                  picker.pick({ selectedId: token, includeNoneRow: false, onSelectId: (secretRef) => setToken(secretRef) })
                 }
                 testID={`${props.testID}:token:choose`}
               />

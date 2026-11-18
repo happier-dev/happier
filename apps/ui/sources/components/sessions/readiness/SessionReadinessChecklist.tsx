@@ -22,7 +22,6 @@ import { useMachineDisplayNamesById, useSessionSelector } from '@/sync/store/hoo
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { readMachineAdministrationTargetRouteParams } from '@/sync/domains/machines/administration/targetSelection';
 import { useOpenDiscussion } from '@/components/discussions/useOpenDiscussion';
 import { seedDiscussionDraft } from '@/components/discussions/useDiscussionDraft';
@@ -40,7 +39,7 @@ const GLYPH_SIZE_PX = 14;
 export function useOpenSessionReadinessRepair(scope: ServerAccountScope) {
   const router = useRouter();
   return React.useCallback(
-    (repair: SessionReadinessRepairV1, event?: unknown) => {
+    (repair: SessionReadinessRepairV1) => {
       if (repair.actionId === 'machines.agents.signIn.start') {
         router.push({
           pathname: '/(app)/settings/agents/[agentId]',
@@ -53,7 +52,7 @@ export function useOpenSessionReadinessRepair(scope: ServerAccountScope) {
         return;
       }
       void presentConnectSheet({ scope, service: repair.input.account.service,
-        account: repair.input.account, intent: 'reconnect', anchor: resolvePressTriggerAnchor(event),
+        account: repair.input.account, intent: 'reconnect',
         initialMachineTarget: readMachineAdministrationTargetRouteParams({ machineId: repair.input.machineId,
           serverIdentityId: resolvePortableServerIdentityForRoutingId(scope.serverId) ?? undefined }),
       });
@@ -164,7 +163,7 @@ export const SessionReadinessChecklist = React.memo(function SessionReadinessChe
               size="small"
               display="secondary"
               title={repair.label}
-              onPress={(event?: unknown) => openRepair(repair.repair, event)}
+              onPress={() => openRepair(repair.repair)}
             />
           ) : offerAsk && ownerName ? (
             <RoundButton

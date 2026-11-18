@@ -1,4 +1,3 @@
-import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -23,14 +22,12 @@ export function useRegistryTokenPicker() {
   const pick = React.useCallback(
     (props: Readonly<{
       selectedId: string | null;
-      anchor?: PopoverAnchor;
       includeNoneRow?: boolean;
       onSelectId: (secretRef: string | null) => void;
     }>) => {
       void presentConnectSheet({
         service: { kind: 'key', keyKind: 'token' },
         intent: 'link',
-        anchor: props.anchor,
         ...(props.selectedId ? { current: props.selectedId } : {}),
       }).then(result => {
         if (result.kind !== 'dismissed') props.onSelectId(result.secretRef);

@@ -269,7 +269,6 @@ describe('HubAttentionSection', () => {
             chrome: expect.objectContaining({ testID: 'connect-sheet' }),
             props: expect.objectContaining({ request: expect.objectContaining({
                 intent: 'reconnect', service: SERVICE, account: { service: SERVICE, accountId: 'acct-1' },
-                anchor: expect.objectContaining({ kind: 'view', ref: { current: trigger } }),
             }) }),
         }));
         expect(push).not.toHaveBeenCalled();

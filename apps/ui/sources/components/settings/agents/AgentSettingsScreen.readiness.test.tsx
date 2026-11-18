@@ -280,7 +280,6 @@ it('opens the expired operation account reconnect continuation on the exact Home
         scope: { serverId, accountId }, service: { pluginId: 'acme.external', localId: 'account' },
         account: { service: { pluginId: 'acme.external', localId: 'account' }, accountId: 'work' }, intent: 'reconnect',
         initialMachineTarget: { serverIdentityId: 'srv_readiness', machineId: 'bot-machine' },
-        anchor: { kind: 'view', ref: { current: trigger } },
     }) }) }));
     expect(navigation.push).not.toHaveBeenCalled();
 });

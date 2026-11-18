@@ -1,5 +1,3 @@
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
-import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,7 +10,6 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import {
   DropdownMenu,
   type DropdownMenuItem,
-  type DropdownMenuSelection,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import {
@@ -475,11 +472,10 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
   };
   const onValueBlur = () => commit();
 
-  const pickSecret = (thenType: RowType, anchor?: PopoverAnchor) => {
+  const pickSecret = (thenType: RowType) => {
     void presentConnectSheet({
       service: { kind: 'key', suggestedName: name.trim() || undefined },
       intent: 'link',
-      anchor,
       ...(props.scope === undefined ? {} : { scope: props.scope }),
       ...(props.valueRef.t === 'savedSecret' ? { current: props.valueRef.secretId } : {}),
     }).then(selection => {
@@ -490,11 +486,11 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
     });
   };
 
-  const chooseType = (id: string, selection?: DropdownMenuSelection) => {
+  const chooseType = (id: string) => {
     const next = id as RowType;
     if (next === type) return;
     if (next === 'savedSecret') {
-      pickSecret(next, selection?.anchor);
+      pickSecret(next);
       return;
     }
     const text =
@@ -601,7 +597,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
           {type === 'savedSecret' ? (
             <HappierPressable
                             testID={`${props.testID}.value`}
-                            onPress={(event) => pickSecret('savedSecret', resolvePressTriggerAnchor(event))}
+                            onPress={() => pickSecret('savedSecret')}
                             accessibilityRole="button"
                             accessibilityLabel={props.secretName ?? t('capabilities.valueRows.chooseSecret')}
                             hasPopup="dialog"

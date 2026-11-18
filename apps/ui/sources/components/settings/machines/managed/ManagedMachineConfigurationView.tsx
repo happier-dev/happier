@@ -104,8 +104,6 @@ import { formatRetentionDuration } from './managedRetentionPresentation';
 import { presentConnectSheet } from '../../connectedServices/setup/ConnectedServiceSetupModal';
 import { ConnectedServiceMark } from '../../connectedServices/ConnectedServiceMark';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { resolveConnectedServiceSettingsErrorMessage } from '../../connectedServices/connectedServiceSettingsErrors';
 import { resolveConnectedAccountPurposeSetupHandoff, type ConnectedAccountPurposeSetupHandoff } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -268,7 +266,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         controller: catalogController, provisioner: catalogProvisioner, available: catalogCurrent });
     purposeHandoff.current = { activeHandoff: accountSetup, pendingCredential, binding: catalog.binding,
         controller: catalogController, provisioner: catalogProvisioner, available: catalogCurrent };
-    const openAccountSetup = async (purposeId: string, anchor?: PopoverAnchor) => {
+    const openAccountSetup = async (purposeId: string) => {
         const binding = catalog.binding;
         const purpose = catalogProvisioner?.credentialPurposes?.find(entry => entry.purpose.purpose === purposeId)?.purpose;
         if (!catalogCurrent || !draft || !binding?.isCurrent() || !catalogProvisioner || !purpose || busy
@@ -285,7 +283,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         setAccountSetup(setup);
         try {
             const result = await presentConnectSheet({ service: selected?.service ?? (services?.length === 1 ? services[0] : undefined),
-                purpose, account: selected ?? undefined, purposeRequest: setup.request, anchor, intent: 'link',
+                purpose, account: selected ?? undefined, purposeRequest: setup.request, intent: 'link',
                 ...(selection ? { targetSelection: { ...selection, resolveExecutionTarget: () => {
                     const target = selection.resolveExecutionTarget() ?? null;
                     return resolveConnectedAccountPurposeSetupHandoff(setup, { ...purposeHandoff.current,
@@ -1242,7 +1240,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 icon={purposeService(purpose.purpose) ? <ConnectedServiceMark legacyServiceId={null}
                     service={purposeService(purpose.purpose)!} size="card" /> : <Icon name="plug" />}
                 disabled={!catalogPlacementAvailable || !catalogProvisioner || busy || !!preset && !props.presetOnly}
-                onPress={event => { void openAccountSetup(purpose.purpose, resolvePressTriggerAnchor(event)); }} />)}
+                onPress={() => { void openAccountSetup(purpose.purpose); }} />)}
         </ItemGroup> : null}
         {draft && showLaunchFields && primaryFields.length ? <ItemGroup title={t(hasDimensionChoices ? 'managedMachines.detail.launchTitle' : 'managedMachines.config.launchForm')}>
             {launchForm(primaryFields, true)}

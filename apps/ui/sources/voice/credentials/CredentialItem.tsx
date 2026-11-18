@@ -1,5 +1,3 @@
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
-import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 import { Platform } from 'react-native';
 
@@ -213,7 +211,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
     return status;
   };
 
-  const runCredentialGesture = (gesture: VoiceCredentialGesture, anchor?: PopoverAnchor) => fireAndForget((async () => {
+  const runCredentialGesture = (gesture: VoiceCredentialGesture) => fireAndForget((async () => {
       try {
         if (credentialAction.approval.approvalPending) return;
         const contribution = props.contribution;
@@ -255,7 +253,6 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
         }
         const selection = await presentConnectSheet({
           scope: expectedSettingsScope,
-          anchor,
           service: { kind: 'key', keyKind: 'apiKey', suggestedName: props.title },
           intent: 'link',
           bindingTarget: { kind: 'voice', contribution, slot: props.credentialSlotId },
@@ -390,10 +387,10 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
         itemProps: { subtitleLines: 0 },
       }}
       items={gestureItems}
-      onSelect={(id, selection) => {
+      onSelect={(id) => {
         setGestureMenuOpen(false);
         if (id !== 'useSavedSecret' && id !== 'remove') return;
-        runCredentialGesture(id, selection?.anchor);
+        runCredentialGesture(id);
       }}
     />
     : <Item
@@ -401,7 +398,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
       title={props.title}
       subtitle={detail}
       subtitleLines={0}
-      onPress={(event) => runCredentialGesture(offersSavedSecretSelection ? 'useSavedSecret' : 'enterNew', resolvePressTriggerAnchor(event))}
+      onPress={() => runCredentialGesture(offersSavedSecretSelection ? 'useSavedSecret' : 'enterNew')}
     />;
 
   let selectedForRawReview = false;

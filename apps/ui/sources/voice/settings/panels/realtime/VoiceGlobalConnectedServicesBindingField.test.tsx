@@ -121,15 +121,13 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
     // Presentation is the system boundary; the existing binding writer remains real.
     const show = vi.spyOn(Modal, 'show').mockReturnValue('connect-sheet');
     try {
-      const anchor = { kind: 'rect', rect: { left: 40, top: 70, height: 30 }, coordinateSpace: 'window' } as const;
-      await act(async () => selection.props.onOpenSettings('openai-codex', anchor));
+      await act(async () => selection.props.onOpenSettings('openai-codex'));
       expect(show).toHaveBeenCalledOnce();
       const sheet = show.mock.calls[0]![0].props as {
         request: { service: { pluginId: string; localId: string } };
         onResult: (result: { kind: 'selected'; account: { service: { pluginId: string; localId: string }; accountId: string } }) => void;
       };
       expect(sheet.request.service).toEqual({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
-      expect(sheet.request).toMatchObject({ anchor });
       await act(async () => sheet.onResult({ kind: 'selected', account: {
         service: sheet.request.service, accountId: 'just-connected',
       } }));

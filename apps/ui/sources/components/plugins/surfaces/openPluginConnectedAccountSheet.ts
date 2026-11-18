@@ -1,7 +1,7 @@
 import type { PluginUiOpenConnectedAccountsRequestV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
-import { presentConnectSheet, type ConnectSheetAccountRequest } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 
 /** The mounted surface forwards context; purpose setup owns declaration placement. */
 export async function openPluginConnectedAccountSheet(input: Readonly<{
@@ -9,11 +9,10 @@ export async function openPluginConnectedAccountSheet(input: Readonly<{
     scope: ServerAccountScope | null;
     machineId?: string | null;
     serverId?: string | null;
-    anchor?: ConnectSheetAccountRequest['anchor'];
 }>) {
-    const { request, scope, machineId, serverId, anchor } = input;
+    const { request, scope, machineId, serverId } = input;
     const result = await presentConnectSheet({
-        scope, anchor, intent: 'link',
+        scope, intent: 'link',
         ...(machineId && serverId ? { initialMachineTarget: {
             serverIdentityId: captureServerProfileScopeResolver()(serverId), machineId,
         } } : {}),

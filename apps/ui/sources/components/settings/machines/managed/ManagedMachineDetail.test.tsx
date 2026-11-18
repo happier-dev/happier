@@ -1012,8 +1012,8 @@ describe('managed Machine detail', () => {
                 params: expect.objectContaining({ serverId, machineId: machine.controller.machineId }) }));
         } else {
             expect(show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-                request: removed === 'credential' ? { scope: { serverId, accountId: 'owner' }, intent: 'reconnect', service: account.service, account, anchor: { kind: 'view', ref: { current: trigger } } }
-                    : { scope: { serverId, accountId: 'owner' }, intent: 'link', service: undefined, anchor: { kind: 'view', ref: { current: trigger } } },
+                request: removed === 'credential' ? { scope: { serverId, accountId: 'owner' }, intent: 'reconnect', service: account.service, account }
+                    : { scope: { serverId, accountId: 'owner' }, intent: 'link', service: undefined },
             }) }));
             expect(router.push).not.toHaveBeenCalled();
         }

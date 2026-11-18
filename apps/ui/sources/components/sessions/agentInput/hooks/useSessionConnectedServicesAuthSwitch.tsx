@@ -2,7 +2,6 @@ import { buildExistingSessionConnectedServicesAuthActionInput } from '@happier-d
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
-import type { PopoverAnchor } from '@/components/ui/popover';
 import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
@@ -563,9 +562,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         ));
     }, [metadataBindingsByServiceId]);
 
-    const openConnectSheet = React.useCallback((serviceId: string, accountId?: string | null, anchor?: PopoverAnchor) => {
+    const openConnectSheet = React.useCallback((serviceId: string, accountId?: string | null) => {
         const service = parseQualifiedPluginContributionKey(serviceId) ?? undefined;
-        return presentConnectSheet({ scope: binding?.scope ?? null, service, intent: 'link', ...(anchor ? { anchor } : {}),
+        return presentConnectSheet({ scope: binding?.scope ?? null, service, intent: 'link',
             ...(service && accountId ? { intent: 'reconnect', account: { service, accountId } } : {}) });
     }, [binding]);
 
@@ -987,9 +986,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             }}
             defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
             resolveOptionAvailability={resolveOptionAvailability}
-            onOpenSettings={(serviceId, anchor) => {
+            onOpenSettings={(serviceId) => {
                 requestClose();
-                fireAndForget(openConnectSheet(serviceId, undefined, anchor).then((result) => {
+                fireAndForget(openConnectSheet(serviceId).then((result) => {
                     if (result.kind === 'dismissed') return;
                     setBindingForService(buildQualifiedPluginContributionKey(result.account.service), {
                         source: 'connected', selection: 'profile', profileId: result.account.accountId,

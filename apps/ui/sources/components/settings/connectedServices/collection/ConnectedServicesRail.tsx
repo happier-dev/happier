@@ -2,7 +2,7 @@ import * as React from 'react';
 import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 import { presentConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
 import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
-import { View, type GestureResponderEvent } from 'react-native';
+import { View } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
@@ -36,8 +36,6 @@ import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
 import type { ConnectedAccountSetupCompletion, ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
@@ -102,7 +100,7 @@ export type ConnectedServicesRailViewProps = Readonly<{
     identitiesHidden: boolean;
     onSetIdentitiesHidden: (hidden: boolean) => void;
     /** "+" in the head when no menu is supplied: connect a service. */
-    onConnect: (anchor?: PopoverAnchor) => void;
+    onConnect: () => void;
     settled?: Readonly<{ serviceKey: string; content: React.ReactNode }> | null;
     /** "+" in the head as the grouped, searchable menu of what can be added (P8-R3); it renders its trigger. */
     renderConnect?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
@@ -111,7 +109,7 @@ export type ConnectedServicesRailViewProps = Readonly<{
     onOpenNpmProfiles?: () => void;
     onOpenAccount: (sheet: ConnectedServicesIndexSheet, accountId: string) => void;
     /** A service row's "+": add another account of that service (its draft beside the rail). */
-    onAddAccount?: (sheet: ConnectedServicesIndexSheet, anchor?: PopoverAnchor) => void;
+    onAddAccount?: (sheet: ConnectedServicesIndexSheet) => void;
     /** Owned and granted Saved Secrets (Q2: a service's key appears only under its service). */
     secrets?: Readonly<{ entries: readonly SavedSecretCatalogEntryV1[]; state: CredentialsSecretsState; onRetry: () => void;
         errorCause?: ScopedSnapshotError | null }>;
@@ -296,7 +294,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 rightElement={props.onAddAccount ? groupAdd(
                     `connected-services-rail:service:${sheet.serviceKey}:add`,
                     t('connectedServicesCollection.addServiceAccount', { service: sheet.label }),
-                    (event) => props.onAddAccount?.(sheet, resolvePressTriggerAnchor(event)),
+                    () => props.onAddAccount?.(sheet),
                 ) : undefined}
                 onPress={() => (expandable || drafting ? toggle(sheet.serviceKey) : props.onOpenService(sheet))}
             />
@@ -355,7 +353,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 onPress={onPress}
             />
         );
-        return renderConnect ? renderConnect(trigger) : trigger((event?: GestureResponderEvent) => onConnect(resolvePressTriggerAnchor(event)));
+        return renderConnect ? renderConnect(trigger) : trigger(() => onConnect());
     }, [onConnect, renderConnect]);
     const filterInHead = accountCount > 0 && !searchable;
     const header = (
@@ -682,20 +680,19 @@ function secretRowStatus(entry: SavedSecretCatalogEntryV1): React.ReactNode {
     return status ? <CollectionStatusGlyph status={status} label={sharedSecretStatusLabel(entry.materialStatus)} /> : undefined;
 }
 
-/** The Secrets group's "+" and the create popover anchored under it. */
-function NewSecretPopoverTrigger(props: Readonly<{
+/** The Secrets group's "+" and the Connect sheet it opens for a new key. */
+function NewSecretTrigger(props: Readonly<{
     renderTrigger: (onPress: () => void) => React.ReactElement;
     onCreated: (ref: string) => void;
 }>) {
-    // "New secret" is the one Connect sheet for a key with no purpose, hanging from this "+" (owner 10-31).
-    const anchorRef = React.useRef<View>(null);
+    // "New secret" is the one Connect sheet for a key with no purpose, opened from this "+" (owner 10-31).
     const { onCreated } = props;
     const open = React.useCallback(() => {
-        fireAndForget(presentConnectSheet({ service: { kind: 'key' }, intent: 'add', anchor: { kind: 'view', ref: anchorRef } }).then((result) => {
+        fireAndForget(presentConnectSheet({ service: { kind: 'key' }, intent: 'add' }).then((result) => {
             if (result.kind !== 'dismissed') onCreated(result.secretRef);
         }), { tag: 'ConnectedServicesRail.newSecret' });
     }, [onCreated]);
-    return <View ref={anchorRef} collapsable={false}>{props.renderTrigger(open)}</View>;
+    return props.renderTrigger(open);
 }
 
 /** An account's tightest limit, read by the row that shows it (one shared snapshot store per account). */
@@ -778,8 +775,8 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
     }, [onDetail, router]);
 
     // Stable while the menu's facts are, so the phone's navigation bar is not re-published per render.
-    const onConnect = React.useCallback((anchor?: PopoverAnchor) => {
-        fireAndForget(presentConnectSheet({ scope, intent: 'add', ...(anchor ? { anchor } : {}) }).then(result => {
+    const onConnect = React.useCallback(() => {
+        fireAndForget(presentConnectSheet({ scope, intent: 'add' }).then(result => {
             if (result.kind !== 'dismissed') onConnected(result.account, result);
         }), { tag: 'ConnectedServicesRail.connect' });
     }, [onConnected, scope]);
@@ -819,8 +816,8 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
                 });
             }}
             onOpenAccount={(sheet, accountId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'account', accountId }), 'ConnectedServicesRail.account')}
-            onAddAccount={(sheet, anchor?: PopoverAnchor) => {
-                fireAndForget(presentConnectSheet({ scope, intent: 'add', service: sheet.service, ...(anchor ? { anchor } : {}) }).then(result => {
+            onAddAccount={(sheet) => {
+                fireAndForget(presentConnectSheet({ scope, intent: 'add', service: sheet.service }).then(result => {
                     if (result.kind !== 'dismissed') onConnected(result.account, result);
                 }), {
                     tag: 'ConnectedServicesRail.addAccount',
@@ -829,7 +826,7 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
             secrets={secrets}
             onOpenSecret={(ref) => open(buildCredentialsSecretRoute({ ref }) as never, 'ConnectedServicesRail.secret')}
             renderNewSecret={(renderTrigger) => (
-                <NewSecretPopoverTrigger
+                <NewSecretTrigger
                     renderTrigger={renderTrigger}
                     onCreated={(ref) => open(buildCredentialsSecretRoute({ ref }) as never, 'ConnectedServicesRail.createdSecret')}
                 />

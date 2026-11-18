@@ -219,7 +219,6 @@ describe('SidebarUsagePopoverContent', () => {
             intent: 'reconnect',
             service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
             account: state.needingSignIn[0].ref,
-            anchor: { kind: 'view', ref: { current: trigger } },
         } }) }));
     });
 

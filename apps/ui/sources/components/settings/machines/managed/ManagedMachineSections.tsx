@@ -1,7 +1,6 @@
 import { approveManagedMachineEnrollment, isManagedMachineEnrollmentRequester } from './managedMachineCreation';
 import * as React from 'react';
-import { View, type GestureResponderEvent } from 'react-native';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { View } from 'react-native';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { useUnistyles } from 'react-native-unistyles';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -892,12 +891,11 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             ...(canDelete && (currentControllerAvailable || creatorScoped) && machine.creationState === 'active'
                 && machine.submittedNativeEffect?.intent === 'delete' ? { tryAgain: reviewDependencies } : {}),
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
-                reconnect: (event?: GestureResponderEvent) => {
+                reconnect: () => {
                     // Native failure currently names no account; only a sole launch credential identifies the repair target.
                     const credential = machine.launch.credentials?.length === 1 ? machine.launch.credentials[0] : undefined;
                     const account = credential && 'account' in credential ? credential.account : undefined;
-                    const anchor = resolvePressTriggerAnchor(event);
-                    fireAndForget(presentConnectSheet({ scope: props.binding?.scope ?? null, service: account?.service, intent: 'link', ...(anchor ? { anchor } : {}),
+                    fireAndForget(presentConnectSheet({ scope: props.binding?.scope ?? null, service: account?.service, intent: 'link',
                         ...(account ? { intent: 'reconnect', account } : {}) }),
                         { tag: 'ManagedMachineSections.reconnect' });
                 },

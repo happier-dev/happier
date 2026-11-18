@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { ConnectSheetContentProps } from './ConnectedServiceSetupModal';
+import { createConnectSheetChrome } from './connectSheetChrome';
 import { resolveConnectSheetBodyScroll } from './connectSheetOpening';
 
 /**
- * The Connect sheet's band: one mark, the title and one line of purpose, in the shared anchored chrome
- * (popover at the button on wide layouts, bottom sheet on a phone). Set when its words change.
+ * The Connect sheet's band: one mark, the title and one line of purpose, in the Connect sheet's one
+ * presentation (centred dialog on wide layouts, bottom sheet on a phone). Set when its words change.
  */
 export function useConnectSheetHeading(
   props: ConnectSheetContentProps,
@@ -20,16 +20,14 @@ export function useConnectSheetHeading(
 ) {
   const { setChrome } = props;
   const bodyScroll = resolveConnectSheetBodyScroll(props.request);
-  const anchor = props.request.anchor;
   const leadingRef = React.useRef(heading.leading);
   leadingRef.current = heading.leading;
   React.useLayoutEffect(() => {
     setChrome?.({
-      ...createAnchoredSheetChrome({
+      ...createConnectSheetChrome({
         title: heading.title,
         subtitle: heading.subtitle,
         testID: 'connect-sheet',
-        anchor,
       }),
       leading: leadingRef.current,
       // Chrome updates merge; null retires a previous method's Machine chip.
@@ -37,6 +35,6 @@ export function useConnectSheetHeading(
       // A sign-in's steps can outgrow the window: the body scrolls under the band (Share's list scrolls itself).
       bodyScroll,
     });
-  }, [anchor, bodyScroll, heading.actions, heading.leadingKey, heading.subtitle, heading.title, setChrome]);
+  }, [bodyScroll, heading.actions, heading.leadingKey, heading.subtitle, heading.title, setChrome]);
 }
 

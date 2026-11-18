@@ -1,7 +1,5 @@
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
@@ -17,6 +15,7 @@ import type { DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/r
 import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { ConnectSheetContent } from './ConnectSheetContent';
+import { createConnectSheetChrome } from './connectSheetChrome';
 import { resolveConnectSheetBodyScroll } from './connectSheetOpening';
 import type { ConnectedAccountSetupFacts } from '../account/useConnectedAccountSetupCompletion';
 
@@ -34,7 +33,6 @@ export type ConnectSheetAccountRequest = Readonly<{
      * accounts first; `reconnect` signs `account` in again.
      */
     intent: 'add' | 'link' | 'reconnect';
-    anchor?: PopoverAnchor;
     purposeRequest?: ConnectedAccountPurposeSetupRequest;
     /** Resource consumers keep their existing purpose-default writer; inline callers own the returned account. */
     purposeSettlement?: 'resourceDefault';
@@ -48,7 +46,6 @@ export type ConnectSheetKeyRequest = Readonly<{
     scope?: AccountSettingsScope | null;
     current?: string;
     bindingTarget?: ConnectSheetKeyBindingTarget;
-    anchor?: PopoverAnchor;
 }>;
 export type ConnectSheetNpmRegistryRequest = Readonly<{
     service: Readonly<{ kind: 'npm-registry-profile' }>;
@@ -56,7 +53,6 @@ export type ConnectSheetNpmRegistryRequest = Readonly<{
     current?: string;
     projectDir?: string;
     targetSelection?: MachineAdministrationTargetSelectionV1;
-    anchor?: PopoverAnchor;
     onOperationError?: (code: string) => void;
 }>;
 export type ConnectSheetNpmRegistryResult = Readonly<{
@@ -73,8 +69,8 @@ export type ConnectSheetContentProps = CustomModalInjectedProps & Readonly<{
 
 /**
  * The setup panel where there is no page to grow in (lab AM/AMp): a popover's or a session banner's
- * "Sign in again", or Connect from a surface without room. Same panel, same controller; a modal on
- * wide screens and a sheet on phones through the modal owner.
+ * "Sign in again", or Connect from a surface without room. Same panel, same controller; one presentation
+ * for every caller ({@link createConnectSheetChrome}).
  */
 export function presentConnectSheet(request: ConnectSheetKeyRequest): Promise<ConnectSheetKeyResult>;
 export function presentConnectSheet(request: ConnectSheetNpmRegistryRequest): Promise<ConnectSheetNpmRegistryResult>;
@@ -99,8 +95,8 @@ export function presentConnectSheet(request: ConnectSheetRequest): Promise<Conne
             onHostUnmount: () => finish({ kind: 'dismissed' }),
             props: { request: capturedRequest, onResult: finish },
             // The body scroll its content publishes with its heading: a native card picks its body once, here.
-            chrome: { ...createAnchoredSheetChrome({ title: t('settings.connectedServices'),
-                testID: 'connect-sheet', anchor: request.anchor }), bodyScroll: resolveConnectSheetBodyScroll(request) },
+            chrome: { ...createConnectSheetChrome({ title: t('settings.connectedServices'), testID: 'connect-sheet' }),
+                bodyScroll: resolveConnectSheetBodyScroll(request) },
             closeOnBackdrop: true,
         });
         if (!modalId) finish({ kind: 'dismissed' });

@@ -39,9 +39,9 @@ const modalConfirmMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
 const modalShowMock = vi.hoisted(() => vi.fn((_config: Parameters<IModal['show']>[0]) => 'connect-sheet'));
 
-function expectConnectSheet(service: { pluginId: string; localId: string }, accountId?: string, anchor?: import('@/components/ui/popover/_types').PopoverAnchor) {
+function expectConnectSheet(service: { pluginId: string; localId: string }, accountId?: string) {
     expect(modalShowMock).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-        request: { scope: null, service, intent: 'link', ...(accountId ? { intent: 'reconnect', account: { service, accountId } } : {}), ...(anchor ? { anchor } : {}) },
+        request: { scope: null, service, intent: 'link', ...(accountId ? { intent: 'reconnect', account: { service, accountId } } : {}) },
     }) }));
 }
 
@@ -2436,11 +2436,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const content = popoverRenderer({ requestClose, maxHeight: 320 }) as {
             props: { onOpenSettings: (serviceId: string, anchor?: import('@/components/ui/popover/_types').PopoverAnchor) => void };
         };
-        const anchor = { kind: 'rect', rect: { left: 30, top: 40, width: 24, height: 24 } } as const;
-        content.props.onOpenSettings(CLAUDE_SERVICE_KEY, anchor);
+        content.props.onOpenSettings(CLAUDE_SERVICE_KEY);
 
         expect(requestClose).toHaveBeenCalledOnce();
-        expectConnectSheet({ pluginId: 'happier.agent.claude', localId: 'anthropic' }, undefined, anchor);
+        expectConnectSheet({ pluginId: 'happier.agent.claude', localId: 'anthropic' });
         expect(routerPushMock).not.toHaveBeenCalled();
         const modalProps = modalShowMock.mock.calls.at(-1)?.[0].props;
         if (typeof modalProps?.onResult !== 'function') throw new Error('Expected the sheet result boundary');

@@ -155,13 +155,13 @@ describe('ExecutionRunSecretReferenceOverlayField', () => {
         expect(screen.getTextContent()).not.toContain('temporarily_unavailable');
     });
 
-    it('uses the existing anchored Connect presenter on wide layouts and returns only the exact reference', async () => {
+    it('uses the Connect presenter on wide layouts and returns only the exact reference', async () => {
         viewport.width = 1200;
         const { entry, onChange, screen } = await setup();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         expect(modal.component).toBe(ConnectSheetContent);
-        expect(modal.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet', anchor: { kind: 'view' } });
+        expect(modal.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet' });
         const content = modal.props as ConnectSheetContentProps;
         expect(content.request).toMatchObject({ scope: home!.scope, service: { kind: 'key', suggestedName: 'OPENAI_API_KEY' } });
         await act(async () => content.onResult({ kind: 'selected', secretRef: entry.ref }));

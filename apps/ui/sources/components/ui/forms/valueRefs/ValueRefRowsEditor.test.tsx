@@ -61,10 +61,9 @@ async function type(
 describe('ValueRefRowsEditor', () => {
   it('keeps the draft when Connect is dismissed and links the returned key reference in place', async () => {
     const { screen, onChangeEntries } = await mount({ API_KEY: { t: 'literal', v: 'kept-value' } });
-    const anchor = { kind: 'rect', rect: { left: 25, top: 40, width: 90, height: 30 }, coordinateSpace: 'window' } as const;
     const chooseKey = async () => {
       await act(async () => {
-        screen.findAllByTestId('env.row.0.type').find(node => typeof node.props.onSelect === 'function' && typeof node.props.onOpenChange === 'function')!.props.onSelect('savedSecret', { anchor });
+        screen.findAllByTestId('env.row.0.type').find(node => typeof node.props.onSelect === 'function' && typeof node.props.onOpenChange === 'function')!.props.onSelect('savedSecret');
       });
       const { Modal } = await import('@/modal');
       const presented = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props as {
@@ -72,7 +71,6 @@ describe('ValueRefRowsEditor', () => {
         onResult: (result: { kind: 'dismissed' } | { kind: 'connected'; secretRef: string }) => void;
       };
       expect(presented.request.service.kind).toBe('key');
-      expect(presented.request).toMatchObject({ anchor });
       return presented;
     };
     const first = await chooseKey();

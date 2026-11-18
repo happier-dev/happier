@@ -3866,7 +3866,7 @@ describe('PluginSurfacePlacementHost', () => {
             await new Promise<void>(resolve => setTimeout(resolve, 0));
             expect(completed).toBe(false);
             const modal = show.mock.calls.at(-1)![0];
-            expect(modal.props?.request.anchor).toEqual({ kind: 'view', ref: { current: trigger } });
+            expect(modal.props?.request).not.toHaveProperty('anchor');
             expect(modal.props?.request).toMatchObject({ scope: lifetime.scope,
                 purposeRequest: { scope: lifetime.scope, purpose }, purposeSettlement: 'resourceDefault',
                 service: { pluginId, localId: 'cloud-account' } });
@@ -3877,7 +3877,7 @@ describe('PluginSurfacePlacementHost', () => {
             expect(completed).toBe(true);
             pending = renderContext.hostApi.openConnectedAccounts({ service: { pluginId, localId: 'cloud-account' } });
             await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
-            expect(show.mock.calls.at(-1)![0].props?.request.anchor).toBeUndefined();
+            expect(show.mock.calls.at(-1)![0].props?.request).not.toHaveProperty('anchor');
             show.mock.calls.at(-1)![0].onRequestClose?.();
             await pending;
         } finally {

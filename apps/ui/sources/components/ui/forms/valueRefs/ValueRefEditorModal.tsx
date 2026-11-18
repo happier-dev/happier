@@ -1,5 +1,3 @@
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
-import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -111,11 +109,10 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
 
     const canSave = editor.canSubmit;
 
-    const pickSecret = React.useCallback((event?: unknown, anchor?: PopoverAnchor) => {
+    const pickSecret = React.useCallback(() => {
         void presentConnectSheet({
             service: { kind: 'key', suggestedName: normalizedKey || undefined },
             intent: 'link',
-            anchor: anchor ?? resolvePressTriggerAnchor(event),
             ...(props.scope === undefined ? {} : { scope: props.scope }),
             ...(secretId ? { current: secretId } : {}),
         }).then(result => {
@@ -158,13 +155,13 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                         onOpenChange={setSourceMenuOpen}
                         items={sourceItems}
                         selectedId={source}
-                        onSelect={(id, selection) => {
+                        onSelect={(id) => {
                             if (id !== 'literal' && id !== 'savedSecret') return;
                             const next = id;
                             setSource(next);
                             if (next !== 'savedSecret') return;
                             if (!secretId) {
-                                pickSecret(undefined, selection?.anchor);
+                                pickSecret();
                             }
                         }}
                         itemTrigger={{

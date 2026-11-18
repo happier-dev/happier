@@ -10,7 +10,6 @@ installSettingsViewCommonModuleMocks({
     router: async () => ({ useRouter: () => ({ push }) }),
 });
 const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
-const { resolvePressTriggerAnchor } = await import('@/components/ui/popover/resolvePointerMenuAnchor');
 const { Modal } = await import('@/modal');
 const state = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     screen.findAll((node) => typeof node.props.title === 'string' && node.props.testID?.startsWith('provider-error:') && 'kind' in node.props)[0];
@@ -21,23 +20,21 @@ describe('ProviderErrorItems', () => {
     afterEach(standardCleanup);
     beforeEach(() => push.mockReset());
 
-    it.each(['rows', 'line'] as const)('anchors the key sheet to its %s recovery trigger', async (presentation) => {
+    it.each(['rows', 'line'] as const)('opens the key sheet from its %s recovery trigger', async (presentation) => {
         const { ProviderErrorItems } = await import('./ProviderErrorItems');
-        // Modal presentation is the boundary; recovery dispatch and anchor resolution remain real.
+        // Modal presentation is the boundary; recovery dispatch remains real.
         const show = vi.spyOn(Modal, 'show').mockReturnValue('recovery-key-sheet');
         try {
             const screen = await renderScreen(<ProviderErrorItems presentation={presentation}
                 error={{ v: 1, code: 'provider_secret_missing', retryable: false, action: 'add_secret' }}
-                configureSecret={(event?: unknown) => {
-                    void presentConnectSheet({ service: { kind: 'key' }, intent: 'link', anchor: resolvePressTriggerAnchor(event) });
+                configureSecret={() => {
+                    void presentConnectSheet({ service: { kind: 'key' }, intent: 'link' });
                 }} />);
             const trigger = { measureInWindow: (_callback: unknown) => undefined };
             const button = recovery(screen);
             if (!button) throw new Error('Missing key recovery trigger');
             await React.act(async () => { await button.props.onPress({ currentTarget: trigger }); });
-            expect(show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { request: {
-                anchor: { kind: 'view', ref: { current: trigger } },
-            } } });
+            expect(show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { request: { service: { kind: 'key' }, intent: 'link' } } });
         } finally { show.mockRestore(); }
     });
 

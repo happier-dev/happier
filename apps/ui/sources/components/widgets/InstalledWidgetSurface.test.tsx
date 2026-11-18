@@ -192,7 +192,7 @@ describe('InstalledWidgetSurface', () => {
         expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props?.request).toMatchObject({
             purposeRequest: { scope: { serverId: scope.serverId, accountId: scope.accountId }, machineId: 'machine-a',
                 purpose: { consumer, purpose: 'read' } },
-            purposeSettlement: 'resourceDefault', anchor: { kind: 'view', ref: { current: trigger } },
+            purposeSettlement: 'resourceDefault',
         });
         expect(state.push).not.toHaveBeenCalled();
         expect(screen.findByTestId('shared-widget-inputs-repair')).toBeNull();

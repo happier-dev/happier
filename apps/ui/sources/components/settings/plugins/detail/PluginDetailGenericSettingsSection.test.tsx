@@ -383,7 +383,7 @@ async function openAccountKeySheet(screen: Awaited<ReturnType<typeof renderScree
     if (!trigger) throw new Error('Missing plugin Account key trigger');
     await act(async () => { trigger.props.onPress(event); });
     const modal = modalShowMock.mock.calls.at(-1)?.[0] as { props?: {
-        request: { service: { kind: string }; anchor?: unknown; bindingTarget?: unknown };
+        request: { service: { kind: string }; bindingTarget?: unknown };
         onResult: (result: { kind: 'connected' | 'selected'; secretRef: string } | { kind: 'dismissed' }) => void;
     } } | undefined;
     if (!modal?.props) throw new Error('Missing plugin Connect sheet');
@@ -1578,8 +1578,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         const trigger = { measureInWindow: (_callback: unknown) => undefined };
         const sheet = await openAccountKeySheet(screen, { currentTarget: trigger });
         expect(sheet.request).toMatchObject({ service: { kind: 'key' },
-            bindingTarget: { kind: 'plugin', pluginId: PLUGIN_ID, localId: 'accountToken' },
-            anchor: { kind: 'view', ref: { current: trigger } } });
+            bindingTarget: { kind: 'plugin', pluginId: PLUGIN_ID, localId: 'accountToken' } });
         await act(async () => {
             sheet.onResult({ kind: 'selected', secretRef: 'saved-secret-owned-by-user' });
             await Promise.resolve();

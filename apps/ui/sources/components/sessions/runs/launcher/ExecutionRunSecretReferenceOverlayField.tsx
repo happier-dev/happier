@@ -10,7 +10,6 @@ import { presentConnectSheet, type ConnectSheetKeyRequest, type ConnectSheetResu
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { Text } from '@/components/ui/text/Text';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
@@ -70,7 +69,6 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
 }>) => {
     const { theme } = useUnistyles();
     const phone = isMobileLayoutWidth(useWindowDimensions().width);
-    const triggerRef = React.useRef<View>(null);
     const catalog = useSavedSecretCatalog({
         sharedEnabled: props.sharedEnabled,
         scope: props.accountScope,
@@ -150,14 +148,13 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
             setSelectedSecretIds((previous) => ({ ...previous, [name]: result.secretRef }));
         }
     }, []);
-    const openRequirement = (name: string, anchor: PopoverAnchor) => {
+    const openRequirement = (name: string) => {
         const current = normalizeSecretReference(selectedSecretIds[name]) ?? normalizeSecretReference(props.defaultBindings?.[name]);
         const request: ConnectSheetKeyRequest = {
             service: { kind: 'key', suggestedName: name },
             intent: 'link',
             scope: props.accountScope,
             ...(current ? { current } : {}),
-            anchor,
         };
         if (phone) setInlineConnect({ name, request });
         else void presentConnectSheet(request).then((result) => applyConnectResult(name, result));
@@ -167,7 +164,7 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
 
     return (
         <View style={{ gap: theme.space.s8 }}>
-            <View ref={triggerRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
+            <View style={{ alignSelf: 'flex-start' }}>
                 <RoundButton
                     testID="execution-run-secret-overlay-edit"
                     title={t('profiles.requirements.modalTitle')}
@@ -176,7 +173,7 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
                     disabled={!props.editable}
                     onPress={() => {
                         const target = requirements.find((requirement) => requirement.required)?.name ?? requirementNames[0];
-                        if (target) openRequirement(target, { kind: 'view', ref: triggerRef });
+                        if (target) openRequirement(target);
                     }}
                 />
             </View>
@@ -229,23 +226,20 @@ function ExecutionRunSecretRequirementActions(props: Readonly<{
     editable: boolean;
     machineAvailable: boolean;
     machineReady: boolean;
-    onConnect: (name: string, anchor: PopoverAnchor) => void;
+    onConnect: (name: string) => void;
     onUseMachine: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const anchorRef = React.useRef<View>(null);
     return (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
-            <View ref={anchorRef} collapsable={false}>
-                <RoundButton
-                    testID={`execution-run-secret-saved:${props.name}`}
-                    title={t('profiles.requirements.options.useSavedSecret.title')}
-                    display="secondary"
-                    size="small"
-                    disabled={!props.editable}
-                    onPress={() => props.onConnect(props.name, { kind: 'view', ref: anchorRef })}
-                />
-            </View>
+            <RoundButton
+                testID={`execution-run-secret-saved:${props.name}`}
+                title={t('profiles.requirements.options.useSavedSecret.title')}
+                display="secondary"
+                size="small"
+                disabled={!props.editable}
+                onPress={() => props.onConnect(props.name)}
+            />
             {props.machineAvailable ? (
                 <RoundButton
                     testID={`execution-run-secret-machine:${props.name}`}

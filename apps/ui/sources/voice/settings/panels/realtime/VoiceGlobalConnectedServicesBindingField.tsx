@@ -1,4 +1,3 @@
-import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 
 import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV1Schema, ConnectedServiceBindingsV2Schema, ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -178,14 +177,14 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
       : ConnectedServiceBindingsV1Schema.parse({ v: 1, bindingsByServiceId: sessionBindings.bindingsByServiceId }),
     openRef.current?.expectedSettingsVersion ?? null);
   }, [accountGroupsEnabled, defaultProfileIdByServiceId, groupOptionsByServiceId, profileOptionsByServiceId, props, supportedServiceIds]);
-  const openConnect = React.useCallback((serviceId: string, anchor?: PopoverAnchor) => {
+  const openConnect = React.useCallback((serviceId: string) => {
     const serviceKey = resolveQualifiedConnectedAccountServiceKey(serviceId);
     if (!serviceKey) return;
     const service = parseQualifiedPluginContributionKey(serviceKey);
     if (!service) return;
     const binding = valueRef.current[serviceKey] ?? valueRef.current[serviceId];
     void presentConnectSheet({
-      scope: openRef.current?.scope ?? null, service, intent: 'link', anchor,
+      scope: openRef.current?.scope ?? null, service, intent: 'link',
       ...(binding?.source === 'connected' && binding.profileId
         ? { account: { service, accountId: binding.profileId } } : {}),
     }).then(result => {

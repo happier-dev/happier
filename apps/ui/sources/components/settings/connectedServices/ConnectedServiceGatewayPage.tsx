@@ -73,9 +73,9 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
                 if (target) slots[slotPurpose] = target; else delete slots[slotPurpose];
                 onChange({ ...deployment, purposeBindingDefaults: slots });
             }}
-            onConnectService={(serviceKey, anchor) => {
+            onConnectService={(serviceKey) => {
                 const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
-                fireAndForget(presentConnectSheet({ scope, service, intent: 'link', ...(anchor ? { anchor } : {}) }), { tag: 'ConnectedServiceGatewayPage.connect' });
+                fireAndForget(presentConnectSheet({ scope, service, intent: 'link' }), { tag: 'ConnectedServiceGatewayPage.connect' });
             }}
             placement={deployment.gatewayPlacement ?? undefined}
             machines={machines.map(row => ({ machineId: row.target.machineId, displayName: row.displayName, online: row.online }))}

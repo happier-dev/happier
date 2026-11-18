@@ -20,8 +20,6 @@ import { ConnectedAccountPrivacyToggle } from '@/components/settings/connectedSe
 import { UsageMeterRow, UsageMeterStack } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
@@ -215,9 +213,9 @@ export function useUsagePopoverHandlers(params: Readonly<{ close: () => void; ro
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
         if (result !== true) fireAndForget(result, { tag: 'UsagePopover.openUsage' });
     }, [close, router]);
-    const signInAgain = React.useCallback((account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => {
+    const signInAgain = React.useCallback((account: ConnectedServiceAccountNeedingSignIn) => {
         close();
-        fireAndForget(presentConnectSheet({ scope, intent: 'reconnect', service: account.ref.service, account: account.ref, ...(anchor ? { anchor } : {}) }),
+        fireAndForget(presentConnectSheet({ scope, intent: 'reconnect', service: account.ref.service, account: account.ref }),
             { tag: 'UsagePopover.signInAgain' });
     }, [close, scope]);
     return { openConnectedServices, openUsage, signInAgain };
@@ -238,7 +236,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
     onOpenConnectedServices: () => void;
     /** The header's chart: the Usage page, the whole picture behind this preview. */
     onOpenUsage: () => void;
-    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => void;
+    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
 }>) {
     const { theme } = useUnistyles();
     const { usage, privacy, session } = props;
@@ -580,7 +578,7 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
 const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
     account: ConnectedServiceAccountNeedingSignIn;
     name: ConnectedAccountNamePresentation;
-    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn, anchor?: PopoverAnchor) => void;
+    onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
 }>) {
     const { theme } = useUnistyles();
     const { account } = props;
@@ -607,7 +605,7 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
                         size="small"
                         display="secondary"
                         title={t('connectedServicesSettings.signInAgain')}
-                        onPress={(event) => props.onSignInAgain?.(account, resolvePressTriggerAnchor(event))}
+                        onPress={() => props.onSignInAgain?.(account)}
                     />
                 ) : null}
             </View>

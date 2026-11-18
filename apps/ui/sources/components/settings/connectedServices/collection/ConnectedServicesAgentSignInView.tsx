@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { PopoverAnchor } from '@/components/ui/popover';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
@@ -93,13 +92,13 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     });
 
     /** Released V2/V3 default-auth ingress uses the same action admission as the index. */
-    const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string, anchor?: PopoverAnchor) => {
+    const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string) => {
         const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
         if (!entry.service || !canExecuteConnectedServiceAction(entry, index.transport)) {
             await Modal.alert(t('errors.daemonUnavailableTitle'), t('errors.daemonUnavailableBody'));
             return;
         }
-        const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, intent: 'link', ...(anchor ? { anchor } : {}) });
+        const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, intent: 'link' });
         if (result.kind !== 'dismissed') setSettled(result);
     }, [activeAccountScope, index.transport]);
 

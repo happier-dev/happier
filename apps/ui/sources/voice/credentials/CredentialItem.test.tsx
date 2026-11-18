@@ -312,7 +312,6 @@ describe('VoiceCredentialItem', () => {
       await openGesture(screen, 'useSavedSecret');
       const sheet = await shown.promise;
       expect(sheet.request.bindingTarget).toEqual({ kind: 'voice', contribution, slot: 'api-key' });
-      expect(sheet.request.anchor).toMatchObject({ kind: 'view' });
       await act(async () => { sheet.onResult({ kind: 'selected', secretRef: ref }); });
       await credentialChanged.promise;
       expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' },

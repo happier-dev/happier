@@ -14,7 +14,6 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 import { Modal } from '@/modal';
 import { presentConnectSheet } from './ConnectedServiceSetupModal';
-import { presentShareSheet } from '@/components/sharing/presentShareSheet';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const account = { service, accountId: 'work' };
@@ -45,17 +44,22 @@ describe('presentConnectSheet result lifecycle', () => {
         await expect(result).resolves.toEqual({ kind: 'selected', secretRef: 'shared:inference' });
     });
 
-    it('uses the Share presentation owner for anchored desktop and phone sheet chrome', () => {
+    it('opens every Connect flow as the centred dialog (a phone sheet), whatever control opened it', () => {
         const anchor = { kind: 'rect' as const, rect: { left: 100, top: 200, height: 30 } };
-        const result = presentConnectSheet({ service, anchor, intent: 'link' });
-        const connect = vi.mocked(Modal.show).mock.calls.at(-1)![0];
-        function Body() { return React.createElement('Body'); }
-        presentShareSheet({ component: Body, props: {}, title: 'Share', testID: 'share', anchor });
-        const share = vi.mocked(Modal.show).mock.calls.at(-1)![0];
-        expect(connect.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet', anchor });
-        expect(share.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet', anchor });
-        connect.onRequestClose?.();
-        return result;
+        const requests = [
+            { service, intent: 'link' as const },
+            { service: { kind: 'key' as const }, intent: 'add' as const },
+            { service: { kind: 'npm-registry-profile' as const } },
+        ];
+        for (const request of requests) {
+            // A caller holding its trigger's position (an untyped plugin bridge, a stale call) still gets the dialog.
+            const result = presentConnectSheet({ ...request, anchor } as Parameters<typeof presentConnectSheet>[0]);
+            const connect = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+            expect(connect.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet' });
+            expect(connect.chrome).not.toHaveProperty('anchor');
+            connect.onRequestClose?.();
+            void result;
+        }
     });
 });
 

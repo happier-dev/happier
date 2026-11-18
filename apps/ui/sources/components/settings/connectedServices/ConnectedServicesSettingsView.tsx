@@ -60,7 +60,6 @@ import type { ConnectedAccountSetupCompletion, ConnectedAccountSetupFacts } from
 import { ConnectedServicesConnectMore } from './setup/ConnectedServicesConnectMore';
 import { readConnectedServiceSetupResult } from './setup/connectMoreBlocks';
 import { presentConnectSheet, type ConnectSheetAccountRequest } from './setup/ConnectedServiceSetupModal';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
 
 
 /**
@@ -406,15 +405,13 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
         />
       )}
       renderStar={renderStar}
-      onAddAccount={(sheet, anchor?: PopoverAnchor) => {
-        fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'add', service: sheet.service,
-          ...(anchor ? { anchor } : {}) }).then((result) => {
+      onAddAccount={(sheet) => {
+        fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'add', service: sheet.service }).then((result) => {
           if (result.kind !== 'dismissed') settleAccount(result.account, result);
         }), { tag: 'ConnectedServices.addAccount' });
       }}
-      onSignInAgain={(sheet, accountId, anchor?: PopoverAnchor) => {
-        fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'reconnect', service: sheet.service, account: { service: sheet.service, accountId },
-          ...(anchor ? { anchor } : {}) }).then((result) => {
+      onSignInAgain={(sheet, accountId) => {
+        fireAndForget(presentConnectSheet({ scope: activeAccountScope, intent: 'reconnect', service: sheet.service, account: { service: sheet.service, accountId } }).then((result) => {
           if (result.kind !== 'dismissed') settleAccount(result.account, result);
         }), { tag: 'ConnectedServices.reconnect' });
       }}

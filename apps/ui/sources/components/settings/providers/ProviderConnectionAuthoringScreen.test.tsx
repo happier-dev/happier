@@ -222,7 +222,7 @@ async function openProviderKeySheet(screen: RenderedScreen, event?: unknown) {
     if (!trigger) throw new Error('Missing Provider Add key or Replace trigger');
     await React.act(async () => { trigger.props.onPress(event); });
     const modal = modalShow.mock.calls.at(-1)?.[0] as { props?: {
-        request: { current?: string; anchor?: unknown; service: { suggestedName?: string } };
+        request: { current?: string; service: { suggestedName?: string } };
         onResult: (result: { kind: 'connected' | 'selected'; secretRef: string } | { kind: 'dismissed' }) => void;
     } } | undefined;
     if (!modal?.props) throw new Error('Missing Connect sheet');
@@ -1008,7 +1008,6 @@ describe('ProviderConnectionAuthoringScreen', () => {
         const sheet = await openProviderKeySheet(screen, { currentTarget: trigger });
         expect(sheet.request).toMatchObject({
             service: { suggestedName: kind === 'built-in' ? 'Ollama' : 'Gateway' },
-            anchor: { kind: 'view', ref: { current: trigger } },
         });
         await React.act(async () => { sheet.onResult({ kind: 'connected', secretRef: ref }); });
         expect(screen.getTextContent()).toContain('Provider key');

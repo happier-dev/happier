@@ -116,8 +116,7 @@ it.each([390, 1440])('changes an Account purpose through the plugin Host produce
     async function openPicker(capturedScope = scope) {
         let result!: ReturnType<typeof openPluginConnectedAccountSheet>;
         await act(async () => { result = openPluginConnectedAccountSheet({ scope: capturedScope, request: { service, purpose },
-            machineId: 'unavailable-selected-machine', serverId: capturedScope.serverId,
-            anchor: { kind: 'rect', rect: { left: 100, top: 200, width: 150, height: 30 } } }); });
+            machineId: 'unavailable-selected-machine', serverId: capturedScope.serverId }); });
         await vi.waitFor(() => {
             const trigger = document.querySelector<HTMLElement>(`[data-testid="${chooser}"]`);
             expect(trigger).not.toBeNull();

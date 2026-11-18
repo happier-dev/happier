@@ -29,7 +29,6 @@ import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { ConfiguredWidgetTargetResolution, WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import type { ProjectSurfaceTargetV1, ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { createPluginUiProjectPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 
@@ -505,10 +504,10 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         : t('widgetAdd.chooseAnother', { field: field.label });
     const action = repair.kind === 'connect' && repair.connection ? {
         label: t('connectedServicesSettings.connect'),
-        onPress: (event?: unknown) => {
+        onPress: () => {
             const request = repair.connection!;
             void presentConnectSheet({ intent: 'link', purposeRequest: request, purpose: request.purpose, scope: request.scope,
-                purposeSettlement: 'resourceDefault', anchor: resolvePressTriggerAnchor(event) });
+                purposeSettlement: 'resourceDefault' });
         },
         testID: `${props.testID}-connect`,
     } : repair.kind === 'type_unavailable' && props.onManagePlugin ? {

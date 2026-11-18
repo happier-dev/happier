@@ -148,8 +148,8 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             onResetLabel={resetLabel}
             onSetLabel={setLabel}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
-            onConnectAccount={(anchor) => {
-                fireAndForget(presentConnectSheet({ scope, service, intent: 'add', ...(anchor ? { anchor } : {}) }).then(result => {
+            onConnectAccount={() => {
+                fireAndForget(presentConnectSheet({ scope, service, intent: 'add' }).then(result => {
                     if (result.kind !== 'dismissed') setSettled(result);
                 }), { tag: 'QualifiedPoolDetail.connect' });
             }}

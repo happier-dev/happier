@@ -3391,7 +3391,6 @@ describe('ProviderConnectionDetailScreen', () => {
             throw new Error('Expected Provider Connect presentation');
         expect(sheet.request).toMatchObject({ service: { kind: 'key', keyKind: 'apiKey' },
             bindingTarget: { kind: 'provider', contributionKey, slot: 'apiKey' } });
-        expect(sheet.request).toMatchObject({ anchor: { kind: 'view', ref: { current: trigger } } });
         const onResult = sheet.onResult;
         await act(async () => { onResult({ kind: 'selected', secretRef: ref }); });
         await waitForHomeGovernance(() => expect(stored.catalog.secretBindingsByConnectionId[stored.catalog.connections[0]!.id]?.account?.apiKey).toBe(ref));

@@ -282,7 +282,6 @@ describe('RegistrySourcesView through real registry Actions', () => {
             screen.findAllByTestId('registries:detail:token:choose').find(node => typeof node.props.onPress === 'function')!.props.onPress({ currentTarget: trigger });
         });
         const props = readRegistryTokenPickerProps();
-        expect(props.request.anchor).toMatchObject({ kind: 'view', ref: { current: trigger } });
         expect(props.request.current).toBe(previous.secretRef);
         await React.act(async () => { props.onResult({ kind: 'selected', secretRef: 'happier:shared-secret:v1:registry-token' }); });
         await waitForHomeGovernance(() => expect(outcomes).toHaveLength(1));

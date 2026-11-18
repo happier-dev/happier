@@ -278,10 +278,9 @@ describe('ConnectedServicesSettingsView row presentation', () => {
         const menu = actions.root.findAll(node => node.props.testID === 'connected-services-index:add-menu' && typeof node.props.onSelect === 'function')[0];
         expect(menu).toBeDefined();
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-        const anchor = { kind: 'rect', rect: { left: 30, top: 40, width: 24, height: 24 } } as const;
-        await act(async () => { actions.root.findByType(DropdownMenu).props.onSelect('account:happier.agent.codex/openai-codex', { anchor }); });
+        await act(async () => { actions.root.findByType(DropdownMenu).props.onSelect('account:happier.agent.codex/openai-codex'); });
         expect(show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-            request: { scope: null, service: PROFILES[2].ref.service, anchor },
+            request: { scope: null, service: PROFILES[2].ref.service, intent: 'add' },
         }) }));
         expect(router.push).not.toHaveBeenCalled();
         show.mockRestore();
@@ -389,14 +388,12 @@ describe('ConnectedServicesSettingsView row presentation', () => {
         const sheet = overview.props.model.sheets.find((candidate: { serviceKey: string }) => candidate.serviceKey === 'happier.agent.codex/openai-codex');
         expect(sheet).toBeDefined();
         const trigger = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 24, height: 24 }) };
-        const anchor = surface === 'rail' ? { kind: 'view', ref: { current: trigger } } as const
-            : { kind: 'rect', rect: { left: 30, top: 40, width: 24, height: 24 } } as const;
         await act(async () => {
             if (surface === 'rail') tree.findHostByTestId(`connected-services-rail:service:${sheet.serviceKey}:add`)!.props.onPress({ currentTarget: trigger });
-            else overview.props.onAddAccount(sheet, anchor);
+            else overview.props.onAddAccount(sheet);
         });
         expect(show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-            request: { scope: null, intent: 'add', service: PROFILES[2].ref.service, anchor },
+            request: { scope: null, intent: 'add', service: PROFILES[2].ref.service },
         }) }));
         expect(router.push).not.toHaveBeenCalled();
         show.mockRestore();

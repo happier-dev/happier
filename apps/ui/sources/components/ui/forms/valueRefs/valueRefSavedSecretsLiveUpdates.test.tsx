@@ -229,11 +229,10 @@ describe('value ref saved secrets live updates', () => {
         const dropdown = screen.findAll(node => typeof node.props.onSelect === 'function'
             && node.props.items?.some((item: { id: string }) => item.id === 'savedSecret'))[0];
         if (!dropdown) throw new Error('Missing value source menu');
-        const anchor = { kind: 'rect', rect: { left: 40, top: 60, height: 30 }, coordinateSpace: 'window' } as const;
-        await act(async () => { dropdown.props.onSelect('savedSecret', { anchor }); });
+        await act(async () => { dropdown.props.onSelect('savedSecret'); });
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
         expect(modalShowSpy.mock.calls[0]?.[0]).toMatchObject({
-            props: { request: { scope: home!.scope, service: { kind: 'key' }, anchor } },
+            props: { request: { scope: home!.scope, service: { kind: 'key' } } },
             closeOnBackdrop: true,
         });
     });

@@ -1,4 +1,3 @@
-import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { ProviderCompatibilityReview } from './detail/ProviderCompatibilityReview';
 import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
@@ -458,7 +457,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }, [focused, machineId, probeProviderConnection, probeScope, props.connectionId, query.refresh, resolveCurrentTarget]);
 
     // One Saved Secret writer for every declared slot: the inference key and a usage source's billing key.
-    const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string | null, credentialSlotId = 'apiKey', event?: unknown) => {
+    const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string | null, credentialSlotId = 'apiKey') => {
         if (scope === 'machine' && !targetMachineId) return;
         if (!selectedTargetServerMatchesActiveAccount) return;
         const accountLifetime = captureActiveServerAccountScopeLifetime();
@@ -466,7 +465,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         const bindings = storedConnection ? query.catalog?.secretBindingsByConnectionId[storedConnection.id] : undefined;
         const current = scope === 'account' ? bindings?.account?.[credentialSlotId]
             : targetMachineId ? bindings?.byMachineId?.[targetMachineId]?.[credentialSlotId] : undefined;
-        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', keyKind: 'apiKey' }, intent: 'link', scope: accountLifetime.scope, ...(connectionContributionKey ? { bindingTarget: { kind: 'provider', contributionKey: connectionContributionKey, slot: credentialSlotId } } : {}), ...(current ? { current } : {}) }).then(result => {
+        void presentConnectSheet({ service: { kind: 'key', keyKind: 'apiKey' }, intent: 'link', scope: accountLifetime.scope, ...(connectionContributionKey ? { bindingTarget: { kind: 'provider', contributionKey: connectionContributionKey, slot: credentialSlotId } } : {}), ...(current ? { current } : {}) }).then(result => {
             if (result.kind === 'dismissed' || !accountLifetime.isCurrent()) return;
             invalidateProbe();
             void mutation.run({
@@ -476,9 +475,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         });
     }, [connectionContributionKey, invalidateProbe, mutation, props.connectionId, query.catalog?.secretBindingsByConnectionId, selectedTargetServerMatchesActiveAccount, storedConnection]);
 
-    const chooseBillingKey = React.useCallback((slotId: string, event?: unknown) => bindSecret('account', machineId, slotId, event), [bindSecret, machineId]);
+    const chooseBillingKey = React.useCallback((slotId: string) => bindSecret('account', machineId, slotId), [bindSecret, machineId]);
     // The same picker and writer as the API key row's Choose key.
-    const chooseApiKey = React.useCallback((event?: unknown) => bindSecret('account', machineId, 'apiKey', event), [bindSecret, machineId]);
+    const chooseApiKey = React.useCallback(() => bindSecret('account', machineId, 'apiKey'), [bindSecret, machineId]);
 
     const duplicate = React.useCallback(async (mode: 'sameSource' | 'asCustom', name: string, allowNavigation: () => void) => {
         if (!connection) return;
@@ -878,9 +877,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? gatewayRuntimeQuery.data?.connections.find(row => row.connectionId === props.connectionId) ?? null
         : null;
     const gatewayRuntime = gatewayRuntimeConnection?.runtime.gateway;
-    const connectGatewayService = React.useCallback((serviceKey: string, anchor?: PopoverAnchor) => {
+    const connectGatewayService = React.useCallback((serviceKey: string) => {
         const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
-        fireAndForget(presentConnectSheet({ scope: addressedScope, service, intent: 'link', ...(anchor ? { anchor } : {}) }), {
+        fireAndForget(presentConnectSheet({ scope: addressedScope, service, intent: 'link' }), {
             tag: 'ProviderConnectionDetailScreen.connectGatewayService',
         });
     }, [addressedScope]);
@@ -1215,7 +1214,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             testID="provider-connection-machine-api-key"
                             saved={connection.credential.boundMachineIds.includes(machineId)}
                             disabled={apiKeyActionsDisabled}
-                            onChoose={(event) => bindSecret('machine', machineId, 'apiKey', event)}
+                            onChoose={() => bindSecret('machine', machineId, 'apiKey')}
                         />
                     )}
                     rightElementOutsidePressable
@@ -1519,7 +1518,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     testID="provider-connection-account-api-key"
                                     saved={connection.credential.accountBound}
                                     disabled={apiKeyActionsDisabled}
-                                    onChoose={(event) => bindSecret('account', machineId, 'apiKey', event)}
+                                    onChoose={() => bindSecret('account', machineId, 'apiKey')}
                                 />
                             )}
                             rightElementOutsidePressable
@@ -1542,7 +1541,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                         testID={`provider-connection-account-key:${slot.slotId}`}
                                         saved={slot.accountBound}
                                         disabled={apiKeyActionsDisabled}
-                                        onChoose={(event) => bindSecret('account', machineId, slot.slotId, event)}
+                                        onChoose={() => bindSecret('account', machineId, slot.slotId)}
                                     />
                                 )}
                                 rightElementOutsidePressable

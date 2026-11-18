@@ -540,7 +540,6 @@ describe('managed provisioner credential purposes', () => {
         const setup = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         expect(setup?.props?.request).toMatchObject({ service: cloud.service, purpose: cloudPurpose,
-            anchor: { kind: 'view', ref: { current: trigger } },
             purposeRequest: { scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
                 machineId: controller.machineId, purpose: cloudPurpose } });
         if (refreshCredential) {
