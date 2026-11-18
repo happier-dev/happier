@@ -315,26 +315,21 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         }).toEqual({ row: rowBleed, contentRow: rowBleed, line: rowBleed });
     });
 
-    it('keeps the page rhythm for a headerless section in the page flow: one section gap below what precedes it', async () => {
+    it('starts an untitled page section one section gap below a banner, and leaves a header="none" section\'s space to its container', async () => {
         const { ItemGroup, ListPresentationProvider } = await loadModules();
         const { View } = await import('react-native');
-        // Environment Overview: the attention banner (an untitled page block), then the Serving card (`header="none"`).
+        // Environment Overview: the attention banner (an untitled page block), then the Serving card, then the facts
+        // under it whose own gap the page sets (`header="none"`).
         const page = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup testID="banner" surface="none"><View testID="banner-body" /></ItemGroup>
-                <ItemGroup testID="serving" header="none"><View testID="serving-body" /></ItemGroup>
+                <ItemGroup testID="serving"><View testID="serving-body" /></ItemGroup>
+                <ItemGroup testID="facts" header="none" surface="none"><View testID="facts-body" /></ItemGroup>
             </ListPresentationProvider>,
         );
         expect(spaceAbovePx(page, 'serving', 'serving-body')).toBe(spaceAbovePx(page, 'banner', 'banner-body'));
         expect(spaceAbovePx(page, 'serving', 'serving-body')).toBeGreaterThan(0);
-        await page.unmount();
-        // A contained column owns its own spacing: there the section stays flush.
-        const column = await renderScreen(
-            <ListPresentationProvider value="page" pageInsets="contained">
-                <ItemGroup testID="flow" header="none"><View testID="flow-body" /></ItemGroup>
-            </ListPresentationProvider>,
-        );
-        expect(spaceAbovePx(column, 'flow', 'flow-body')).toBe(0);
+        expect(spaceAbovePx(page, 'facts', 'facts-body')).toBe(0);
     });
 
     it('hands each row its position in the section, so a highlighted first or last row follows the sheet corners', async () => {

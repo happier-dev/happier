@@ -985,8 +985,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             actionsLayout="hang"
           />
 
-          {/* The tabs hang from the page header (lab envOv): the header owns their distance, not the page's section gap. */}
-          <ItemGroup surface="none" header="none" headerStyle={styles.tabsUnderHeader}>
+          <ItemGroup surface="none" header="none">
             <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={selectPage} />
           </ItemGroup>
           {/* One attention slot under the tabs (R3): only the highest-precedence notice; lower ones stay in their rows. */}
@@ -1007,7 +1006,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}
               {activeReceipt ? (
                 <>
-                  <ItemGroup testID="project-deployments.environment.serving" header="none">
+                  <ItemGroup testID="project-deployments.environment.serving">
                     <DeploymentServingReceipt receipt={activeReceipt}
                       still={attention?.kind === 'latestFailed'}
                       address={liveUrl ? {
@@ -1032,7 +1031,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </>
               ) : (
                 <ItemGroupDefaultSurfaceProvider value="flat">
-                <ItemGroup testID="project-deployments.environment.serving" header="none">
+                <ItemGroup testID="project-deployments.environment.serving">
                   {activeId && active.snapshot.status === 'unavailable' ? (
                     <SurfaceStateCard
                       testID="project-deployments.environment.serving.error"
@@ -1519,9 +1518,6 @@ const styles = StyleSheet.create((theme) => ({
   phoneDeploy: { flexGrow: 1 },
   phoneSplit: { flexGrow: 1, alignSelf: 'stretch' },
   split: { flexDirection: 'row', alignItems: 'center', gap: 1 },
-  tabsUnderHeader: {
-    paddingTop: 0,
-  },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',

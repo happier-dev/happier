@@ -275,7 +275,7 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
       {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId} onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
       {props.recovery ? (
         // The decisions the notice offers lead; its owner decides which exist and runs them.
-        <ItemGroup surface="none" header="none">
+        <ItemGroup surface="none">
           <AccountNoticeRecoveryChoices entry={props.recovery.entry} recovery={props.recovery.binding} testID="inbox.notice.recovery" />
         </ItemGroup>
       ) : null}

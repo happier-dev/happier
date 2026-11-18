@@ -334,7 +334,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             action={restore ? { label: t('common.restore'), onPress: restore, loading: busy, disabled: busy } : undefined} /> : null}
         {/* The page's one cause, on the sections' column edge. */}
         {(!archived && (catalog.error || configurationUnavailable)) || detail.state.error || conflict || mutationError || refusal
-            ? <ItemGroup surface="none" header="none">
+            ? <ItemGroup surface="none">
             {/* Why a preset can't create is moot once it is archived: its notice is the one message. */}
             {!archived && catalog.error ? <SurfaceStateCard testID="machine-preset.provider-error" kind="unavailable" size="line"
                 title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
