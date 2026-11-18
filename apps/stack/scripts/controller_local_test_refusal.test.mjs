@@ -33,7 +33,9 @@ async function fixture(t) {
   }
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !placementEnvironment.includes(key)));
   const run = (args, extraEnv = {}) => spawnSync('/bin/sh', [launcher, '--local', ...args], {
-    cwd: repoRoot, encoding: 'utf8', timeout: 60_000,
+    // No per-call ceiling: on a busy worker the local admission census alone
+    // exceeded 60 s (nl1, 99 active reservations); the test runner owns timeouts.
+    cwd: repoRoot, encoding: 'utf8',
     env: { ...env, HOME: root, HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'), PATH: `${bin}:${process.env.PATH}`, ...extraEnv },
   });
   const started = () => access(marker).then(() => true, () => false);
