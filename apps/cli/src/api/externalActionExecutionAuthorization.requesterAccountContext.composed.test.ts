@@ -1670,6 +1670,54 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     }
   });
 
+  it('admits a proposed preset Plan at Home even beside the selected Machine daemon', async () => {
+    await withTempDir('happier-own-preset-plan-', async taskDir => {
+      const originalConfiguration = { serversDir: configuration.serversDir };
+      Object.assign(configuration, { serversDir: join(taskDir, 'servers') });
+      try {
+        const events: string[] = [];
+        const actionId = 'machines.setup.plan';
+        const machineId = 'alice-machine';
+        const address = { homeId: homeIdentityId, machineId };
+        const sources = [{ kind: 'accountPresetOpaque', presetId: 'saved', presetRevision: 1, contentEncryptionMode: 'plain' },
+          { kind: 'direct', setup: {} }];
+        const storedPlan = { desiredRevision: 2, sources: [], exclusions: [], support: [] };
+        const proposedPlan = { ...storedPlan, sources };
+        const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: actionId,
+          machineRole: 'manage', localDaemon: true, localDaemonExecution: { ok: true, result: storedPlan },
+          ownExecution: { ok: true, result: proposedPlan } });
+        const serverDir = join(configuration.serversDir, 'home');
+        await mkdir(serverDir, { recursive: true });
+        await writeFile(join(serverDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid,
+          httpPort: Number(new URL(target.url).port), startedAt: Date.now(), startedWithCliVersion: 'test',
+          machineId, accountId: 'bob', controlToken: 'test-daemon-control' }));
+        const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+        async function invoke(input: unknown) {
+          const output = captureConsoleJsonOutput();
+          try {
+            await handleActionsCommand(['invoke', actionId, '--machine-id', machineId, '--request-id', 'request-1',
+              '--input-json', JSON.stringify(input), '--json'], {
+              readCredentialsFn: async () => credentials,
+              createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+                serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+                actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } }),
+            });
+            return output.json();
+          } finally { output.restore(); }
+        }
+        expect(await invoke(address)).toMatchObject({ ok: true, data: storedPlan });
+        expect(events).toEqual(['local-daemon']);
+        events.length = 0;
+        const input = { ...address, mode: 'effects', sources };
+        expect(await invoke(input)).toMatchObject({ ok: true, data: proposedPlan });
+        expect(events).toEqual(['home-authorized', 'dispatch']);
+        expect(ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived())).toMatchObject({
+          envelope: { input }, executionAuthorization: { binding: { actionId, machineId, installationId: 'alice-installation' } },
+        });
+      } finally { Object.assign(configuration, originalConfiguration); }
+    });
+  });
+
   it('overlaps passive Home mode and inventory reads but joins both before authorization or dispatch', async () => {
     const events: string[] = [];
     const measured = await home('plain', [], { custodianAccountId: 'bob', originalOwnAction: 'agents.models.list', passiveReadDelayMs: 20 });

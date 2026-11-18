@@ -30,6 +30,7 @@ import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } f
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { machineSetupTargetUnavailable, requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
+import { machineSetupPlanNeedsHomeSources } from './machineSetupPlanHomeSources';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
 import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
@@ -218,7 +219,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
       }
     } else if (wireSources !== undefined) {
       const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
-      const needsOpaqueOpen = wireSources.some(source => source.kind === 'accountPresetOpaque');
+      const needsOpaqueOpen = machineSetupPlanNeedsHomeSources(input);
       if ((managedContinuation && input.mode !== 'effects') || ((managedContinuation || needsOpaqueOpen)
         && (!params.installation || !params.apiMachine.resolveMachineSetupRuntime))) return fail('admission_unavailable');
       try {

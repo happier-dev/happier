@@ -16,7 +16,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, proj
 import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -28,6 +28,7 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
+import { machineSetupPlanNeedsHomeSources } from '@/machines/setup/machineSetupPlanHomeSources';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
   DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
@@ -754,6 +755,11 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     && typeof input.sessionId === 'string' && input.sessionId.trim().length > 0;
   const detachedRunLaunch = !hasSession && (actionId === 'execution.run.start' || actionId === 'execution.run.ensure'
     || actionId === 'execution.run.send' || actionId === 'execution.run.ensure_or_start');
+  if (actionId === MACHINE_SETUP_PLAN_ACTION_ID_V1) {
+    // The installed target uses this Home admission to open the proposed preset.
+    const plan = MachineSetupPlanInputV1Schema.safeParse(input);
+    if (plan.success && machineSetupPlanNeedsHomeSources(plan.data)) return true;
+  }
   // Every Action's declared Machine content/review demand needs the original
   // requester, even when this person's approval policy is waived.
   return action.success && spec !== null
