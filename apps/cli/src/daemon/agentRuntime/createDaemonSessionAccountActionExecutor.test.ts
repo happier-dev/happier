@@ -1490,7 +1490,7 @@ describe('daemon Session Account authority', () => {
         } } };
       }
       if (path === '/v2/sessions/lookup-by-tags') return { status: 200,
-        data: { sessions: [ownedSessionRecord({}, receiverCredentials.token, source.machineId)] } };
+        data: { sessions: [ownedSessionRecord()] } };
       if (path.endsWith('/verify')) {
         const signature = config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
         expect(typeof signature).toBe('string');
