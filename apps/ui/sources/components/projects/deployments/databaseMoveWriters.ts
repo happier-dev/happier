@@ -2,7 +2,8 @@ import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-pro
 import type { MachineServicesListResultV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { isMap, parseDocument } from 'yaml';
 
-type Writer = Readonly<{ machineId: string; serviceId: string; expectedGeneration: string }>;
+/** `composeService` names the writer in the review; the Workflow input carries only its identity and generation. */
+type Writer = Readonly<{ machineId: string; serviceId: string; expectedGeneration: string; composeService: string }>;
 type Stopped = Readonly<{ machineId: string; serviceId: string; composeService: string }>;
 export type DatabaseMoveWritersPreparation = Readonly<{ kind: 'ready'; writers: Writer[];
     runningServices: string[]; stopped: Stopped[] }>
@@ -40,7 +41,7 @@ export function prepareDatabaseMoveWriters(content: DeploymentEnvironmentContent
             if (row.native?.phase === 'stopped') {
                 stopped.push({ machineId: inventory.machineId, serviceId: row.serviceId, composeService });
             } else if (row.native?.phase === 'running' && row.generation && row.capabilities.stop) {
-                writers.push({ machineId: inventory.machineId, serviceId: row.serviceId, expectedGeneration: row.generation });
+                writers.push({ machineId: inventory.machineId, serviceId: row.serviceId, expectedGeneration: row.generation, composeService });
                 runningServices.add(composeService);
             } else return unavailable;
         }

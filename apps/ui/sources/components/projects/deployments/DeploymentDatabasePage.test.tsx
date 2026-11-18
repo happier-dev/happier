@@ -786,7 +786,11 @@ describe('Environment → Database → Move', () => {
       const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
       const refusalCodes = view.screen.findAllByType(SurfaceStateCard).map(card => card.props.diagnosticCode);
       expect(review, JSON.stringify({ refusalCodes, effects: view.effects })).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.move.writer:instance/app')).not.toBeNull();
+      // A writer reads as its Compose service, not the runtime's internal service id (W5 live #172c).
+      const writerTexts = view.screen.findByTestId('project-deployments.move.writer:instance/app')!
+        .findAll(node => typeof node.props?.children === 'string').map(node => node.props.children);
+      expect(writerTexts).toContain('app');
+      expect(writerTexts).not.toContain('instance/app');
       expect(view.effects.filter(effect => effect.actionId === 'machines.services.list')).toHaveLength(1);
       expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
       await view.screen.pressByTestIdAsync('project-deployments.move.save');

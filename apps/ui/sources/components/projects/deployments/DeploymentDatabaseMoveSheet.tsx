@@ -23,6 +23,7 @@ import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentDatabaseMoveDestination } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
 import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
 import { useDeploymentMoveWorkflow } from './useDeploymentMoveWorkflow';
@@ -87,7 +88,8 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       const primary = prepared.patch.definition.primaryService;
       const composeService = primary && writers.runningServices.includes(primary) ? primary : writers.runningServices[0]!;
       const environment = props.source.environment;
-      const input: MoveInput = { kind: 'stateful', serverId, writers: writers.writers,
+      const input: MoveInput = { kind: 'stateful', serverId,
+        writers: writers.writers.map(({ machineId, serviceId, expectedGeneration }) => ({ machineId, serviceId, expectedGeneration })),
         backupTarget: { ...props.backupTarget, serverId }, sourceId: dump.sourceId,
         origin: { environmentId: environment.id, targetLinkId: sourceTarget.targetLinkId },
         // Cross-Environment restore reads the source capture receipt; destination health names its own receipt.
@@ -148,6 +150,13 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   </ListPresentationProvider>;
 }
 
+/** A running writer reads as its Compose service on its Machine, never as the runtime's internal ids. */
+function MoveWriterItem(props: Readonly<{ serverId: string; writer: Writers['writers'][number] }>) {
+  const machine = useServerScopedMachineLabel(props.serverId, props.writer.machineId);
+  return <Item testID={`project-deployments.move.writer:${props.writer.serviceId}`} title={props.writer.composeService}
+    {...(machine ? { detail: machine } : {})} mode="info" />;
+}
+
 function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared; writers: Writers; input: MoveInput;
   lifetime: ServerAccountScopeLifetime; projectSourceId: string; controllerMachineId: string;
   name: string; sourceService: string; title: string }> & CustomModalInjectedProps) {
@@ -177,8 +186,8 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
     <View testID="project-deployments.move.review" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.move.dataReviewLead')}</Text>
       <ItemGroup title={t('projects.deployments.move.writers')}>
-        {props.writers.writers.map(writer => <Item key={`${writer.machineId}:${writer.serviceId}`}
-          testID={`project-deployments.move.writer:${writer.serviceId}`} title={writer.serviceId} detail={writer.machineId} mode="info" />)}
+        {props.writers.writers.map(writer => <MoveWriterItem key={`${writer.machineId}:${writer.serviceId}`}
+          serverId={props.lifetime.scope.serverId} writer={writer} />)}
         {props.writers.stopped.map(service => <Item key={`${service.machineId}:${service.serviceId}`}
           testID={`project-deployments.move.stopped:${service.serviceId}`} title={service.composeService}
           detail={t('projects.deployments.move.stopped')} mode="info" />)}

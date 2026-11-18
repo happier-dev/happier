@@ -21,8 +21,8 @@ const placement = { machineId: 'machine', installationId: 'installation', deploy
 it.each(['running', 'stopped'] as const)('quiesces every exact running application service and preserves the %s worker and database', phase => {
     const result = prepareDatabaseMoveWriters(content, detail.environment.id, 'database', [{ ...placement,
         result: { kind: 'snapshot', services: [service('web', 'running'), service('worker', phase), service('database', 'running')] } }]);
-    expect(result).toEqual({ kind: 'ready', writers: [{ machineId: 'machine', serviceId: 'instance/web', expectedGeneration: 'generation' },
-        ...(phase === 'running' ? [{ machineId: 'machine', serviceId: 'instance/worker', expectedGeneration: 'generation' }] : [])],
+    expect(result).toEqual({ kind: 'ready', writers: [{ machineId: 'machine', serviceId: 'instance/web', expectedGeneration: 'generation', composeService: 'web' },
+        ...(phase === 'running' ? [{ machineId: 'machine', serviceId: 'instance/worker', expectedGeneration: 'generation', composeService: 'worker' }] : [])],
         runningServices: phase === 'running' ? ['web', 'worker'] : ['web'],
         stopped: phase === 'stopped' ? [{ machineId: 'machine', serviceId: 'instance/worker', composeService: 'worker' }] : [] });
 });
