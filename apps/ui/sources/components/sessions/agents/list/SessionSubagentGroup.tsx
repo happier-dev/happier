@@ -13,6 +13,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -135,11 +136,11 @@ export const SessionSubagentGroup = React.memo((props: SessionSubagentGroupProps
                     sessionId, kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: liveTeamId },
                 });
                 if (!result.ok && actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), result.error || t('common.requestFailed'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
                 }
             } catch (error) {
                 if (actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
                 }
             } finally {
                 pendingRef.current = false;

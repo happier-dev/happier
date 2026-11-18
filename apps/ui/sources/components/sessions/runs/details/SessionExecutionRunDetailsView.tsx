@@ -104,6 +104,7 @@ import { presentExecutionRunFailure, presentExecutionRunResultFailure } from '@/
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 type LoadState =
     | { status: 'loading' }
@@ -206,7 +207,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     } : {}, [props.sessionId, props.workspace?.machineId]);
     const [state, setState] = React.useState<LoadState>({ status: 'loading' });
     const [daemonProcessLine, setDaemonProcessLine] = React.useState<string | null>(null);
-    const [stopError, setStopError] = React.useState<string | null>(null);
+    const [stopFailure, setStopFailure] = React.useState<Readonly<{ message: string; diagnostic: string | null }> | null>(null);
     /** The Run's machine did not confirm a stop: the whole-session fallback is on offer. */
     const [stopUnconfirmed, setStopUnconfirmed] = React.useState(false);
     const [isStopping, setIsStopping] = React.useState(false);
@@ -630,11 +631,11 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     const machineReachable = presence.reachability === 'unknown' ? undefined : presence.reachability === 'reachable';
     const runStatus = state.status === 'loaded' ? resolveAgentActivityStatusPresentation(
         readExecutionRunAgentActivityStatus(state.run.status), isExecutionRunActive(state.run), machineReachable).label : null;
-    const runAnnouncement = stopError ?? interactionError ?? (runStatus === null
+    const runAnnouncement = stopFailure?.message ?? interactionError ?? (runStatus === null
         ? ''
         : t('executionRuns.details.labels.statusValue', { value: runStatus }));
-    const runAnnouncementKey = stopError
-        ? `stop-error:${stopError}`
+    const runAnnouncementKey = stopFailure
+        ? `stop-error:${stopFailure.message}`
         : interactionError
             ? `interaction-error:${interactionError}`
             : runStatus === null
@@ -648,7 +649,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     const stopRun = React.useCallback(() => {
         if (isStopping) return;
         fireAndForget((async () => {
-            setStopError(null);
+            setStopFailure(null);
             setInteractionError(null);
             setStopUnconfirmed(false);
             setIsStopping(true);
@@ -660,8 +661,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 });
                 if (!actionScopeIsCurrent() || isExecutionRunMutationCancelled(result)) return;
                 if (result.ok === false) {
-                    setStopError(String(result.error ?? t('runs.stop.failedToStopRun')));
-                    if (!transportIssued) setInteractionError(String(result.error ?? t('runs.stop.failedToStopRun')));
+                    setStopFailure({
+                        message: resolveActionExecutionErrorMessage(result, t('runs.stop.failedToStopRun')),
+                        diagnostic: transportIssued ? result.error : null,
+                    });
                     if (isExecutionRunNotRunningMutationError(result)) {
                         await load();
                     } else {
@@ -673,8 +676,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 }
             } catch (error) {
                 if (!actionScopeIsCurrent() || isExecutionRunMutationCancelled(error)) return;
-                setStopError(error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
-                if (!transportIssued) setInteractionError(error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                setStopFailure({
+                    message: resolveActionExecutionErrorMessage(error, t('runs.stop.failedToStopRun')),
+                    diagnostic: transportIssued && error instanceof Error ? error.message : null,
+                });
                 setStopUnconfirmed(props.sessionId !== null && transportIssued);
             } finally {
                 setIsStopping(false);
@@ -705,7 +710,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     }, [actionScopeIsCurrent, executeAction, isDeleting, load, props.runId, props.workspace?.machineId, runOperation]);
     const onSessionStopped = React.useCallback(() => {
         setStopUnconfirmed(false);
-        setStopError(null);
+        setStopFailure(null);
         void load();
     }, [load]);
     const modelRun = state.status === 'loaded' && loadedRunAddressRef.current === runAddressKey ? state.run : null;
@@ -817,13 +822,13 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     : await executeAction('execution.run.ensure', { sessionId: props.sessionId, runId: props.runId, resume: true }, runOperation);
                 if (!actionScopeIsCurrent()) return;
                 if (result.ok === false) {
-                    setInteractionError(String(result.error ?? t('runs.runDetails.controlFailed')));
+                    setInteractionError(resolveActionExecutionErrorMessage(result, t('runs.runDetails.controlFailed')));
                     if (isExecutionRunNotRunningMutationError(result)) await load();
                     return;
                 }
                 await load();
             } catch (error) {
-                setInteractionError(error instanceof Error ? error.message : t('runs.runDetails.controlFailed'));
+                if (actionScopeIsCurrent()) setInteractionError(resolveActionExecutionErrorMessage(error, t('runs.runDetails.controlFailed')));
             } finally {
                 setPendingInteraction(null);
             }
@@ -1027,7 +1032,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     intent={state.run.intent}
                     machineId={machine.machineId}
                     machineName={machine.name}
-                    diagnostic={stopError}
+                    diagnostic={stopFailure?.diagnostic ?? null}
                     onRetry={stopRun}
                     onSessionStopped={onSessionStopped}
                 />
@@ -1041,7 +1046,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
 
             {canMutateRunViaSessionRpc && (state.run.status === 'running' || interactionAffordances.canResume) ? (
                 <View style={{ gap: theme.space.s8 }}>
-                    {stopError && !stopUnconfirmed ? <Text style={{ color: theme.colors.text.secondary }}>{stopError}</Text> : null}
+                    {stopFailure && !stopUnconfirmed ? <Text style={{ color: theme.colors.text.secondary }}>{stopFailure.message}</Text> : null}
                     {interactionError ? <Text style={{ color: theme.colors.text.secondary }}>{interactionError}</Text> : null}
                     {interactionAffordances.canResume ? (
                         <HappierPressable

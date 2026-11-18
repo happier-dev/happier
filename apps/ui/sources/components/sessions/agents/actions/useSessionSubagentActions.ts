@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -68,11 +69,11 @@ export function useSessionSubagentActions(params: Readonly<{
             try {
                 const result = await actionExecution.execute('execution.run.stop', { sessionId, runId });
                 if (!result.ok && actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), result.error || t('runs.stop.failedToStopRun'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('runs.stop.failedToStopRun')));
                 }
             } catch (error) {
                 if (actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('runs.stop.failedToStopRun')));
                 }
             } finally {
                 pendingRef.current = false;
@@ -96,11 +97,11 @@ export function useSessionSubagentActions(params: Readonly<{
                     },
                 });
                 if (!result.ok && actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), result.error || t('common.requestFailed'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('common.requestFailed')));
                 }
             } catch (error) {
                 if (actionExecution.isCurrent()) {
-                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
                 }
             } finally {
                 pendingRef.current = false;

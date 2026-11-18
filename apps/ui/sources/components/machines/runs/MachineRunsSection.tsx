@@ -22,6 +22,7 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { machineExecutionRunsList } from '@/sync/ops';
 import { isExecutionRunMutationCancelled } from '@/sync/ops/sessionExecutionRuns';
@@ -199,7 +200,9 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                         ...retryPresentation, rpcErrorCode: errorCode, message: error,
                                     });
                                     if (!shownDaemonUnavailable) {
-                                        Modal.alert(t('common.error'), error || t('runs.stop.failedToStopSession'));
+                                        Modal.alert(t('common.error'), stopResult.ok
+                                            ? error || t('runs.stop.failedToStopSession')
+                                            : resolveActionExecutionErrorMessage(stopResult, t('runs.stop.failedToStopSession')));
                                     }
                                 };
                                 const showStopFailure = async (error: string) => {
@@ -226,12 +229,12 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                             onTransportIssued: () => { issued = true; } });
                                     refreshRuns = res.ok || issued;
                                     if (!res.ok && !isExecutionRunMutationCancelled(res)) {
-                                        await showStopFailure(res.error || t('runs.stop.failedToStopRun'));
+                                        await showStopFailure(resolveActionExecutionErrorMessage(res, t('runs.stop.failedToStopRun')));
                                     }
                                 } catch (error) {
                                     refreshRuns = issued;
                                     if (!isExecutionRunMutationCancelled(error)) {
-                                        await showStopFailure(error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                                        await showStopFailure(resolveActionExecutionErrorMessage(error, t('runs.stop.failedToStopRun')));
                                     }
                                 } finally {
                                     setStoppingRunId(null);

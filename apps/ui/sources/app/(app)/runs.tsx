@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { isAcceptedPendingSessionStop, readSessionStopActionResponse } from '@/components/sessions/sessionStopArchiveFlow';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcFailure } from '@/utils/errors/daemonUnavailableAlert';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
@@ -449,7 +450,9 @@ export default function RunsScreen() {
                               message: error ?? null,
                             });
                             if (!shownDaemonUnavailable) {
-                              Modal.alert(t('common.error'), error || t('runs.stop.failedToStopSession'));
+                              Modal.alert(t('common.error'), stopResult.ok
+                                  ? error || t('runs.stop.failedToStopSession')
+                                  : resolveActionExecutionErrorMessage(stopResult, t('runs.stop.failedToStopSession')));
                             }
                           };
                           const showStopFailure = async (error: string) => {
@@ -476,12 +479,12 @@ export default function RunsScreen() {
                                 onTransportIssued: () => { issued = true; } });
                             refreshRuns = res.ok || issued;
                                     if (!res.ok && !isExecutionRunMutationCancelled(res)) {
-                              await showStopFailure(res.error || t('runs.stop.failedToStopRun'));
+                              await showStopFailure(resolveActionExecutionErrorMessage(res, t('runs.stop.failedToStopRun')));
                             }
                           } catch (error) {
                             refreshRuns = issued;
                                     if (!isExecutionRunMutationCancelled(error)) {
-                                        await showStopFailure(error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                                        await showStopFailure(resolveActionExecutionErrorMessage(error, t('runs.stop.failedToStopRun')));
                                     }
                           } finally {
                             setStoppingRunAddressKey(null);

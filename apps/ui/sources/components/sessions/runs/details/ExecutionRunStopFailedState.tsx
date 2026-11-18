@@ -5,6 +5,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
 import { isAcceptedPendingSessionStop, readSessionStopActionResponse, resolveSessionStopFailureMessage } from '@/components/sessions/sessionStopArchiveFlow';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isExecutionRunMutationCancelled } from '@/sync/ops/sessionExecutionRuns';
 import { t } from '@/text';
 
@@ -52,7 +53,7 @@ export const ExecutionRunStopFailedState = React.memo((props: Readonly<{
         if (!isCurrent() || isExecutionRunMutationCancelled(result)) return;
         const response = result.ok ? readSessionStopActionResponse(result.result) : null;
         if (!response || (!response.success && !isAcceptedPendingSessionStop(response))) {
-            Modal.alert(t('common.error'), !result.ok ? result.error : response
+            Modal.alert(t('common.error'), !result.ok ? resolveActionExecutionErrorMessage(result, t('runs.stop.failedToStopSession')) : response
                 ? resolveSessionStopFailureMessage(response, t('runs.stop.failedToStopSession'))
                 : t('runs.stop.failedToStopSession'));
             return;

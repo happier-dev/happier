@@ -220,7 +220,7 @@ describe('MachineDetailScreen canonical Stop fallback', () => {
             const stopEffects = network.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION);
             if (settlement === 'disabled') {
                 expect(stopEffects).toEqual([]);
-                expect(stopDialogs.alert).toHaveBeenCalledWith('common.error', expect.stringContaining('action_disabled'));
+                expect(stopDialogs.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
             } else {
                 expect(stopEffects.map(request => ({ serverUrl: request.serverUrl, machineId: request.targetId })), JSON.stringify({
                     alerts: stopDialogs.alert.mock.calls,

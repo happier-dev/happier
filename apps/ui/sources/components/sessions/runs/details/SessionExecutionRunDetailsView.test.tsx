@@ -1296,7 +1296,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         }));
         await mount(); await loaded();
         await screen.pressByTestIdAsync('session-run-details-resume');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('action_disabled'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('actionConfirmations.turnedOffUnnamedMessage'));
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)).toHaveLength(0);
     });
     it.each([
@@ -1315,7 +1315,8 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
             await vi.waitFor(() => expect(info().stopAction?.stopping).toBe(false));
             expect(calls(method)).toHaveLength(0);
         }
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('action_disabled'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('actionConfirmations.turnedOffUnnamedMessage'));
+        expect(screen.getTextContent()).not.toContain('action_disabled');
         expect(calls(method)).toHaveLength(0);
         expect(screen.findByTestId('session-run-details-stop-failed')).toBeNull();
     });
@@ -1603,7 +1604,7 @@ describe('Neighboring user Run Stop admission', () => {
         const listsBeforeStop = calls(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST).length;
         await stop();
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
-        await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'action_disabled'));
+        await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
         expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
         expect(calls(RPC_METHODS.KILL_SESSION)).toEqual([]);
         expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
@@ -1741,7 +1742,7 @@ describe('Session Stop fallback Action policy', () => {
         if (operation) await act(async () => { await operation; });
         expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(stops);
         expect(vi.mocked(Modal.confirm)).toHaveBeenCalledTimes(policy.startsWith('Ask') ? 1 : 0);
-        if (policy === 'Off') expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'action_disabled');
+        if (policy === 'Off') expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
         if (stops) expect(boundary.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION)).toEqual([
             { serverUrl: home.homes.home!.serverUrl, targetId: 'm1', method: RPC_METHODS.STOP_SESSION, payload: { sessionId: 's1' } },
         ]);
@@ -1863,7 +1864,7 @@ describe('Teammate command Action admission', () => {
     it.each(['member', 'team'] as const)('refuses %s shutdown through Action policy before input delivery', async surface => {
         const send = await mountCommandSurface(surface);
         await send();
-        await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'action_disabled'));
+        await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
         expect(sentInputs()).toEqual([]);
         expect(boundary.messages).toEqual([]);
     });
