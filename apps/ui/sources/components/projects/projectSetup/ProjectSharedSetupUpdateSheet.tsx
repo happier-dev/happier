@@ -99,17 +99,18 @@ function useProjectSetupRow(workspace: WorkspaceAddressV1) {
   const projectKey =
     useProjectAccountWorkspaceRef(workspace.workspaceId, workspace.serverId)
       ?.projectKey ?? null;
-  const revision = useProjectAccountRows((rows) =>
-    projectKey
-      ? (rows?.organizations.find(
-          (row) =>
-            row.key.projectKey === projectKey &&
-            areServerProfileIdentifiersEquivalent(
-              row.key.serverId,
-              workspace.serverId,
-            ),
-        )?.revision ?? 'absent')
-      : null,
+  const revision = useProjectAccountRows(
+    (rows): ProjectSharedSetupUpdateRequest['expectedRevision'] | null =>
+      projectKey
+        ? (rows?.organizations.find(
+            (row) =>
+              row.key.projectKey === projectKey &&
+              areServerProfileIdentifiersEquivalent(
+                row.key.serverId,
+                workspace.serverId,
+              ),
+          )?.revision ?? 'absent')
+        : null,
   );
   return React.useMemo(
     () =>
