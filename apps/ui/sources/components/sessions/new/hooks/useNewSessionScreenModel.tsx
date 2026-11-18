@@ -2657,6 +2657,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resolveDefaultPermissionMode,
     } = useNewSessionPermissionModeState({
         persistedPermissionModeExplicit: persistedDraft?.permissionModeExplicit,
+        agentTarget: canonicalAgentTarget,
         agentType: agentPolicyType,
         sessionModeDescriptor: selectedBackendEntry?.agentCatalogEntry.sessionModeDescriptor,
         backendTarget,

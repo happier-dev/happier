@@ -5,8 +5,26 @@ import { useNewSessionPermissionModeState } from './useNewSessionPermissionModeS
 import { seedAndOpenNewSession } from '../../newSessionSeedComposer';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
 describe('useNewSessionPermissionModeState authored draft intent', () => {
+    it('uses the picked Agent Team permission instead of the Project Agent suggestion without authoring an override', async () => {
+        const agentTarget = AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } });
+        const projectAgent = AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } });
+        const hook = await renderHook(useNewSessionPermissionModeState, { initialProps: {
+            ...input, agentType: 'codex', backendTarget: { kind: 'backend', backendId: 'codex' }, agentTarget,
+            sessionDefaultPermissionModeByTargetKey: {},
+            managedDefaults: {
+                projectDefaults: { defaultAgentTarget: projectAgent },
+                teamDefaults: ManagedDefaultsV1Schema.parse({ team: { permissionModeByAgentTargetKey: {
+                    'agent:happier.agent.codex/codex': 'read-only', 'agent:happier.agent.pi/pi': 'yolo',
+                } }, groups: {} }),
+            },
+        } });
+        expect(hook.getCurrent().permissionMode).toBe('read-only');
+        expect(hook.getCurrent().permissionModeSource).toBe('team');
+        expect(hook.getCurrent().hasUserSelectedPermissionModeRef.current).toBe(false);
+    });
     afterEach(standardCleanup);
     afterEach(resetSessionDraftRepositoryForTests);
     const input = {

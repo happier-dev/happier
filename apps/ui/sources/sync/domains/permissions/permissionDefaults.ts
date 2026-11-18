@@ -7,6 +7,7 @@ import { normalizePermissionModeForAgentType } from './permissionModeOptions';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 export type AccountPermissionDefaults = Readonly<{
     byTargetKey: Record<string, PermissionMode>;
@@ -37,6 +38,8 @@ type NewSessionPermissionModeInput = Readonly<{
     agentType: string;
     sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     backendTarget?: BackendTargetRefV2Input | null;
+    /** The Agent already chosen by the Session authoring owner. */
+    agentTarget?: AgentExecutionTargetV1;
     accountDefaults: AccountPermissionDefaults;
     profileDefaultsByTargetKey?: Record<string, PermissionMode | undefined> | null;
     legacyProfileDefaultPermissionMode?: PermissionMode | null | undefined;
@@ -51,7 +54,7 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
     nativeSandbox: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['agentSandbox'];
 }> {
     const { agentType, backendTarget, accountDefaults, profileDefaultsByTargetKey, legacyProfileDefaultPermissionMode } = params;
-    const effectiveTarget = backendTarget ?? { kind: 'backend', backendId: agentType };
+    const effectiveTarget = params.agentTarget ?? backendTarget ?? { kind: 'backend', backendId: agentType };
     const targetKey = resolveBackendTargetKeyV2(effectiveTarget);
 
     const memberMode = profileDefaultsByTargetKey?.[targetKey]
@@ -72,7 +75,10 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
             ...(params.managedDefaults?.memberDefaults ?? {}),
             ...(memberIntent ? { permissionModeByAgentTargetKey: { [targetKey]: memberIntent } } : {}),
         },
-        ...(explicitIntent ? { explicitChoices: { permissionModeByAgentTargetKey: { [targetKey]: explicitIntent } } } : {}),
+        explicitChoices: {
+            ...(params.agentTarget ? { defaultAgentTarget: params.agentTarget } : {}),
+            ...(explicitIntent ? { permissionModeByAgentTargetKey: { [targetKey]: explicitIntent } } : {}),
+        },
     });
     return {
         permissionMode: normalizePermissionModeForAgentType(decision.permissionMode.value ?? 'default', agentType, params.sessionModeDescriptor),

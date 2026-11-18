@@ -272,11 +272,16 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const selectedPickerValue = React.useMemo(() => sessionModelPickerValueFromRef(selectedModelSelection?.ref), [selectedModelSelection]);
     const sourceModelSelected = Boolean((isTeamCredentialProviderModelPickerValue(selectedPickerValue) ? true : selectedPickerValue?.providerConnectionId) || props.teamModels?.selectedTeamCredentialModel);
+    const inheritedModel = props.teamModels?.modelAttribution;
+    const managedModelSelected = Boolean(inheritedModel
+        && backendTargetKeysMatch(inheritedModel.agentTargetKey, formatBackendTargetKeyV2(props.backendTarget)));
     const canonicalSelectedModelId = React.useMemo(() => (
-        sourceModelSelected
+        // Discovery supplies selectable rows; it must not replace inherited intent.
+        // The shared picker presents a missing selection as typed unavailable.
+        sourceModelSelected || managedModelSelected
             ? selectedModelId
             : resolveCanonicalModelOptionId(modelOptions, selectedModelId, modelProbe.failed || modelProbe.phase !== 'idle' ? null : preflightModels)
-    ), [modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, selectedModelId, sourceModelSelected]);
+    ), [managedModelSelected, modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, selectedModelId, sourceModelSelected]);
     // The caller's one line leads, then anything the probe has to report. One
     // section label, one subtitle, then the models — never a paragraph.
     const modelNotes = React.useMemo(
@@ -460,9 +465,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             onToggle={props.favoriteEngine.onToggle}
         />
     ) : undefined;
-    const inheritedModel = props.teamModels?.modelAttribution;
-    const modelAttribution = inheritedModel && backendTargetKeysMatch(inheritedModel.agentTargetKey, agentTargetKey)
-        ? inheritedModel.label : null;
+    const modelAttribution = managedModelSelected ? inheritedModel?.label ?? null : null;
     const providerPicker = (
         <SessionModelPicker
             fillAvailableSpace

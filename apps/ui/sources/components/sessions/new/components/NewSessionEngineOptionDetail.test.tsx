@@ -268,6 +268,21 @@ async function withPlatformOS(os: 'web' | 'ios', run: () => Promise<void>) {
 }
 
 describe('NewSessionEngineOptionDetail', () => {
+    it('retains an inherited model absent from the Machine catalog as unavailable without replacing Team intent', async () => {
+        modelOptionsState.value = [{ value: 'gpt-6.1-sol', label: 'GPT 6.1', description: '' }];
+        preflightModelsState.value = { availableModels: [{ id: 'gpt-6.1-sol', name: 'GPT 6.1' }], supportsFreeform: false };
+        const onSelectionChange = vi.fn();
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget} selectedMachineId="machine-1" capabilityServerId="server-1"
+            selectedModelId="gpt-5.1-codex" onSelectionChange={onSelectionChange}
+            teamModels={{ onSelectOtherModel: () => {}, modelAttribution: { agentTargetKey: formatBackendTargetKeyV2(backendTarget), label: 'Team' } }}
+        />);
+        const missing = renderedNativeModelOption('gpt-5.1-codex');
+        expect(missing).toMatchObject({ disabled: true, availability: 'unavailable' });
+        expect(lastOptionPickerOverlayProps.selectedValue?.modelId).toBe('gpt-5.1-codex');
+        expect(renderedNativeModelOption('gpt-6.1-sol')).toBeTruthy();
+        expect(onSelectionChange).not.toHaveBeenCalled();
+    });
     it('retains a source-aware Team selection in the existing model picker', async () => {
         const { SessionModelSelectionV2Schema } = await import('@happier-dev/protocol/providers/selection/v2');
         const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 123, ref: {

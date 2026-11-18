@@ -14,6 +14,7 @@ import { isPermissionMode, type PermissionMode } from '@/sync/domains/permission
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 type PersistedAuthoringDraftLike = Readonly<{
@@ -28,6 +29,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     agentType: string;
     sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     backendTarget: PersistedBackendTargetRefV2;
+    agentTarget?: AgentExecutionTargetV1 | null;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     persistedPermissionModeExplicit?: boolean;
@@ -61,12 +63,13 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             agentType: params.agentType,
             sessionModeDescriptor: params.sessionModeDescriptor,
             backendTarget: params.backendTarget,
+            agentTarget: params.agentTarget ?? undefined,
             accountDefaults,
             profileDefaultsByTargetKey: profile?.defaultPermissionModeByTargetKey ?? null,
             legacyProfileDefaultPermissionMode: (profile?.defaultPermissionMode as PermissionMode | undefined) ?? undefined,
             managedDefaults: params.managedDefaults,
         });
-    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, params.sessionModeDescriptor]);
+    }, [accountDefaults, params.agentType, params.agentTarget, params.backendTarget, params.managedDefaults, params.sessionModeDescriptor]);
 
     // Draft hydration can finish after mount. Store only a choice made in this
     // editor; until then the hydrated draft remains the source of intent.
@@ -90,6 +93,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             agentType: params.agentType,
             sessionModeDescriptor: params.sessionModeDescriptor,
             backendTarget: params.backendTarget,
+            agentTarget: params.agentTarget ?? undefined,
             accountDefaults,
             profileDefaultsByTargetKey: selectedProfile?.defaultPermissionModeByTargetKey ?? null,
             legacyProfileDefaultPermissionMode: selectedProfile?.defaultPermissionMode as PermissionMode | undefined,
@@ -102,7 +106,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             explicitAgentSandbox: params.explicitAgentSandbox,
             retainedNativeProfile: params.retainedNativeProfile,
         });
-    }, [accountDefaults, params.agentType, params.backendTarget, params.explicitAgentSandbox, params.machineIsolation, params.machineIsolationPolicy, params.managedDefaults, params.nativeSandboxAvailable, params.retainedNativeProfile, params.sandboxTypeSupportsNativeSandbox, params.sessionModeDescriptor, selectedProfile]);
+    }, [accountDefaults, params.agentType, params.agentTarget, params.backendTarget, params.explicitAgentSandbox, params.machineIsolation, params.machineIsolationPolicy, params.managedDefaults, params.nativeSandboxAvailable, params.retainedNativeProfile, params.sandboxTypeSupportsNativeSandbox, params.sessionModeDescriptor, selectedProfile]);
     const decision = resolvePermissionModeDecision(explicitPermissionMode);
     const permissionMode = decision.permissionMode;
 
