@@ -11096,7 +11096,7 @@ const machineDetailPageTranslations = { fr: translated({
             description: "Paquets du système d’exploitation en attente sur chaque machine de ce Home. Les mises à jour de l’app, du CLI et du daemon Happier restent dans Réglages → Mises à jour.",
             reviewRollout: "Examiner le déploiement…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${count} machines sur ${total} ont des mises à jour`,
-        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} ont des mises à jour · ${checked} sur ${total} vérifiées`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} ${count === 1 ? 'a' : 'ont'} des mises à jour · ${checked} sur ${total} vérifiées`,
             security: ({ count }: { count: number }) => `${count} de sécurité`,
             all: ({ count }: { count: number }) => `${count} au total`,
             restarts: ({ count }: { count: number }) => count === 1 ? "1 redémarrage nécessaire" : `${count} redémarrages nécessaires`,

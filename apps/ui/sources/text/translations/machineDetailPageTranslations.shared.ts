@@ -2273,7 +2273,7 @@ export const english = {
         description: "Operating-system packages waiting on each machine of this Home. Happier’s own app, CLI and daemon updates stay in Settings → Updates.",
         reviewRollout: "Review rollout…",
         statusWith: ({ count, total }: { count: number; total: number }) => `${count} of ${total} machines have updates`,
-        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} have updates · ${checked} of ${total} checked`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} ${count === 1 ? 'has' : 'have'} updates · ${checked} of ${total} checked`,
         security: ({ count }: { count: number }) => `${count} security`,
         all: ({ count }: { count: number }) => `${count} in all`,
         restarts: ({ count }: { count: number }) => count === 1 ? "1 restart needed" : `${count} restarts needed`,

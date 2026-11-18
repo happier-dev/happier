@@ -11087,7 +11087,7 @@ const machineDetailPageTranslations = { it: translated({
             description: "Pacchetti del sistema operativo in attesa su ogni macchina di questo Home. Gli aggiornamenti di app, CLI e daemon di Happier restano in Impostazioni → Aggiornamenti.",
             reviewRollout: "Rivedi la distribuzione…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${count} macchine su ${total} hanno aggiornamenti`,
-        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} hanno aggiornamenti · ${checked} di ${total} controllate`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} ${count === 1 ? 'ha' : 'hanno'} aggiornamenti · ${checked} di ${total} controllate`,
             security: ({ count }: { count: number }) => `${count} di sicurezza`,
             all: ({ count }: { count: number }) => `${count} in tutto`,
             restarts: ({ count }: { count: number }) => count === 1 ? "1 riavvio necessario" : `${count} riavvii necessari`,

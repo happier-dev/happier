@@ -11091,7 +11091,7 @@ const machineDetailPageTranslations = { de: translated({
             description: "Betriebssystempakete, die auf jeder Maschine dieses Homes warten. Updates für Happiers App, CLI und Daemon bleiben unter Einstellungen → Updates.",
             reviewRollout: "Rollout prüfen…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${count} von ${total} Maschinen haben Updates`,
-        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} haben Updates · ${checked} von ${total} geprüft`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} ${count === 1 ? 'hat' : 'haben'} Updates · ${checked} von ${total} geprüft`,
             security: ({ count }: { count: number }) => `${count} Sicherheit`,
             all: ({ count }: { count: number }) => `${count} insgesamt`,
             restarts: ({ count }: { count: number }) => count === 1 ? "1 Neustart nötig" : `${count} Neustarts nötig`,
