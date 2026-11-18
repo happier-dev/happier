@@ -8,6 +8,8 @@ import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } fr
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAccessV1.js';
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { MachineSetupOperationReferenceV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
@@ -623,7 +625,11 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     const contributed = snapshot.state === 'failed' && parseQualifiedPluginContributionKey(snapshot.actionId)
       ? PluginActionFailureResponseV1Schema.safeParse(snapshot.result) : null;
     const contributedRefusal = contributed?.success && contributed.data.code === snapshot.error?.errorCode;
-    if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
+    const setupRun = snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && snapshot.state !== 'accepted'
+      ? MachineSetupOperationReferenceV1Schema.safeParse(snapshot.result) : null;
+    const setupRunLink = setupRun?.success && setupRun.data.operationId === snapshot.operationId
+      && setupRun.data.runId !== undefined && setupRun.data.terminalId === undefined;
+    if (!setupRunLink && (!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
       && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
       && !backupFailure && !restore?.success && !linkProvisioned?.success && !contributedRefusal && !isolationRefusal && !reachabilityReceipt) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
@@ -733,6 +739,7 @@ export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperat
     // Keep newer typed refusals on the full owner read, outside the released V1 shape.
     ...(result !== undefined && !(snapshot.state === 'failed' && (snapshot.actionId === 'session.spawn_new'
       || parseQualifiedPluginContributionKey(snapshot.actionId)))
+      && !(snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && snapshot.state !== 'succeeded')
       && !((snapshot.state === 'failed' || snapshot.state === 'cancelled') && snapshot.actionId === 'machines.agentIsolation.set')
       ? { result } : {}),
     ...(legacyProgress ? { progress: legacyProgress } : {}),

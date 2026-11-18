@@ -103,6 +103,29 @@ describe('Action operation v1 contract', () => {
       expect(ActionOperationFailureV1Schema.safeParse({ ...snapshot.error, details: { ...details, ...extra } }).success).toBe(false);
     }
   });
+  it('reads the matching combined Setup Run on active and settled receipts without exposing it to legacy readers', () => {
+    const result = { operationId: baseSnapshot.operationId, runId: 'setup-run' };
+    const running = { ...baseSnapshot, actionId: 'machines.setup.apply', state: 'running', startedAt: 110, result };
+    const error = { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
+      details: { kind: 'finiteCommand', phase: 'setup', step: 0, exitCode: 23, signal: 0 } };
+    const failed = { ...running, state: 'failed', settledAt: 120, error };
+    const cancelled = { ...running, state: 'cancelled', settledAt: 120 };
+
+    for (const receipt of [running, failed, cancelled]) {
+      const response = ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: receipt });
+      expect(response).toEqual({ kind: 'found', operation: receipt });
+      if (response.kind !== 'found') throw new Error('Missing Setup operation');
+      expect(projectActionOperationSnapshotForV1Reader(response.operation)).not.toHaveProperty('result');
+    }
+    for (const invalid of [
+      { ...running, actionId: 'machines.setup.remove' },
+      { ...running, result: { ...result, operationId: 'another-operation' } },
+      { ...running, result: { operationId: result.operationId } },
+      { ...failed, result: { ...result, terminalId: 'private-terminal' } },
+      { ...failed, result: { ...result, privateDetails: 'private-native-output' } },
+    ]) expect(ActionOperationSnapshotV1Schema.safeParse(invalid).success).toBe(false);
+  });
+
   it('retains only the matching public contributed refusal and omits it for predecessor readers', () => {
     const result = { ok: false, code: 'connection_required', retryable: false,
       remediation: { kind: 'openSettings', path: '/settings/plugins/acme.review/connections' } };
