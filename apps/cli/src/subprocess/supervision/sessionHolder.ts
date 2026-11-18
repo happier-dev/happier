@@ -18,6 +18,7 @@ import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
 import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
+import { resolveProcessCustodySupportExecutable } from './processCustody';
 
 /**
  * Client side of the per-Session holder (`happier-session-holder`, built and
@@ -1016,8 +1017,26 @@ export function spawnSessionHolderChild(
 ): SessionHolderChild {
     if (launch.target) return spawnTargetSessionHolderChild(launch, launch.target);
     const child = new SessionHolderChild(launch.socketPath, launch.role);
-    const holder = spawn(launch.executablePath, ['serve', '--socket', launch.socketPath,
-        ...(launch.windowsVerbatimArguments ? ['--windows-verbatim'] : []), ...holderTerminalArgs(launch), '--', launch.command, ...launch.args], {
+    const holderArgs = ['serve', '--socket', launch.socketPath,
+        ...(launch.windowsVerbatimArguments ? ['--windows-verbatim'] : []), ...holderTerminalArgs(launch), '--', launch.command, ...launch.args];
+    // Windows: the holder outlives its runner as on Linux and macOS. The custody helper starts it
+    // outside the runner's owner Job (whose cleanup terminates that Job), in a kill-on-close Job of
+    // its own, and exits; the holder's readiness line still arrives on this stdout.
+    const heldLaunchHelper = process.platform === 'win32' ? resolveProcessCustodySupportExecutable('win32') : null;
+    if (process.platform === 'win32' && !heldLaunchHelper) {
+        throw new PluginError({ code: 'session_holder_unavailable', retryable: false,
+            message: 'The process-custody helper is missing from this Happier build; the Session holder cannot outlive its runner' });
+    }
+    const holder = heldLaunchHelper
+        ? spawn(heldLaunchHelper, ['held-launch', '--', launch.executablePath, ...holderArgs], {
+            ...spawnOptions,
+            ...(launch.cwd ? { cwd: launch.cwd } : {}),
+            ...(launch.env ? { env: launch.env } : {}),
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+        })
+        : spawn(launch.executablePath, holderArgs, {
         ...spawnOptions,
         ...(launch.cwd ? { cwd: launch.cwd } : {}),
         ...(launch.env ? { env: launch.env } : {}),
@@ -1038,24 +1057,41 @@ export function spawnSessionHolderChild(
         child.emit('error', error);
     };
     holder.once('error', fail);
-    holder.once('exit', () => fail(Object.assign(new Error('Session holder ended before the Agent started'), { code: 'session_holder_failed' })));
+    let launcherError = '';
+    holder.stderr?.setEncoding('utf8');
+    holder.stderr?.on('data', (chunk: string) => { if (launcherError.length < 4096) launcherError += chunk; });
+    const ended = () => fail(Object.assign(new Error(`Session holder ended before the Agent started${launcherError ? `: ${launcherError.trim()}` : ''}`), { code: 'session_holder_failed' }));
+    // The Windows launcher exits as soon as the holder runs; only its failure ends the start. The
+    // holder's own end shows as its stdout closing without a readiness line.
+    holder.once('exit', (code: number | null) => { if (!heldLaunchHelper || code !== 0) ended(); });
+    // The holder closes its stdout after the readiness line; only an end without one is a failure.
+    let readinessReceived = false;
+    holder.stdout.once('end', () => { if (!readinessReceived) ended(); });
     holder.stdout.setEncoding('utf8');
     holder.stdout.on('data', (chunk: string) => {
         if (settled) return;
         line += chunk;
         const end = line.indexOf('\n');
         if (end < 0) return;
+        readinessReceived = true;
         const ready = JSON.parse(line.slice(0, end)) as { ready: boolean; agentPid?: number; holderPid?: number; code?: string; kind?: string; errno?: number | null; message?: string };
         if (!ready.ready || typeof ready.agentPid !== 'number') {
             fail(spawnFailureError(ready));
             return;
         }
         Object.defineProperty(child, 'pid', { value: ready.agentPid, writable: true, configurable: true });
+        // The holder's own pid (the Windows launcher's pid is not the holder's).
+        if (typeof ready.holderPid === 'number') child.holderPid = ready.holderPid;
         connectHolder(child, () => {
             if (settled) return;
             settled = true;
             holder.removeAllListeners('exit');
+            holder.stdout.removeAllListeners('end');
             holder.stdout.destroy();
+            holder.stderr?.destroy();
+            // The Windows launcher could not take the holder out of an enclosing Job: the Agent
+            // runs and is held, but ends with that Job (not observable anywhere else).
+            if (launcherError.includes('held-launch:')) logger.warn('[SessionHolder] Held Agent stays in an enclosing Job', { detail: launcherError.trim() });
             holder.unref();
             child.emit('spawn');
             reportHeldPrimaryAgent(child, sessionId);

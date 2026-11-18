@@ -79,7 +79,8 @@ describe.skipIf(!holderAvailable)('PTY terminal host: held terminal Agent', () =
   let agentPid: number | undefined;
   afterAll(async () => {
     if (agentPid !== undefined && alive(agentPid)) process.kill(agentPid, 'SIGKILL');
-    if (directory) await rm(directory, { recursive: true, force: true });
+    // Windows locks a directory that is an exiting holder's working directory for a moment.
+    if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
 
   it('survives its runner and is adopted with the full screen restored', async () => {
