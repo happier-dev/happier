@@ -127,6 +127,7 @@ export const CODEX_PLUGIN = definePlugin({
         title: 'ChatGPT',
         ui: { iconResourceId: 'agent-mark', setup: { order: 1, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogChatGpt', fallback: 'Plus, Pro or Team plan. Sign in with a code or a browser.' } } },
         usageIdentity: { providerId: CODEX_ACCOUNT_USAGE_PROVIDER_ID },
+        capabilities: ['usage'],
         metadata: CODEX_ACCOUNT_USAGE_PLAN_METADATA,
         recoveryCredits: { supported: true },
         authentication: {

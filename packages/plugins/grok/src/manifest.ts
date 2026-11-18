@@ -49,6 +49,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     [GROK_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'Grok / xAI',
+        capabilities: ['usage'],
         ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },

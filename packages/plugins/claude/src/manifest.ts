@@ -229,6 +229,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         // Claude Pro/Max web billing, not the separate Anthropic API account.
         billingUrl: 'https://claude.ai/settings/billing',
         recoveryCredits: { supported: true },
+        capabilities: ['usage'],
         usageIdentity: { providerId: CLAUDE_ACCOUNT_USAGE_PROVIDER_ID, requiredContext: 'organization' },
         metadata: CLAUDE_ACCOUNT_USAGE_PLAN_METADATA,
         authentication: {

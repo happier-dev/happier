@@ -50,6 +50,7 @@ export const CURSOR_PLUGIN = definePlugin({
       declaration: {
         title: 'Cursor',
         ui: { iconResourceId: 'agent-mark' },
+        capabilities: ['usage'],
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'subscription',

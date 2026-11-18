@@ -57,6 +57,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
     'antigravity-account': {
       declaration: {
         title: 'Google Antigravity',
+        capabilities: ['usage'],
         ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },

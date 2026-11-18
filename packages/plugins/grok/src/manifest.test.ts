@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Grok plugin manifest', () => {
+  it('publishes the xAI quota capability in the Connected Account manifest projection', () => {
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual(expect.objectContaining({
+      id: 'xai',
+      capabilities: expect.arrayContaining(['usage']),
+    }));
+  });
+
   it('declares the native Agent, exact system tool, environment access, and CLI setup facts', () => {
     expect(PLUGIN_MANIFEST.id).toBe('happier.agent.grok');
     expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([expect.objectContaining({

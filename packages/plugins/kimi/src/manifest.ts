@@ -57,6 +57,7 @@ export const KIMI_PLUGIN = definePlugin({
     'kimi-code': {
       declaration: {
         title: 'Kimi Code',
+        capabilities: ['usage'],
         ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },

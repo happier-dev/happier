@@ -72,7 +72,7 @@ export const PLUGIN = definePlugin({
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] } },
   ], optional: [] },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
-    declaration: { title: label('account'), ui: { category: 'cloud-machines' }, authentication: {
+    declaration: { title: label('account'), ui: { category: 'cloud-machines' }, capabilities: ['usage'], authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
       // No callbackUrl: the attempt uses the Home's Connected Account relay. The Home advertises the public client.
       id: 'oauth', kind: 'oauthAuthorizationCode', title: label('signIn'), scopes: [...VERCEL_IDENTITY_SCOPES], pkce: 'required',

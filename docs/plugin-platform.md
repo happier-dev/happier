@@ -11324,6 +11324,10 @@ contracts. The provider basis is the OAuth read/reset implementation in
 Authenticated read discovery was verified; live redemption and provider request-id
 idempotency guarantees remain unverified.
 
+In 0.3 development, bundled services with a daemon quota reader declare
+`usage` on the Connected Account descriptor. Home Usage reads that capability
+when selecting accounts for quota observation.
+
 Connected Account quota results may carry a provider-declared `planLabel`.
 The host snapshots the trusted SDK result and preserves it in the canonical
 usage projection; external wire and persistence readers retain their schemas. An absent

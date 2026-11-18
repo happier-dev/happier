@@ -221,6 +221,7 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
   connectedAccountDescriptors: { [CLOUDFLARE_ACCOUNT_ID]: {
     declaration: { title: 'Cloudflare',
       description: 'Connect Cloudflare to deploy Workers and Pages or manage tunnels and DNS.',
+      capabilities: ['usage'],
       authentication: { account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [
         // No callbackUrl: the attempt uses the Home's Connected Account relay.
         { id: 'oauth', kind: 'oauthAuthorizationCode', title: 'Sign in with Cloudflare',
