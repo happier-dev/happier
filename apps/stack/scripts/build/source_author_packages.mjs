@@ -36,8 +36,10 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
     const bundles = owner.resolveWorkspaceBundlesFromPackageJson({repoRoot:repoDir,hostPackageDir:projectDir});
     const roots = bundles.filter(bundle => owner.sanitizeBundledPackageJson(
       workspacePackages.get(bundle.packageName).manifest).happier?.publicSdkRelease);
+    const bundledAuthorPackages = roots.flatMap(bundle => owner.readBundledWorkspacePackageNames(
+      workspacePackages.get(bundle.packageName).manifest));
     const closure = new Set(owner.resolveInternalWorkspacePackageNameClosure({repoRoot:repoDir,
-      packageNames:roots.map(bundle => bundle.packageName)}));
+      packageNames:[...roots.map(bundle => bundle.packageName), ...bundledAuthorPackages]}));
     const authorRoot = join(runtimeDir, 'authoring/node_modules');
     const codeFiles = [];
     const visit = async directory => {
