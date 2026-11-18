@@ -11,7 +11,7 @@ import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
 import { resolveRoleSelectionV1 } from '../prompts/roles/resolveRoleSelectionV1.js';
 import { roleEngineModelFieldsV1 } from '../prompts/roles/roleArtifactV1.js';
-import { readAuthoredSessionModelSelection } from '../teams/credentials/sessionBindingIntentV1.js';
+import { findAssignedProviderModelCredentialBinding, readAuthoredSessionModelSelection } from '../teams/credentials/sessionBindingIntentV1.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1, type WorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, WorkflowRoleOverridesV1Schema, WorkflowReplayAgentOverrideV1Schema, deriveWorkflowAcceptedPermissionCeilingV1,
@@ -899,6 +899,15 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       if (leaf.kind !== 'step') {
         selection = { ...selection };
         for (const field of WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS) delete selection[field];
+        if (leaf.kind === 'action' && isAgentStartActionV1(leaf.actionId)) {
+          const model = readAuthoredSessionModelSelection(resolved.selection);
+          if (model?.v === 2 && model.ref.source === 'team_resource' && resolved.selection.modelSelection?.v !== 2) {
+            if (leaf.actionId === 'session.spawn_new') {
+              const binding = findAssignedProviderModelCredentialBinding(resolved.selection.teamCredentialBindings);
+              if (binding) selection.teamCredentialBindings = [binding];
+            } else selection.modelSelection = model;
+          }
+        }
       }
       if (leaf.kind === 'step' && findWorkflowUnsupportedSelectionFieldV1(selection, executionTarget) !== null) return unavailable(leaf.id);
       // Choosing a role's engine does not also choose that role's profile.
@@ -994,7 +1003,10 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       }
       // Every executable leaf carries concrete authoring fields. Mutable roles
       // and profile catalogs cannot influence dispatch or recovery after this pass.
-      leaf.execution = selection;
+      if (leaf.kind === 'action' && selection.teamCredentialBindings !== undefined) {
+        const { teamCredentialBindings: _bindings, ...actionSelection } = selection;
+        leaf.execution = actionSelection;
+      } else leaf.execution = selection;
       targetById.set(leaf.id, executionTarget);
       materializedLeaves.push(sidecar);
     }

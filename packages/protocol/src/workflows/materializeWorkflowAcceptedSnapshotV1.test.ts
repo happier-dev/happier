@@ -493,6 +493,28 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     });
   });
 
+  it('inherits a split Team model in a native Session spawn Action and in replay', async () => {
+    const modelSelection = { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model',
+      teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 2, deliveryMode: 'brokered' as const } };
+    const binding = sessionModelSelectionV2TeamBindingIntent(modelSelection);
+    const contract = actionSpecToActionDefinitionV1(getActionSpec('session.spawn_new'));
+    const accepted = await materialize({ definition: { version: 1,
+      defaults: { agentTarget, modelSelection: null, teamCredentialBindings: [binding] },
+      blocks: [{ kind: 'action', id: 'spawn', actionId: 'session.spawn_new', input: {
+        executionTarget: { kind: 'literal', value: { serverId: 'server', machineId: 'machine' } },
+        directory: { kind: 'literal', value: { kind: 'path', path: '/project' } },
+      } }] }, effects: { resolveTargetAvailability: available,
+      readActionContract: async () => ({ inputSchema: contract.inputSchema, outputSchema: contract.outputSchema ?? {} }) },
+    });
+    const expected = { ok: true, snapshot: { materializedLeaves: [{ actionInput: { teamCredentialBindings: [binding] } }] },
+      agentStartLeaves: [{ engine: { modelId: 'team-model' }, facts: { modelSelection: { ref: modelSelection.ref } } }] };
+    expect(accepted).toMatchObject(expected);
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    expect(accepted.snapshot.materializedLeaves[0]?.actionInput).not.toHaveProperty('modelSelection');
+    expect(await materialize({ replay: { snapshot: accepted.snapshot } })).toMatchObject(expected);
+  });
+
   it('rebinds edited inputs and only one explicit Agent override while rechecking current policy', async () => {
     const authored = { ...definition, inputs: [{ name: 'request', valueType: 'string', required: true }], blocks: [
       definition.blocks[0], { kind: 'action', id: 'record', actionId: 'session.goal.set', input: { objective: { kind: 'input', name: 'request' } } },

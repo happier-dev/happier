@@ -21,7 +21,7 @@ import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } fr
 import { SpawnConfigOptionValueSchema } from '../sessionSpawnConfigOptions.js';
 import { resolveExecutionBackendTargetSelectionForValue } from '../resolveActionBackendTargetSelection.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
-import { readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
+import { findAssignedProviderModelCredentialBinding, readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
 import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
@@ -151,11 +151,20 @@ export function projectActionWorkflowSelectionInputV1(
         projected[profileField] = selected.profileId;
     if (projected.agentModeId === undefined && projected.acpSessionModeId === undefined && selected.acpSessionModeId !== undefined)
         projected.agentModeId = selected.acpSessionModeId;
-    if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined
-        && selected.modelSelection !== undefined) {
-        if (actionId === 'session.spawn_new' || selected.modelSelection === null)
-            projected.modelSelection = selected.modelSelection;
-        else Object.assign(projected, projectSessionModelRefToExecutionModelSelection(selected.modelSelection.ref));
+    if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined) {
+        const model = readAuthoredSessionModelSelection(selected);
+        if (actionId === 'session.spawn_new') {
+            const binding = selected.modelSelection?.v !== 2 && model?.v === 2
+                ? findAssignedProviderModelCredentialBinding(selected.teamCredentialBindings) : null;
+            if (!binding && model !== undefined) projected.modelSelection = model;
+            if (binding && model && projected.teamCredentialBindings === undefined) {
+                const target = readAgentStartTargetV1(projected.agentTarget);
+                if (target && buildBackendTargetKeyV2(target) === model.ref.agentTargetKey) {
+                    projected.teamCredentialBindings = [binding];
+                }
+            }
+        } else if (model === null) projected.modelSelection = null;
+        else if (model) Object.assign(projected, projectSessionModelRefToExecutionModelSelection(model.ref));
     }
     if (actionId !== 'session.spawn_new' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
         && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
@@ -221,7 +230,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
     const overrideEngine = params.effectiveSelection?.overrideEngine === true;
     let inheritWorkflowModel = true;
     const selectedModelForTarget = (target: AgentStartFactsV1['agentTarget']) => {
-        const model = selected?.modelSelection;
+        const model = selected && readAuthoredSessionModelSelection(selected);
         if (model === undefined || model === null)
             return model;
         if (!target || target.kind === 'unresolved')
