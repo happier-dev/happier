@@ -1,5 +1,4 @@
 import { runWithScmAccountScope } from '@/scm/accountScope';
-import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +42,8 @@ import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContrac
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 import { ReviewProfile } from './ReviewProfile';
+import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from '@/api/artifacts/accountArtifactStore';
 
 // Only HTTP and environment configuration are substituted. Snapshot, protocol,
 // signing, event envelopes, triage mapping, and terminalization remain real.
@@ -90,17 +91,20 @@ function transport() {
     resolveAccountId: () => 'account-1',
     // Account mode and installation signing key are genuine server/OS boundaries.
     resolveAccountEncryptionMode: async () => 'plain',
-    // Resource mode/key acquisition crosses the Artifact HTTP/credential boundary.
-    resolveReviewResourceCrypto: async reviewId => ({ reviewId, mode: 'plain',
-      open: async envelope => { if (envelope.t !== 'plain') throw new Error('expected plain Artifact'); return envelope.v; },
-      seal: async value => ({ t: 'plain', v: value }),
-      commitment: (purpose, canonicalInput) => createHash('sha256').update(`${purpose}:${canonicalInput}`).digest('base64url'),
-    }),
     resolvePrincipalSigningContext: async () => ({
       machineId: workspace.machineId, installationId: 'installation-1',
       privateKeyBase64Url: Buffer.from(signingKeys.secretKey).toString('base64url'),
     }),
   });
+}
+
+async function prepareReviewArtifact() {
+  const boundary = createPlainAccountArtifactHttpBoundary();
+  const artifacts = createAccountArtifactStore({ credentials: boundary.credentials, getAccountEncryptionMode: async () => 'plain' });
+  const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+  await records.start({ reviewId: 'review-1', title: 'Review', subjectKind: 'comparison', sourceKind: 'direct',
+    reviewerIds: ['claude', 'reviewer-model-selection-2'], startedAt: 1 });
+  vi.mocked(axios.post).mockClear();
 }
 
 function plainStoredComment(comment: ReviewCommentV1) {
@@ -693,6 +697,7 @@ describe('canonical review Run comments', () => {
   });
   it.each(['execution', 'session'] as const)('materializes every finding with actual engine identity, launch fingerprint, snapshots and a signed host intent (%s)', async source => {
     return runWithScmAccountScope('account', async () => {
+    await prepareReviewArtifact();
     const posted: unknown[] = [];
     let prepared: ReviewCommentPreparedRecordV1[] = [];
     vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
@@ -786,6 +791,7 @@ describe('canonical review Run comments', () => {
 
   it('keeps a deduplicated ignored finding unchanged while attaching the new round at create', async () => {
     return runWithScmAccountScope('account', async () => {
+      await prepareReviewArtifact();
       let roundOrdinal = 2;
       const mutationIds: string[] = [];
       const existing = { ...commentForCreate({ workspace: { machineId: 'older-machine', path: '/other-worktree' }, sessionId: 'older-session', runId: 'older-run', engineId: 'codex', findingId: 'file-finding',
@@ -804,7 +810,7 @@ describe('canonical review Run comments', () => {
       const result = await service().materialize({ run: run(), review: { reviewId: 'review-1', roundOrdinal: 2 }, findings: [findings[0]], reviewedFingerprint: null });
       expect(result).toMatchObject({ status: 'materialized', commentIds: [existing.id], comments: [{ comment: { state: 'dismissed', serverRevision: 3 } }] });
       expect(axios.post).toHaveBeenCalledTimes(2);
-      expect(axios.get).not.toHaveBeenCalled();
+      expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).includes('/v1/reviews/comments'))).toEqual([]);
       roundOrdinal = 3;
       expect(await service().materialize({ run: run(), review: { reviewId: 'review-1', roundOrdinal }, findings: [findings[0]], reviewedFingerprint: null })).toMatchObject({ status: 'materialized', commentIds: [existing.id] });
       expect(new Set(mutationIds).size).toBe(2);
