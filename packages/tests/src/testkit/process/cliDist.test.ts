@@ -4,6 +4,7 @@ import { cp, mkdtemp, mkdir, readFile, rename, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 
@@ -238,6 +239,31 @@ describe('ensureCliDistBuilt', () => {
 
     expect(entrypoint).toBe(join(backupDir, 'index.mjs'));
     expect(rebuildCalls).toBe(0);
+  });
+
+  it('publishes a snapshot after rebuilding CLI chunks that import a removed Protocol export', async () => {
+    const repoRoot = await createRepoRoot();
+    const cliDir = join(repoRoot, 'apps', 'cli');
+    const cliEntrypoint = join(cliDir, 'dist', 'index.mjs');
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    await writeFile(cliEntrypoint, 'import { removed } from "@happier-dev/protocol/dist/index.js";\nexport const value = removed;\n');
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: { ...process.env, HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink' } },
+      {
+        repoRoot,
+        snapshotDir,
+        skipDistIntegrityCheck: true,
+        skipSourceFreshnessCheck: true,
+        runCommand: async ({ args }) => {
+          expect(args).toContain('build:prepared');
+          await writeFile(cliEntrypoint, 'import { ok } from "@happier-dev/protocol/dist/index.js";\nexport const value = ok;\n');
+        },
+      },
+    );
+
+    expect(spawnSync(process.execPath, ['--input-type=module', '--eval',
+      'if (!(await import(process.argv[1])).value) process.exit(1);', pathToFileURL(entrypoint).href]).status).toBe(0);
   });
 
   it('passes the canonical owner lease into the nested CLI build', async () => {

@@ -86,6 +86,7 @@ type EnsureCliDistBuiltOptions = CliDistBuildLockOptions & {
   allowRebuild?: boolean;
   skipDistIntegrityCheck?: boolean;
   skipSourceFreshnessCheck?: boolean;
+  requireCompatibleNamedImports?: boolean;
   waitForAvailabilityMs?: number;
   repoRoot?: string;
   buildTimeoutMs?: number;
@@ -1010,13 +1011,10 @@ export async function ensureCliDistBuilt(
       rootDir,
       skipDistIntegrityCheck,
       skipSourceFreshnessCheck,
+      requireCompatibleNamedImports: options.requireCompatibleNamedImports,
     });
     return reusableDir ? resolveCliDistEntrypoint(reusableDir) : null;
   };
-  const shouldRebuild = (): boolean => {
-    return resolveReusableEntrypoint() === null;
-  };
-
   const reusableEntrypoint = resolveReusableEntrypoint();
   if (reusableEntrypoint) {
     return reusableEntrypoint;
@@ -1073,9 +1071,8 @@ export async function ensureCliDistBuilt(
         timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
 
-      if (!shouldRebuild()) {
-        return entrypoint;
-      }
+      const rebuiltEntrypoint = resolveReusableEntrypoint();
+      if (rebuiltEntrypoint) return rebuiltEntrypoint;
 
       if (attempt === maxAttempts) {
         const missing = findMissingDistChunkImports(distDir);
@@ -1085,7 +1082,7 @@ export async function ensureCliDistBuilt(
         if (missing.length > 0) {
           throw new Error(`CLI dist build missing chunk imports: ${missing.join(', ')}`);
         }
-        if (isHealthyCliDist(distDir)) {
+        if (!options.requireCompatibleNamedImports && isHealthyCliDist(distDir)) {
           return entrypoint;
         }
         throw new Error('CLI dist rebuild required after maximum retry attempts');
@@ -1150,6 +1147,7 @@ function resolveExistingCliDistDir(params: {
   rootDir: string;
   skipDistIntegrityCheck: boolean;
   skipSourceFreshnessCheck: boolean;
+  requireCompatibleNamedImports?: boolean;
 }): string | null {
   const candidates = [resolveCliDistDir(params.rootDir), resolveCliBackupDistDir(params.rootDir)];
   for (const dir of candidates) {
@@ -1159,6 +1157,10 @@ function resolveExistingCliDistDir(params: {
     if (!params.skipSourceFreshnessCheck && isBuildDirectoryStale({ sourcePaths: resolveCliDistSourcePaths(params.rootDir), outputDir: dir })) {
       continue;
     }
+    if (params.requireCompatibleNamedImports && !hasCliDistFirstPartyNamedImportCompatibility({
+      distDir: dir,
+      nodeModulesDir: resolve(params.rootDir, 'apps', 'cli', 'node_modules'),
+    })) continue;
     return dir;
   }
   return null;
@@ -1301,7 +1303,9 @@ export async function ensureCliDistSnapshotEntrypoint(
     let retryCleanupSnapshotDir: string | null = null;
     // Ensure dist is available first. We intentionally do this outside the snapshot lock to avoid
     // re-entering the same lock from ensureCliDistBuilt.
-    await ensureCliDistBuilt(params, { ...options, repoRoot: rootDir, lockPath: distLockPath });
+    const sourceEntrypoint = await ensureCliDistBuilt(params, {
+      ...options, repoRoot: rootDir, lockPath: distLockPath, requireCompatibleNamedImports: true,
+    });
 
     try {
       return await withCliDistBuildLock(
@@ -1347,25 +1351,6 @@ export async function ensureCliDistSnapshotEntrypoint(
             } catch {
               // Best-effort only.
             }
-          };
-
-          const resolveSnapshotSourceDistDir = (): string => {
-            const distDir = resolveExistingCliDistDir({
-              rootDir,
-              skipDistIntegrityCheck: options.skipDistIntegrityCheck ?? false,
-              skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? false,
-            });
-            if (distDir) {
-              return distDir;
-            }
-
-            const canonicalDistDir = resolveCliDistDir(rootDir);
-            const missing = findMissingDistChunkImports(canonicalDistDir);
-            throw new Error(
-              missing.length > 0
-                ? `Refusing to snapshot an incomplete CLI dist (missing chunk imports): ${missing.join(', ')}`
-                : `Refusing to snapshot an incomplete CLI dist (missing index.mjs): ${resolveCliDistEntrypoint(canonicalDistDir)}`,
-            );
           };
 
           const materializeSnapshot = async (targetSnapshotDir: string, distDir: string): Promise<string> => {
@@ -1416,8 +1401,7 @@ export async function ensureCliDistSnapshotEntrypoint(
           if (snapshotIsReadyButStale(options.snapshotDir)) {
             const replacementEntrypoint = findReusableReplacementSnapshotEntrypoint();
             if (replacementEntrypoint) return replacementEntrypoint;
-            const distDir = resolveSnapshotSourceDistDir();
-            return await materializeSnapshot(resolveReplacementSnapshotDir(), distDir);
+            return await materializeSnapshot(resolveReplacementSnapshotDir(), dirname(sourceEntrypoint));
           }
 
           // If a previous run left a partial snapshot behind, self-heal instead of failing closed.
@@ -1432,8 +1416,7 @@ export async function ensureCliDistSnapshotEntrypoint(
             return snapshotEntrypoint;
           }
 
-          const distDir = resolveSnapshotSourceDistDir();
-          return await materializeSnapshot(options.snapshotDir, distDir);
+          return await materializeSnapshot(options.snapshotDir, dirname(sourceEntrypoint));
         },
         {
           lockPath: snapshotLockPath,
