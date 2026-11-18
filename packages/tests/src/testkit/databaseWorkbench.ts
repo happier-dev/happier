@@ -101,7 +101,7 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
       installationId: installation.installationId, projectKey: accepted.facts.projectKey, workspace: accepted.workspace };
     const scope = { kind: 'worktree' as const, ...context };
     function executeDatabase(actionId: DatabaseActionIdV1, input: unknown, context: Parameters<typeof owner.execute>[2] = {}) {
-      return owner.execute('action.invoke', {
+      return owner.executeReviewed('action.invoke', {
         action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(actionId) }, input,
       }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
         presentUserConfirmation: { actionId: 'action.invoke' }, ...context });
