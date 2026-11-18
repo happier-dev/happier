@@ -12,16 +12,22 @@ import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { SESSION_AGENT_READINESS_CHILDREN_V1, isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+type MachinesAgentsList = NonNullable<ActionExecutorDeps['machinesAgentsList']>;
+
 export function createCliMachineInventoryActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
   { callMachineAction, inventoryDeps }: Readonly<{
     callMachineAction: CliMachineActionCall;
     inventoryDeps: ReturnType<typeof createCliActionInventoryDeps>;
   }>,
-): Pick<ActionExecutorDeps, 'machinesAgentsList' | 'machineAgentSignInStart' | 'machineAgentSignInStatus' | 'machineAgentSignInCancel' | 'machineAgentSignInRestart' | 'workflowEventsList'> {
+): Pick<ActionExecutorDeps, 'machineAgentSignInStart' | 'machineAgentSignInStatus' | 'machineAgentSignInCancel' | 'machineAgentSignInRestart' | 'workflowEventsList'> & {
+  machinesAgentsList(args: Parameters<MachinesAgentsList>[0], context: ActionExecutorContext,
+    catalog?: AcpCatalogSnapshotV1): ReturnType<MachinesAgentsList>;
+} {
   const signInOperations = (target: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal;
     context: ActionExecutorContext; effectActionId: string }>): Parameters<typeof restartMachineAgentSignIn>[1] => {
     const { machineId, serverId, signal, context, effectActionId } = target;
@@ -44,7 +50,7 @@ export function createCliMachineInventoryActionDeps(
     };
   };
   return {
-    machinesAgentsList: async (args, context) => {
+    machinesAgentsList: async (args, context, catalog) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== args.machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -82,7 +88,7 @@ export function createCliMachineInventoryActionDeps(
           const observedDefinitions: ReturnType<typeof projectAcpCatalogForMachineInventory> = binding && binding.accountId !== binding.custodianAccountId
             ? { definitionCatalog: { status: 'unavailable', reason: 'requester-account-unavailable' } }
             : !args.agentId || args.definitionId
-              ? projectAcpCatalogForMachineInventory(await inventoryDeps.readAccountAcpCatalog({ signal: context.signal })) : {};
+              ? projectAcpCatalogForMachineInventory(catalog ?? await inventoryDeps.readAccountAcpCatalog({ signal: context.signal })) : {};
           const definitionInventory = args.definitionId && 'definitions' in observedDefinitions
             ? { ...observedDefinitions, definitions: observedDefinitions.definitions?.filter(definition => definition.definitionId === args.definitionId) }
             : observedDefinitions;

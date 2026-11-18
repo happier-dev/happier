@@ -335,7 +335,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   localMachineId?: string;
   /** Lazy because the Machine inventory owner is composed after the Account catalog owner. */
-  getReviewReadinessDeps?: () => Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
+  getReviewReadinessDeps?: (catalog: AcpCatalogSnapshotV1) => Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
   token: string;
   serverId?: string;
   /** Portable Home identity: the server id published to Action outputs that other Machines consume. */
@@ -671,7 +671,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         registrySnapshot: registry.contributions,
         profileCatalog,
         ...(selectedMachineId && params.getReviewReadinessDeps ? {
-          readReadiness: targets => readAgentTargetReadinessV1(params.getReviewReadinessDeps!(), selectedMachineId,
+          readReadiness: targets => readAgentTargetReadinessV1(params.getReviewReadinessDeps!(captured.catalog), selectedMachineId,
             targets.map(target => parseBackendTargetKeyV2(target)), context),
         } : {}),
       });

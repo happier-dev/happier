@@ -724,8 +724,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { callMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
     localMachineId,
-    getReviewReadinessDeps: (): Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'> => ({
-      machinesAgentsList: machineInventoryDeps.machinesAgentsList,
+    getReviewReadinessDeps: catalog => ({
+      // Readiness must probe the same definitions the Review inventory just projected.
+      machinesAgentsList: (args, context) => machineInventoryDeps.machinesAgentsList(args, context, catalog),
       agentsConnectedDefaultRoutesRead: inventoryDeps.agentsConnectedDefaultRoutesRead,
     }),
     authorizeConnectedAccountRequest: (context, request) => resolveServerRequestHeaders(context,

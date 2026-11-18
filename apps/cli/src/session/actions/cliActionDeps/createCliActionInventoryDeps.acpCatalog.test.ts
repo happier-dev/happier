@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import axios from 'axios';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2HistoryMutationRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -32,6 +32,9 @@ import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machi
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resolveAccountConfiguredAcpLaunch } from '@/agent/runtime/registry/engineRegistry/accountConfiguredAcp';
+import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 const record = { v: 1, definitions: [{ id: 'row-review', name: 'row-review', title: 'Row Review', launch: { kind: 'command' as const, command: 'review-agent', args: ['acp'] },
    env: {}, capabilities: { supportsLoadSession: true, supportsModes: 'yes', supportsModels: 'yes',
@@ -143,10 +146,17 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
       provider: 'customAcp', availableModels: [{ id: 'stale-model', name: 'Stale model' }] } } } });
   return { deps, requests, writes, historyWrites, incumbent, operationContext, credentials,
     setPurposeStatus: (status: typeof purposeStatus) => { purposeStatus = status; },
+    setRow: (next: AcpCatalogRecordV1) => { currentRecord = next; revision += 1; },
     readRow: () => ({ record: currentRecord, revision }), readHistory: () => historySettings };
 }
 
 describe('ACP Action inventory row authority', () => {
+  beforeAll(async () => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.muse', CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId] } });
+    return () => runtime.dispose();
+  });
+
   it('keeps complete backend discovery and honors a deliberate 201-row projection', async () => {
     const initialRecord = { v: 1, definitions: Array.from({ length: 202 }, (_, index) => ({
       ...record.definitions[0], id: `backend-${index}`, name: `backend-${index}`, title: `Backend ${index}`,
@@ -462,6 +472,52 @@ describe('ACP Action inventory row authority', () => {
     const results = await Promise.all([deps.readAccountAcpCatalog({}), deps.readAccountAcpCatalog({})]);
     expect(results).toEqual([first, first]);
     for (const result of results) expect(result).toBe(operationContext.readSnapshot()?.acpCatalog);
+  });
+
+  it('reuses the admitted ACP row for detached Review readiness and refuses a changed row', async () => {
+    const initialRecord = { v: 1, definitions: [{ ...record.definitions[0],
+      launch: { kind: 'command', command: process.execPath, args: [] },
+    }] } satisfies AcpCatalogRecordV1;
+    const { deps, credentials, operationContext, requests, setRow } = await createInventory('ready', { initialRecord });
+    const service = createCapabilitiesService({ capabilities: [createAcpAgentInventoryCapability({ accountId: 'custodian' })],
+      checklists: { 'machine-details': [], 'new-session': [] }, buildContext: async () => ({ cliSnapshot: null }) });
+    const engines = expect.arrayContaining([
+      expect.objectContaining({ engineId: 'muse', available: true }),
+      expect.objectContaining({ engineId: targetKey, available: true }),
+    ]);
+    expect(await deps.reviewEnginesList!({ sessionId: 'requester-session' })).toMatchObject({
+      items: engines,
+    });
+    requests.length = 0;
+    let changeDuringProbe = false;
+    const executor = createActionExecutor(createCliActionDeps({
+      token: credentials.token, savedSecretOperationContext: operationContext,
+      sessionId: '', mode: 'plain', ctx: null,
+      // Keep Account reads on the captured holder and supply the Machine RPC boundary directly.
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async (method, request) => {
+        if (method === 'daemon.extensions.contributionRegistryProjection.describe') {
+          return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {} } };
+        }
+        if (method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        if (changeDuringProbe) {
+          setRow({ ...initialRecord, definitions: [] });
+          const changed = await refreshActiveAcpCatalog({ credentials, operationContext });
+          expect(changed).toMatchObject({ status: 'ready', revision: 5 });
+        }
+        return service.detect(request as CapabilitiesDetectRequest);
+      } },
+    }));
+    const list = () => executor.execute('review.engines.list', { sessionId: null, machineId: 'machine' },
+      { surface: 'cli', authority: 'account_automation' });
+    const result = await list();
+    expect(result.ok, result.ok ? undefined : JSON.stringify(result)).toBe(true);
+    expect(result).toMatchObject({ ok: true, result: { items: engines } });
+    expect(requests.filter(request => request === `GET ${ACP_CATALOG_ROWS_ROUTE_V1}`)).toHaveLength(1);
+
+    changeDuringProbe = true;
+    expect(await list()).toMatchObject({ ok: false, errorCode: 'ACP_CATALOG_UNAVAILABLE',
+      failureCause: { phase: 'acp_catalog.snapshot.source_stale', nativeErrorReason: 'source-stale' },
+    });
   });
 
   it('shares ready ACP authority between builders and retains only built-ins without it', async () => {
