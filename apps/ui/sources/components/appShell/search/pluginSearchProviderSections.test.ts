@@ -129,6 +129,8 @@ beforeEach(() => {
 });
 
 it.each(['account', 'machine', 'home', 'home partial'] as const)('queries Account data from a %s provider and fences its withdrawal', async providerPlacement => {
+    const { installNativeRuntimeFetchBoundaryForTest } = await import('@/dev/testkit/harness/nativeRuntimeFetch');
+    installNativeRuntimeFetchBoundaryForTest();
     const homeScope = providerPlacement === 'home' || providerPlacement === 'home partial';
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
