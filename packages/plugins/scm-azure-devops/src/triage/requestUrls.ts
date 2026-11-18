@@ -34,7 +34,10 @@ function routeSegments(route: AzureDevOpsRoute): readonly string[] {
     case 'projects':
       return [API_ROOT_SEGMENT, 'projects'];
     case 'repositories':
-      return [route.project, API_ROOT_SEGMENT, GIT_AREA_SEGMENT, REPOSITORIES_SEGMENT];
+      return [
+        route.project, API_ROOT_SEGMENT, GIT_AREA_SEGMENT, REPOSITORIES_SEGMENT,
+        ...(route.repositoryId === undefined ? [] : [route.repositoryId]),
+      ];
     case 'pullRequests':
       return [
         route.project,

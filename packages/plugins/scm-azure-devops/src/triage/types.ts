@@ -54,7 +54,7 @@ export type AzureDevOpsOriginResult =
 export type AzureDevOpsRoute =
   | Readonly<{ resource: Extract<AzureDevOpsResource, 'connectionData'> }>
   | Readonly<{ resource: Extract<AzureDevOpsResource, 'projects'> }>
-  | Readonly<{ resource: Extract<AzureDevOpsResource, 'repositories'>; project: string }>
+  | Readonly<{ resource: Extract<AzureDevOpsResource, 'repositories'>; project: string; repositoryId?: string }>
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'pullRequests'>;
     project: string;

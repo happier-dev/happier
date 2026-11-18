@@ -34,6 +34,11 @@ const MERGE_STATUS_TONE: Readonly<Record<AzurePullRequestMergeStatus, TriageRowF
   failure: 'danger',
 };
 
+/** Preserve the repository key whole because a shortened token addresses a different route. */
+export function projectAzureTriageRoutingToken(repositoryKey: string): string | null {
+  return fittingWithin(normalizeTriageSingleLineV1(repositoryKey), MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1);
+}
+
 /**
  * Project one mapped Azure pull request into the closed public present observation.
  *
@@ -69,12 +74,7 @@ export function projectAzurePresentObservation(input: Readonly<{
   );
   const createdAtMs = readEpochMs(entry.createdAt);
   const webUrl = fittingLocation(buildPullRequestWebUrl(entry));
-  // §2.10: the routing token is `repositoryKey`, verbatim — this source is its only parser, so a
-  // shortened one would be a wrong route rather than a shortened label. It is omitted instead.
-  const routingToken = fittingWithin(
-    normalizeTriageSingleLineV1(entry.locator.repositoryKey),
-    MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-  );
+  const routingToken = projectAzureTriageRoutingToken(entry.locator.repositoryKey);
   const nativeRevision = fittingWithin(
     normalizeTriageSingleLineV1(entry.headCommitId ?? ''),
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,

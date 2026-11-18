@@ -9,13 +9,18 @@ import { AZURE_DEVOPS_ACCOUNT_ACTIONS, sources, READ_HOST_ACCESS, INSTANCE_ACCOU
  * contribution with `required_surface_missing` and the plugin contributes nothing at all.
  * `contribute` types the required surface roles, so the same omission is a compile error here.
  *
- * Every Action's input and result schema is published by the Triage protocol, with the
- * shared account-only input specialization rather than a local restatement, so drift in the shared
- * contract fails conformance instead of admitting a source that speaks a private dialect.
+ * Triage Actions use the shared Triage protocol schemas, including its account-only input
+ * specialization. The Event Actions use the SDK's setup, recovery and webhook contracts.
  */
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  createPluginEventAutomationSetupResultV1JsonSchema,
+  PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+  PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+} from '@happier-dev/plugin-sdk/events';
+import { PluginWebhookActionInputSchema, PluginWebhookActionResultSchema } from '@happier-dev/plugin-sdk/webhooks';
 
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1, TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 } from '@happier-dev/triage-protocol/v1';
 
@@ -28,6 +33,16 @@ import {
   AZURE_DEVOPS_PLUGIN_ID,
   AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID,
 } from './azureDevopsContracts.js';
+import { AZURE_DEVOPS_EVENT_ACTION_IDS } from './eventActionIds.js';
+import { receiveAzureDevOpsWebhook, resetAzureDevOpsEventHistoryGap, setupAzureDevOpsPullRequestEvent } from './eventActions.js';
+import {
+  AZURE_DEVOPS_EVENT_SOURCE_CONTRACT_VERSION,
+  AZURE_DEVOPS_PULL_REQUEST_EVENT_ID,
+  AZURE_DEVOPS_WEBHOOK_CONTRIBUTION_ID,
+  AzureDevOpsEventSetupInputSchema,
+  AzureDevOpsEventSourceConfigSchema,
+  AzureDevOpsPullRequestEventPayloadSchema,
+} from './events.js';
 import { azureDevopsOperationsAdapter } from './operations/azureDevopsAdapter.js';
 
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS, prepareAzureDevOpsReviewWorkspaceAction, verifyAzureDevOpsReviewWorkspaceAction } from './triage/actions.js';
@@ -53,6 +68,7 @@ import {
 
 export const AZURE_CLI_SYSTEM_TOOL_ID = 'azure-cli';
 const AZURE_CLI_PROCESS_HOST_ACCESS_ID = 'azure-cli-process';
+const EVENT_ACCOUNT_BINDINGS = [{ path: 'credentialRef', purpose: AZURE_DEVOPS_TRIAGE_PURPOSE }];
 
 export {
   AZURE_DEVOPS_TRIAGE_ACTION_IDS,
@@ -250,6 +266,57 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
   },
   actions: {
     ...AZURE_DEVOPS_ACCOUNT_ACTIONS,
+    [AZURE_DEVOPS_EVENT_ACTION_IDS.setup]: {
+      title: 'Set up Azure DevOps pull request events',
+      description: 'Checks one repository using the selected Azure DevOps account.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+      dangerLevel: 'safe',
+      inputSchema: AzureDevOpsEventSetupInputSchema.jsonSchema,
+      inputHints: { fields: [{
+        path: 'credentialRef', title: 'Azure DevOps account', widget: 'select', required: true,
+        connectedAccountOptions: true, requireExplicitSelection: true,
+      }, {
+        path: 'baseUrl', title: 'Organization or collection URL', widget: 'text', required: true,
+        description: 'Enter the URL in the selected Azure DevOps account.',
+      }, {
+        path: 'project', title: 'Project ID', widget: 'text', required: true,
+      }, {
+        path: 'repository', title: 'Repository ID', widget: 'text', required: true,
+      }, {
+        path: 'changes', title: 'Pull request changes', widget: 'select', required: true,
+        description: 'Use the returned URL for the matching Azure DevOps Service Hooks and send all resource details.',
+        options: [{
+          value: 'sourceBranch', label: 'Opened or source branch updated',
+          description: 'Set up Pull request created and Pull request updated hooks. Filter updates to source branch pushes.',
+        }, {
+          value: 'status', label: 'Reopened',
+          description: 'Set up a Pull request updated hook filtered to status changes.',
+        }],
+      }] },
+      resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+        AZURE_DEVOPS_EVENT_SOURCE_CONTRACT_VERSION, AzureDevOpsEventSourceConfigSchema.jsonSchema,
+      ),
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: EVENT_ACCOUNT_BINDINGS,
+      run: setupAzureDevOpsPullRequestEvent,
+    },
+    [AZURE_DEVOPS_EVENT_ACTION_IDS.resetHistoryGap]: {
+      title: 'Check Azure DevOps Event history',
+      description: 'Checks whether the webhook source has a history gap.',
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+      resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+      run: resetAzureDevOpsEventHistoryGap,
+    },
+    [AZURE_DEVOPS_EVENT_ACTION_IDS.webhook]: {
+      title: 'Receive Azure DevOps pull request webhook',
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      inputSchema: PluginWebhookActionInputSchema.jsonSchema,
+      resultSchema: PluginWebhookActionResultSchema.jsonSchema,
+      run: receiveAzureDevOpsWebhook,
+    },
     [AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       title: 'Prepare Azure DevOps review workspace',
       description: 'Revalidates one selected pull request and materializes its source tip locally.',
@@ -282,6 +349,37 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: verifyAzureDevOpsReviewWorkspaceAction,
     }
+  },
+  events: {
+    [AZURE_DEVOPS_PULL_REQUEST_EVENT_ID]: {
+      declaration: {
+        kind: 'event',
+        title: 'Azure DevOps pull request lifecycle changed',
+        description: 'A pull request was opened, reopened, or received a source branch push.',
+        payloadSchema: AzureDevOpsPullRequestEventPayloadSchema.jsonSchema,
+        automation: {
+          v: 1,
+          eligible: true,
+          source: {
+            sourceContractVersion: AZURE_DEVOPS_EVENT_SOURCE_CONTRACT_VERSION,
+            supportedObservationTransports: ['durablePush'],
+            sourceConfigSchema: AzureDevOpsEventSourceConfigSchema.jsonSchema,
+            setupActionRef: { pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_EVENT_ACTION_IDS.setup },
+            historyGapResetActionRef: { pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_EVENT_ACTION_IDS.resetHistoryGap },
+            webhookContributionRef: { pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_WEBHOOK_CONTRIBUTION_ID },
+            connectedAccountPurposeBindings: EVENT_ACCOUNT_BINDINGS,
+          },
+        },
+      },
+    },
+  },
+  webhooks: {
+    [AZURE_DEVOPS_WEBHOOK_CONTRIBUTION_ID]: {
+      title: 'Azure DevOps pull request webhook',
+      description: 'Receives Azure DevOps pull request Service Hooks.',
+      verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+      handlerAction: { localId: AZURE_DEVOPS_EVENT_ACTION_IDS.webhook },
+    },
   },
   scmHostingProviders: {
     [AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID]: {
