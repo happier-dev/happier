@@ -83,6 +83,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { SessionHeaderExternalAgentStatus } from './view/SessionHeaderExternalAgentStatus';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
@@ -754,6 +755,15 @@ const wireMachines = new Map<string, FetchedMachineRow>();
 const { composerStructuredMentionsFromReferences, placePositionlessComposerReferences } = await import('@/components/sessions/composer/composerScopeAdapters');
 
 /** The Session header composes its own controls around the resolved right element, so search the whole tree. */
+/** The header's rendered external-Agent status: its shared pill element rendered to host nodes. */
+async function renderHeaderExternalStatus(rightElement: unknown): Promise<any> {
+  const pill = findHeaderRightElementChild(rightElement, (child: any) => child?.type === SessionHeaderExternalAgentStatus);
+  if (!pill) return undefined;
+  const screen = await renderScreen(pill);
+  return screen.findAll((node: any) => typeof node.type === 'string'
+    && typeof node.props.testID === 'string' && node.props.testID.startsWith('session-header-external-agent-status-'))[0];
+}
+
 function findHeaderRightElementChild(element: unknown, matches: (child: any) => boolean): any {
   for (const child of React.Children.toArray((element as any)?.props?.children)) {
     if (matches(child)) return child;
@@ -3107,7 +3117,8 @@ describe('SessionView (direct sessions)', () => {
       isConnected: false,
     }));
     const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-    const externalStatus = findHeaderRightElementChild(latestHeaderProps?.rightElement, (child: any) => child?.props?.testID === 'session-header-external-agent-status-working');
+    const externalStatus = await renderHeaderExternalStatus(latestHeaderProps?.rightElement);
+    expect(externalStatus?.props?.testID).toBe('session-header-external-agent-status-working');
     expect(externalStatus?.props?.accessibilityLabel).toBe('status.workingExternally');
     expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl)
       .toEqual(expect.objectContaining({
@@ -3195,11 +3206,11 @@ describe('SessionView (direct sessions)', () => {
     await renderSessionViewAndSettle();
 
     const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-    const externalStatus = findHeaderRightElementChild(latestHeaderProps?.rightElement, (child: any) => child?.props?.testID?.startsWith('session-header-external-agent-status-'));
+    const externalStatus = await renderHeaderExternalStatus(latestHeaderProps?.rightElement);
     expect(externalStatus).toBeUndefined();
   });
 
-  it('presents an expired pushed external-Agent observation as honest unknown', async () => {
+  it('shows no external-Agent chip once a pushed observation expires', async () => {
     (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
       v: 1,
       qualifiedLinkIdentity: {
@@ -3222,8 +3233,9 @@ describe('SessionView (direct sessions)', () => {
     await renderSessionViewAndSettle();
 
     const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-    const externalStatus = findHeaderRightElementChild(latestHeaderProps?.rightElement, (child: any) => child?.props?.testID === 'session-header-external-agent-status-unknown');
-    expect(externalStatus?.props?.accessibilityLabel).toBe('status.externalStatusUnknown');
+    // An expired observation is no current evidence: the header shows no chip rather than an "unknown" one.
+    const externalStatus = await renderHeaderExternalStatus(latestHeaderProps?.rightElement);
+    expect(externalStatus).toBeUndefined();
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
   });
 

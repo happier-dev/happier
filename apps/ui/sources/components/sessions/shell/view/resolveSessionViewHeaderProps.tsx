@@ -1,10 +1,8 @@
 import type { ManagedWakeProjection } from '@/sync/domains/pending/managedWakeProjection';
-import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 
 import type { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { resolvePluginSessionHeaderActionPresentations } from '@/components/sessions/actions/pluginHeaderActions';
@@ -15,7 +13,6 @@ import { SessionHeaderRoleChip } from '@/components/roles/session/SessionHeaderR
 import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
 import type { WorkSummary } from '@/components/sessions/work/workProjection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { WorkspaceSyncSetAttention } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { formatWorkspaceSyncSetAttention } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
@@ -45,8 +42,7 @@ import {
     resolveExternalSessionIdentityPresentation,
 } from '../../presentation/externalSessionIdentityPresentation';
 import type { ExternalSessionRuntimePresentation } from '../../presentation/externalSessionRuntimePresentation';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { SessionHeaderExternalAgentStatus } from './SessionHeaderExternalAgentStatus';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveSessionCompanionHeaderPlacement } from '@/components/sessions/companion/sessionCompanionHeaderPlacement';
 import { resolveSessionCompanionHeaderIntent } from '@/components/sessions/companion/sessionCompanionHeaderIntent';
@@ -397,42 +393,11 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         rightElement: (
             <SessionHeaderActionsRow>
                 <PendingNavigationPill address={normalizeSessionAddress(session.serverId, input.sessionId)} presentation="header" />
-                {/* No current evidence about the external Agent shows nothing rather than an "unknown" chip. */}
-                {input.externalSessionRuntime && input.externalSessionRuntime.externalAgent.state !== 'unknown' ? (
-                    <View
-                        testID={`session-header-external-agent-status-${input.externalSessionRuntime.externalAgent.state}`}
-                        accessibilityLabel={t(input.externalSessionRuntime.externalAgent.labelKey)}
-                        style={{
-                            maxWidth: 160,
-                            marginRight: 4,
-                            paddingHorizontal: 6,
-                            paddingVertical: 4,
-                            borderRadius: 999,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 3,
-                        }}
-                    >
-                        <WorkStatusGlyph
-                            status={resolveWorkStatusTone({ kind: 'external_agent', facts: {
-                                externalAgent: input.externalSessionRuntime.externalAgent,
-                                word: t(input.externalSessionRuntime.externalAgent.labelKey),
-                            } })}
-                            testIDSuffix={`${input.sessionId}-header-external`}
-                        />
-                        <HeaderChipLabel>
-                            <Text
-                                numberOfLines={1}
-                                style={{
-                                    color: input.actionIconColor,
-                                    ...Typography.variant('meta', 'semiBold'),
-                                }}
-                            >
-                                {t(input.externalSessionRuntime.externalAgent.labelKey)}
-                            </Text>
-                        </HeaderChipLabel>
-                    </View>
-                ) : null}
+                <SessionHeaderExternalAgentStatus
+                    sessionId={input.sessionId}
+                    externalAgent={input.externalSessionRuntime?.externalAgent}
+                    color={input.actionIconColor}
+                />
                 {workspaceSyncAttentionLabel && input.onOpenWorkspaceSyncConflicts ? (
                     <SessionHeaderActionButton
                         onPress={input.onOpenWorkspaceSyncConflicts}
@@ -475,9 +440,4 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     };
 
     return next;
-}
-
-/** A header chip's words, left out while the header is tight; its accessible label and mark stay. */
-function HeaderChipLabel(props: Readonly<{ children: React.ReactNode }>): React.ReactElement | null {
-    return useDetailsTabHeaderActionsCompact() ? null : <>{props.children}</>;
 }

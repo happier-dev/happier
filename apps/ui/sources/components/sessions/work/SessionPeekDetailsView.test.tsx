@@ -74,4 +74,52 @@ describe('SessionPeekDetailsView', () => {
     expect(screen.findByTestId('notify-turn:worker-1')).toBeNull();
     expect(screen.findByTestId('notify-attention:worker-1')).toBeNull();
   });
+
+  // The embedded Session has no header of its own and its control row is withheld when it offers nothing
+  // (an imported Muse Session: no Take over, Replay off), so the peek's header carries the external state.
+  it('keeps an imported external Session\'s needs-input state visible in the peek header', async () => {
+    const now = Date.now();
+    storage.setState({
+      sessions: {
+        ...storage.getState().sessions,
+        'worker-1': createSessionFixture({
+          id: 'worker-1',
+          serverId: 'home-one',
+          metadata: {
+            path: '/tmp',
+            host: 'nldw4',
+            machineId: 'machine-1',
+            flavor: 'muse',
+            externalSessionV1: {
+              v: 1,
+              agentId: 'muse',
+              machineId: 'machine-1',
+              remoteSessionId: 'muse-session-1',
+              source: { kind: 'museNative' },
+            },
+            externalAgentObservationV1: {
+              v: 1,
+              qualifiedLinkIdentity: {
+                v: 1,
+                agent: { pluginId: 'happier.muse', localId: 'muse' },
+                source: { kind: 'museNative', contractVersion: 1 },
+              },
+              linkGeneration: 'link-generation-1',
+              status: 'waiting',
+              observedAtMs: now,
+              expiresAtMs: now + 60 * 60 * 1000,
+            },
+          },
+        } as never),
+      },
+    });
+
+    const screen = await renderScreen(
+      <SessionPeekDetailsView sessionId="worker-1" serverId="home-one" active />,
+    );
+
+    const header = screen.findByTestId('session-peek-header');
+    expect(header).not.toBeNull();
+    expect(screen.findByTestId('session-header-external-agent-status-waiting')).not.toBeNull();
+  });
 });

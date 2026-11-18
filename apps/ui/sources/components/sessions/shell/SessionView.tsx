@@ -61,7 +61,7 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { sync } from "@/sync/sync";
 import { t, type TranslationKey } from "@/text";
 import { useDeviceType, useIsLandscape, useIsTablet } from "@/utils/platform/responsive";
-import { getSessionName, getSessionStatus } from "@/utils/sessions/sessionUtils";
+import { getSessionName } from "@/utils/sessions/sessionUtils";
 import { deriveTranscriptInteractionFromSession } from "@/utils/sessions/deriveTranscriptInteraction";
 import { AppSessionTranscriptSourceProvider } from "@/components/sessions/transcript/source/appSessionTranscriptSource";
 import { SessionDiscussionSourceLinksProvider } from "@/components/discussions/SessionDiscussionSourceLinks";
@@ -181,9 +181,9 @@ import { resolveWorkspaceSyncSetAttention } from "@/sync/domains/sessionHandoff/
 import { createWorkspaceSyncConflictDetailsTab } from "@/components/workspaces/sync/workspaceSyncConflictDetailsTab";
 import { SessionAgentCatalogIdentityIcon } from "@/components/sessions/presentation/SessionAgentCatalogIdentityIcon";
 import { BotMarkerFeedback } from "@/components/sessions/bots/botMarkerFeedback";
-import { readExternalAgentObservationPresentationInput, resolveExternalSessionRuntimePresentation } from "../presentation/externalSessionRuntimePresentation";
+import type { resolveExternalSessionRuntimePresentation } from "../presentation/externalSessionRuntimePresentation";
+import { useSessionExternalRuntimePresentation } from "../presentation/useSessionExternalRuntimePresentation";
 import { resolveExternalSessionIdentityPresentation } from "../presentation/externalSessionIdentityPresentation";
-import { useSessionListRuntimeDeadlineNowMs } from "@/hooks/session/sessionListRuntimeClock";
 import { usePluginUiClientExecutableRegistrationRevision } from "@/components/plugins/reactNative/clientExecutableContributions";
 import { useScopedPluginUiProjection } from "@/components/plugins/projection/useScopedPluginUiProjection";
 import { PluginSurfacePaneLaunchScope, stagePluginSurfacePaneLaunch, type PluginSurfaceDestinationOpenResolution, type PluginSurfaceDestinationNavigationBinding, usePluginSurfacePaneLaunchScope } from "@/components/plugins/surfaces/pluginSurfaceDestinationNavigation";
@@ -1082,21 +1082,6 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
     </PluginSurfacePaneLaunchScope>
 ));
 
-/** The hosted external agent's runtime presentation at `nowMs`. */
-function resolveExternalSessionRuntimePresentationAt(session: Session, nowMs: number) {
-    const hostedStatus = getSessionStatus(session, nowMs, {});
-    return resolveExternalSessionRuntimePresentation({
-        controlConnectivity: hostedStatus.isConnected ? 'connected' : 'offline',
-        detachedActivity: hostedStatus.state === 'background_active'
-            ? 'active'
-            : hostedStatus.isConnected
-                ? 'idle'
-                : 'unknown',
-        externalAgent: readExternalAgentObservationPresentationInput(readSessionOwnerMetadataView(session)),
-        nowMs,
-    });
-}
-
 const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocusedSurfaceContentProps) => {
     const sessionId = props.sessionId;
     // Presence starts and stops this surface's work by subscription; its drawn readers are leaves. A tab
@@ -1309,19 +1294,8 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         enabled: sessionId.length > 0 && session != null,
         active: surfaceFocusedSignal,
     });
-    // The external agent's freshness ages on the shared clock only while this surface is visible, and
-    // only at its own next expiry: the gate is a subscription, so a hide or show renders nothing.
-    const externalSessionLinkPresent = externalSessionRuntime.externalSessionLink !== null;
-    const readExternalAgentPresentationExpiry = React.useCallback((nowMs: number) => {
-        if (!stableSessionForHeader || !externalSessionLinkPresent) return null;
-        return resolveExternalSessionRuntimePresentationAt(stableSessionForHeader, nowMs).externalAgent.nextExpiryAtMs ?? null;
-    }, [externalSessionLinkPresent, stableSessionForHeader]);
-    const externalAgentPresentationNowMs = useSessionListRuntimeDeadlineNowMs(readExternalAgentPresentationExpiry,
-        externalSessionLinkPresent ? surfaceVisibleSignal : false);
-    const externalSessionRuntimePresentation = React.useMemo(() => {
-        if (!stableSessionForHeader || !externalSessionRuntime.externalSessionLink) return null;
-        return resolveExternalSessionRuntimePresentationAt(stableSessionForHeader, externalAgentPresentationNowMs);
-    }, [externalAgentPresentationNowMs, externalSessionRuntime.externalSessionLink, stableSessionForHeader]);
+    const externalSessionRuntimePresentation = useSessionExternalRuntimePresentation(
+        stableSessionForHeader ?? null, externalSessionRuntime.externalSessionLink !== null, surfaceVisibleSignal);
     const externalSessionIdentityPresentation = React.useMemo(
         () => resolveExternalSessionIdentityPresentation(ownerMetadata, currentSessionMachineId),
         [currentSessionMachineId, ownerMetadata],

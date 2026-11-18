@@ -4,20 +4,23 @@ import { describe, expect, it } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 
-import { resolveSessionViewHeaderProps } from './resolveSessionViewHeaderProps';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
-function headerTestIds(
+import { resolveSessionViewHeaderProps } from './resolveSessionViewHeaderProps';
+import { SessionHeaderExternalAgentStatus } from './SessionHeaderExternalAgentStatus';
+
+/** The external-Agent status the header's actions row renders, by its host testIDs. */
+async function headerTestIds(
   props: ReturnType<typeof resolveSessionViewHeaderProps>,
-): string[] {
-  const children = React.Children.toArray(
+): Promise<string[]> {
+  const pills = React.Children.toArray(
     (props.rightElement as React.ReactElement<{ children?: React.ReactNode }>)
       .props.children,
-  );
-  return children
-    .filter((child): child is React.ReactElement<{ testID?: string }> =>
-      React.isValidElement(child),
-    )
-    .map((child) => child.props.testID ?? '');
+  ).filter((child) => React.isValidElement(child) && child.type === SessionHeaderExternalAgentStatus);
+  const screen = await renderScreen(<>{pills}</>);
+  return screen
+    .findAll((node) => typeof node.type === 'string' && typeof node.props.testID === 'string')
+    .map((node) => node.props.testID as string);
 }
 
 function runtime(
@@ -67,7 +70,7 @@ function input(externalSessionRuntime: ExternalSessionRuntimePresentation) {
 }
 
 describe('resolveSessionViewHeaderProps external Agent status', () => {
-  it('shows an observed external Agent state and says nothing when there is no current evidence', () => {
+  it('shows an observed external Agent state and says nothing when there is no current evidence', async () => {
     const working = resolveSessionViewHeaderProps(
       input(
         runtime({
@@ -79,7 +82,7 @@ describe('resolveSessionViewHeaderProps external Agent status', () => {
         }),
       ),
     );
-    expect(headerTestIds(working)).toContain(
+    expect(await headerTestIds(working)).toContain(
       'session-header-external-agent-status-working',
     );
 
@@ -95,7 +98,7 @@ describe('resolveSessionViewHeaderProps external Agent status', () => {
       ),
     );
     expect(
-      headerTestIds(unknown).some((id) =>
+      (await headerTestIds(unknown)).some((id) =>
         id.startsWith('session-header-external-agent-status'),
       ),
     ).toBe(false);

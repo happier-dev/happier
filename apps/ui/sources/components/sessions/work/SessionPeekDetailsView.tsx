@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -19,6 +19,10 @@ import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { describeSessionLineage, useSessionLineage } from './sessionLineage';
 import { SessionFollowHeaderChip } from '@/components/sessions/follow/SessionFollowHeaderChip';
 import { useAccountSessionFollowEditorHost } from '@/components/sessions/follow/useAccountSessionFollowEditorHost';
+import { useSessionExternalRuntimePresentation } from '@/components/sessions/presentation/useSessionExternalRuntimePresentation';
+import { SessionHeaderExternalAgentStatus } from '@/components/sessions/shell/view/SessionHeaderExternalAgentStatus';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 /**
  * The peek of a Session the lead leads (lab `session-D`): the Session itself — its header, real
@@ -100,6 +104,14 @@ const SessionPeekHeader = React.memo(function SessionPeekHeader(
   const followAnchorRef = React.useRef<View>(null);
   const follow = useAccountSessionFollowEditorHost({ serverId: props.serverId, sessionId: props.sessionId, anchorRef: followAnchorRef });
   const archived = session?.archivedAt != null;
+  // The embedded Session draws no header of its own, so the external Agent's live state (needs input, working)
+  // stands here, through the same owner and pill as the Session page header.
+  const externalAgent = useSessionExternalRuntimePresentation(
+    session ?? null,
+    readExternalSessionLink(session ? readSessionOwnerMetadataView(session) : null) !== null,
+    true,
+  )?.externalAgent;
+  const { theme } = useUnistyles();
   const meta = React.useMemo(
     () =>
       lineageDescription
@@ -134,6 +146,11 @@ const SessionPeekHeader = React.memo(function SessionPeekHeader(
       meta={meta}
       actions={(
         <>
+          <SessionHeaderExternalAgentStatus
+            sessionId={props.sessionId}
+            externalAgent={externalAgent}
+            color={theme.colors.text.secondary}
+          />
           {follow.enabled && props.serverId ? (
             <SessionFollowHeaderChip
               sessionId={props.sessionId}
