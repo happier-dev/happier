@@ -59,7 +59,7 @@ export function useProjectsTreeEnvironments(
         // The row's end (lab rdProj): its state through the one Environment state mark, else its one quiet fact.
         fact: deploymentEnvironmentRowFact(part, itemById.get(part.environmentId)),
         state: part.state,
-        platform: part.platform,
+        platform: part.platformMark,
         // A collapsed Project's rollup: a state that speaks needs you; a deploy at work is working.
         attention: part.state ? (part.state.tone === null ? 'working' : 'needs-you') : null,
         // Opened, a deployed Environment reads what runs on its Machine; one never deployed has nothing beneath.

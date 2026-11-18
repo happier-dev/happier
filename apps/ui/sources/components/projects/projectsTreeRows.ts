@@ -6,7 +6,7 @@ import { readSourceTeamId } from './sources/projectSourceGroups';
 import { shallow } from 'zustand/vanilla/shallow';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
-import type { DeploymentEnvironmentState } from './deployments/rows/DeploymentEnvironmentRow';
+import type { DeploymentEnvironmentState, DeploymentPlatformIdentity } from './deployments/rows/DeploymentEnvironmentRow';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref } from './deployments/deploymentNavigation';
 import { isSameDeploymentName } from './deployments/DeploymentEnvironmentCollection';
 
@@ -90,8 +90,8 @@ export type ProjectsTreeEnvironment = ProjectsTreeEnvironmentAddress & Readonly<
     attention: ProjectsTreeAttention;
     /** Its state while it needs the person or deploys (the one Environment state mark draws it); healthy has none. */
     state: DeploymentEnvironmentState | null;
-    /** On a platform target (Vercel, Cloudflare): its mark is a cloud. */
-    platform: boolean;
+    /** On a platform target (Vercel, Cloudflare): the platform whose brand is its mark. */
+    platform: DeploymentPlatformIdentity | null;
     /** The Machine it runs on: an Environment on a Machine discloses what runs there; without one it has nothing beneath. */
     machineId?: string | null;
 }>;
@@ -152,7 +152,7 @@ export type ProjectsTreeRow = Readonly<{
     fact?: string | null;
     /** An Environment row's state: the one Environment state mark at its end, in place of the fact. */
     state?: DeploymentEnvironmentState | null;
-    platform?: boolean;
+    platform?: DeploymentPlatformIdentity | null;
     /** A service or database under an Environment: where it opens. Read through `projectsTreeRowChild`. */
     child?: ProjectsTreeChildTarget;
 }>;

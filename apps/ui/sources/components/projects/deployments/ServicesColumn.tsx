@@ -386,7 +386,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           testID={testID}
           // A folded Project keeps its Project mark, so every top-level row starts on one edge (lab `sideSvc`).
           row={{ kind: title ? 'project' : 'environment', title: title ?? name.title, titleQualifier: title ? null : name.titleQualifier,
-            platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
+            platform: row.platformMark, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
           href={href}
           treeItem={treeItemOf(`environment:${row.environmentId}`)}
           child={child}
@@ -463,7 +463,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
               key={testID}
               testID={testID}
               row={{ kind: 'environment', title: name.title, titleQualifier: name.titleQualifier,
-                platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
+                platform: row.platformMark, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
               href={href}
               treeItem={treeItemOf(`pinned:${row.environmentId}`)}
               selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}

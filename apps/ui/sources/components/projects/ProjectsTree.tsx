@@ -351,7 +351,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         <DeploymentTreeRow
                             key={row.key}
                             testID={`${props.testID}-row-${row.key}`}
-                            row={{ kind: row.kind, title: row.title, titleQualifier: row.titleQualifier ?? null, platform: row.platform === true,
+                            row={{ kind: row.kind, title: row.title, titleQualifier: row.titleQualifier ?? null, platform: row.platform ?? null,
                                 state: row.state ?? null, fact: row.kind === 'environment' ? row.fact ?? null : row.subtitle ?? null }}
                             href={row.child?.kind === 'href' ? row.child.href : null}
                             disclosure={row.expandable ? { expanded: row.expanded, onToggle: () => props.onToggle(row.key) } : null}

@@ -234,7 +234,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('lists a Project\'s Environments under it, opening each Environment and rolling its trouble up (pfc-redesign dProject tree)', () => {
         const environment = (environmentId: string, title: string, extra: Partial<ProjectsTreeEnvironment> = {}): ProjectsTreeEnvironment => ({
-            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, ...extra,
+            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: null, attention: null, ...extra,
         });
         const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]),
             environments: [environment('prod', 'Production'), environment('stg', 'Staging', { state: { tone: 'danger', text: 'Failed' }, attention: 'needs-you' })] };
@@ -273,7 +273,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('says a folded Project\'s Environments at its end while none speaks (lab rdReach tree: "2 environments", "Production")', () => {
         const environment = (environmentId: string, title: string, extra: Partial<ProjectsTreeEnvironment> = {}): ProjectsTreeEnvironment => ({
-            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, ...extra,
+            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: null, attention: null, ...extra,
         });
         const describe = { checkoutCount: String, machineCount: String, offlineCount: String };
         const facts = (rows: ReturnType<typeof buildProjectsTreeRows>) => rows.map(row => row.fact ?? null);
@@ -305,7 +305,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('discloses an Environment on a Machine into what runs there and its databases, folded until opened (lab rdProj tree)', () => {
         const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod', title: 'Production',
-            titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, machineId: 'fsn1' };
+            titleQualifier: null, fact: 'v1.42', state: null, platform: null, attention: null, machineId: 'fsn1' };
         const staging: ProjectsTreeEnvironment = { ...production, environmentId: 'stg', title: 'Staging', machineId: null };
         const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]), environments: [production, staging] };
         const environmentKey = 'billing-api/environment/prod';
@@ -335,7 +335,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('lists a Project that only deploys (no checkout on this Home) with its Environments, each opening its own page (lab rdProj: plausible, status)', () => {
         const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'src-q', environmentId: 'e1', title: 'Production',
-            titleQualifier: null, fact: null, state: { tone: 'danger', text: 'Failed' }, platform: false, attention: 'needs-you', machineId: 'm1' };
+            titleQualifier: null, fact: null, state: { tone: 'danger', text: 'Failed' }, platform: null, attention: 'needs-you', machineId: 'm1' };
         const demo: ProjectsTreeProject = { key: 'deployments:src-q', name: 'Billing demo', checkouts: [], environments: [production],
             deploymentSource: { serverId: 'home', projectSourceId: 'src-q' } };
         const collapsed = buildProjectsTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set() });

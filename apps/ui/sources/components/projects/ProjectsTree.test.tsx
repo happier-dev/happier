@@ -180,7 +180,7 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
 
     it('draws an Environment row on one line with its end: the one Environment state mark in trouble, else the quiet fact (lab rdProj)', async () => {
         const env = (environmentId: string, title: string, fact: string, state: Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null) => ({
-            serverId: 'home', projectSourceId: 'src', environmentId, title, titleQualifier: null, fact, state, platform: false,
+            serverId: 'home', projectSourceId: 'src', environmentId, title, titleQualifier: null, fact, state, platform: null,
             attention: state ? 'needs-you' as const : null });
         const billing = buildProjectsTreeRows({ projects: [{ key: 'billing', name: 'billing', checkouts: [
             { refId: 'b1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/billing', attention: null },
@@ -201,7 +201,7 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
     it('says a folded Project\'s Environment trouble with that Environment\'s state mark, not a hand-drawn dot (LIVE-FID-1115)', async () => {
         const env = (environmentId: string, state: Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null) => ({
             serverId: 'home', projectSourceId: 'src', environmentId, title: environmentId, titleQualifier: null, fact: 'v1', state,
-            platform: false, attention: state ? (state.tone ? 'needs-you' as const : 'working' as const) : null });
+            platform: null, attention: state ? (state.tone ? 'needs-you' as const : 'working' as const) : null });
         const folded = (environments: ReturnType<typeof env>[], checkoutAttention: 'needs-you' | null = null) => buildProjectsTreeRows({
             projects: [{ key: 'billing', name: 'billing', checkouts: [
                 { refId: 'b1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/billing', attention: checkoutAttention },

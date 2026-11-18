@@ -2,6 +2,7 @@ import * as React from 'react';
 import { HAPPIER_PAGE_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useBundledPluginBrandPresentation, useInstalledPluginBrandPresentation, type InstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
@@ -17,7 +18,8 @@ type PluginMarkProps = Readonly<{
     pluginId?: string | null;
     /** The Agent this plugin contributes, when it has a known mark (projection `iconAgentId`). */
     iconAgentId?: string | null;
-    size?: 'row' | 'page';
+    /** `glyph`: drawn at a navigation or tree row's glyph size, bare beside the row's other glyphs. */
+    size?: 'row' | 'page' | 'glyph';
     dimmed?: boolean;
     testID?: string;
     brand?: InstalledPluginBrandPresentation | null;
@@ -79,8 +81,10 @@ function PluginIdentityMark(props: PluginMarkProps) {
     const page = props.size === 'page';
     const mark = <HappierBrandMark
         brand={props.brand ?? bundledBrand ?? { displayName: props.title }}
-        pixelSize={page ? HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx : ROW_MARK_PX} externallyLabelled testID={props.testID}
+        pixelSize={page ? HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx : props.size === 'glyph' ? ICON_SIZE.sm : ROW_MARK_PX}
+        externallyLabelled testID={props.testID}
     />;
+    if (props.size === 'glyph') return mark;
     if (page) {
         return (
             <PageHeaderMarkSlot testID={props.testID} size="page">

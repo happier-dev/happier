@@ -61,7 +61,7 @@ describe('the one Environment row (UI refinements 2026-11-15 08:57Z)', () => {
     ).toEqual([]);
   });
 
-  it('ends with its one quiet fact when healthy, pulses while a deploy works, and marks a platform Environment as a cloud', async () => {
+  it('ends with its one quiet fact when healthy, pulses while a deploy works, and marks a platform Environment with its platform brand', async () => {
     const healthy = await renderScreen(
       <DeploymentTreeRow
         testID="env"
@@ -71,16 +71,16 @@ describe('the one Environment row (UI refinements 2026-11-15 08:57Z)', () => {
           kind: 'environment',
           title: 'Production',
           titleQualifier: null,
-          platform: true,
+          platform: { pluginId: 'happier.vercel', title: 'Vercel' },
           state: null,
           fact: 'v1.42',
         }}
       />,
     );
     expect(healthy.getTextContent()).toContain('v1.42');
-    expect(
-      healthy.root.findAll((node) => node.props.name === 'cloud').length,
-    ).toBeGreaterThan(0);
+    // The platform's own mark (D9), never a generic cloud standing in for every platform.
+    expect(healthy.root.findAll((node) => node.props.name === 'cloud')).toHaveLength(0);
+    expect(healthy.root.findAll((node) => node.props.pluginId === 'happier.vercel' && node.props.title === 'Vercel').length).toBeGreaterThan(0);
     const working = await renderScreen(
       <DeploymentTreeRow
         testID="env2"

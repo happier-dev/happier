@@ -3,7 +3,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import type { IconName } from '@/components/ui/icons/Icon';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
   CollectionNavigationRow,
   type CollectionNavigationRowProps,
@@ -58,9 +58,9 @@ export const DeploymentEnvironmentStateMark = React.memo(
   },
 );
 
-/** An Environment's mark: a platform (Vercel, Cloudflare) is a cloud; a Machine target is its drives. */
-export function deploymentEnvironmentGlyph(platform: boolean): IconName {
-  return platform ? 'cloud' : 'hard-drives';
+/** A Machine-target Environment's glyph (its drives); a platform Environment carries its platform's brand instead. */
+export function deploymentEnvironmentGlyph(): IconName {
+  return 'hard-drives';
 }
 
 /** The platform a platform Environment runs on: the plugin that declares it and its name ("Vercel"). */
@@ -72,15 +72,18 @@ export type DeploymentPlatformIdentity = Readonly<{ pluginId: string; title: str
  * the Environment header.
  */
 export const DeploymentEnvironmentMark = React.memo(function DeploymentEnvironmentMark(
-  props: Readonly<{ platform: DeploymentPlatformIdentity | null; size?: 'row' | 'page' }>,
+  props: Readonly<{ platform: DeploymentPlatformIdentity | null; size?: 'row' | 'page' | 'tree' }>,
 ) {
   const { theme } = useUnistyles();
   const size = props.size ?? 'row';
-  if (props.platform) return <PluginMark title={props.platform.title} pluginId={props.platform.pluginId} size={size} />;
-  if (size === 'page') return <PageHeaderMarkIcon name={deploymentEnvironmentGlyph(false)} />;
+  if (props.platform) {
+    return <PluginMark title={props.platform.title} pluginId={props.platform.pluginId} size={size === 'tree' ? 'glyph' : size} />;
+  }
+  if (size === 'page') return <PageHeaderMarkIcon name={deploymentEnvironmentGlyph()} />;
+  if (size === 'tree') return <Icon name={deploymentEnvironmentGlyph()} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
   return (
     <HappierCollectionListMark>
-      <Icon name={deploymentEnvironmentGlyph(false)} size={18} color={theme.colors.text.secondary} />
+      <Icon name={deploymentEnvironmentGlyph()} size={18} color={theme.colors.text.secondary} />
     </HappierCollectionListMark>
   );
 });
@@ -98,15 +101,12 @@ export type DeploymentTreeRowKind =
   | 'check';
 
 function treeRowGlyph(
-  kind: DeploymentTreeRowKind,
-  platform: boolean,
+  kind: Exclude<DeploymentTreeRowKind, 'environment'>,
 ): IconName {
   // The marks Machine → Services and Services → Databases already give services and databases.
   switch (kind) {
     case 'project':
       return 'folder';
-    case 'environment':
-      return deploymentEnvironmentGlyph(platform);
     case 'service':
       return 'cube';
     case 'database':
@@ -144,8 +144,8 @@ export type DeploymentTreeRowModel = Readonly<{
   kind: DeploymentTreeRowKind;
   title: string;
   titleQualifier?: string | null;
-  /** An Environment on a platform target (its mark is a cloud). */
-  platform?: boolean;
+  /** An Environment on a platform target: its mark is the platform's brand (lab d1 rail). */
+  platform?: DeploymentPlatformIdentity | null;
   state?: DeploymentRowState | null;
   fact?: string | null;
 }>;
@@ -186,11 +186,11 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
       title={row.title}
       titleQualifier={row.titleQualifier ?? null}
       icon={
-        <Icon
-          name={treeRowGlyph(row.kind, row.platform === true)}
-          size={16}
-          color={theme.colors.text.secondary}
-        />
+        row.kind === 'environment' ? (
+          <DeploymentEnvironmentMark platform={row.platform ?? null} size="tree" />
+        ) : (
+          <Icon name={treeRowGlyph(row.kind)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+        )
       }
       // While it needs the person (a toned state, not a working deploy) the row keeps the shared needs-you treatment.
       needsYou={row.state?.tone ? NEEDS_YOU_TONES.has(row.state.tone) : false}
