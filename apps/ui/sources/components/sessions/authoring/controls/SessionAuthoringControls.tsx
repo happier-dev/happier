@@ -574,7 +574,7 @@ function useResolvedSessionAuthoringControls(
         agentId: agentId ?? DEFAULT_AGENT_ID,
         metadata: metadata ?? null,
         permissionMode: isPermissionMode(values.permissionMode) ? values.permissionMode : null,
-        modelMode: values.modelSelection?.ref.modelId ?? null,
+        modelMode: readAuthoredSessionModelRef(values)?.modelId ?? null,
         // Authoring a definition can always change these; whether the *target*
         // supports a field is answered by that field's own capability facts.
         canChangeModel: true,

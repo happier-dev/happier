@@ -25,6 +25,7 @@ import type { SessionAuthoringControlFacts } from '@/components/sessions/authori
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 
 import {
     resolveEffectiveWorkflowStepExecution,
@@ -259,15 +260,16 @@ export function WorkflowStepEditor(props: Readonly<{
     const engineSummary = useSessionAuthoringEngineSummary({ values: effective, engine: participant ?? engineChoice,
         workflowRoles: props.draft.roles, facts: props.authoringFacts });
     const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
+    const modelMode = readAuthoredSessionModelRef(effective)?.modelId;
     // The composer is the prompt alone: who runs the step is the card header's engine chip (round 1116b).
     const agentInputContext = React.useMemo(() => ({
         agentType: agentId ?? undefined,
-        modelMode: effective.modelSelection?.ref.modelId,
+        modelMode,
         permissionMode,
         showStatusPermissionMode: false,
         // A reader's frozen engine facts (the Run's admitted Agent and model), never the authoring choice.
         ...(!editable ? props.slots?.enginePresentation : undefined),
-    }), [agentId, effective.modelSelection, permissionMode, editable, props.slots?.enginePresentation]);
+    }), [agentId, modelMode, permissionMode, editable, props.slots?.enginePresentation]);
     const readerEngine = !editable ? props.slots?.enginePresentation?.engineLabel : undefined;
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);

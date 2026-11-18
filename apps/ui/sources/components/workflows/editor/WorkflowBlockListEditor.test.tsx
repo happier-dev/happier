@@ -742,6 +742,40 @@ it('reads admitted engines from their frozen source in Run Steps, including coll
     expect(childComposer().props.engineLabel).toBeUndefined();
 });
 
+it('uses a binding-only Team model for the editable step prompt', async () => {
+    const harness = await loadHarness();
+    const modelId = 'team-editor-model';
+    const binding = {
+        v: 1, slot: { kind: 'provider_model' }, teamId: 'team-a',
+        resourceId: 'resource-a', expectedResourceRevision: 1, deliveryMode: 'brokered',
+        providerModelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId },
+    } as const;
+    const draft = buildDraft(harness, [{
+        kind: 'step', id: 'analyze', document: { text: 'Analyze', references: [], attachments: [] },
+        input: [], result: { kind: 'text' },
+        execution: {
+            modelSelection: null,
+            teamCredentialBindings: [binding],
+        },
+    }]);
+    const screen = await renderList(harness, { draft, editingBlockId: 'analyze' });
+
+    expect(screen.getTextContent()).toContain(modelId);
+    expect(findComposer(screen, harness, 'analyze').props.modelMode).toBe(modelId);
+
+    const nextModelId = 'another-team-editor-model';
+    const next = harness.setWorkflowStepExecutionField(draft, 'analyze', 'teamCredentialBindings', [{
+        ...binding, providerModelSelection: { ...binding.providerModelSelection, modelId: nextModelId },
+    }]);
+    const editorProps: React.ComponentProps<typeof harness.WorkflowBlockListEditor> =
+        screen.findByType(harness.WorkflowBlockListEditor).props;
+    await screen.update(<harness.WorkflowBlockListEditor {...editorProps} draft={next} blocks={next.blocks}
+        validation={harness.validateWorkflowEditorDraft(next)} />);
+
+    expect(screen.getTextContent()).toContain(nextModelId);
+    expect(findComposer(screen, harness, 'analyze').props.modelMode).toBe(nextModelId);
+});
+
 it('shows the Team model selected by Run again in Run Steps history', async () => {
     const harness = await loadHarness();
     const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
