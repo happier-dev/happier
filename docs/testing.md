@@ -658,7 +658,10 @@ simulation as AUTO placement's expected start: admitted slots release at their o
 p99 (or now when unknown or overrun), so the head still starts on time. A waiter
 without duration history never backfills. Borrowed memory returns to the pledge
 on release. A backfilled waiter's client logs `[preferred-execution] admitted as a
-backfill (…, borrowedKiB=…, headStartInMs=…)`. No new timer or tunable is used. The head is offered capacity first
+backfill (…, borrowedKiB=…, headStartInMs=…)`, and the broker status counts them
+(`backfillCount`, since the broker started). The pledging waiter is told what it
+holds (`held`) and resends it when it re-registers with a successor broker, so a
+succession does not restart the head's pledge at zero. No new timer or tunable is used. The head is offered capacity first
 as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
 same pledge from unreserved memory and CPU. The sample exposes head age,

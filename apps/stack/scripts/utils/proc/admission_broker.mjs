@@ -210,6 +210,8 @@ export function createAdmissionBroker({ root,
   const pendingResourceChanges = new Set();
   let resourceCatchUp;
   let rootWatcher;
+  // Backfills admitted since this broker started (published in status).
+  let backfillCount = 0;
   let sample = { availableMemoryKiB: 0, totalMemoryKiB: 0, reservedMemoryKiB: 0,
     residentMemoryKiB: 0, unreservedMemoryKiB: 0, achievableMemoryKiB: 0 };
   let totalCpuCores;
@@ -452,7 +454,7 @@ export function createAdmissionBroker({ root,
     }
     // Publish the same head reservation used by drain and read-only checks.
     // Publication-blocked demand has no memory reservation.
-    return { ...sample, ...budget, overruns, nextOverrunAt, durationHistoryUnavailableCount,
+    return { ...sample, ...budget, overruns, nextOverrunAt, durationHistoryUnavailableCount, backfillCount,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
         ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB,
         reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS, headPriority: head.headPriority,
@@ -804,6 +806,7 @@ export function createAdmissionBroker({ root,
         && accountedCpuCores(item) <= availableCpuCores ? item.floorKiB - availableMemoryKiB : 0;
       // Announced to the waiter (its client logs it), so a backfill is visible in the run's log.
       const backfill = borrowKiB > 0 ? { borrowedKiB: borrowKiB, headStartInMs: Math.max(0, headStartAt - Date.now()) } : undefined;
+      if (backfill) backfillCount += 1;
       if (borrowKiB > 0) {
         availableMemoryKiB += borrowKiB;
         lendableKiB -= borrowKiB;
@@ -855,6 +858,16 @@ export function createAdmissionBroker({ root,
         ...(backfill ? { backfill } : {}) });
     }
     reserveHead(head);
+    // Tell the pledging waiter what it holds, so it can resend it to a successor.
+    if (head?.headPledge && !head.socket.destroyed) {
+      const held = { memoryKiB: Math.min(head.headPledge.memoryKiB, head.floorOptions?.at(-1).floorKiB ?? head.floorKiB),
+        cpuCores: Math.min(head.headPledge.cpuCores, minimumCpuCores(head)) };
+      // Only a change from what it last heard (nothing held at first) is sent.
+      if (held.memoryKiB !== (head.sentHold?.memoryKiB ?? 0) || held.cpuCores !== (head.sentHold?.cpuCores ?? 0)) {
+        head.sentHold = held;
+        send(head.socket, { kind: 'held', ...held });
+      }
+    }
     refreshWatchers();
   }
   async function connectSlot(slot) {
@@ -965,6 +978,8 @@ export function createAdmissionBroker({ root,
         || (request.component !== undefined && typeof request.component !== 'string')
         || (request.entry !== undefined && typeof request.entry !== 'string')
         || (request.preparesClass !== undefined && typeof request.preparesClass !== 'string')
+        || (request.heldKiB !== undefined && (!Number.isSafeInteger(request.heldKiB) || request.heldKiB < 0))
+        || (request.heldCpuCores !== undefined && (!Number.isSafeInteger(request.heldCpuCores) || request.heldCpuCores < 0))
         || (request.projects !== undefined && (!Array.isArray(request.projects)
           || request.projects.some(project => typeof project !== 'string')))
         || typeof request.repoDir !== 'string' || (request.cacheBaseDir !== undefined && typeof request.cacheBaseDir !== 'string')
@@ -981,6 +996,13 @@ export function createAdmissionBroker({ root,
       item.floorKiB = recordedIdentityFloorKiB(item);
       item.floorOptions = recordedIdentityFloorOptions(item);
       if (item.p99DurationMs === undefined) Object.assign(item, recordedIdentityDuration(item));
+      // A waiter re-registering after a succession resends the releases it was holding
+      // (`held`), so the successor does not admit work ahead of it. Capped by its own
+      // minimum floor and cores; it still applies only while the waiter is the head.
+      if (item.heldKiB > 0 || item.heldCpuCores > 0) {
+        item.headPledge = { item, memoryKiB: Math.min(item.heldKiB ?? 0, item.floorOptions?.at(-1).floorKiB ?? item.floorKiB),
+          cpuCores: Math.min(item.heldCpuCores ?? 0, minimumCpuCores(item)) };
+      }
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.

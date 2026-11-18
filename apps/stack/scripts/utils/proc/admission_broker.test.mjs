@@ -115,6 +115,36 @@ test('real clients waiting across a broker succession re-register with their arr
   assert.deepEqual(order, ['older', 'younger']);
 });
 
+test('an overdue head keeps its held memory across a broker succession (nl1/controller 2026-11-18)', linux, async t => {
+  // The successor restarted the head's 18 GiB (nl1) and 8 GiB (controller) holds at 0 and
+  // admitted work ahead of it. The waiting client re-registers with the hold it was told.
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root, broker, sampleResources } = await fixture(t);
+  await (await acquire(root, 60, t)).admit();
+  const pledger = await (await acquire(root, 30, t)).admit();
+  const stop = new AbortController();
+  const head = runAdmittedTask({ root, className: 'validation', floorKiB: 50, repoDir: root, cacheBaseDir: root, env: {},
+    signal: stop.signal }, async () => 0);
+  // The head is still queued when the test ends: withdraw it before the brokers and root go.
+  t.after(async () => { stop.abort(); await head.catch(() => {}); });
+  while (broker.status().waitingCount !== 1) await new Promise(resolve => setImmediate(resolve));
+  now += headReservationDelayMs;
+  await pledger.release();
+  while ((await requestAdmissionSample(root)).head?.reservationKiB !== 30) await new Promise(resolve => setImmediate(resolve));
+  // Let the held notice reach the waiting client before the broker goes away.
+  await new Promise(resolve => setTimeout(resolve, 50));
+  await broker.close();
+  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
+    readCpuCapacity: () => 128 });
+  t.after(() => successor.close());
+  await successor.start();
+  while (successor.status().waitingCount !== 1) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 30, 'the successor keeps the head\'s hold');
+  const small = await acquire(root, 20, t, { noWait: true });
+  assert.equal((await small.next()).reason, 'HSTACK_MEMORY_BUSY', 'nothing is admitted ahead of the head with its hold');
+});
+
 test('current admission clients retain duration metadata across broker succession', linux, async t => {
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
@@ -394,8 +424,8 @@ async function request(root, value) {
   socket.write(JSON.stringify(value) + '\n');
   return { socket, next: async () => {
     let response;
-    // Queue and capacity-wait notices are diagnostic; these broker assertions consume decisions.
-    do { response = JSON.parse((await iterator.next()).value); } while (response.kind === 'queued' || response.kind === 'capacity-wait');
+    // Queue, capacity-wait and held notices are diagnostic; these broker assertions consume decisions.
+    do { response = JSON.parse((await iterator.next()).value); } while (['queued', 'capacity-wait', 'held'].includes(response.kind));
     return response;
   } };
 }
@@ -1646,7 +1676,9 @@ test('windows2-linux 2026-11-18: a preparation holder sized by its own recorded 
     assert.ok(backfill.reserved.backfill?.borrowedKiB > 0, 'the backfill is announced to its waiter');
     backfills.push(backfill);
   }
-  assert.equal((await requestAdmissionSample(root)).activeCount, 4, '1-7 GiB waiters run beside the 10.5 GiB holder');
+  const during = await requestAdmissionSample(root);
+  assert.equal(during.activeCount, 4, '1-7 GiB waiters run beside the 10.5 GiB holder');
+  assert.equal(during.backfillCount, 3, 'the broker counts its backfills in its status');
   now += 404_000;
   for (const backfill of backfills) await backfill.release();
   // The pledge gets back what it lent plus the free unit the first backfill used.

@@ -245,6 +245,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             console.error(`[preferred-execution] waiting for admission (class=${className}, floorKiB=${response.floorKiB ?? floorKiB}${position}, waiting=${response.waitingCount})`);
           }
           if (response.kind === 'capacity-wait') priorityScope?.suspend();
+          // The releases this waiter holds as the overdue head; resent if the broker is succeeded.
+          if (response.kind === 'held') Object.assign(request, { heldKiB: response.memoryKiB, heldCpuCores: response.cpuCores });
           if (response.kind === 'reserved') {
             if (response.backfill) {
               console.error(`[preferred-execution] admitted as a backfill (class=${className}, floorKiB=${response.floorKiB}, borrowedKiB=${response.backfill.borrowedKiB}, headStartInMs=${response.backfill.headStartInMs})`);
