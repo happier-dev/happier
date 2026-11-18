@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { SURFACE_CONTEXT_THEME_FIXTURE } from '@happier-dev/plugin-sdk/testing';
 
+import type { ComponentProps, ComponentType } from 'react';
+
+import { HappierUiPlatformProvider } from '../../environment/context.js';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
-import { HappierSkeletonRows } from './Skeleton.js';
+import { HappierSkeletonBlock, HappierSkeletonRows } from './Skeleton.js';
 
 const theme = SURFACE_CONTEXT_THEME_FIXTURE;
 
@@ -26,6 +29,28 @@ function barsOf(row: HTMLElement): HTMLElement[] {
     (node) => node.children.length === 0 && node.style.backgroundColor !== '',
   );
 }
+
+/** The host root's private presentation projection (the app passes whether anyone can see the window). */
+const HostPlatformProvider = HappierUiPlatformProvider as ComponentType<
+  ComponentProps<typeof HappierUiPlatformProvider> & Readonly<{ presentationActive: boolean }>
+>;
+
+describe('HappierSkeletonBlock motion', () => {
+  it('pulses only while the host presents it: a hidden window holds the bar still', () => {
+    const render = (presentationActive: boolean) => (
+      <HostPlatformProvider platform={{ platform: 'web', colorScheme: 'light' }} presentationActive={presentationActive}>
+        <HappierSkeletonBlock testID="bar" color="#102030" width={40} height={8} />
+      </HostPlatformProvider>
+    );
+    const bar = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-testid="bar"]')!;
+    const visible = mountThroughReactNativeWeb(render(true));
+    expect(bar(visible.container).style.animationName).toBe('happierSkeletonPulse');
+    visible.unmount();
+    const hidden = mountThroughReactNativeWeb(render(false));
+    expect(bar(hidden.container).style.animationName).toBe('');
+    hidden.unmount();
+  });
+});
 
 describe('HappierSkeletonRows (the one loading-rows owner)', () => {
   it('stands each row in the host row geometry: its height, its hairline, its glyph column and ink', () => {

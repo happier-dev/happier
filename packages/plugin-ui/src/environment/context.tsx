@@ -126,19 +126,29 @@ export function resolveHappierUiPresentationTheme(
   });
 }
 
-export function HappierUiPlatformProvider({
-  platform,
-  children,
-}: HappierUiPlatformProviderProps) {
+/**
+ * Host-private presentation projection for the application root: whether anyone
+ * can see the host at all (a hidden window, a background tab). Not part of the
+ * author ABI; mounted surfaces narrow it further through their own environment.
+ */
+type HappierUiPlatformProviderInternalProps = HappierUiPlatformProviderProps & Readonly<{
+  presentationActive?: boolean;
+}>;
+
+export function HappierUiPlatformProvider(props: HappierUiPlatformProviderProps) {
+  const { platform, children } = props;
+  const { presentationActive = true } = props as HappierUiPlatformProviderInternalProps;
   const platformValue = useMemo(
     () => platform,
     [platform.platform, platform.colorScheme],
   );
 
   return (
-    <HappierUiPlatformContext.Provider value={platformValue}>
-      {children}
-    </HappierUiPlatformContext.Provider>
+    <HappierUiAnimationActivityProviderInternal active={presentationActive}>
+      <HappierUiPlatformContext.Provider value={platformValue}>
+        {children}
+      </HappierUiPlatformContext.Provider>
+    </HappierUiAnimationActivityProviderInternal>
   );
 }
 

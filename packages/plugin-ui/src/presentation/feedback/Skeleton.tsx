@@ -1,7 +1,11 @@
 import { useContext, useEffect, useRef, type ReactNode } from 'react';
 import { Animated, Platform, View, type ViewStyle } from 'react-native';
 
-import { useOptionalHappierUiAccessibility, useOptionalHappierUiPalette } from '../../environment/context.js';
+import {
+  useHappierUiAnimationActivityInternal,
+  useOptionalHappierUiAccessibility,
+  useOptionalHappierUiPalette,
+} from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import type { HappierDimension, HappierStyleProp } from '../portableTypes.js';
@@ -17,8 +21,11 @@ import type { HappierDimension, HappierStyleProp } from '../portableTypes.js';
  *
  * Web runs the pulse as a compositor CSS animation (`happierSkeletonPulse` in
  * `apps/ui/sources/theme.css`, beside the status-dot pulse); native runs it on
- * the native driver. Neither is a JavaScript-driven loop, and `animationEnabled`
- * lets a surface that is hidden or inactive stop it.
+ * the native driver. Neither is a JavaScript-driven loop. `animationEnabled`
+ * lets a surface stop it, and like the spinner and the status dot it holds
+ * still while the enclosing presentation is inactive (a hidden window, a parked
+ * surface): an infinite CSS animation otherwise keeps the host's display link
+ * running for a page nobody sees.
  */
 export const HAPPIER_SKELETON_PULSE_V1 = Object.freeze({
   durationMs: 800,
@@ -86,8 +93,9 @@ export function HappierSkeletonBlock(props: HappierSkeletonBlockProps) {
 /** Pulse an existing loading shape without scheduling React work on each web frame. */
 export function HappierSkeletonPulse(props: HappierSkeletonPulseProps) {
   const environmentAccessibility = useOptionalHappierUiAccessibility();
+  const presentationActive = useHappierUiAnimationActivityInternal();
   const reducedMotion = props.reducedMotion ?? environmentAccessibility?.reducedMotion ?? false;
-  const animate = props.animationEnabled !== false && !reducedMotion;
+  const animate = props.animationEnabled !== false && !reducedMotion && presentationActive;
   if (!animate) {
     return (
       <View
