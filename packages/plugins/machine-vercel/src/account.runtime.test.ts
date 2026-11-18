@@ -186,14 +186,15 @@ describe('activated Vercel vendor Connected Account', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('does not infer deployment-write permissions from identity reads or expose unproven OAuth', async () => {
+  it('does not infer deployment-write permissions from identity reads', async () => {
     // AM-1: a successful identity/scope read may connect a read-only member.
     // A role label is not an effective permission probe or write-authority claim.
     const h = await host({ response: { ...project, role: 'VIEWER', permissions: [] } });
     try {
       const descriptor = entry.manifest.contributes?.connectedAccountDescriptors?.find(d => d.id === service.localId);
-      expect(descriptor?.authentication).toMatchObject({ defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual' }] });
-      expect(Object.keys(h.runtime.authentication.modes)).toEqual(['token']);
+      // The token mode stays beside Sign in with Vercel (oauth.test.ts).
+      expect(descriptor?.authentication.modes.find(mode => mode.id === 'token')).toMatchObject({ kind: 'manual' });
+      expect(Object.keys(h.runtime.authentication.modes).sort()).toEqual(['oauth', 'token']);
       const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
       expect(result).toMatchObject({ status: 'connected', scopes: [] });
       expect(result).not.toHaveProperty('deploymentPermissions');

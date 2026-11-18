@@ -24,5 +24,7 @@
   "machineVercel.deleteBody": "Elimina este entorno y las instantáneas que le pertenecen. Sus archivos no podrán recuperarse.",
 "machineVercel.nativeCredentialConfirmTitle": "¿Aplicar la entrega de credenciales de Vercel?",
 "machineVercel.nativeCredentialConfirmBody": "La clave de credencial seleccionada puede divulgarse al plano de control de Vercel, separado del token de aprovisionamiento. Vercel mantiene la clave fuera del invitado, pero el custodio del origen y Vercel siguen siendo de confianza. Las solicitudes instaladas omiten la autorización por solicitud de Happier, la política del cuerpo/modelo y los límites de solicitudes, tokens o costes. Los comparadores del proveedor restringen la sustitución de claves; no inspeccionan el JSON del modelo ni rechazan solicitudes sin coincidencia. Configura los presupuestos y las restricciones de claves en el Gateway/proveedor; aquí no se verifica la cobertura. Las reglas instaladas pueden continuar mientras el controlador esté desconectado, cuando no se pueden garantizar los cambios ni la eliminación. La rotación o revocación de la clave del proveedor es el freno independiente; los bytes ya divulgados no se pueden recuperar. La atribución es observacional, no una identidad de miembro autenticada ni una imputación de costes. Los miembros que comparten un usuario del sistema operativo pueden leer y reutilizar los marcadores de otros; no son privados entre miembros.",
-  "machineVercel.customSize": "Tamaño personalizado"
+  "machineVercel.customSize": "Tamaño personalizado",
+  "machineVercel.signIn": "Iniciar sesión con Vercel",
+  "machineVercel.signInTeamIdDescription": "Déjalo vacío para elegir entre tus equipos después de iniciar sesión."
 }

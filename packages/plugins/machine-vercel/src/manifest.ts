@@ -9,6 +9,7 @@ import {
   observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
+import { VERCEL_IDENTITY_SCOPES } from './oauth.js';
 import { ACCOUNT_PURPOSE, nativeFetch, readAccountScope } from './machine/credentials.js';
 import { createVercelNativeClient } from './machine/nativeClient.js';
 import { createVercelPreparationClient, VERCEL_PREPARATION_HOME, VercelPreparationInputSchema, VercelPreparedArtifactSchema, VercelPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
@@ -22,6 +23,13 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'
 } as const;
 const nativeDefaults = { ...defaults, scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' } } as const;
 const confirmation = { title: label('confirmTitle'), body: label('confirmBody') };
+// A team contains its projects, so the team comes first.
+const scopeFields = [
+  { id: 'teamId', title: label('teamId'), description: label('teamIdDescription'), presentation: { placeholder: 'team_…', order: 1 },
+    schema: { type: 'string', minLength: 1 }, required: false, secret: false },
+  { id: 'projectId', title: label('projectId'), description: label('projectIdDescription'), presentation: { placeholder: 'prj_…', order: 2 },
+    schema: { type: 'string', minLength: 1 }, required: false, secret: false },
+] as const;
 const runtime = async (context: PluginAccountActionContext | PluginInvocationContext) => createVercelNativeClient(
   await readAccountScope(context), nativeFetch(context), context.signal, context.invokedAtMs);
 const preparationRuntime = async (context: PluginAccountActionContext | PluginInvocationContext) => createVercelPreparationClient(
@@ -65,21 +73,22 @@ export const PLUGIN = definePlugin({
   ], optional: [] },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: label('account'), ui: { category: 'cloud-machines' }, authentication: {
-      account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
+      account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
+      // No callbackUrl: the attempt uses the Home's Connected Account relay. The Home advertises the public client.
+      id: 'oauth', kind: 'oauthAuthorizationCode', title: label('signIn'), scopes: [...VERCEL_IDENTITY_SCOPES], pkce: 'required',
+      outcomeReconciliation: 'none', postAuthenticationFieldIds: ['teamId', 'projectId'],
+      configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+        { ...scopeFields[0], description: label('signInTeamIdDescription') }, scopeFields[1],
+      ] },
+    }, {
       id: 'token', title: label('token'), kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
       setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Create a Vercel access token',
         checklist: ['Create an access token in [Vercel account settings] and give it a name.', 'Choose the team you will deploy to. Select All Projects to create projects, or select an existing project to limit the token to that project. Choose an expiration and create the token.', 'Copy the token and paste it here, then connect the account.'] },
       credentialFieldKeys: { token: 'token' },
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: label('token'), description: label('tokenDescription'), schema: { type: 'string', minLength: 1 }, secret: true }],
-      // A team contains its projects, so the team comes first.
-      configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
-        // Left empty, the pasted token lists its teams to choose from.
-        { id: 'teamId', title: label('teamId'), description: label('teamIdDescription'), presentation: { placeholder: 'team_…', order: 1 },
-          schema: { type: 'string', minLength: 1 }, required: false, secret: false },
-        { id: 'projectId', title: label('projectId'), description: label('projectIdDescription'), presentation: { placeholder: 'prj_…', order: 2 },
-          schema: { type: 'string', minLength: 1 }, required: false, secret: false },
-      ] },
+      // Left empty, the pasted token lists its teams to choose from.
+      configuration: { scope: 'account', changeBehavior: 'reconnect', fields: scopeFields },
     }] } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,
   } },
   machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },

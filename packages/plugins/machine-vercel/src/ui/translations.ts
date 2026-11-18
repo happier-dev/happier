@@ -12,6 +12,8 @@ const en = {
   "timeoutDescription": "Leave empty to use your plan maximum: 45 minutes on Hobby; 24 hours on Pro and Enterprise. Enter a shorter duration if needed. Happier does not extend runs automatically.",
   "retentionDescription": "Use 0 for no expiry. Retained snapshots are billed after the sandbox stops.",
   "token": "Access token",
+  "signIn": "Sign in with Vercel",
+  "signInTeamIdDescription": "Leave empty to choose from your teams after you sign in.",
   "teamId": "Team ID",
   "projectId": "Project ID",
   "tokenDescription": "Use a personal access token for the selected team or project. Sandboxes also require team plan access.",

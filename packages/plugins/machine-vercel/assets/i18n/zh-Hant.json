@@ -24,5 +24,7 @@
   "machineVercel.deleteBody": "刪除此沙箱及其擁有的快照。刪除後將無法復原其中的檔案。",
 "machineVercel.nativeCredentialConfirmTitle": "套用 Vercel 認證資料傳遞？",
 "machineVercel.nativeCredentialConfirmBody": "所選的認證資料金鑰可能會揭露給 Vercel 控制平面，與佈建權杖分開。Vercel 將金鑰保存在客體之外，但來源保管者與 Vercel 仍須受信任。已安裝的要求會繞過 Happier 的逐項要求授權、本文/模型政策，以及要求、權杖或費用限制。供應商比對器會縮小金鑰替換範圍，但不會檢查模型 JSON，也不會拒絕不相符的要求。請在 Gateway/供應商處設定預算與金鑰限制；這裡不驗證涵蓋範圍。控制器離線時，已安裝規則仍可能繼續執行，此時無法保證變更與移除。供應商金鑰輪替或撤銷是獨立的最終停止手段；已揭露的位元組無法收回。歸因僅是觀察結果，不代表經驗證的成員身分或費用分攤。共用同一作業系統使用者的成員可以讀取並重用彼此的佔位符；這些內容在成員之間並不私密。",
-  "machineVercel.customSize": "自訂規格"
+  "machineVercel.customSize": "自訂規格",
+  "machineVercel.signIn": "使用 Vercel 登入",
+  "machineVercel.signInTeamIdDescription": "留空，登入後從你的團隊中選擇。"
 }

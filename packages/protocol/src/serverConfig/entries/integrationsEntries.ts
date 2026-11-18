@@ -21,6 +21,13 @@ export const INTEGRATIONS_SERVER_CONFIG = defineServerConfigRegistry({
         description: 'Exact registered API scope IDs for Cloudflare consent. Empty by default; include Account Settings Read and only the Workers, Pages, Tunnel or DNS permissions your client offers.',
         docs: 'self-hosting/env#cloudflare-public-oauth-client',
     },
+    HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: {
+        type: 'string', default: '', sensitivity: 'plain', apply: 'live', editable: 'home',
+        section: 'server', group: 'connectedServices',
+        bounds: { noControlChars: true },
+        description: 'Public Vercel app client ID for Sign in with Vercel. Its callback must be this Home\'s Connected Account callback. Empty by default; people can still connect with an access token.',
+        docs: 'self-hosting/env#vercel-public-oauth-client',
+    },
     // Live Activity remote updates.
     HAPPIER_LIVE_ACTIVITY_REMOTE_UPDATES_ENABLED: {
         type: 'boolean',

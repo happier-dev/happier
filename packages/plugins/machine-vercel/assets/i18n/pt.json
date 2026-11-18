@@ -24,5 +24,7 @@
   "machineVercel.deleteBody": "Exclui este ambiente e os snapshots que pertencem a ele. Seus arquivos não poderão ser recuperados.",
 "machineVercel.nativeCredentialConfirmTitle": "Aplicar a entrega de credenciais da Vercel?",
 "machineVercel.nativeCredentialConfirmBody": "A chave de credencial selecionada pode ser divulgada ao plano de controlo da Vercel, separado do token de aprovisionamento. A Vercel mantém a chave fora do convidado, mas o responsável pela origem e a Vercel continuam a ser entidades de confiança. Os pedidos instalados ignoram a autorização por pedido da Happier, a política do corpo/modelo e os limites de pedidos, tokens ou custos. Os correspondentes do fornecedor restringem a substituição de chaves; não inspecionam o JSON do modelo nem recusam pedidos sem correspondência. Configure os orçamentos e as restrições de chaves no Gateway/fornecedor; a cobertura não é verificada aqui. As regras instaladas podem continuar enquanto o controlador está offline, quando não é possível garantir alterações e remoção. A rotação ou revogação da chave do fornecedor é o travão independente; os bytes já divulgados não podem ser recuperados. A atribuição é observacional, não uma identidade de membro autenticada nem uma imputação de custos. Membros que partilham um utilizador do sistema operativo podem ler e reutilizar os marcadores uns dos outros; não são privados entre membros.",
-  "machineVercel.customSize": "Tamanho personalizado"
+  "machineVercel.customSize": "Tamanho personalizado",
+  "machineVercel.signIn": "Entrar com a Vercel",
+  "machineVercel.signInTeamIdDescription": "Deixe em branco para escolher entre suas equipes depois de entrar."
 }

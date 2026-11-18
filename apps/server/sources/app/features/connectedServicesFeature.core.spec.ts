@@ -28,6 +28,37 @@ describe("resolveConnectedServicesFeature core contract", () => {
         expect(Reflect.get(absent.capabilities?.connectedServices ?? {}, "publicOAuthClients")).toBeUndefined();
     });
 
+    it("advertises the Vercel public client only when its client id is set, beside Cloudflare", () => {
+        const vercel = {
+            service: { pluginId: "happier.machine.vercel", localId: "vercel-account" },
+            clientId: "cl_vercel_public",
+            scopesByMode: { oauth: ["openid", "email", "profile", "offline_access"] },
+        };
+        const values = { HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId };
+        expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values })).toMatchObject({ ok: true, values });
+        const consumed = (env: NodeJS.ProcessEnv) => {
+            const feature = resolveConnectedServicesFeature(env);
+            const parsed = FeaturesResponseSchema.parse({ features: feature.features, capabilities: feature.capabilities });
+            return Reflect.get(parsed.capabilities.connectedServices, "publicOAuthClients");
+        };
+        expect(consumed({ HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: ` ${vercel.clientId} ` })).toEqual([vercel]);
+        expect(consumed({ HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: "  " })).toBeUndefined();
+        expect(consumed({
+            HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId,
+            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
+            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "account.read",
+        })).toEqual([
+            { service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" }, clientId: "happier-public-client", scopesByMode: { oauth: ["account.read"] } },
+            vercel,
+        ]);
+        // One operator's malformed Cloudflare scopes must not withdraw the Vercel client.
+        expect(consumed({
+            HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId,
+            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
+            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "not an OAuth scope token",
+        })).toEqual([vercel]);
+    });
+
     it("defaults to connected services enabled (including quotas)", () => {
         const malformed = resolveConnectedServicesFeature({
             HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
