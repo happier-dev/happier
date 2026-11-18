@@ -116,22 +116,38 @@ export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
     // producers before the canonical reconciler has compared their evidence.
     const endMs = request.dateRange?.endMs;
     if (eventIds?.length === 0 || days?.length === 0) return [];
-    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
-        return await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds, days));
-    }
-    const where: Prisma.UsageEventWhereInput = { ...usageEventWhere(accountId, endMs),
-        ...(days === undefined ? {} : { OR: days.map(day => ({ observedAt: { gte: new Date(day), lt: new Date(day + 86_400_000) } })) }) };
-    if (eventIds === undefined) return await tx.usageEvent.findMany({ where,
-        orderBy: { observedAt: 'asc' }, select: usageEventSelect });
+    const postgres = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres';
+    // Exact emitted binds: Account, optional end, excluded sources, and Prisma's
+    // LIMIT/OFFSET operands. Raw PostgreSQL SELECTs have no pagination operands;
+    // its existing ID array occupies one bind regardless of ID count.
+    const fixedBindings = 1 + Number(endMs !== undefined) + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length + (postgres ? 0 : 2);
+    const selectedDays = days === undefined ? undefined : [...new Set(days)];
+    const minimumIdBindings = Number(eventIds !== undefined);
+    const dayPartitions = selectedDays === undefined ? [undefined] : portableQueryChunks({
+        values: selectedDays, bindingsPerValue: 2, fixedBindings: fixedBindings + minimumIdBindings,
+    });
+    // Balance the final short partition with its peers: filling the first day
+    // query can otherwise leave just one ID slot for a two-dimensional read.
+    const daysPerPartition = selectedDays === undefined ? 0 : Math.ceil(selectedDays.length / dayPartitions.length);
     const rows: UsageQueryEvent[] = [];
-    // Prisma adds a small fixed predicate envelope to SQLite statements beyond
-    // the caller-visible day filters; reserve it so each chunk stays below the
-    // driver's binding ceiling when the day projection is present.
-    const sqlitePredicateHeadroom = 20;
-    for (const ids of portableQueryChunks({ values: eventIds, bindingsPerValue: 1,
-        fixedBindings: 1 + (endMs === undefined ? 0 : 1) + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length + ((days?.length ?? 0) * 2) + sqlitePredicateHeadroom })) {
-        rows.push(...await tx.usageEvent.findMany({ where: { ...where, id: { in: [...ids] } },
-            orderBy: { observedAt: 'asc' }, select: usageEventSelect }));
+    let reads = 0;
+    for (let index = 0; index < dayPartitions.length; index++) {
+        const selected = selectedDays?.slice(index * daysPerPartition, (index + 1) * daysPerPartition);
+        if (postgres) {
+            rows.push(...await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds, selected)));
+            reads++;
+            continue;
+        }
+        const where: Prisma.UsageEventWhereInput = { ...usageEventWhere(accountId, endMs),
+            ...(selected === undefined ? {} : { OR: selected.map(day => ({ observedAt: { gte: new Date(day), lt: new Date(day + 86_400_000) } })) }) };
+        const idPartitions = eventIds === undefined ? [undefined] : portableQueryChunks({
+            values: eventIds, bindingsPerValue: 1, fixedBindings: fixedBindings + 2 * (selected?.length ?? 0),
+        });
+        for (const ids of idPartitions) {
+            rows.push(...await tx.usageEvent.findMany({ where: { ...where, ...(ids === undefined ? {} : { id: { in: [...ids] } }) },
+                orderBy: { observedAt: 'asc' }, select: usageEventSelect }));
+            reads++;
+        }
     }
-    return rows.sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime());
+    return reads < 2 ? rows : rows.sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime());
 }
