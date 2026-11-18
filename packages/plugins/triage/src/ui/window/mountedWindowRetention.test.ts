@@ -1,21 +1,16 @@
 import { expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-    TriageConfiguredSourceInstanceV1Schema,
     type TriageScanInputV1,
     type TriageScanResultV1,
+    type TriageGetResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { listTriageEntries, type TriageAdmittedSourceV1 } from '../../actions/listEntries.js';
+import { createNoPersistenceTriageFixture } from '../../projection/noPersistence.test-support.js';
 import { TriageListEntriesInputV1Schema } from '../../actions/listEntriesProtocol.js';
 import { reobserveTriageEntry } from '../../actions/reobserveEntry.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../corpus/collections/ids.js';
-import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import { findConfiguredSourceInstanceRow } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
-import { createTestkitCorpusCollections, selectTestkitExternalSourceInput } from '../../corpus/testkit/corpusCollections.test-support.js';
-import { TESTKIT_SOURCE_INSTANCE_ID, TRIAGE_TESTKIT_SOURCE, testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
+import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { retainTriageLastKnownRowV1 } from '../shell/lastKnownRow.js';
 import { createTriageEphemeralSharedScopeOriginFixture } from './ephemeralSharedScope.test-support.js';
@@ -32,43 +27,19 @@ function present(entryId: string) {
 // Real mounted owner, aggregate, qualification and Collection logic. Only the
 // host's admitted handles, provider execution and persistence are boundaries.
 function mountSource() {
-    const { collections, control } = createTestkitCorpusCollections();
-    const seeded = control.sourceInstances.seed(toCorpusStoredValue({
-        instanceTag: 'a'.repeat(43),
-        sourceQualifiedId: `${TRIAGE_TESTKIT_SOURCE.pluginId}/${TRIAGE_TESTKIT_SOURCE.localId}`,
-        lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
-        configured: TriageConfiguredSourceInstanceV1Schema.parse({
-            v: 1, instance: { source: TRIAGE_TESTKIT_SOURCE, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID },
-            binding: { purpose: 'triage-source', account: {
-                service: { pluginId: TRIAGE_TESTKIT_SOURCE.pluginId, localId: 'accounts' }, accountId: 'account-1',
-            } },
-            localInstanceKey: 'example/repository', configuration: { v: 1, token: 'routing-token' },
-        }),
-    }));
-    // Branded handles originate in the genuine host, outside this plugin owner.
-    const admitted = {
-        contributor: { pluginId: TRIAGE_TESTKIT_SOURCE.pluginId, contributionId: TRIAGE_TESTKIT_SOURCE.localId, immutableGenerationId: 'generation-1' },
-        protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-        descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
-            kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
-        operations: { listInstances: {}, scan: {}, get: {} }, surfaces: { detail: {} },
-    } as unknown as TriageAdmittedSourceV1;
+    const fixture = createNoPersistenceTriageFixture({ sourceInstanceIds: [TESTKIT_SOURCE_INSTANCE_ID], externalOnly: true });
+    const { collections, admitted } = fixture;
     const state = {
         scan: async (_input: TriageScanInputV1): Promise<TriageScanResultV1> => ({
             kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [present('baseline')],
         }),
     };
     const pages: TriageScanInputV1['page'][] = [];
+    let nowMs = Date.now();
     const host: TriageListWindowHostV1 = {
         async executeAction(_action, rawInput, options) {
-            return listTriageEntries(await selectTestkitExternalSourceInput(
-                TriageListEntriesInputV1Schema.parse(rawInput), collections.sourceInstances,
-            ), {
-                sourceInstances: collections.sourceInstances,
-                readSourceSnapshot: async () => ({ contributions: [admitted] }),
-                executeScan: async (_operation, input) => { pages.push(input.page); return state.scan(input); },
-                nowMs: () => Date.now(), signal: options?.signal,
-            });
+            fixture.setScan(async (_operation, input) => { pages.push(input.page); return state.scan(input); });
+            return fixture.readEntries(TriageListEntriesInputV1Schema.parse(rawInput), options);
         },
     };
     const lifetime = createTriageEphemeralSharedScopeOriginFixture();
@@ -79,16 +50,16 @@ function mountSource() {
         state, pages, store,
         refresh: () => refreshTriageListWindow('manual', host, scope),
         loadMore: () => loadMoreTriageListWindow(host, scope),
-        async exact(entryId: string) {
+        async exact(entryId: string, outcome?: TriageGetResultV1) {
             const result = await reobserveTriageEntry({ entryRef: testkitEntryRef({ entryId }), sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID }, {
                 readConfiguredInstance: async (id, options) => (await findConfiguredSourceInstanceRow(collections.sourceInstances, id, options))?.value.configured ?? null,
                 readSourceSnapshot: async () => ({ contributions: [admitted] }),
-                executeGet: async () => ({ ...present(entryId), snapshot: testkitSnapshot({ title: `Exact ${entryId}` }) }), nowMs: () => Date.now(),
+                executeGet: async () => outcome ?? ({ ...present(entryId), snapshot: testkitSnapshot({ title: `Exact ${entryId}` }) }), nowMs: () => ++nowMs,
             });
             expect(result.kind).toBe('observed');
             if (result.kind === 'observed') expect(store.publishObservation(result.observation)).not.toBeNull();
         },
-        assertSourceUnchanged: () => expect(control.sourceInstances.inspect(seeded.rowId)).toEqual({ revision: seeded.revision, deleted: false }),
+        assertSourceUnchanged: () => expect(fixture.durableWriteAttempts).toEqual([]),
         dispose() { lease.release(); lifetime.retire(); },
     };
 }
@@ -163,6 +134,23 @@ it('keeps the selected exact-read row present when a completed walk omits its sc
         expect(retained?.row.lane).toBe(held?.row.lane);
         expect(fixture.store.getSnapshot().window?.rows.flatMap(row => row.observations).some(observation => observation.outcome.kind === 'absent')).toBe(false);
         expect(fixture.store.getSnapshot().window?.coverage).toBe('complete');
+        fixture.assertSourceUnchanged();
+    } finally { fixture.dispose(); }
+});
+
+it.each(['unresolved', 'absent'] as const)('establishes absence only from the exact absent result, with %s as the current answer', async kind => {
+    const fixture = mountSource();
+    try {
+        await fixture.refresh();
+        await fixture.exact('baseline');
+        const localRef = present('baseline').localRef;
+        await fixture.exact('baseline', kind === 'absent'
+            ? { kind, localRef }
+            : { kind, localRef, failure: { class: 'permission', code: 'source-forbidden' } });
+        const row = fixture.store.getRow(triageEntryRowKey(testkitEntryRef({ entryId: 'baseline' })));
+        expect(row?.presence.kind).toBe(kind);
+        expect(row?.content?.outcome.snapshot.title).toBe(kind === 'absent' ? undefined : 'Exact baseline');
+        expect(row?.observations.map(observation => observation.outcome.kind)).toEqual([kind]);
         fixture.assertSourceUnchanged();
     } finally { fixture.dispose(); }
 });

@@ -19,7 +19,7 @@ import type { TriageListEntriesInputV1 } from '../actions/listEntriesProtocol.js
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE, CORPUS_SOURCE_INSTANCES_COLLECTION_ID,
     CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_USER_MARKS_COLLECTION_ID } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
-import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitExternalSourceInput } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
@@ -109,10 +109,15 @@ export const NO_PERSISTENCE_INSTANCE_IDS = [
 
 /** The existing composed Action fixture: only host admission, dispatch and
  * durable storage ports are replaced. All list/fold/refresh logic remains real. */
-export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?: () => Promise<TaskList> }>) {
+export function createNoPersistenceTriageFixture(options?: Readonly<{
+    taskRead?: () => Promise<TaskList>;
+    sourceInstanceIds?: readonly string[];
+    seedSourceInstances?: boolean;
+    externalOnly?: boolean;
+}>) {
     const { collections, control } = createTestkitCorpusCollections();
     const source = { pluginId: 'happier.example.source', localId: 'example-forge' };
-    for (const [index, sourceInstanceId] of NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS.entries()) {
+    for (const [index, sourceInstanceId] of (options?.seedSourceInstances === false ? [] : options?.sourceInstanceIds ?? NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS).entries()) {
         control.sourceInstances.seed(toCorpusStoredValue({
             instanceTag: `${index === 0 ? 'a' : 'b'}${'0'.repeat(42)}`,
             sourceQualifiedId: `${source.pluginId}/${source.localId}`,
@@ -233,7 +238,7 @@ export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?:
     } as unknown as PluginAccountActionContext;
     const handler = createTriageListEntriesActionHandler();
     return {
-        durableWriteAttempts, scannedPages, actionInputs, defaultScan,
+        durableWriteAttempts, scannedPages, actionInputs, defaultScan, collections, control, admitted,
         async verifyDurableWriteTraps() {
             for (const handle of allowedCollections.values()) {
                 for (const method of ['put', 'delete', 'batch', 'forget'] as const) {
@@ -246,9 +251,11 @@ export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?:
             durableWriteAttempts.length = 0;
         },
         setScan(next: TriageAdmittedOperationExecutorV1) { scan = next; },
-        async readEntries(input: TriageListEntriesInputV1) {
-            actionInputs.push(input);
-            return await handler(input, context);
+        async readEntries(input: TriageListEntriesInputV1, cancellation?: Readonly<{ signal?: AbortSignal }>) {
+            const selected = options?.externalOnly
+                ? await selectTestkitExternalSourceInput(input, collections.sourceInstances) : input;
+            actionInputs.push(selected);
+            return await handler(selected, { ...context, signal: cancellation?.signal ?? context.signal });
         },
     };
 }

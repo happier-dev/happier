@@ -2,19 +2,16 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageSourceInstanceDraftV1Schema,
     type TriageScanInputV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { listTriageEntries, type TriageAdmittedSourceV1 } from '../../actions/listEntries.js';
+import { createNoPersistenceTriageFixture } from '../../projection/noPersistence.test-support.js';
 import { TriageListEntriesInputV1Schema } from '../../actions/listEntriesProtocol.js';
 import { administerConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
-import { createTestkitCorpusCollections, selectTestkitExternalSourceInput } from '../../corpus/testkit/corpusCollections.test-support.js';
 import { TESTKIT_SOURCE_INSTANCE_ID, TRIAGE_TESTKIT_SOURCE, testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import { createTriageEphemeralSharedScopeOriginFixture } from './ephemeralSharedScope.test-support.js';
@@ -22,6 +19,8 @@ import { acquireTriageListWindow, loadMoreTriageListWindow, readTriageListWindow
 import { useTriageListWindowViewDemand } from './useTriageListWindowViewDemand.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+afterEach(() => { vi.restoreAllMocks(); });
 
 function present(entryId: string) {
     return { kind: 'present' as const,
@@ -32,30 +31,16 @@ function present(entryId: string) {
 async function configuredMount() {
     const clock = { nowMs: 1_760_000_000_000 };
     const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock.nowMs);
-    const { collections } = createTestkitCorpusCollections();
-    // Admission and provider execution are host boundaries; every Triage owner
-    // from configuration through the mounted scheduler and aggregate is real.
-    const admitted = {
-        contributor: { pluginId: TRIAGE_TESTKIT_SOURCE.pluginId, contributionId: TRIAGE_TESTKIT_SOURCE.localId, immutableGenerationId: 'generation-1' },
-        protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-        descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
-            kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
-        operations: { listInstances: {}, scan: {}, get: {} }, surfaces: { detail: {} },
-    } as unknown as TriageAdmittedSourceV1;
+    const fixture = createNoPersistenceTriageFixture({ seedSourceInstances: false, externalOnly: true });
+    const { collections } = fixture;
     const state = { scan: async (_input: TriageScanInputV1): Promise<TriageScanResultV1> => ({
         kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [present('retained')],
     }) };
     const pages: TriageScanInputV1['page'][] = [];
     const host: TriageListWindowHostV1 = {
         async executeAction(_action, rawInput, options) {
-            return listTriageEntries(await selectTestkitExternalSourceInput(
-                TriageListEntriesInputV1Schema.parse(rawInput), collections.sourceInstances,
-            ), {
-                sourceInstances: collections.sourceInstances,
-                readSourceSnapshot: async () => ({ contributions: [admitted] }),
-                executeScan: async (_operation, input) => { pages.push(input.page); return state.scan(input); },
-                nowMs: () => clock.nowMs, signal: options?.signal,
-            });
+            fixture.setScan(async (_operation, input) => { pages.push(input.page); return state.scan(input); });
+            return fixture.readEntries(TriageListEntriesInputV1Schema.parse(rawInput), options);
         },
     };
     const configured = await administerConfiguredSourceInstance({
