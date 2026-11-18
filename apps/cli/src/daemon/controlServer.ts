@@ -3602,7 +3602,7 @@ export function createDaemonControlApp({
       if (request.body.operation.kind === 'provider_broker.binding.open'
         && error instanceof SessionTeamCredentialLaunchUnavailableError) {
         return { ok: false as const, error: {
-          code: error.code, message: error.code,
+          code: error.code, message: error.message,
           failureCause: projectActionFailureCauseV1(error),
         } };
       }

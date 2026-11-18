@@ -683,7 +683,7 @@ export async function executeSpawnSessionRequest(
                     if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw error;
                     recordPreparationPhase('team_credential', error);
                     return await refuseSpawn(projectSessionRunnerLaunchAdmissionFailure({
-                        kind: 'launch_error', code: error.code, message: error.code,
+                        kind: 'launch_error', code: error.code, message: error.message, failureCause: error.failureCause,
                     })!);
                 }
             }
