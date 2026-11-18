@@ -28,7 +28,7 @@ export type WorkspaceFileDownloadSource = DownloadTransferSource;
 
 type WorkspaceFileDownloadSourceResult =
     | Readonly<{ success: true; source: WorkspaceFileDownloadSource }>
-    | Readonly<{ success: false; error: string }>;
+    | Readonly<{ success: false; error: string; errorCode?: 'not_found' }>;
 
 function createTempDownloadZipPath(): string {
     return join(tmpdir(), 'happier', 'file-zips', `${randomUUID()}.zip`);
@@ -100,7 +100,16 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
 
     const workspace = currentWorkspaceSource();
     if (!asZip) {
-        const sourceStats = await workspace.stat(resolvedPath);
+        let sourceStats: Awaited<ReturnType<WorkspaceSource['stat']>>;
+        try {
+            sourceStats = await workspace.stat(resolvedPath);
+        } catch (error) {
+            // Only this source observation establishes absence; staging/sink failures do not.
+            if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+                return { success: false, error: 'Source file not found', errorCode: 'not_found' };
+            }
+            throw error;
+        }
         if (!sourceStats.isFile()) {
             return { success: false, error: 'Download is only supported for files' };
         }

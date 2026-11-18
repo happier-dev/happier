@@ -325,9 +325,10 @@ describe('useFilePreviewSource', () => {
         { code: 'not_found', reason: { kind: 'missing' } },
         { code: 'machine_carrier_transport_failed', reason: { kind: 'loadFailed', error: 'File does not exist' } },
         { code: undefined, reason: { kind: 'loadFailed', error: 'File does not exist' } },
-    ])('preserves the owner failure $code through the preview and comparison projection', async ({ code, reason }) => {
+        { code: undefined, message: "ENOENT: no such file or directory, stat '/tmp/recording.webm'", reason: { kind: 'loadFailed', error: "ENOENT: no such file or directory, stat '/tmp/recording.webm'" } },
+    ])('preserves the owner failure $code through the preview and comparison projection', async ({ code, reason, message }) => {
         // The Machine Action response is a genuine external boundary. Identical messages must not classify the cause.
-        downloadFailure = { success: false, status: 'failed', error: 'File does not exist', ...(code ? { errorCode: code } : {}) };
+        downloadFailure = { success: false, status: 'failed', error: message ?? 'File does not exist', ...(code ? { errorCode: code } : {}) };
         const hook = await renderHook(({ enabled }: { enabled: boolean }) => useFilePreviewSource({ enabled,
             source: { kind: 'workspace', scope: fixture.scope, filePath: 'failed.png' }, cacheKey: 'failed-revision',
         }), { initialProps: { enabled: true } });
@@ -335,6 +336,11 @@ describe('useFilePreviewSource', () => {
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', errorCode: code ?? null }));
             expect(buildImageCompareModel({ changeKind: 'added', before: { status: 'disabled' },
                 after: projectImageComparePreview(hook.getCurrent()) }).after).toEqual({ kind: 'unavailable', reason });
+            const state = hook.getCurrent();
+            if (state.status !== 'error') throw new Error('Expected preview failure');
+            const { previewUnavailableCard, resolvePreviewUnavailable } = await import('./previewUnavailable');
+            expect(previewUnavailableCard(resolvePreviewUnavailable(state), 'failed.png')).toMatchObject(
+                code === 'not_found' ? { kind: 'empty', retryable: false } : { kind: 'error', retryable: true });
             await hook.rerender({ enabled: false });
             expect(hook.getCurrent()).toEqual({ status: 'disabled', uri: null, error: null });
         } finally { await hook.unmount(); }

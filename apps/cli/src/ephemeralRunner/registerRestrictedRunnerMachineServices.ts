@@ -163,7 +163,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
         accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY,
         sessionRpcTransferMaxBytes: null,
       });
-      if (!resolved.success) throw new Error(resolved.error);
+      if (!resolved.success) throw Object.assign(new Error(resolved.error), { errorCode: resolved.errorCode });
       await filesystemScope.assertCurrentAuthority();
       const payloadSource = createFileTransferPayloadSource({
         filePath: resolved.source.filePath,

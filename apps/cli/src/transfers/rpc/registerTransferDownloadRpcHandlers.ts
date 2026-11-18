@@ -28,7 +28,7 @@ type TransferDownloadInitRequest = SessionFileDownloadInitRequest | ComposerMedi
 
 type TransferDownloadInitResponse =
   | Readonly<{ success: true; downloadId: string; chunkSizeBytes: number; sizeBytes: number; name: string }>
-  | Readonly<{ success: false; error: string }>;
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 export function registerTransferDownloadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,

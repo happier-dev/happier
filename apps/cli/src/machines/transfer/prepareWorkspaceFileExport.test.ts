@@ -67,6 +67,22 @@ describe('workspace file export custody', () => {
     } finally { await lifecycle.stop(); await handle?.close(); await rm(root, { recursive: true, force: true }); }
   });
 
+  it('preserves missing source identity through prepared download RPC', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-export-missing-'));
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+    try {
+      const handlers = new Map<string, RpcHandler>();
+      registerMachineDirectTransferExportRpcHandlers({
+        rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+        prepareExportSession: () => prepareWorkspaceFileExport({ lifecycle,
+          request: { workingDirectory: root, path: 'missing.webm', asZip: false } }),
+      });
+      const invoke = handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)!;
+      await expect(invoke({ t: 'workspace_file_download_v1', workingDirectory: root, path: 'missing.webm', asZip: false }))
+        .resolves.toMatchObject({ success: false, errorCode: 'not_found' });
+    } finally { await lifecycle.stop(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it('admits the captured filesystem owner before observing the source path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-export-admission-'));
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });

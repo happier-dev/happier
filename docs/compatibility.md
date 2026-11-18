@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## File preview source absence (unreleased 0.3)
+
+Workspace file downloads classify an absent source at the source stat operation
+and carry `errorCode: 'not_found'` through download RPC and prepared exports.
+The existing transfer failure shape already accepts an optional string code;
+no persisted format or protocol epoch changes. Preview sources and hooks retain
+that code for the shared missing-media card. Destination creation and
+materialization errors remain load failures. An older daemon's untyped ENOENT
+response also remains a load failure: presentation never infers source absence
+from an errno or message. Matching development daemon and UI readers should
+reload together for the corrected missing-source presentation.
+
 ## Starter forge catalog projection (unreleased 0.3)
 
 The closed `deployments.suggestions.catalog` input accepts optional

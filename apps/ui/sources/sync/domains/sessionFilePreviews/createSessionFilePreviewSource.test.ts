@@ -336,6 +336,17 @@ describe('createSessionFilePreviewSource', () => {
             .toMatchObject({ ok: true, source: { uri: 'blob:bytes', byteLength: 3, mimeType: 'image/svg+xml' } });
     });
 
+    it('keeps destination ENOENT as a retryable load failure for already-held bytes', async () => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const error = "ENOENT: cannot create preview cache";
+        nativeFiles.current!.create.mockImplementationOnce(() => { throw Object.assign(new Error(error), { code: 'ENOENT' }); });
+        const result = await createBytesPreviewSource({ bytes: new Uint8Array([1]), fileName: 'clip.mp4', mimeType: 'video/mp4', maxBytes: null });
+        expect(result).toEqual({ ok: false, error });
+        if (result.ok) throw new Error('Expected destination failure');
+        const { resolvePreviewUnavailable, previewUnavailableCard } = await import('@/components/ui/media/previewUnavailable');
+        expect(previewUnavailableCard(resolvePreviewUnavailable(result), 'clip.mp4')).toMatchObject({ kind: 'error', retryable: true });
+    });
+
     it('deletes a native bytes destination cancelled while writing', async () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         const controller = new AbortController();

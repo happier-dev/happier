@@ -9,6 +9,22 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { registerTransferDownloadRpcHandlers } from './registerTransferDownloadRpcHandlers';
 
 describe('filesystem download RPC custody', () => {
+  it('returns typed source absence through download RPC after a successful source read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-download-source-'));
+    const store = new TransferSessionStore({ ttlMs: 30_000 });
+    const handlers = new Map<string, RpcHandler>();
+    registerTransferDownloadRpcHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } },
+      { workingDirectory: root, store });
+    try {
+      await writeFile(join(root, 'present.webm'), Buffer.from([1, 2, 3]));
+      const invoke = handlers.get(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)!;
+      const request = { t: 'session_file_download_v1', path: 'present.webm',
+        recipientPublicKeyBase64: createTransferRecipientKeyPair().recipientPublicKeyBase64 };
+      expect(await invoke(request)).toMatchObject({ success: true, sizeBytes: 3 });
+      expect(await invoke({ ...request, path: 'missing.webm' })).toMatchObject({ success: false, errorCode: 'not_found' });
+    } finally { await store.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it.each(['present_user', 'account_automation'] as const)('refuses member/Agent handle reuse while preserving %s owner downloads', async callerAuthority => {
     const root = await mkdtemp(join(tmpdir(), 'happier-download-rpc-custody-'));
     const store = new TransferSessionStore({ ttlMs: 30_000 });

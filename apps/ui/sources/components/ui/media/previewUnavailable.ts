@@ -22,10 +22,6 @@ export function resolvePreviewUnavailable(input: Readonly<{
     errorCode?: string | null;
     sizeBytes?: number | null;
 }>): PreviewUnavailable {
-    // Local file readers surface a missing recording as either the typed ENOENT code or an
-    // untyped filesystem message. Both are a settled fact about the file, never a retryable
-    // transport failure, and must not be disclosed as a raw diagnostic in the media surface.
-    if (input.errorCode === 'ENOENT' || input.error.startsWith('ENOENT:')) return { kind: 'missing' };
     switch (input.errorCode) {
         case 'too_large': return { kind: 'tooLarge', sizeBytes: input.sizeBytes ?? null };
         case 'unsupported': return { kind: 'unsupported' };

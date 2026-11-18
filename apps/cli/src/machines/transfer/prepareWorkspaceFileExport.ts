@@ -101,7 +101,7 @@ export async function prepareWorkspaceFileExport(params: Readonly<{
   })() : await (async () => {
     const resolved = await resolveWorkspaceFileDownloadSource({ ...params.request,
       accessPolicy: params.accessPolicy, sessionRpcTransferMaxBytes: null });
-    if (!resolved.success) throw new Error(resolved.error);
+    if (!resolved.success) throw Object.assign(new Error(resolved.error), { errorCode: resolved.errorCode });
     const file = resolved.source;
     return { name: file.name, sizeBytes: file.sizeBytes, payloadSource: createFileTransferPayloadSource({ filePath: file.filePath,
       sizeBytes: file.sizeBytes, name: file.name,
