@@ -65,7 +65,10 @@ export function useMachineServiceActions(input: Readonly<{
             : parsed.data.kind === 'conflict' ? { kind: 'conflict' } : { kind: 'unwatched' };
       }
     } catch (error: unknown) {
-      const failure = normalizeActionExecutorThrownError(error, 'machines.services.unwatch');
+      const failure: ActionExecuteFailure = {
+        ok: false,
+        ...normalizeActionExecutorThrownError(error, 'machines.services.unwatch'),
+      };
       outcome = { kind: 'failed', code: failure.errorCode, failure };
     } finally {
       if (flight.current === key) flight.current = null;
