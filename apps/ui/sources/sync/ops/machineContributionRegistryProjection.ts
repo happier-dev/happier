@@ -218,9 +218,11 @@ export type MachinePluginTransportReason =
 
 export type MachinePluginUiResourceTransportReason = MachinePluginTransportReason;
 
-/** The Home could not deliver to the selected Machine. Recovery needs a new Machine signal. */
-export function isMachinePluginUiResourceTargetUnavailable(code: string): boolean {
-    return code === 'target_unavailable';
+/** Home refusals that settle a Resource read or watch. */
+export function classifyMachinePluginUiResourceRefusal(code: string): 'target_unavailable' | 'denied' | undefined {
+    if (code === 'target_unavailable') return 'target_unavailable';
+    if (code === 'credential_scope_denied') return 'denied';
+    return undefined;
 }
 
 export type MachinePluginUiResourceReadResult =

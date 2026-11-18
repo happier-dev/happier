@@ -25,7 +25,8 @@ beforeEach(async () => {
 });
 afterEach(async () => { await homes.reset(); });
 
-it('settles a refused Machine Services watch without idle Action requests and recovers on Machine push', async () => {
+it.each(['target_unavailable', 'credential_scope_denied'] as const)(
+    'settles a Machine Services watch refused with %s without idle Action requests', async refusal => {
     const machineId = 'machine-a';
     const installationId = 'installation';
     const row = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account' }), installationId };
@@ -47,6 +48,8 @@ it('settles a refused Machine Services watch without idle Action requests and re
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
     const requests: string[] = [];
     let refused = true;
+    let refuseParkedWatch: (() => void) | undefined;
+    let credentialDenied = false;
     const read = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ;
     const open = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN;
     const next = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT;
@@ -59,11 +62,17 @@ it('settles a refused Machine Services watch without idle Action requests and re
             requestId: envelope.requestId, execution: { ok: true, result } } });
         if (continuation.method === read) return reply({ ok: true, resource: continuation.params.resource,
             contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest });
+        const denied = { status: 403, body: { error: 'credential_scope_denied', requestId: envelope.requestId } };
+        if (credentialDenied) return denied;
         if (continuation.method === open) return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest });
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
-        if (refused) return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId } };
+        if (refusal === 'target_unavailable' && refused) return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId } };
         return new Promise<HomeDomainAnswer>(resolve => {
             const idle = () => resolve(reply({ ok: true, status: 'idle' }));
+            if (refusal === 'credential_scope_denied') refuseParkedWatch = () => {
+                credentialDenied = true;
+                resolve(denied);
+            };
             request.signal?.addEventListener('abort', idle, { once: true });
             if (request.signal?.aborted) idle();
         });
@@ -104,9 +113,22 @@ it('settles a refused Machine Services watch without idle Action requests and re
         expect(attachments).toEqual([machineId]);
         expect(requests.filter(method => method === read)).toHaveLength(1);
         expect(requests.filter(method => method === open)).toHaveLength(1);
+        if (refusal === 'credential_scope_denied') {
+            await vi.waitFor(() => expect(resource.selection.getSnapshot()).toMatchObject({
+                subscription: 'live', value: { kind: 'snapshot', services: [] },
+            }));
+            refuseParkedWatch?.();
+        }
         const openCount = requests.length;
         await vi.advanceTimersByTimeAsync(60_000);
         expect(requests.slice(openCount)).toEqual([]);
+        if (refusal === 'credential_scope_denied') {
+            expect(resource.selection.getSnapshot()).toMatchObject({
+                pending: 'idle', subscription: 'ended', error: { code: 'denied', diagnostics: [refusal] },
+            });
+            expect(resource.selection.getSnapshot().value).toBeUndefined();
+            return;
+        }
         expect(resource.selection.getSnapshot()).toMatchObject({
             pending: 'idle', subscription: 'reconnecting', error: { code: 'target_unavailable' },
         });

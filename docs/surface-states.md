@@ -429,7 +429,8 @@ unreleased 0.3 source and changes no plugin wire event or Account authority.
 In unreleased 0.3 source, a host Resource watch refused with
 `target_unavailable` settles with that reason and keeps any admitted
 snapshot stale. The next Machine push or reconnect reopens the watch through
-the existing admission path.
+the existing admission path. A Home credential-scope denial ends the watch,
+clears the retained snapshot and preserves the refusal code in diagnostics.
 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
 

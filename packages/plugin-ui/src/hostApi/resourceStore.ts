@@ -290,6 +290,7 @@ function readLostResourceReadAuthorityCode(error: PluginUiResourceError): string
   return [error.code, ...(error.diagnostics ?? [])].find(code =>
     code === 'denied'
     || code === 'permission_denied'
+    || code === 'credential_scope_denied'
     || code === 'action_disabled'
     || code === 'action_forbidden'
     || code === 'action_home_signed_out'

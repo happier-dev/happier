@@ -1,6 +1,6 @@
 import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
-import { isMachinePluginUiResourceTargetUnavailable, mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
+import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
 import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -209,7 +209,8 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 ok: false,
                 // A declaration or generation failure is settled: re-opening
                 // would ask the same question and get the same answer.
-                terminal: outcome.result.reason !== 'unavailable',
+                terminal: outcome.result.reason !== 'unavailable'
+                    || classifyMachinePluginUiResourceRefusal(outcome.result.code) === 'denied',
                 reason: outcome.result.code,
             };
         }
@@ -219,12 +220,13 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             : { ok: false, terminal: true, reason: 'plugin_resource_digest_invalid' };
     }
 
-    function settleTargetRefusal(watch: ActiveWatch, code: string): boolean {
-        if (!isMachinePluginUiResourceTargetUnavailable(code)) return false;
+    function settleRefusal(watch: ActiveWatch, code: string): boolean {
+        const refusal = classifyMachinePluginUiResourceRefusal(code);
+        if (!refusal) return false;
         watch.closed = true;
         watches.delete(watch.subscriptionId);
-        if (watch.onRefused) watch.onRefused(code);
-        else watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', code));
+        if (refusal === 'target_unavailable' && watch.onRefused) watch.onRefused(code);
+        else watch.deliver(terminalEvent(watch.subscriptionId, refusal === 'denied' ? 'denied' : 'unavailable', code));
         return true;
     }
 
@@ -242,7 +244,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         if (watch.closed || !isCurrent()) return 'stop';
         if (input.resource.store && watch.input === undefined) { retireOrdinaryWatches(); return 'stop'; }
         if (!reopened.ok) {
-            if (settleTargetRefusal(watch, reopened.reason)) return 'stop';
+            if (settleRefusal(watch, reopened.reason)) return 'stop';
             if (!reopened.terminal) return 'retry';
             watch.closed = true;
             watches.delete(watch.subscriptionId);
@@ -347,7 +349,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     return;
                 }
                 if (outcome.supported && !outcome.result.ok) {
-                    if (settleTargetRefusal(watch, outcome.result.code)) return;
+                    if (settleRefusal(watch, outcome.result.code)) return;
                     if (outcome.result.reason === 'stale_occurrence') {
                         watch.closed = true;
                         watches.delete(watch.subscriptionId);
