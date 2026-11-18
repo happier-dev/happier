@@ -144,7 +144,10 @@ export type ProjectsTreeRow = Readonly<{
     newFromSession?: boolean;
     /** An Environment row: the Environment page it opens. Read through `projectsTreeRowEnvironment`. */
     environment?: ProjectsTreeEnvironmentAddress;
-    /** An Environment row's one quiet fact at its end, when it has no state to say. */
+    /**
+     * The row's one quiet fact at its end, when it has no state to say: an Environment's (a version, an age), or a
+     * folded Project's Environments ("Production", "2 environments"; lab rdReach tree).
+     */
     fact?: string | null;
     /** An Environment row's state: the one Environment state mark at its end, in place of the fact. */
     state?: DeploymentEnvironmentState | null;
@@ -286,6 +289,7 @@ function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, cont
         opens: null,
         attention: open ? null : mostUrgent(environments),
         state: open ? null : foldedEnvironmentState(environments),
+        fact: open ? null : foldedEnvironmentFact(environments),
         selected: false,
         child: { kind: 'href', href: buildDeploymentProjectHref(project.deploymentSource) },
     };
@@ -315,6 +319,16 @@ export function projectsTreeRowSubtitle(row: Pick<ProjectsTreeRow, 'subtitle' | 
 function foldedEnvironmentState(environments: readonly ProjectsTreeEnvironment[]): DeploymentEnvironmentState | null {
     return environments.find((environment) => environment.state?.tone)?.state
         ?? environments.find((environment) => environment.state)?.state ?? null;
+}
+
+/**
+ * A folded Project's quiet end while none of its Environments speaks (lab rdReach tree): its one Environment's name, else
+ * how many. A Project row that already ends on a count, or opens to list them, says nothing more.
+ */
+function foldedEnvironmentFact(environments: readonly ProjectsTreeEnvironment[]): string | null {
+    if (environments.length === 0 || foldedEnvironmentState(environments)) return null;
+    return environments.length === 1 ? environments[0]!.title
+        : t('projects.deployments.services.countEnvironmentsTotal', { count: environments.length });
 }
 
 function mostUrgent(checkouts: readonly Readonly<{ attention: ProjectsTreeAttention }>[]): ProjectsTreeAttention {
@@ -416,6 +430,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 workspaceAddress: only.workspaceAddress,
                 attention: open ? only.attention : mostUrgent([only, ...environments]),
                 state: open ? null : foldedEnvironmentState(environments),
+                fact: open ? null : foldedEnvironmentFact(environments),
                 offline: only.offline,
                 selected,
                 newFromSession: project.newFromSession === true,
@@ -716,6 +731,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             count: single || !expanded ? null : checkouts.length,
             attention: expanded ? (single ? single.attention : null) : mostUrgent([...checkouts, ...environments]),
             state: expanded ? null : foldedEnvironmentState(environments),
+            fact: expanded ? null : foldedEnvironmentFact(environments),
             offline: single?.offline,
             selected: single?.refId === input.openRefId && !holdsEnvironment(project, input.openEnvironmentId),
             newFromSession: project.newFromSession === true,

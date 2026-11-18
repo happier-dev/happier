@@ -7,7 +7,7 @@ import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { t } from '@/text';
 
-import { DeploymentEnvironmentStateMark } from './deployments/rows/DeploymentEnvironmentRow';
+import { DeploymentEnvironmentRowEnd, DeploymentEnvironmentStateMark } from './deployments/rows/DeploymentEnvironmentRow';
 import type { ProjectsTreeAttention, ProjectsTreeRow } from './projectsTreeRows';
 import { useTeamSetupRepositoryProgress } from '@/components/teams/setup/useTeamSetupRepositoryProgress';
 import { resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
@@ -22,7 +22,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
  */
 export function ProjectsTreeRowAttention(
   props: Readonly<{
-    row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'kind' | 'source' | 'machineId'>>;
+    row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'kind' | 'source' | 'machineId' | 'fact'>>;
     testID?: string;
   }>,
 ) {
@@ -35,7 +35,7 @@ export function ProjectsTreeRowAttention(
 
 /** Ambient setup progress for one Source: the Project Open and setup operations' own states, never inferred. */
 function ProjectsTreeSourceSetupAttention(props: Readonly<{
-  row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'machineId'>>;
+  row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'machineId' | 'fact'>>;
   source: NonNullable<ProjectsTreeRow['source']>;
   testID?: string;
 }>) {
@@ -82,7 +82,7 @@ function readSetupAttention(operation: ActionOperationProjection | null): Projec
 
 function ProjectsTreeRowAttentionMark(
   props: Readonly<{
-    row: Pick<ProjectsTreeRow, 'attention' | 'state'>;
+    row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'fact'>>;
     attention: ProjectsTreeAttention;
     testID?: string;
   }>,
@@ -110,5 +110,8 @@ function ProjectsTreeRowAttentionMark(
   }
   if (attention === 'working')
     return <ActivitySpinner size="small" color={theme.colors.text.tertiary} />;
-  return null;
+  // Nothing speaks: a folded Project's quiet fact ("Production", "2 environments"), the Environment row's own end.
+  return props.row.fact
+    ? <DeploymentEnvironmentRowEnd state={null} fact={props.row.fact} {...(props.testID ? { testID: `${props.testID}-fact` } : {})} />
+    : null;
 }

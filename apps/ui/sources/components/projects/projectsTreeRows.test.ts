@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { buildProjectsTreeEnvironmentChildren, buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowChild, projectsTreeRowEnvironment, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeEnvironment, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject } from './projectsTreeRows';
 
 const checkout = (refId: string, machineId: string, label: string, extra: Partial<ProjectsTreeCheckout> = {}): ProjectsTreeCheckout => ({
@@ -267,6 +269,35 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             describe: { checkoutCount: String, machineCount: String, offlineCount: String } });
         expect(shape(phone)).toEqual(['billing-api v', '  Production', '  Staging']);
         expect(phone[0]).toMatchObject({ refId: 'b1', subtitle: 'MacBook Pro · main' });
+    });
+
+    it('says a folded Project\'s Environments at its end while none speaks (lab rdReach tree: "2 environments", "Production")', () => {
+        const environment = (environmentId: string, title: string, extra: Partial<ProjectsTreeEnvironment> = {}): ProjectsTreeEnvironment => ({
+            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, ...extra,
+        });
+        const describe = { checkoutCount: String, machineCount: String, offlineCount: String };
+        const facts = (rows: ReturnType<typeof buildProjectsTreeRows>) => rows.map(row => row.fact ?? null);
+        const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]),
+            environments: [environment('prod', 'Production'), environment('stg', 'Staging')] };
+        const many = t('projects.deployments.services.countEnvironmentsTotal', { count: 2 });
+        // Folded: how many; opened, its Environment rows say it themselves.
+        expect(facts(buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set() }))).toEqual([many]);
+        expect(facts(buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']) }))[0]).toBeNull();
+        expect(facts(buildProjectsPhoneTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(), describe }))).toEqual([many]);
+        // One Environment: its name.
+        const landing: ProjectsTreeProject = { ...billing, environments: [environment('prod', 'Production')] };
+        expect(facts(buildProjectsTreeRows({ projects: [landing], openRefId: null, expandedKeys: new Set() }))).toEqual(['Production']);
+        // A state that speaks takes the end instead.
+        const failing: ProjectsTreeProject = { ...billing, environments: [environment('prod', 'Production', { state: { tone: 'danger', text: 'Failed' }, attention: 'needs-you' })] };
+        expect(facts(buildProjectsTreeRows({ projects: [failing], openRefId: null, expandedKeys: new Set() }))).toEqual([null]);
+        // A Project that only deploys says the same.
+        const demo: ProjectsTreeProject = { key: 'deployments:src-q', name: 'Billing demo', checkouts: [], environments: [environment('e1', 'Production')],
+            deploymentSource: { serverId: 'home', projectSourceId: 'src-q' } };
+        expect(facts(buildProjectsTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set() }))).toEqual(['Production']);
+        // Several checkouts fold behind their count; the end keeps that one quiet number.
+        const several: ProjectsTreeProject = { ...project('happier', [checkout('h1', 'devbox', 'main'), checkout('h2', 'mbp', 'v0.3')]), environments: [environment('prod', 'Production')] };
+        const folded = buildProjectsTreeRows({ projects: [several], openRefId: null, expandedKeys: new Set() });
+        expect([folded[0]!.count, folded[0]!.fact ?? null]).toEqual([2, null]);
     });
 
     it('discloses an Environment on a Machine into what runs there and its databases, folded until opened (lab rdProj tree)', () => {
