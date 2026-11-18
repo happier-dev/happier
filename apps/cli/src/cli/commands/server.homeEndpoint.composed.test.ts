@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import type { SpawnOptions } from 'child_process';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -139,4 +140,79 @@ describe('Home endpoint publication → server set → daemon launch', () => {
       });
     },
   );
+
+  // A shared-database Stack server mints its own Home identity record while the Stack's profile
+  // still names the shared identity it established earlier. The Stack's profile reconciliation
+  // re-establishes only onto the identity its own server recorded; a record naming any other
+  // Home leaves the established descriptor in place.
+  it.each(['own-record', 'foreign-record'] as const)('re-establishes a Stack profile only on its own server identity record (%s)', async scenario => {
+    await withTempDir('happier-home-identity-record-', async homeDir => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+        'HAPPIER_WEBAPP_URL', 'HAPPIER_CLI_SUBPROCESS_PREFER_TSX', 'DBUS_SESSION_BUS_ADDRESS']);
+      const previousExitCode = process.exitCode;
+      const output = captureConsoleLogAndMuteStdout();
+      const server = createServer();
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined,
+          HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '1', DBUS_SESSION_BUS_ADDRESS: undefined });
+        reloadConfiguration();
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing HTTP test address');
+        const origin = `http://127.0.0.1:${address.port}`;
+        const id = 'stack_qa__id_default';
+        const sharedDescriptor = { v: 1 as const, homeServerIdentityId: 'srv_shared_source', canonicalServerUrl: origin,
+          revision: 66, endpoints: [{ kind: 'https' as const, url: origin }] };
+        await setServerProfileEndpointsById({ id, serverUrl: origin, webappUrl: origin, use: true });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: id, descriptor: sharedDescriptor, observation: 'exact' });
+        await writeCredentialsTokenOnlyForServerId(id, { token: 'fixture-endpoint-token' });
+        reloadConfiguration();
+        const minted = 'srv_stack_own_minted';
+        const published = await readHomeConnectionDescriptor({
+          env: { HAPPIER_SERVER_IDENTITY_ID: minted, HAPPIER_CANONICAL_SERVER_URL: origin, HAPPIER_PUBLIC_SERVER_URL: origin },
+          continuityStore: createFileHomeConnectionDescriptorContinuityStore(join(homeDir, 'server-light', 'runtime', 'home.descriptor.json')),
+          visibility: 'authenticated',
+          resolveIrohEndpointState: () => ({ status: 'not-composed', snapshot: null, failureReason: null }),
+        });
+        expect(published?.homeServerIdentityId).toBe(minted);
+        server.on('request', (request, response) => {
+          if (request.url !== '/v1/features/authenticated' || request.headers.authorization !== 'Bearer fixture-endpoint-token') {
+            response.writeHead(401).end();
+            return;
+          }
+          response.setHeader('content-type', 'application/json');
+          response.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: minted } },
+            homeConnectionDescriptor: published }));
+        });
+        const recordPath = join(homeDir, 'server-light', 'runtime', 'server.identity');
+        await mkdir(dirname(recordPath), { recursive: true });
+        await writeFile(recordPath, `${scenario === 'own-record' ? minted : 'srv_some_other_home'}\n`);
+
+        await handleServerCommand(['set', '--server-id', id, '--server-url', origin, '--local-server-url', origin,
+          '--webapp-url', origin, '--home-identity-record', recordPath, '--json']);
+        const result = JSON.parse(output.logs.join('\n'));
+        if (scenario === 'own-record') {
+          expect(result).toMatchObject({ ok: true, kind: 'server_set' });
+          expect((await getServerProfile(id)).homeConnectionDescriptor).toEqual(published);
+          await spawnDetachedDaemonStartSync();
+          expect(launches).toMatchObject([{ args: expect.arrayContaining(['daemon', 'start-sync']) }]);
+        } else {
+          expect(result).toMatchObject({ ok: false, kind: 'server_set' });
+          expect(process.exitCode).toBe(1);
+          expect((await getServerProfile(id)).homeConnectionDescriptor).toEqual(sharedDescriptor);
+          expect(launches).toEqual([]);
+        }
+      } finally {
+        if (server.listening) {
+          server.closeAllConnections();
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+        output.restore();
+        process.exitCode = previousExitCode;
+        scope.restore();
+        reloadConfiguration();
+      }
+    });
+  });
 });

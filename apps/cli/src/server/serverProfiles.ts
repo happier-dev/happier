@@ -5,7 +5,7 @@ import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/
 import { HomeApplicationOriginV1Schema, HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
@@ -587,12 +587,20 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
   webappUrl?: string;
   observation: 'advisory' | 'exact';
   use?: boolean;
+  /**
+   * The established identity an exact observation re-establishes on `expectedProfileId`. Only
+   * Stack profile reconciliation passes it, after proving the new identity is its own server's.
+   */
+  replacesHomeServerIdentityId?: string;
 }>): Promise<Readonly<{
   profile: ServerProfile;
   outcome: 'updated' | 'unchanged' | 'stale';
 }>> {
   const incoming = HomeConnectionDescriptorV1Schema.parse(opts.descriptor);
   const expectedProfileId = opts.expectedProfileId ? asStringId(opts.expectedProfileId) : null;
+  if (opts.replacesHomeServerIdentityId && (!expectedProfileId || opts.observation !== 'exact')) {
+    throw new Error('Home identity re-establishment requires an exact observation of one profile');
+  }
   let resolvedId = '';
   let outcome: 'updated' | 'unchanged' | 'stale' = 'unchanged';
   let adoptedProfile!: ServerProfile;
@@ -609,6 +617,11 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     }
 
     const identityMatchId = identityMatches[0]?.[0] ?? null;
+    if (opts.replacesHomeServerIdentityId && identityMatchId && identityMatchId !== expectedProfileId) {
+      throw new ServerProfileIdentityMismatchError(
+        `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
+      );
+    }
     let descriptor = incoming;
     // Cross-profile observations may reuse saved routes, but only the owner's
     // own observation may change its endpoints.
@@ -635,7 +648,9 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
       throw new Error(`Server profile not found: ${expectedProfileId}`);
     }
     const expectedIdentity = expected?.homeConnectionDescriptor?.homeServerIdentityId;
-    if (expectedIdentity && expectedIdentity !== incoming.homeServerIdentityId) {
+    const reestablishes = Boolean(opts.replacesHomeServerIdentityId)
+      && expectedIdentity === opts.replacesHomeServerIdentityId && expectedIdentity !== incoming.homeServerIdentityId;
+    if (expectedIdentity && expectedIdentity !== incoming.homeServerIdentityId && !reestablishes) {
       throw new ServerProfileIdentityMismatchError(
         `Profile ${expectedProfileId} belongs to Home ${expectedIdentity}, not ${incoming.homeServerIdentityId}`,
       );
@@ -658,8 +673,10 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     if (opts.use === true || (current?.activeServerId === resolvedId && existing && !urlsReferToSameServer(existing.serverUrl, incoming.canonicalServerUrl))) {
       assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', incoming.canonicalServerUrl);
     }
-    const previous = existing?.homeConnectionDescriptor;
-    const previousAuthority = existing?.homeConnectionDescriptorAuthority ?? (previous ? 'exact' : undefined);
+    // Another Home's revisions say nothing about this one's.
+    const previous = reestablishes ? undefined : existing?.homeConnectionDescriptor;
+    const previousAuthority = reestablishes ? undefined
+      : existing?.homeConnectionDescriptorAuthority ?? (previous ? 'exact' : undefined);
     if (opts.observation === 'advisory' && previousAuthority === 'exact') {
       outcome = 'stale';
       adoptedProfile = requireProfileProjection(rawExisting, resolvedId);
@@ -822,6 +839,8 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
   localServerUrl?: string;
   webappUrl: string;
   use?: boolean;
+  /** A Stack shared-database server's own Home identity record (see re-establishment below). */
+  homeIdentityRecordPath?: string;
 }>): Promise<ServerProfile> {
   const id = asStringId(opts.id);
   if (sanitizeServerIdForFilesystem(id, '') !== id) {
@@ -839,11 +858,8 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
   }
   const previous = before.servers?.[id] ? requireProfileProjection(before.servers[id], id) : null;
   const previousDescriptor = previous?.homeConnectionDescriptor;
-  // A URL change cannot rewrite Home authority. Refresh the published routes
-  // through the requested carrier, retaining the profile's established identity.
-  // Compare against the descriptor itself: a prior launcher may already have
-  // updated the ordinary URLs while leaving the descriptor on the old port.
-  if (previousDescriptor && previousDescriptor.canonicalServerUrl !== serverUrl) {
+  // Observes the authenticated descriptor through the requested carrier; it must name `expectedIdentity`.
+  const observeExactDescriptor = async (expectedIdentity: string) => {
     const probeUrl = HomeApplicationOriginV1Schema.parse(
       (opts.localServerUrl !== undefined ? localServerUrl : previous?.localServerUrl) || serverUrl,
     );
@@ -855,7 +871,7 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
     ]);
     const snapshot = await observeServerFeaturesSnapshot({ serverUrl: probeUrl, token: credentials.token });
     const observation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({
-      snapshot, expectedHomeServerIdentityId: previousDescriptor.homeServerIdentityId,
+      snapshot, expectedHomeServerIdentityId: expectedIdentity,
     });
     if (observation.kind !== 'available') {
       const signedOut = snapshot.status === 'error' && snapshot.reason === 'response_status'
@@ -866,12 +882,32 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
         code: signedOut ? 'not_authenticated' : 'server_identity_unavailable',
       });
     }
+    return observation.descriptor;
+  };
+  // A Stack shared-database server mints its own Home identity, so a Stack profile established
+  // on the shared identity is re-established only onto the identity that server recorded, and
+  // only when the live authenticated Home at the profile's carrier publishes exactly that one.
+  const recordedIdentity = previousDescriptor && opts.homeIdentityRecordPath
+    ? (await readFile(opts.homeIdentityRecordPath, 'utf8')).trim() : '';
+  const reestablishesHome = Boolean(recordedIdentity) && recordedIdentity !== previousDescriptor?.homeServerIdentityId;
+  if (reestablishesHome) {
+    await adoptServerProfileHomeConnectionDescriptor({
+      descriptor: await observeExactDescriptor(recordedIdentity), expectedProfileId: id, observation: 'exact',
+      replacesHomeServerIdentityId: previousDescriptor!.homeServerIdentityId,
+    });
+  }
+  // A URL change cannot rewrite Home authority. Refresh the published routes
+  // through the requested carrier, retaining the profile's established identity.
+  // Compare against the descriptor itself: a prior launcher may already have
+  // updated the ordinary URLs while leaving the descriptor on the old port.
+  if (!reestablishesHome && previousDescriptor && previousDescriptor.canonicalServerUrl !== serverUrl) {
+    const descriptor = await observeExactDescriptor(previousDescriptor.homeServerIdentityId);
     const adopted = await adoptServerProfileHomeConnectionDescriptor({
-      descriptor: observation.descriptor, expectedProfileId: id, observation: 'exact',
+      descriptor, expectedProfileId: id, observation: 'exact',
     });
     if (adopted.outcome === 'stale') {
       throw new ServerProfileDescriptorRevisionError(
-        'stale_home_descriptor', adopted.profile.homeConnectionDescriptor!.revision, observation.descriptor.revision,
+        'stale_home_descriptor', adopted.profile.homeConnectionDescriptor!.revision, descriptor.revision,
       );
     }
   }

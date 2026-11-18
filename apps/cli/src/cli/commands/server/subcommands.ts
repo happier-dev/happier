@@ -531,7 +531,7 @@ async function cmdSet(args: string[], options: ServerSubcommandOptions): Promise
   assertNoUnknownServerFlags({
     args,
     commandName: 'set',
-    valueFlags: ['--server-id', '--server-url', '--local-server-url', '--public-server-url', '--webapp-url'],
+    valueFlags: ['--server-id', '--server-url', '--local-server-url', '--public-server-url', '--webapp-url', '--home-identity-record'],
     booleanFlags: ['--json', '--no-use'],
   });
   const json = wantsJson(args);
@@ -539,6 +539,8 @@ async function cmdSet(args: string[], options: ServerSubcommandOptions): Promise
   // relay explicitly (`--server <id>`) never switches the terminal's active relay.
   const shouldUse = !args.includes('--no-use');
   const serverId = argvValue(args, '--server-id');
+  // Internal Stack flag: a shared-database Stack server's own Home identity record.
+  const homeIdentityRecordPath = argvValue(args, '--home-identity-record');
   const hasExplicitLocalServerUrl = args.some((arg) => arg === '--local-server-url' || arg.startsWith('--local-server-url='));
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
@@ -608,6 +610,7 @@ async function cmdSet(args: string[], options: ServerSubcommandOptions): Promise
         ...(hasExplicitLocalServerUrl ? { localServerUrl } : {}),
         webappUrl,
         use: shouldUse,
+        ...(homeIdentityRecordPath ? { homeIdentityRecordPath } : {}),
       })
     : await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
   if (!shouldUse) {
