@@ -419,6 +419,9 @@ describe('Plugin Account Collection contracts', () => {
         const frontier = arms['projection-frontier']!.properties!;
         frontier.payload = { oneOf: [frontier.payload!, { type: 'object', properties: { lastScannedSeq: {} } }] };
       }]],
+      ['a disjoint branch prepended before retained arms', [(arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
+        ingressTarget(arms).oneOf!.unshift(discussionTarget('discussion'));
+      }]],
       ['a non-disjoint appended branch', [(arms: Readonly<Record<string, PluginJsonSchemaV2>>) => {
         // Open, so every retained Session target also matches it.
         ingressTarget(arms).oneOf!.push({ type: 'object', properties: { kind: { type: 'string', const: 'session' } }, required: ['kind'] });
