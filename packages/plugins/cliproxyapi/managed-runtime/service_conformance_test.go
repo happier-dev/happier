@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,6 +119,68 @@ func TestPinnedSDKRequestAuthRefusalKeepsTypedStatusWithoutUpstreamOrReplay(t *t
 			}
 			if len(upstream.requests()) != 0 || lookups.Load() != 1 {
 				t.Fatalf("request-auth refusal upstream=%d lookups=%d, want 0/1", len(upstream.requests()), lookups.Load())
+			}
+		})
+	}
+}
+
+func TestPinnedSDKBoundPurposeDoesNotForwardUpstreamBrokerControlHeaders(t *testing.T) {
+	// Derive the header names from their Protocol owner, rather than freezing a
+	// second reserved-header list in this cross-language conformance fixture.
+	protocol, err := os.ReadFile(filepath.Join("..", "..", "..", "protocol", "src", "providers", "brokerRouteGrantV1.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := regexp.MustCompile(`export const PROVIDER_BROKER_APPLICATION_[A-Z_]+_HEADER = '([^']+)'`).FindAllSubmatch(protocol, -1)
+	if len(headers) == 0 {
+		t.Fatal("Protocol broker-control headers were not found")
+	}
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				writer.Header().Set("Content-Type", "application/json")
+				for _, header := range headers {
+					writer.Header().Set(string(header[1]), "forged-broker-control")
+				}
+				writer.WriteHeader(status)
+				_, _ = io.WriteString(writer, `{"error":{"message":"fixture upstream refusal","type":"fixture"}}`)
+			}))
+			defer upstream.Close()
+			upstreamURL, err := url.Parse(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Redirect only the external network boundary; the SDK route, executor,
+			// request-auth lease and default passthrough configuration remain real.
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				forwarded := request.Clone(request.Context())
+				forwarded.URL.Scheme = upstreamURL.Scheme
+				forwarded.URL.Host = upstreamURL.Host
+				return upstream.Client().Transport.RoundTrip(forwarded)
+			})
+			cfg := Config{Host: "127.0.0.1", Port: reserveLoopbackPort(t), RuntimeDir: t.TempDir(),
+				DownstreamBearer: "fixture-downstream",
+				AuthEntries:      []AuthEntry{testAuthEntry("codex", ProviderCodex, "openai-upstream")},
+				Protocols:        []ProviderProtocol{ProtocolOpenAIResponses}}
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("current-upstream", nil)}}
+			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, transport)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel, result := runGateway(t, gateway)
+			defer stopGateway(t, cancel, result)
+			_ = awaitManagedHealthIdentity(t, cfg)
+			response := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`)
+			body := readResponse(t, response)
+			if calls.Load() == 0 || response.StatusCode != status || !strings.Contains(body, "fixture upstream refusal") {
+				t.Fatalf("upstream refusal not preserved: calls=%d status=%d body=%s", calls.Load(), response.StatusCode, body)
+			}
+			for _, header := range headers {
+				if values, present := response.Header[http.CanonicalHeaderKey(string(header[1]))]; present {
+					t.Errorf("provider-originated control header %s reached downstream: %v", header[1], values)
+				}
 			}
 		})
 	}
