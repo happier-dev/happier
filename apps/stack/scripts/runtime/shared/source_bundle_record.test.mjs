@@ -62,7 +62,7 @@ test('reload READY reports the payload belonging to the loaded source bundle loc
     sourceRuntimeIdentities: local, components: { daemon: { running: true } },
     daemonEntry: { selected: entrypoint, loaded: entrypoint }, health: { status: 'healthy' }, managedCli } };
   const ready = projectStackReloadVerification({ info, beforeManagedCli: managedCli, auth: { authenticated: true },
-    agent: { status: 'ready' } });
+    agent: { status: 'ready' }, reload: { status: 'ready', fresh: true, sourceCaptures: { server: { revision: 'a'.repeat(40) }, daemon: { revision: 'a'.repeat(40) } } }, signIn: { status: 200 } });
   assert.equal(ready.status, 'READY');
   assert.equal(ready.identities.daemon.loaded, 'daemon-new');
   assert.deepEqual(ready.identities.daemon.guestPayload, guestPayload);

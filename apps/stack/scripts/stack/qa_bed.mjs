@@ -121,7 +121,7 @@ async function signInCli({ rootDir, stackName, keyFile }) {
   }
 }
 
-async function probeKeyLogin(serverUrl) {
+export async function probeKeyLogin(serverUrl) {
   // The key-challenge issue answers 503 when the server has no canonical URL
   // (P03-MOBILE-SESSION-OPEN). Issuing a challenge writes nothing durable.
   try {

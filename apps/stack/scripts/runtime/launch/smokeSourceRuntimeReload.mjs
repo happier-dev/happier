@@ -178,7 +178,9 @@ async function serveSourceWebArtifactForSmoke({ ui, env, signal }) {
   }
 }
 
-export async function smokeSourceWebBoot({ repoDir, url, stackName, env = process.env, signal }) {
+/** With `observeApiOrigin`, also returns the origin the loaded QA URL names for its server (its `server` parameter,
+ * else the page's own origin) and the origins of the page's API requests up to its first one. */
+export async function smokeSourceWebBoot({ repoDir, url, stackName, env = process.env, signal, observeApiOrigin = false }) {
   // The source checkout's browser test tooling owns Playwright. Chromium
   // launch policy/profile cleanup remain with the existing QA browser owner.
   const { chromium } = createRequire(join(repoDir, 'packages/tests/package.json'))('@playwright/test');
@@ -215,6 +217,15 @@ export async function smokeSourceWebBoot({ repoDir, url, stackName, env = proces
         rejectBoot(new Error(`[reload] UI boot request failed: ${request.url()}`));
       }
     });
+    const apiOrigins = new Set();
+    let firstApiRequest;
+    const apiRequest = new Promise(resolve => { firstApiRequest = resolve; });
+    if (observeApiOrigin) page.on('request', request => {
+      const target = new URL(request.url());
+      if (!/^\/v\d+\//.test(target.pathname)) return;
+      apiOrigins.add(target.origin);
+      firstApiRequest();
+    });
     const closePage = () => { void page.close().catch(() => {}); };
     signal?.addEventListener('abort', closePage, { once: true });
     try {
@@ -224,10 +235,19 @@ export async function smokeSourceWebBoot({ repoDir, url, stackName, env = proces
       await Promise.race([page.evaluate(async () => {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       }), bootError]);
+      // The app's boot reads the server's features; that request names the API origin it uses.
+      if (observeApiOrigin) await Promise.race([apiRequest, bootError]);
       signal?.throwIfAborted();
     } finally {
       signal?.removeEventListener('abort', closePage);
     }
+    if (observeApiOrigin) {
+      // The URL this smoke navigated to (a controlled browser's endpoint may rewrite it), not the page's later URL.
+      const loaded = new URL(endpoint.url ?? url);
+      const named = loaded.searchParams.get('server');
+      return { expectedApiOrigin: named ? new URL(named).origin : loaded.origin, apiOrigins: [...apiOrigins] };
+    }
+    return undefined;
   } finally {
     signal?.removeEventListener('abort', cancel);
     try {

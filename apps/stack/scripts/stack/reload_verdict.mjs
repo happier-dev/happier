@@ -1,7 +1,9 @@
 import { readSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 
 /** Project the existing lifecycle owners' evidence into one reload verdict. */
-export function projectStackReloadVerification({ info, beforeManagedCli, start, auth, agent, render, failure } = {}) {
+/** `enforceValidity` (QA train canary, owner 2026-11-18): the daemon-tree, sign-in and API-origin checks refuse READY only
+ * on Stacks in the canary (`HAPPIER_STACK_QA_TRAIN=1`); elsewhere READY reports them under `validity` until the fleet default. */
+export function projectStackReloadVerification({ info, beforeManagedCli, start, auth, agent, render, reload, signIn, failure, enforceValidity = true } = {}) {
   const runtime = info?.runtime;
   const hasBaseline = beforeManagedCli?.status === 'installed' && Boolean(beforeManagedCli.binaryPath);
   const baseline = hasBaseline ? {} : { baseline: 'unavailable' };
@@ -39,6 +41,19 @@ export function projectStackReloadVerification({ info, beforeManagedCli, start, 
   } else if (!runtime.selectedSnapshotId || runtime.selectedSnapshotId !== runtime.loadedSnapshotId) {
     return notReady('identity:snapshot', { selected: runtime.selectedSnapshotId ?? null, loaded: runtime.loadedSnapshotId ?? null });
   }
+  // The daemon runs this reload's tree (owner 2026-11-18, QA train): selected == loaded holds for a daemon the
+  // reload never reselected, so this reload's own record must carry a daemon capture of the server's revision.
+  const validity = {};
+  const invalid = (check, evidence) => { validity[check] = { status: 'failed', evidence }; return enforceValidity ? notReady(check, evidence) : null; };
+  if (runtime.mode === 'source-snapshot') {
+    const captures = reload?.sourceCaptures ?? {};
+    const revision = captures.daemon?.revision ?? null;
+    if (reload?.status !== 'ready' || reload.fresh !== true || !revision
+      || (captures.server && captures.server.revision !== revision)) {
+      const refused = invalid('daemon_tree', { fresh: reload?.fresh === true, daemon: revision, server: captures.server?.revision ?? null });
+      if (refused) return refused;
+    }
+  }
   if (runtime.components?.daemon?.running !== true) {
     return notReady('control', { status: runtime.components?.daemon?.status ?? 'unavailable' });
   }
@@ -47,6 +62,8 @@ export function projectStackReloadVerification({ info, beforeManagedCli, start, 
     if (participant.reason) return notReady(`participant:${participant.identity}`, participant);
   }
   if (auth?.authenticated !== true) return notReady('auth', { authenticated: false });
+  // A QA sign-in starts with the key challenge on the stack's canonical server (503 without a canonical URL).
+  if (signIn?.status !== 200) { const refused = invalid('sign_in', { status: signIn?.status ?? null }); if (refused) return refused; }
   if (runtime.health?.status !== 'healthy') {
     return notReady('readiness', { status: runtime.health?.status ?? 'unavailable', issues: runtime.health?.issues ?? [] });
   }
@@ -60,11 +77,17 @@ export function projectStackReloadVerification({ info, beforeManagedCli, start, 
   if (info.urls?.uiUrl && render?.status !== 'ready') {
     return notReady('render', { status: render?.status ?? 'pending' });
   }
+  // The QA URL's page must talk to the server that URL names, not another Home it drifted to.
+  if (info.urls?.uiUrl && (!render.apiOrigins?.length || !render.expectedApiOrigin
+    || render.apiOrigins.some(origin => origin !== render.expectedApiOrigin))) {
+    const refused = invalid('api_origin', { expected: render.expectedApiOrigin ?? null, observed: render.apiOrigins ?? [] });
+    if (refused) return refused;
+  }
   const sourceTimes = runtime.mode === 'source-snapshot' ? { sourceTimes: {
     server: runtime.sourceRuntimeIdentities?.server?.sourceTime ?? null,
     daemon: runtime.sourceRuntimeIdentities?.daemon?.sourceTime ?? null,
   } } : {};
-  return { status: 'READY', ...baseline, ...participants, ...sourceTimes, identities: runtime.sourceRuntimeIdentities ?? {
+  return { status: 'READY', ...baseline, ...participants, ...sourceTimes, ...(Object.keys(validity).length ? { validity } : {}), identities: runtime.sourceRuntimeIdentities ?? {
     snapshot: { selected: runtime.selectedSnapshotId, loaded: runtime.loadedSnapshotId },
   }, managedCli: afterManagedCli, agent, render: info.urls?.uiUrl ? render : { status: 'disabled' } };
 }

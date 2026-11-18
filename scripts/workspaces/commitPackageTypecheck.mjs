@@ -708,6 +708,16 @@ export function kickRollingHeadTypecheck({ repo, env = process.env }) {
   } finally {
     closeSync(descriptor);
   }
+  // The same kick moves the QA green pointer (owner 2026-11-18): its own lock and state, never this worktree.
+  const greenCheck = fileURLToPath(new URL('../../apps/stack/scripts/stack/qa_green.mjs', import.meta.url));
+  if (existsSync(greenCheck)) {
+    const greenLog = openSync(join(state, 'runs', 'qa-green.log'), 'a');
+    try {
+      spawn(process.execPath, [greenCheck, '--rolling', repo], { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', greenLog, greenLog] }).unref();
+    } finally {
+      closeSync(greenLog);
+    }
+  }
   return `rolling HEAD typecheck kicked; verdicts in ${join(state, 'verdicts.log')}`;
 }
 

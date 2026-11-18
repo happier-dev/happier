@@ -55,6 +55,22 @@ export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, ma
   return { status: 'ready' };
 }
 
+/** The reload record this start wrote (source-runtime/reload.json): fresh only when written after `startedAt`.
+ * Its per-component captures name the revision each prepared component came from. */
+export async function readThisReloadRecord({ stackBaseDir, startedAt }) {
+  if (!stackBaseDir) return null;
+  const { readFile, stat } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const path = join(stackBaseDir, 'source-runtime', 'reload.json');
+  try {
+    const [record, info] = await Promise.all([readFile(path, 'utf8').then(JSON.parse), stat(path)]);
+    return { status: record?.status ?? null, fresh: info.mtimeMs >= startedAt, sourceCaptures: record?.sourceCaptures ?? {} };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 /** Start retains lifecycle/wait authority; verification observes its settled result. */
 export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, args }) {
   if (args.includes('--json')) throw new Error('[stack] --verify cannot be combined with the --json dry run');
@@ -74,20 +90,29 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     if (start?.readiness === 'pending') {
       return { ...projectStackReloadVerification({ info, beforeManagedCli, start }), durationMs: Date.now() - startedAt };
     }
+    check = 'daemon_tree';
+    const reload = await readThisReloadRecord({ stackBaseDir: info?.baseDir, startedAt });
+    // QA train canary: the validity checks refuse READY only on Stacks that opted in (HAPPIER_STACK_QA_TRAIN=1).
+    const { readEnvObjectFromFile } = await import('../utils/env/read.mjs');
+    const enforceValidity = info?.envPath ? (await readEnvObjectFromFile(info.envPath))?.HAPPIER_STACK_QA_TRAIN === '1' : false;
     check = 'auth';
     // Keep the envelope private: only the owner's authenticated boolean is exposed.
     const runtimeMode = info?.runtime?.mode;
     const status = await runRetainedRuntimeCli({ rootDir, stackName, args: ['auth', 'status'], kind: 'auth_status', runtimeMode });
     const auth = { authenticated: status?.ok === true && status.data?.authenticated === true };
+    check = 'sign_in';
+    const { probeKeyLogin } = await import('./qa_bed.mjs');
+    const serverUrl = String(info?.urls?.canonicalServerUrl ?? info?.urls?.internalServerUrl ?? '').replace(/\/+$/, '');
+    const signIn = serverUrl ? await probeKeyLogin(serverUrl) : { status: null };
     // Spawn the probe Agent only on an otherwise ready, signed-in runtime.
-    const verdict = projectStackReloadVerification({ info, beforeManagedCli, auth });
+    const verdict = projectStackReloadVerification({ info, beforeManagedCli, auth, reload, signIn, enforceValidity });
     if (verdict.status === 'NOT_READY' && verdict.check !== 'agent') {
       return { ...verdict, durationMs: Date.now() - startedAt };
     }
     check = 'agent';
     const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId: status.data?.machineId });
     // Resolve all non-render failures before acquiring a managed browser.
-    const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent });
+    const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent, reload, signIn, enforceValidity });
     if (agentVerdict.status === 'NOT_READY' && agentVerdict.check !== 'render') {
       return { ...agentVerdict, durationMs: Date.now() - startedAt };
     }
@@ -100,14 +125,14 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
       process.once('SIGINT', cancel);
       process.once('SIGTERM', cancel);
       try {
-        await smokeSourceWebBoot({ repoDir: info.repo.dir, stackName, url: info.urls.uiUrl, signal: cancellation.signal });
+        const api = await smokeSourceWebBoot({ repoDir: info.repo.dir, stackName, url: info.urls.uiUrl, signal: cancellation.signal, observeApiOrigin: enforceValidity });
+        render = { status: 'ready', processStartedAt: info.runtime.borrowedExpo?.runtimeStartedAt ?? info.runtime.startedAt, ...api };
       } finally {
         process.removeListener('SIGINT', cancel);
         process.removeListener('SIGTERM', cancel);
       }
-      render = { status: 'ready', processStartedAt: info.runtime.borrowedExpo?.runtimeStartedAt ?? info.runtime.startedAt };
     }
-    return { ...projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render }),
+    return { ...projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render, reload, signIn, enforceValidity }),
       durationMs: Date.now() - startedAt };
   } catch (error) {
     // Never expose command output, auth envelopes or environment values in a verdict.

@@ -12,6 +12,12 @@ import { recordStackRuntimeStart } from '../utils/stack/runtime_state.mjs';
 import { readStackInfoSnapshot } from './stack_info_snapshot.mjs';
 import { probeStackAgentStart, runVerifiedStackStart } from './stack_reload_verification.mjs';
 
+/** This reload's own record and a working QA sign-in: the validity evidence every READY needs. */
+function validity() {
+  const revision = 'a'.repeat(40);
+  return { reload: { status: 'ready', fresh: true, sourceCaptures: { server: { revision }, daemon: { revision } } }, signIn: { status: 200 } };
+}
+
 function readyInfo() {
   return { runtime: { mode: 'source-snapshot', running: true, valid: true,
     health: { status: 'healthy', issues: [] },
@@ -27,7 +33,7 @@ test('reload without a baseline requires an identified available replacement and
     const info = readyInfo();
     info.runtime.sourceRuntimeIdentities.server.sourceTime = '2026-11-09T03:38:00.000Z';
     info.runtime.sourceRuntimeIdentities.daemon.sourceTime = '2026-11-09T03:39:00.000Z';
-    const input = { info, beforeManagedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
+    const input = { info, beforeManagedCli, auth: { authenticated: true }, agent: { status: 'ready' }, ...validity() };
     const verdict = projectStackReloadVerification(input);
     assert.equal(verdict.status, 'READY');
     assert.equal(verdict.baseline, 'unavailable');
@@ -83,7 +89,7 @@ test('reload failure retains the cleanup owner reason without exposing its diagn
 
 test('reload verdict requires loaded source entries and authenticated control, not just live processes', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' }, ...validity() };
   assert.equal(projectStackReloadVerification(input).status, 'READY');
   info.runtime.sourceRuntimeIdentities.daemon.loaded = 'daemon-old';
   assert.equal(projectStackReloadVerification(input).check, 'identity:daemon');
@@ -97,7 +103,7 @@ test('reload verdict requires loaded source entries and authenticated control, n
 
 test('matching recorded IDs cannot admit a promoted daemon entry or missing loaded-entry evidence', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' }, ...validity() };
   info.runtime.daemonEntry.loaded = '/managed/cli/package-dist/index.mjs';
   assert.deepEqual(projectStackReloadVerification(input), {
     status: 'NOT_READY', check: 'daemon_entry_mismatch', evidence: info.runtime.daemonEntry,
@@ -110,7 +116,7 @@ test('matching recorded IDs cannot admit a promoted daemon entry or missing load
 
 test('reload verdict refuses missing sign-in, pending readiness, changed managed CLI, and unrendered UI', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: false }, agent: { status: 'ready' } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: false }, agent: { status: 'ready' }, ...validity() };
   assert.equal(projectStackReloadVerification(input).check, 'auth');
   input.auth.authenticated = true;
   info.runtime.health = { status: 'degraded', issues: ['runtime_preparing'] };
@@ -121,7 +127,7 @@ test('reload verdict refuses missing sign-in, pending readiness, changed managed
   input.beforeManagedCli = info.runtime.managedCli;
   info.urls = { uiUrl: 'ui-origin' };
   assert.equal(projectStackReloadVerification(input).check, 'render');
-  input.render = { status: 'ready' };
+  input.render = { status: 'ready', expectedApiOrigin: 'http://qa:3101', apiOrigins: ['http://qa:3101'] };
   assert.equal(projectStackReloadVerification(input).status, 'READY');
 });
 
@@ -143,7 +149,7 @@ test('export snapshots use the existing selection and loaded projection; disable
   info.runtime.mode = 'require';
   info.runtime.selectedSnapshotId = 'new';
   info.runtime.loadedSnapshotId = 'old';
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' }, ...validity() };
   assert.equal(projectStackReloadVerification(input).check, 'identity:snapshot');
   info.runtime.loadedSnapshotId = 'new';
   assert.equal(projectStackReloadVerification(input).status, 'READY');
@@ -172,7 +178,7 @@ function fakeRuntimeCli(replies) {
 
 test('READY requires one real Agent start; a child that exits before webhook keeps the stack NOT_READY', async () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, ...validity() };
   assert.equal(projectStackReloadVerification(input).check, 'agent');
 
   const failing = fakeRuntimeCli({ 'session create': { ok: false, kind: 'session_create',
@@ -214,7 +220,7 @@ test('a probe Session the stop owner cannot stop keeps the stack NOT_READY', asy
   });
   const agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine', run: leaking.run });
   assert.deepEqual(projectStackReloadVerification({ info, beforeManagedCli: info.runtime.managedCli,
-    auth: { authenticated: true }, agent }).evidence, { status: 'failed', phase: 'stop', code: 'session_stop_failed' });
+    auth: { authenticated: true }, agent, ...validity() }).evidence, { status: 'failed', phase: 'stop', code: 'session_stop_failed' });
 });
 
 test('readiness probe explicitly starts a ready Agent instead of the signed-out CLI fallback', async () => {
@@ -244,4 +250,56 @@ test('an unavailable inventory or no ready Agent settles without creating a Sess
     assert.equal(result.code, envelope.ok ? 'agent_cli_not_ready' : 'catalog_unavailable');
     assert.equal(calls.length, 1);
   }
+});
+
+// Usage 4 / O-DEPLOY D6 (owner 2026-11-18, QA train): three QA windows were invalidated after READY by a stale
+// daemon, a UI talking to another server, and sign-in that did not work. READY now proves each one.
+function validInput() {
+  const info = readyInfo();
+  const revision = 'a'.repeat(40);
+  return { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' },
+    reload: { status: 'ready', fresh: true, sourceCaptures: { server: { revision }, daemon: { revision } } },
+    signIn: { status: 200 } };
+}
+
+test('READY requires the daemon to run this reload\'s own revision tree', () => {
+  const input = validInput();
+  assert.equal(projectStackReloadVerification(input).status, 'READY');
+  input.reload.sourceCaptures.daemon.revision = 'b'.repeat(40);
+  assert.equal(projectStackReloadVerification(input).check, 'daemon_tree');
+  delete input.reload.sourceCaptures.daemon;
+  assert.equal(projectStackReloadVerification(input).check, 'daemon_tree');
+  const stale = validInput();
+  stale.reload.fresh = false;
+  assert.equal(projectStackReloadVerification(stale).check, 'daemon_tree');
+  delete stale.reload;
+  assert.equal(projectStackReloadVerification(stale).check, 'daemon_tree');
+});
+
+test('READY requires a QA sign-in to work against the stack\'s own server', () => {
+  const input = validInput();
+  input.signIn = { status: 503 };
+  assert.deepEqual(projectStackReloadVerification(input), { status: 'NOT_READY', check: 'sign_in', evidence: { status: 503 } });
+  delete input.signIn;
+  assert.equal(projectStackReloadVerification(input).check, 'sign_in');
+});
+
+test('READY requires the QA URL\'s API requests to reach the server that URL names', () => {
+  const input = validInput();
+  input.info.urls = { uiUrl: 'http://qa.localhost:8081/?server=http%3A%2F%2Fqa.localhost%3A3101' };
+  input.render = { status: 'ready', expectedApiOrigin: 'http://qa.localhost:3101', apiOrigins: ['http://repo-dev.localhost:3005'] };
+  assert.equal(projectStackReloadVerification(input).check, 'api_origin');
+  input.render.apiOrigins = [];
+  assert.equal(projectStackReloadVerification(input).check, 'api_origin');
+  input.render.apiOrigins = ['http://qa.localhost:3101'];
+  assert.equal(projectStackReloadVerification(input).status, 'READY');
+});
+
+test('outside the QA train canary the validity checks are reported with READY, not enforced', () => {
+  const input = validInput();
+  input.signIn = { status: 503 };
+  input.enforceValidity = false;
+  const verdict = projectStackReloadVerification(input);
+  assert.equal(verdict.status, 'READY');
+  assert.deepEqual(verdict.validity, { sign_in: { status: 'failed', evidence: { status: 503 } } });
 });

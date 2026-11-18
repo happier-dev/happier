@@ -192,10 +192,36 @@ observation, checks the retained runtime's sign-in through `auth status`,
 starts one real Agent Session through the daemon's Session host, runner and
 attach (`session create` with no prompt, so no model turn), then stops and
 archives it, and boots the current UI in the managed QA browser pool. A failed
-start reports `check: "agent"` with only the owner's error codes. The browser loads after
+start reports `check: "agent"` with only the owner's error codes. READY also
+proves the QA environment is valid (owner 2026-11-18, QA train): this start's own
+reload record carries a daemon capture of the server's revision (`daemon_tree`),
+the key challenge that starts a QA sign-in answers 200 on the stack's canonical
+server (`sign_in`), and the page the QA URL loads sends its API requests to the
+server that URL names, its `server` parameter or else its own origin
+(`api_origin`). A plain start that prepared nothing is therefore not READY; use
+`--restart`. During the QA train canary these three checks refuse READY only on
+Stacks with `HAPPIER_STACK_QA_TRAIN=1` in their env; elsewhere READY lists them
+under `validity`. The browser loads after
 the serving process has started; an old `Web Bundled` log line cannot satisfy
 this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
 verified without restarting its producer.
+
+**Green pointer.** A plain QA reload (no `--rev`, no overlay) selects the green
+commit: the newest commit whose own reload, on the green checker bed
+`agent-qa-p03-qa-green-bed` (fake Claude, own database), prepared its revision
+tree, loaded its server and daemon, and started an Agent (`--restart --verify
+--no-ui --rev=<sha>`). Every commit's rolling HEAD kick starts the check; one
+runs at a time and always takes the newest HEAD. Verdicts are appended to
+`<repository dev stack>/qa-green/checks.log`; the pointer is `green.json` there
+(`node apps/stack/scripts/stack/qa_green.mjs --show`). It never moves backwards.
+Without a green commit, selection is unchanged. `--rev=HEAD` takes HEAD. During
+the canary only Stacks with `HAPPIER_STACK_QA_TRAIN=1` select it.
+
+A committed-revision reload refuses before any preparation when the shared
+checkout's `pnpm-lock.yaml` differs from HEAD's (`working_lockfile_differs_from_head`),
+naming the lane whose board post names that write, because no revision can then
+adopt the dependency snapshot. A Stack whose overlay declares the lockfile is not
+refused.
 
 QA source stacks run a committed revision plus only the files the Stack declares
 as its own uncommitted overlay. Other lanes' edits in the shared checkout never

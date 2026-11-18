@@ -10,6 +10,7 @@ import { sourceBuildNodeArgs } from '../../utils/proc/runSourceBuildCommand.mjs'
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
+import { refuseWorkingLockfileDrift } from './reloadLockfilePreflight.mjs';
 import { prepareSourceTreeRuntimeComponents, recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
@@ -51,12 +52,30 @@ export function resolveSourceRuntimeReloadArguments({ args }) {
 /** `--rev` (default: the latest revision this controller's producer built, else HEAD)
  * plus `--overlay` / the Stack's `HAPPIER_STACK_SOURCE_OVERLAY`. An overlay layers on HEAD
  * unless `--rev` names another revision. Every host then prepares this exact revision. */
-async function resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env }) {
+async function resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env, green }) {
   // Without the controller's Git there is no revision to select; the producer logs its checkout capture.
   if (!canResolveSourceRevisions({ repoDir, env })) return null;
   const overlay = request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
-  const rev = request.rev ?? (overlay.length ? 'HEAD' : await readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) ?? 'HEAD');
+  const rev = selectReloadSourceRevision({ rev: request.rev, overlay, green,
+    latestBuilt: request.rev || overlay.length || green ? null : await readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) });
   return await resolveSourceRevisionIdentity({ repoDir, rev, overlay });
+}
+
+/** A plain QA reload takes the green commit (stack/qa_green.mjs): the newest commit whose own reload
+ * built, loaded its server and daemon and started an Agent. `--rev` names any commit; an overlay is a
+ * lane's uncommitted edit written against HEAD, so it stays on HEAD. */
+export function selectReloadSourceRevision({ rev, overlay, green, latestBuilt }) {
+  return rev ?? (overlay.length ? 'HEAD' : green?.revision ?? latestBuilt ?? 'HEAD');
+}
+
+/** The green pointer only where this controller resolves revisions itself, and (QA train canary, owner 2026-11-18)
+ * only for Stacks in the canary (`HAPPIER_STACK_QA_TRAIN=1`) until P03 ORCH makes it the fleet default. */
+async function readReloadGreen({ request, repoDir, env }) {
+  if (env.HAPPIER_STACK_QA_TRAIN !== '1') return null;
+  if (request.rev || request.revisionDescriptorPath || !canResolveSourceRevisions({ repoDir, env })) return null;
+  const { readQaGreen, resolveQaGreenStateDir } = await import('../../stack/qa_green.mjs');
+  try { return await readQaGreen({ stateDir: await resolveQaGreenStateDir({ repoDir, env }) }); }
+  catch (error) { console.error(`[reload] green pointer unreadable (${error?.code ?? error?.message}); selecting as before`); return null; }
 }
 
 /** Called by the existing restart owner before any incumbent retirement. */
@@ -128,15 +147,24 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
     const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
       && canResolveSourceRevisions({ repoDir, env }) && selectsSourceTreeReload({ stackBaseDir, repoDir, env }));
+    // A committed-revision reload on this controller: refuse an uncommitted lockfile before any work (RU2 B.3).
+    if (!request.revisionDescriptorPath && sourceCapturedAfter == null && canResolveSourceRevisions({ repoDir, env })) {
+      await refuseWorkingLockfileDrift({ repoDir, overlay: request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '') });
+    }
     let treeRevision = null;
+    const green = await readReloadGreen({ request, repoDir, env });
     if (sourceTree && !request.revisionDescriptorPath) {
+      const overlay = request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
       treeRevision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir),
-        rev: request.rev ?? 'HEAD', overlay: request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? ''),
+        rev: selectReloadSourceRevision({ rev: request.rev, overlay, green }), overlay,
         outputDir: revisionDir = await mkdtemp(join(await mkdir(sourceRoot, { recursive: true }).then(() => sourceRoot), 'revision-')) });
       await log(`[reload] source tree ${treeRevision.revision} = base ${treeRevision.base} + ${treeRevision.commitPaths} committed path(s); no bundle build`);
     }
     const revision = request.revisionDescriptorPath || sourceTree ? null
-      : await resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env });
+      : await resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env, green });
+    if (green && !request.rev && [treeRevision?.revision, revision?.revision].includes(green.revision)) {
+      await log(`[reload] green commit ${green.revision} (proven ${green.checkedAt}); --rev=HEAD selects HEAD instead`);
+    }
     const sourceRevision = request.revisionDescriptorPath ? { descriptorPath: request.revisionDescriptorPath }
       : revision ? { rev: revision.revision, overlay: Object.keys(revision.overlay) } : undefined;
     if (revision) await log(`[reload] source revision ${revision.revision}${revision.overlayDigest ? ` + overlay ${revision.overlayDigest} (${Object.keys(revision.overlay).length} declared files)` : ''}; select another with --rev=<sha>, layer this Stack's uncommitted files with --overlay=<paths>`);
