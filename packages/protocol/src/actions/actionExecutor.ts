@@ -417,7 +417,7 @@ import { ProviderConnectionIdSchema } from '../providers/ids.js';
 import { BackendTargetKeySchema } from '../backends/targets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { SessionRollbackTarget } from '../sessions/rollback.js';
-import type { ReviewStartInput } from '../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, ReviewEngineReviewerSelectionV1Schema, type ReviewStartInput } from '../reviews/reviewStart.js';
 import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../reviews/reviewNarration.js';
 import { resolveReviewNarratorPolicy } from '../reviews/reviewEngines.js';
 import type { ReviewEnginesListInputSchema } from './specs/reviews.js';
@@ -2868,18 +2868,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       ctx = { ...ctx, agentStartContext: { ...resolved, callerPermissionCeiling: ceiling } };
     }
-    const agentStartAction = isAgentStartActionInvocationV1(actionId, readRecord(admittedInput));
+    const composedReview = actionId === 'review.start' && requiresReviewWorkflowCompositionV1(admittedInput as ReviewStartInput);
+    const agentStartAction = !composedReview && isAgentStartActionInvocationV1(actionId, readRecord(admittedInput));
     const managedAgentStart = actionId === 'machines.managed.acquire' && readRecord(admittedInput).agentStart !== undefined;
     const roleTargetAction = isRoleActionIdV1(actionId) && actionId.startsWith('session.');
+    const roleSelected = typeof (managedAgentStart ? readRecord(readRecord(admittedInput).agentStart) : readRecord(admittedInput)).roleId === 'string'
+      || actionId === 'review.start' && (admittedInput as ReviewStartInput).reviewers.some(reviewer =>
+        reviewer.kind === 'engine' && reviewer.roleId !== undefined || reviewer.kind === 'model' && reviewer.launch.roleId !== undefined);
     const userRoleStart = ctx.authority === 'present_user' && agentStartAction
-      && typeof (managedAgentStart ? readRecord(readRecord(admittedInput).agentStart) : readRecord(admittedInput)).roleId === 'string'
+      && roleSelected
       && Boolean(ctx.agentStartContext);
     // Account automation resolves the same selected Role, while retaining its
     // authenticated ceiling and ordinary policy/depth admission. It is never
     // promoted to the present-user exemption.
     const automationRoleStart = ctx.authority === 'account_automation' && !isAgentCaller(ctx)
       && (!ctx.actionCaller || ctx.actionCaller.kind === 'host') && agentStartAction
-      && typeof (managedAgentStart ? readRecord(readRecord(admittedInput).agentStart) : readRecord(admittedInput)).roleId === 'string'
+      && roleSelected
       && Boolean(ctx.agentStartContext);
     const admittedWorkflowLeafStart = readAdmittedWorkflowLeafStartDepthV1(actionId, ctx) !== undefined;
     if ((isAgentCaller(ctx) && !admittedWorkflowLeafStart && (agentStartAction || roleTargetAction || selectorGoalMutation)) || userRoleStart || automationRoleStart) {
@@ -2910,11 +2914,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ok: false, errorCode: starts.errorCode, error: starts.errorCode,
           ...(starts.details === undefined ? {} : { details: starts.details }),
         });
-        for (const start of starts.requests) {
+        const reviewRoster = actionId === 'review.start' ? [...(starts.effectiveInput as ReviewStartInput).reviewers] : null;
+        const reviewPositions = reviewRoster?.flatMap((reviewer, index) => reviewer.kind === 'person' ? [] : [index]);
+        const reviewReviewerLaunchInputs: Record<number, NonNullable<ActionExecutorContext['reviewReviewerLaunchInputs']>[number]> = {};
+        if (reviewRoster) admittedInput = starts.effectiveInput;
+        for (const [requestIndex, start] of starts.requests.entries()) {
           const admission = admitActionAgentStartV1(ctx, start, startContext);
           if (!admission.ok) return classifyExecutionRunStartPreDispatchFailure(actionId, admission.error);
           if (start.kind === 'execution_run' || start.kind === 'spawn_new') {
-            const startInput = managedAgentStart ? readRecord(request.agentStart) : request;
+            const reviewerIndex = reviewPositions?.[requestIndex];
+            const reviewer = reviewerIndex !== undefined ? reviewRoster?.[reviewerIndex] : undefined;
+            const startInput = reviewer?.kind === 'model' ? reviewer.launch
+              : reviewer?.kind === 'engine' ? { ...request, ...reviewer }
+                : managedAgentStart ? readRecord(request.agentStart) : request;
             // Fan-out inherits only after each concrete child target and route
             // are known. Role projection still precedes downstream admission.
             const stampedInput = start.kind === 'spawn_new'
@@ -2924,10 +2936,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                     startContext!.caller.kind === 'session' ? startContext!.baseline
                       : { machineId: startContext!.baseline.machineId, directory: startContext!.baseline.directory })
                 : startInput;
-            admittedInput = managedAgentStart ? { ...request, agentStart: stampedInput } : stampedInput;
-            if (!managedAgentStart && actionId !== 'execution.run.start' && actionId !== 'session.spawn_new' && admission.stamped.roleId && admission.stamped.engine) {
+            if (reviewRoster && reviewerIndex !== undefined && reviewer) {
+              if (reviewer.kind === 'model') reviewRoster[reviewerIndex] = { ...reviewer, launch: { ...reviewer.launch, ...stampedInput } };
+              else if (reviewer.kind === 'engine') {
+                reviewReviewerLaunchInputs[reviewerIndex] = { ...stampedInput, intent: admission.stamped.intent };
+                const projected = Object.fromEntries(Object.entries(stampedInput)
+                  .filter(([key, value]) => value !== undefined && Object.hasOwn(ReviewEngineReviewerSelectionV1Schema.shape, key)));
+                reviewRoster[reviewerIndex] = { ...reviewer, ...projected,
+                  ...(admission.stamped.engine ? { engineId: admission.stamped.engine.agentTargetKey } : {}) };
+              }
+              admittedInput = { ...starts.effectiveInput, reviewers: reviewRoster };
+              ctx = { ...ctx, reviewReviewerLaunchInputs };
+            } else admittedInput = managedAgentStart ? { ...request, agentStart: stampedInput } : stampedInput;
+            if (!reviewRoster && !managedAgentStart && actionId !== 'execution.run.start' && actionId !== 'session.spawn_new' && admission.stamped.roleId && admission.stamped.engine) {
               admittedInput = { ...readRecord(admittedInput),
-                [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [admission.stamped.engine.agentTargetKey] };
+                backendTargetKeys: [admission.stamped.engine.agentTargetKey] };
             }
           }
           ctx = { ...ctx, agentStartContext: startContext ?? undefined, agentStartWorkDepth: admission.stamped.workDepth,

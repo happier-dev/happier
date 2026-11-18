@@ -653,6 +653,8 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Per-selection native launch projection decided by Agent admission; never Action/RPC input. */
+  reviewReviewerLaunchInputs?: Readonly<Record<number, Readonly<Record<string, unknown>> & Readonly<{ intent?: import('../../execution/runs/runPrimitives.js').ExecutionRunIntent }>>>;
   /** Opened requester registry-read operand; never part of public Action input. */
   registryThemeContent?: import('../externalActionApi.js').ExternalActionRequestEnvelopeV1['registryThemeContent'];
   /** Host-private admission shared by direct dispatch, prepared invocation and approved continuation. */

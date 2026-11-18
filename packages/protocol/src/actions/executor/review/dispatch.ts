@@ -242,6 +242,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         const reviewInput = data as ReviewStartInput;
+        // Native Agent histories currently persist provider inputs. Until a transport
+        // can honor the approved no-persistence contract, refuse before source reads
+        // or Workflow admission rather than silently dropping selected evidence.
+        if (reviewInput.reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.includeSessionTranscript === true)) {
+          return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
+        }
         if (requiresReviewWorkflowCompositionV1(reviewInput)) {
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
