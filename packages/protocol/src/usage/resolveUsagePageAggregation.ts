@@ -88,6 +88,11 @@ function readBoundedAccountingPeriod(value: UsageAnalyticsQueryResponse | undefi
     ? { startMs: range.startMs, endMs: range.endMs } : undefined;
 }
 
+function readWitnessedUsageComparisonPeriod(accounting: UsageAnalyticsQueryResponse | undefined,
+  coachPeriod: Readonly<{ startMs: number; endMs: number }> | undefined) {
+  return readBoundedAccountingPeriod(accounting) ?? coachPeriod ?? accounting?.coverage?.range;
+}
+
 export const USAGE_QUERY_EVIDENCE_SECTIONS = ['work', 'howYouWork', 'coach'] as const;
 
 export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
@@ -155,7 +160,7 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   // Retained private evidence and its calendar can have an older read window
   // during progression. Accounting comparisons belong to the witnessed A window.
   const accountingPeriod = 'relative' in slice.shownQuery.period
-    ? readBoundedAccountingPeriod(slice.accounting) ?? slice.coach?.period ?? slice.accounting?.coverage?.range
+    ? readWitnessedUsageComparisonPeriod(slice.accounting, slice.coach?.period)
     : slice.shownQuery.period;
   if (slice.comparison) {
     const expected = resolveUsageComparisonQuery(slice.requestedQuery, accountingPeriod);
@@ -775,17 +780,6 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // A failed refresh retains the prior accounting window as well as its
     // values; it cannot compare those values against a later requested range.
     const period = 'relative' in query.period ? readBoundedAccountingPeriod(snapshot?.value) ?? readPeriod : readPeriod;
-    // Pending accounting still presents the admitted answer. Its comparison
-    // belongs to that same answer even when optional coverage has no range.
-    const comparisonQuery = snapshot?.status === 'pending' && snapshot.value !== undefined && prior?.comparison
-      ? prior.comparison.query : resolveUsageComparisonQuery(query, period);
-    const previousComparison = comparisonQuery && prior?.comparison
-      && getUsageQueryKey(prior.comparison.query) === getUsageQueryKey(comparisonQuery) ? prior.comparison : undefined;
-    const comparisonSnapshot = comparisonQuery ? projectPrices(retainAccountingOnReadFailure(accounting.get(getUsageQueryKey(comparisonQuery)),
-      previousComparison?.accounting, previousComparison?.source.asOfMs)) : undefined;
-    const comparisonSource: UsageQuerySourceState = { source: 'comparison', status: comparisonSnapshot?.status ?? 'not_loaded',
-      ...(comparisonSnapshot?.asOfMs === undefined ? {} : { asOfMs: comparisonSnapshot.asOfMs }),
-      ...(comparisonSnapshot?.errorCode === undefined ? {} : { errorCode: comparisonSnapshot.errorCode }) };
     const workSnapshot = work.get(key);
     const detailSnapshot = howYouWork.get(key);
     const detailAuthorized = canRetainUsageReadFailure(detailSnapshot?.errorCode);
@@ -924,6 +918,19 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         ...(digestSuggestion === undefined ? {} : { digestSuggestion }),
       };
     });
+    // For rolling queries, only published coverage or Coach evidence identifies
+    // the current window, including while prior accounting is retained.
+    const comparisonPeriod = 'relative' in query.period
+      ? readWitnessedUsageComparisonPeriod(snapshot?.value, coachFacts.value?.period)
+      : period;
+    const comparisonQuery = resolveUsageComparisonQuery(query, comparisonPeriod);
+    const previousComparison = comparisonQuery && prior?.comparison
+      && getUsageQueryKey(prior.comparison.query) === getUsageQueryKey(comparisonQuery) ? prior.comparison : undefined;
+    const comparisonSnapshot = comparisonQuery ? projectPrices(retainAccountingOnReadFailure(accounting.get(getUsageQueryKey(comparisonQuery)),
+      previousComparison?.accounting, previousComparison?.source.asOfMs)) : undefined;
+    const comparisonSource: UsageQuerySourceState = { source: 'comparison', status: comparisonSnapshot?.status ?? 'not_loaded',
+      ...(comparisonSnapshot?.asOfMs === undefined ? {} : { asOfMs: comparisonSnapshot.asOfMs }),
+      ...(comparisonSnapshot?.errorCode === undefined ? {} : { errorCode: comparisonSnapshot.errorCode }) };
     const detailSourceStatus: UsageQuerySourceState['status'] = !detailSnapshot?.errorCode ? detailProjection?.detailStatus ?? 'unknown'
       : detailAuthorized && (retainedDetail?.howYouWork || retainedDetail?.publicProfileEvidence || observedDetail && observedDetail.status !== 'unknown') ? 'stale' : 'error';
     const detailAsOfMs = detailSnapshot?.asOfMs ?? retainedDetail?.sources.find(source => source.source === 'how_you_work')?.asOfMs;

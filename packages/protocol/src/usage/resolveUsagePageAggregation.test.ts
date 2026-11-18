@@ -228,13 +228,15 @@ describe('resolveUsagePageAggregation', () => {
     const nowMs = Date.parse('2026-11-07T12:00:00Z');
     const query = normalizeUsageQuery({ period: { relative: '30days' }, includeSessionEvidence: false,
       includeWorkEvidence: false, includeActivity: false, includeModelTimeline: false });
+    const withCoverage = (atMs: number) => UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+      coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+        range: { ...resolveUsageQueryPeriod(query, atMs), complete: true } } });
     const oldComparison = resolveUsagePageAccountingRequests([query], nowMs)[1]!;
     const initial = resolveUsagePageAggregation({ queries: [query], nowMs, accounting: [
-      { query, period: resolveUsageQueryPeriod(query, nowMs), value: accounting, status: 'available' },
+      { query, period: resolveUsageQueryPeriod(query, nowMs), value: withCoverage(nowMs), status: 'available' },
       { query: oldComparison, value: accounting, status: 'available' },
     ] }, bundledUsageModelPriceCatalog);
-    const prior = initial.results[0]!;
-    expect(prior.accounting?.coverage).toBeUndefined();
+    const prior = UsageQueryBatchResultSchema.parse(initial).results[0]!;
     expect(prior.comparison?.accounting).toBeDefined();
     const laterMs = nowMs + 1_000;
     const newComparison = resolveUsagePageAccountingRequests([query], laterMs)[1]!;
@@ -244,15 +246,17 @@ describe('resolveUsagePageAggregation', () => {
       { query: newComparison, status: 'pending' },
       { query: oldComparison, value: prior.comparison!.accounting, status: 'pending' },
     ] }, bundledUsageModelPriceCatalog);
-    expect(pending.results[0]!.accounting).toEqual(prior.accounting);
-    expect(pending.results[0]!.comparison?.query).toEqual(oldComparison);
-    expect(pending.results[0]!.comparison?.accounting).toEqual(prior.comparison!.accounting);
+    const retained = UsageQueryBatchResultSchema.parse(pending).results[0]!;
+    expect(retained.accounting).toEqual(prior.accounting);
+    expect(retained.comparison?.query).toEqual(oldComparison);
+    expect(retained.comparison?.accounting).toEqual(prior.comparison!.accounting);
     const settled = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: pending, accounting: [
-      { query, period: resolveUsageQueryPeriod(query, laterMs), value: accounting, status: 'available' },
+      { query, period: resolveUsageQueryPeriod(query, laterMs), value: withCoverage(laterMs), status: 'available' },
       { query: newComparison, value: accounting, status: 'available' },
     ] }, bundledUsageModelPriceCatalog);
-    expect(settled.results[0]!.comparison?.query).toEqual(newComparison);
-    expect(settled.results[0]!.comparison?.accounting).toBeDefined();
+    const replacement = UsageQueryBatchResultSchema.parse(settled).results[0]!;
+    expect(replacement.comparison?.query).toEqual(newComparison);
+    expect(replacement.comparison?.accounting).toBeDefined();
   });
   it('preserves operation update requirements beside usable accounting in the public Usage result', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
@@ -1499,6 +1503,34 @@ describe('resolveUsagePageAggregation', () => {
     ] }, bundledUsageModelPriceCatalog);
     expect(denied.results[0]?.accounting).toEqual(accounting);
     expect(denied.results[0]?.comparison?.accounting).toBeUndefined();
+  });
+  it('delivers the accounting refusal for a rolling Session comparison without witnessed coverage', () => {
+    const nowMs = Date.parse('2026-11-18T21:22:00Z');
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, session: 'usage-fixture',
+      includeComparison: true, includeInsights: true, includeQuota: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const result = resolveUsagePageAggregation({ queries: [query], nowMs,
+      accounting: [{ query, period: resolveUsageQueryPeriod(query, nowMs), status: 'error', errorCode: 'denied' }],
+    }, bundledUsageModelPriceCatalog);
+
+    const [slice] = UsageQueryBatchResultSchema.parse(result).results;
+    expect(slice?.sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'denied' });
+    expect(slice?.accounting).toBeUndefined();
+    expect(slice?.comparison).toBeUndefined();
+    expect(slice?.pending).toBe(false);
+  });
+  it('publishes available rolling accounting totals without an unwitnessed comparison', () => {
+    const nowMs = Date.parse('2026-11-18T21:22:00Z');
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, includeComparison: true,
+      includeQuota: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const period = resolveUsageQueryPeriod(query, nowMs);
+    const result = resolveUsagePageAggregation({ queries: [query], nowMs,
+      accounting: [{ query, period, value: accounting, status: 'available' }],
+    }, bundledUsageModelPriceCatalog);
+
+    const [slice] = UsageQueryBatchResultSchema.parse(result).results;
+    expect(slice?.accounting?.totals).toEqual(accounting.totals);
+    expect(slice?.comparison).toBeUndefined();
+    expect(slice?.pending).toBe(false);
   });
   it('exposes private witnessed work only on its exact admitted query slice', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
