@@ -1132,6 +1132,7 @@ function ItemRow(props: ItemProps) {
     const catalogGeometry = isCatalogRow && !inCollectionColumn;
     const columnDescribedRow = isCatalogRow && inCollectionColumn;
     const requestedDensity = densityInputs.resolved;
+    const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
     const sharedItemBehavior = resolveHappierItemBehavior({
         role: isRadioRole ? 'radio' : inferredInteractiveWebRole === 'option' ? 'option' : 'button',
         selected,
@@ -1151,6 +1152,8 @@ function ItemRow(props: ItemProps) {
         // A section's last row never draws a hairline, even when a wrapping row component did not
         // forward the `showDivider` its group injected (the row's position is the group's fact).
         showDivider: !isCatalogRow && showDivider && rowPosition?.isLast !== true,
+        // A sheet row is ruled only when it has two or more lines (the one list-row rule).
+        multiline: hasSubtitleContent,
     });
     const resolvedDensity = sharedItemBehavior.density;
 
@@ -1171,7 +1174,6 @@ function ItemRow(props: ItemProps) {
     const isCompact = resolvedDensity === 'compact';
     const isTight = resolvedDensity === 'tight';
     const resolvedIconDensity = isTight ? 'tight' : isCompact ? 'compact' : isCozy ? 'cozy' : 'comfortable';
-    const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
     const isMenuRow = rowRole === 'menu';
     const listPresentation = useListPresentation();
     const sidePaneTextEdge = useSidePaneTextEdge();

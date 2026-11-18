@@ -82,6 +82,8 @@ export type HappierItemBehaviorInput = HappierItemSemanticInput & Readonly<{
   showNavigationAccessory?: boolean;
   keepNavigationAccessoryWithAccessory?: boolean;
   showDivider?: boolean;
+  /** The row draws two or more lines (a subtitle or described content under its title). */
+  multiline?: boolean;
 }>;
 
 export type HappierItemBehavior = Readonly<{
@@ -137,7 +139,9 @@ export function resolveHappierItemBehavior(input: HappierItemBehaviorInput): Hap
     interactive: input.hasPrimaryAction,
     secondaryActionsEnabled: enabled && input.hasSecondaryActions === true,
     density: input.density ?? 'comfortable',
-    dividerVisible: input.showDivider === true,
+    // One list-row rule for every row, sheets included (owner 2026-11-17 23:52Z, DESIGN.md 2026-11-15): only a row of
+    // two or more lines is ruled; a one-line row parts from the next by its height, whatever its group asks.
+    dividerVisible: input.showDivider === true && input.multiline === true,
     selectionVisible: (input.selected === true || input.focused === true)
       && (input.selectableItemCount ?? 2) > 1,
     accessoryPlacement: hasAccessory && input.accessoryOutsidePressable === true ? 'outside' : 'inside',

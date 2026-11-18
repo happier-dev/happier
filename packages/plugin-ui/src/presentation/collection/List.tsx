@@ -885,6 +885,8 @@ export function HappierListItem({
     hasAccessory: accessory !== undefined && accessory !== null,
     accessoryOutsidePressable,
     showDivider: catalogRow ? false : showDivider,
+    // A sheet row is ruled only when it has two or more lines (the one list-row rule).
+    multiline: described,
   });
   const isInteractive = behavior.interactive;
   const requestedRowHeight = minimumTouchTarget ?? HAPPIER_ITEM_DENSITY_ROW_HEIGHT[behavior.density];

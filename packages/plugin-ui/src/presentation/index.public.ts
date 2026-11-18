@@ -1490,6 +1490,7 @@ export {
   HappierWorkRowShell,
   HappierWorkStatusWord,
   HappierWorkSummary,
+  isHappierWorkSummaryMultiline,
   type HappierWorkRowShellProps,
   type HappierWorkSummaryPhase,
   type HappierWorkSummaryProps,

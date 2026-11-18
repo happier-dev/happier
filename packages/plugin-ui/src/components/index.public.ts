@@ -1618,6 +1618,7 @@ export {
   HappierWorkRowShell,
   HappierWorkStatusWord,
   HappierWorkSummary,
+  isHappierWorkSummaryMultiline,
   type HappierWorkRowDensity,
   type HappierWorkRowShellProps,
   type HappierWorkSummaryPhase,

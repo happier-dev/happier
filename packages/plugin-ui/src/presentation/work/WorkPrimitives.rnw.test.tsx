@@ -5,6 +5,7 @@ import { HappierUiEnvironmentProvider } from '../../environment/context.js';
 import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
 import * as authorBarrel from '../../index.public.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HappierPageSectionContext } from '../layout/PageSection.js';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import {
   createSurfaceContext,
@@ -227,6 +228,51 @@ describe('Work primitives for plugin authors', () => {
     } finally {
       mounted.unmount();
     }
+  });
+
+  // UI refinements ruling O1 (2026-11-18 07:12Z, DESIGN.md wins): a list row's rule starts at its text column in every
+  // list, Inbox phone rows included; the page work row ran its hairline from the row's edge.
+  it('starts a page row\'s hairline at its text column, never the row\'s edge', () => {
+    const { HappierWorkRowShell } = authorBarrel;
+    const section = { rowDividerColor: 'rgb(1, 2, 3)', rowInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx, framed: true };
+    const { container, unmount } = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierPageSectionContext.Provider value={section}>
+          <HappierWorkRowShell testID="work.row" accessibilityLabel="Row" density="page" showDivider multiline onPress={() => {}}>
+            <span>Row</span>
+          </HappierWorkRowShell>
+        </HappierPageSectionContext.Provider>,
+      ),
+    );
+    const hairline = [...container.querySelectorAll<HTMLElement>('div')]
+      .find((node) => getComputedStyle(node).backgroundColor === 'rgb(1, 2, 3)');
+    const textColumnPx = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx;
+    expect(hairline).toBeDefined();
+    expect(Number.parseFloat(getComputedStyle(hairline!).left)).toBe(textColumnPx);
+    unmount();
+  });
+
+  // Owner ruling 2026-11-17 23:52Z, Inbox Updates included (WAVE-ACCEPT-1118D): a page work row is ruled only when its
+  // summary draws two or more lines; a one-line row parts by its height.
+  it('rules a page row only when its summary draws two or more lines', () => {
+    const { HappierWorkRowShell, isHappierWorkSummaryMultiline } = authorBarrel;
+    const section = { rowDividerColor: 'rgb(1, 2, 3)', rowInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx, framed: true };
+    const ruled = (facts: readonly string[], byline?: { text: string }) => {
+      const multiline = isHappierWorkSummaryMultiline({ facts, ...(byline ? { byline } : {}) });
+      const { container, unmount } = mountThroughReactNativeWeb(
+        inSurface(
+          <HappierPageSectionContext.Provider value={section}>
+            <HappierWorkRowShell testID="work.row" accessibilityLabel="Row" density="page" showDivider multiline={multiline} onPress={() => {}}>
+              <span>Row</span>
+            </HappierWorkRowShell>
+          </HappierPageSectionContext.Provider>,
+        ),
+      );
+      const found = [...container.querySelectorAll<HTMLElement>('div')].some((node) => getComputedStyle(node).backgroundColor === 'rgb(1, 2, 3)');
+      unmount();
+      return found;
+    };
+    expect([ruled([]), ruled(['2 files changed']), ruled([], { text: 'Ada' })]).toEqual([false, true, true]);
   });
 
   it('keeps the column on a row with no date, so the controls above and below it share an edge', () => {

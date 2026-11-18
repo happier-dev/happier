@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { HappierWorkRowShell, HappierWorkSummary, joinHappierFacts, useHappierPageSection, type HappierWorkRowShellProps, type HappierWorkSummaryProps } from '@happier-dev/plugin-ui/presentation';
+import { HappierWorkRowShell, HappierWorkSummary, isHappierWorkSummaryMultiline, joinHappierFacts, useHappierPageSection, type HappierWorkRowShellProps, type HappierWorkSummaryProps } from '@happier-dev/plugin-ui/presentation';
 import { WORK_HOST, useWorkTheme } from '@/components/work/map/WorkMapView';
 
 /**
@@ -41,7 +41,8 @@ export const InboxWorkRow = React.memo(function InboxWorkRow(props: Readonly<{
     return <HappierWorkRowShell testID={props.testID} accessibilityLabel={label} selected={props.selected}
         onPress={props.onPress} trailingAccessory={props.trailingAccessory} trailingMeta={density === 'page' && !props.narrow ? props.time : undefined}
         belowAccessory={props.belowAccessory} accessibilityActions={props.accessibilityActions}
-        onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider} theme={theme} host={WORK_HOST}>
+        onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider}
+        multiline={isHappierWorkSummaryMultiline({ facts, factsTail: props.narrow ? props.time : undefined, byline: props.byline })} theme={theme} host={WORK_HOST}>
         <HappierWorkSummary testID={`${props.testID}.summary`} title={props.title} phase={props.phase ?? 'attention'}
             mark={props.mark} facts={facts} factsTail={props.narrow ? props.time : undefined} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
             accessibilityLabel={label} accessibilityLiveRegion={props.accessibilityLiveRegion} density={density} attentionMark={false}

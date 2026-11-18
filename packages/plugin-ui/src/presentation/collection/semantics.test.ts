@@ -27,6 +27,7 @@ describe('shared item and group semantics', () => {
       showNavigationAccessory: true,
       keepNavigationAccessoryWithAccessory: false,
       showDivider: true,
+      multiline: true,
     })).toEqual({
       accessibilityState: { selected: true },
       tabIndex: 0,
@@ -38,6 +39,15 @@ describe('shared item and group semantics', () => {
       accessoryPlacement: 'outside',
       navigationAccessoryVisible: false,
     });
+  });
+
+  // Owner ruling 2026-11-17 23:52Z: one list-row rule for every row, sheets included: only a row of two or more lines is
+  // ruled, even where its group asks for a divider.
+  it('draws a sheet row divider only under a row of two or more lines', () => {
+    const divider = (multiline: boolean | undefined) => resolveHappierItemBehavior({
+      hasPrimaryAction: true, showDivider: true, ...(multiline === undefined ? {} : { multiline }),
+    }).dividerVisible;
+    expect([divider(true), divider(false), divider(undefined)]).toEqual([true, false, false]);
   });
 
   it('projects one accessibility state for core and public rows', () => {

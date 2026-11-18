@@ -96,6 +96,7 @@ async function loadModules() {
     return modules;
 }
 
+// Rows here carry a second line: a sheet rules only two-line rows (owner 2026-11-17 23:52Z), so these seam tests use them.
 describe('ItemGroup page sections render through the shared page sheet', () => {
     it('draws a Settings section as the W3 card, with subtle row seams, and reads its explanation before the real rows', async () => {
         const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
@@ -104,8 +105,8 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Appearance" description="How the app looks.">
-                    <Item testID="row-a" title="Theme" />
-                    <Item testID="row-b" title="Density" />
+                    <Item testID="row-a" title="Theme" subtitle="Second line" />
+                    <Item testID="row-b" title="Density" subtitle="Second line" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -176,10 +177,28 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Appearance">
-                    <Item testID="row-a" title="Theme" />
-                    <Item testID="row-b" title="Density" showDivider={false} />
-                    <Item testID="row-c" title="Font" />
-                    <Item testID="row-d" title="Language" />
+                    <Item testID="row-a" title="Theme" subtitle="Second line" />
+                    <Item testID="row-b" title="Density" subtitle="Second line" showDivider={false} />
+                    <Item testID="row-c" title="Font" subtitle="Second line" />
+                    <Item testID="row-d" title="Language" subtitle="Second line" />
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const dividers = rowDividers(screen, ['row-a', 'row-b', 'row-c', 'row-d']);
+        expect(dividers.map((color) => color !== null)).toEqual([true, false, true, false]);
+    });
+
+    // Owner ruling 2026-11-17 23:52Z (DESIGN.md 2026-11-15 "One list-row rule"), sheets included (DBW ORCH O10): a sheet
+    // row is ruled only when it has two or more lines; a one-line row parts from the next by its height alone.
+    it('rules only the two-line rows of a sheet, never a one-line row', async () => {
+        const { ItemGroup, Item, ListPresentationProvider } = await loadModules();
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup title="Profile & account">
+                    <Item testID="row-a" title="Account" subtitle="Manage your account details" />
+                    <Item testID="row-b" title="Theme" />
+                    <Item testID="row-c" title="Usage" subtitle="Tokens and costs" />
+                    <Item testID="row-d" title="Machines" subtitle="36 offline" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -190,7 +209,7 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
     it('draws no hairline under the last row when a row component does not forward the divider prop', async () => {
         const { ItemGroup, Item, ListPresentationProvider } = await loadModules();
         // A domain row that wraps Item without accepting `showDivider` (settings rows built elsewhere).
-        const WrappedRow = (props: Readonly<{ testID: string; title: string }>) => <Item testID={props.testID} title={props.title} />;
+        const WrappedRow = (props: Readonly<{ testID: string; title: string }>) => <Item testID={props.testID} title={props.title} subtitle="Second line" />;
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Connection">
@@ -209,9 +228,9 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         const screen = await renderScreen(
             <ListPresentationProvider value="page" pageInsets="contained">
                 <ItemGroup surface="none" density="compact" header="none">
-                    <Item testID="row-a" title="Can contact" />
+                    <Item testID="row-a" title="Can contact" subtitle="Second line" />
                     {null}
-                    <Item testID="row-b" title="Sites" />
+                    <Item testID="row-b" title="Sites" subtitle="Second line" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -301,12 +320,12 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Members" virtualizedSegment={{ first: true, last: false }}>
-                    <Item testID="row-a" title="Ada" />
-                    <Item testID="row-b" title="Grace" />
+                    <Item testID="row-a" title="Ada" subtitle="Second line" />
+                    <Item testID="row-b" title="Grace" subtitle="Second line" />
                 </ItemGroup>
                 <ItemGroup virtualizedSegment={{ first: false, last: true }}>
-                    <Item testID="row-c" title="Linus" />
-                    <Item testID="row-d" title="Margaret" />
+                    <Item testID="row-c" title="Linus" subtitle="Second line" />
+                    <Item testID="row-d" title="Margaret" subtitle="Second line" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -321,11 +340,11 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
             <ListPresentationProvider value="page">
                 <ItemGroup title="Triggers">
                     <HappierPageSheetGroup key="turn">
-                        <Item testID="row-a" title="Review" />
-                        <Item testID="row-b" title="Summarize" />
+                        <Item testID="row-a" title="Review" subtitle="Second line" />
+                        <Item testID="row-b" title="Summarize" subtitle="Second line" />
                     </HappierPageSheetGroup>
                     <HappierPageSheetGroup key="start">
-                        <Item testID="row-c" title="Brief" />
+                        <Item testID="row-c" title="Brief" subtitle="Second line" />
                     </HappierPageSheetGroup>
                 </ItemGroup>
             </ListPresentationProvider>,
@@ -357,13 +376,13 @@ describe('Page row seams start at the text and run to the sheet trailing edge (P
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Team">
-                    <Item testID="row-a" title="Members" icon={glyph} />
-                    <Item testID="row-b" title="Groups" />
-                    <Item testID="row-c" title="Invitations" icon={glyph} />
+                    <Item testID="row-a" title="Members" subtitle="Second line" icon={glyph} />
+                    <Item testID="row-b" title="Groups" subtitle="Second line" />
+                    <Item testID="row-c" title="Invitations" subtitle="Second line" icon={glyph} />
                 </ItemGroup>
                 <ItemGroup title="Team settings">
-                    <Item testID="row-d" title="Team name" />
-                    <Item testID="row-e" title="Let members invite people" />
+                    <Item testID="row-d" title="Team name" subtitle="Second line" />
+                    <Item testID="row-e" title="Let members invite people" subtitle="Second line" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -381,8 +400,8 @@ describe('Page row seams start at the text and run to the sheet trailing edge (P
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <ItemGroup title="Machines" surface="none">
-                    <Item testID="row-a" title="Studio" />
-                    <Item testID="row-b" title="Build box" />
+                    <Item testID="row-a" title="Studio" subtitle="Second line" />
+                    <Item testID="row-b" title="Build box" subtitle="Second line" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );
@@ -404,8 +423,8 @@ describe('Item on a page sheet follows the whole sheet policy', () => {
         // A flat sheet in a pane (the Work tab): grouped presentation, the sheet owns the rows' anatomy.
         const screen = await renderScreen(
             <HappierPageSheet surface="none" colors={colors} rowInsetPx={20}>
-                <Item testID="row-a" title="Role" />
-                <Item testID="row-b" title="Goal" />
+                <Item testID="row-a" title="Role" subtitle="Second line" />
+                <Item testID="row-b" title="Goal" subtitle="Second line" />
             </HappierPageSheet>,
         );
         expect(rowDividers(screen, ['row-a', 'row-b'])).toEqual(['SHEET_ROW_DIVIDER', null]);

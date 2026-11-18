@@ -8,7 +8,7 @@ import { HappierPressable, type HappierPressableProps } from '../interaction/Pre
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT } from '../layout/pageText.js';
-import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
+import { happierPageRowDividerInset, happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkStatusWordColor, type HappierWorkStatusTone } from './workStatus.js';
 import { HAPPIER_COLLECTION_ROW_METRICS, HappierCollectionRowMain } from '../collection/CollectionRowContent.js';
@@ -196,6 +196,11 @@ export type HappierWorkRowShellProps = Readonly<{
    * row does; the sheet passes it (`withHappierPageSectionDividers`) and the last row draws none.
    */
   showDivider?: boolean;
+  /**
+   * The row draws two or more lines ({@link isHappierWorkSummaryMultiline} for a Work summary). A page row is ruled only
+   * then: a one-line row parts from the next by its height (the one list-row rule, DESIGN.md).
+   */
+  multiline?: boolean;
   onPress: () => void;
   onLongPress?: HappierPressableProps['onLongPress'];
   onContextMenu?: HappierPressableProps['onContextMenu'];
@@ -215,13 +220,20 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
   const selected = props.selected === true;
   const page = props.density === 'page';
   const pageSection = useHappierPageSection();
-  const divider = page && props.showDivider === true && pageSection !== null ? (
+  // The one list-row rule starts at the row's text column, as every page row's does (DESIGN.md; UI refinements O1):
+  // the row inset, its mark column and any level's indent, to the sheet's trailing edge.
+  const dividerInset = pageSection === null ? null : happierPageRowDividerInset({
+    rowInsetPx: pageSection.rowInsetPx,
+    leadingPx: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx + (props.level ?? 0) * LEVEL_INDENT_PX,
+    framed: pageSection.framed,
+  });
+  const divider = page && props.showDivider === true && props.multiline === true && pageSection !== null && dividerInset !== null ? (
     <View
       pointerEvents="none"
       style={{
         position: 'absolute',
-        left: 0,
-        right: 0,
+        start: dividerInset.marginStart,
+        end: dividerInset.marginEnd,
         bottom: 0,
         height: happierPageRowDividerWidth(),
         backgroundColor: pageSection.rowDividerColor,
@@ -382,6 +394,11 @@ export type HappierWorkSummaryProps = Readonly<{
   /** Omitted inside a mounted plugin surface: the environment's text. */
   host?: HappierWorkHost;
 }>;
+
+/** Whether a Work summary draws more than its title line: its facts or their tail, or its byline. A row's rule follows it. */
+export function isHappierWorkSummaryMultiline(input: Readonly<Pick<HappierWorkSummaryProps, 'facts' | 'factsTail' | 'byline'>>): boolean {
+  return renderableHappierFacts(input.facts).length > 0 || renderableHappierFacts([input.factsTail]).length > 0 || Boolean(input.byline);
+}
 
 export const HappierWorkSummary = memo(function HappierWorkSummary(props: HappierWorkSummaryProps) {
   const theme = useHappierWorkTheme(props.theme);
