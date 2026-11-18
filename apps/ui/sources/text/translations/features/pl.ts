@@ -19690,7 +19690,7 @@ const pl: WorkflowTriggersCopy = {
         source: "Źródło",
         setUp: "Skonfiguruj",
         runsOn: "Wyzwalacze działają na",
-        useSame: "Użyj tego samego",
+        useSame: "Jak w „Jak i gdzie działa”",
         runNowToo: "Uruchom teraz zawsze działa",
         remove: "Usuń",
         incomplete: "Nie trafi do zapisu, dopóki nie zostanie skonfigurowany.",

@@ -582,6 +582,11 @@ export type CollectionNavigationRowProps = Readonly<{
      */
     status?: React.ReactNode;
     selected: boolean;
+    /**
+     * Whether the selected row paints its own fill (default true). A host that draws the selection around the row and
+     * what it discloses (an expanded event's card) turns it off; the row stays `selected` for its semantics.
+     */
+    selectedFill?: boolean;
     /** Unread news retains its emphasis when the column becomes a phone page. */
     unread?: boolean;
     /** A disclosed level's indent, added to the content inset. */
@@ -723,7 +728,8 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
     const webTreeItem = Platform.OS === 'web' ? props.treeItem ?? null : null;
     const [treeRingVisible, setTreeRingVisible] = React.useState(false);
     const accessibilityLabel = props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel;
-    const basePressableStyle = props.selected && onPlane ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, selectedFill] : HAPPIER_COLLECTION_LIST_ROW_STYLE;
+    const basePressableStyle = props.selected && onPlane && props.selectedFill !== false
+        ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, selectedFill] : HAPPIER_COLLECTION_LIST_ROW_STYLE;
     const treeRing = webTreeItem && treeRingVisible ? happierFocusRingStyle({ visible: true, color: theme.colors.border.focus, placement: 'inset' }) : null;
     const row = (
         <Item
@@ -762,6 +768,7 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             detail={props.status || hasCount ? undefined : props.detail}
             density="compact"
             selected={props.selected}
+            {...(props.selectedFill === false ? { selectedFill: false } : {})}
             showChevron={false}
             pressableStyle={treeRing ? [basePressableStyle, treeRing] : basePressableStyle}
             titleStyle={props.selected && onPlane || props.unread ? styles.navigationRowTitleSelected : undefined}

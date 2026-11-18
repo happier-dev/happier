@@ -19540,7 +19540,7 @@ const zhHans: WorkflowTriggersCopy = {
         source: "来源",
         setUp: "设置",
         runsOn: "触发器运行于",
-        useSame: "使用相同设置",
+        useSame: "与“运行方式和位置”相同",
         runNowToo: "“立即运行”始终可用",
         remove: "移除",
         incomplete: "设置完成前，保存时不会包含它。",

@@ -62,11 +62,14 @@ import { useWorkflowAccountLifetime } from '../workflowAccountScope';
  */
 
 const styles = StyleSheet.create((theme) => ({
+    // Shrinks inside a narrow value row (a phone's trigger card) so its chips wrap instead of running off the card.
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
         flexWrap: 'wrap',
+        flexShrink: 1,
+        minWidth: 0,
     },
     value: {
         ...Typography.variant('label', 'semiBold'),

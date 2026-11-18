@@ -19160,7 +19160,7 @@ const de: WorkflowTriggersCopy = {
         source: "Quelle",
         setUp: "Einrichten",
         runsOn: "Auslöser laufen auf",
-        useSame: "Dasselbe verwenden",
+        useSame: "Wie bei „Wie und wo es läuft“",
         runNowToo: "„Jetzt ausführen“ geht immer",
         remove: "Entfernen",
         incomplete: "Wird beim Speichern erst einbezogen, wenn er eingerichtet ist.",

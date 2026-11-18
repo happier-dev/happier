@@ -19602,7 +19602,7 @@ const es: WorkflowTriggersCopy = {
         source: "Origen",
         setUp: "Configurar",
         runsOn: "Los disparadores se ejecutan en",
-        useSame: "Usar el mismo",
+        useSame: "Igual que «Cómo y dónde se ejecuta»",
         runNowToo: "Ejecutar ahora siempre funciona",
         remove: "Quitar",
         incomplete: "No se incluye al guardar hasta que esté configurado.",

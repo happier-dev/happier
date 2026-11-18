@@ -38,12 +38,15 @@ export const WorkflowEventCarries = React.memo(function WorkflowEventCarries(
     presentation: WorkflowEventPresentation;
     automatable: boolean;
     testID: string;
+    /** `none`: inside an expanded event's card, whose fill already groups the facts (no sheet within the card). */
+    surface?: 'sheet' | 'none';
   }>,
 ) {
   return (
     <ItemGroup
       testID={`${props.testID}:carries`}
       title={t('workflows.events.carries')}
+      {...(props.surface ? { surface: props.surface } : {})}
       {...(props.automatable ? {} : { description: t('workflows.events.noTrigger') })}
     >
       {props.presentation.lines.map((line) => (

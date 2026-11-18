@@ -160,6 +160,7 @@ const LiveEventBody = React.memo(function LiveEventBody(
       <WorkflowEventCarries
         presentation={presentation}
         automatable={seed !== null}
+        surface="none"
         testID={`${props.testID}:expanded`}
       />
       <WorkflowEventStartedRuns
@@ -205,6 +206,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s8,
-    paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    // On the list's text edge, inside the expanded event's card.
+    paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
   },
 }));

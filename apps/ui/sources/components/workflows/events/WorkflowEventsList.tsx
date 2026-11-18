@@ -235,19 +235,29 @@ export const WorkflowEventsRows = React.memo(function WorkflowEventsRows(
           estimatedTop={index * rowHeight}
           estimatedHeight={rowHeight}
         >
-          <WorkflowEventRow
-            projection={feed.projection}
-            eventKey={key}
-            scope={props.scope}
-            surface={props.surface}
-            selected={key === props.selectedKey}
-            onSelect={props.onSelect}
-            active={props.active}
-            testID={props.testID}
-          />
-          {key === props.selectedKey && props.renderExpanded
-            ? props.renderExpanded(key)
-            : null}
+          {/* An expanded event is one card: the row and what it discloses share one selection fill, on the rows'
+              gutter (lab companion-v-open). The wrapper stays mounted either way so the row never remounts. */}
+          <View
+            style={key === props.selectedKey && props.renderExpanded ? styles.expandedCard : null}
+            testID={key === props.selectedKey && props.renderExpanded ? `${props.testID}:card:${key}` : undefined}
+          >
+            <View style={key === props.selectedKey && props.renderExpanded ? styles.expandedCardContent : null}>
+              <WorkflowEventRow
+                projection={feed.projection}
+                eventKey={key}
+                scope={props.scope}
+                surface={props.surface}
+                selected={key === props.selectedKey}
+                selectedFill={!(key === props.selectedKey && props.renderExpanded)}
+                onSelect={props.onSelect}
+                active={props.active}
+                testID={props.testID}
+              />
+              {key === props.selectedKey && props.renderExpanded
+                ? props.renderExpanded(key)
+                : null}
+            </View>
+          </View>
         </NearViewportWindow>
       ))}
     </>
@@ -261,6 +271,8 @@ const WorkflowEventRow = React.memo(function WorkflowEventRow(
     scope: ServerAccountScope | null;
     surface: 'plane' | 'page';
     selected: boolean;
+    /** False while its card draws the selection around it and its detail. */
+    selectedFill: boolean;
     onSelect: (key: string) => void;
     active: boolean;
     testID: string;
@@ -308,12 +320,23 @@ const WorkflowEventRow = React.memo(function WorkflowEventRow(
           }
         : {})}
       selected={props.selected}
+      {...(props.selectedFill ? {} : { selectedFill: false })}
       onPress={onPress}
     />
   );
 });
 
 const styles = StyleSheet.create((theme) => ({
+  // The selected row's chip, grown to hold its detail: the rows' gutter and radius, the selection fill.
+  expandedCard: {
+    marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
+    backgroundColor: theme.colors.surface.selected,
+  },
+  // Inside the card the row and its detail keep their usual geometry, so the title stays on the list's text edge.
+  expandedCardContent: {
+    marginHorizontal: -HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+  },
   listening: {
     flexDirection: 'row',
     alignItems: 'center',

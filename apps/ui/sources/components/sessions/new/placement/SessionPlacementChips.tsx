@@ -639,10 +639,13 @@ function PlacementPopover(
 
 const styles = StyleSheet.create((theme) => ({
   fields: { gap: theme.space.s8, alignSelf: 'stretch' },
+  // The chips wrap within whatever row holds them: it shrinks there rather than overflowing (F6, phone trigger card).
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: theme.space.s6,
+    flexShrink: 1,
+    minWidth: 0,
   },
 }));

@@ -399,7 +399,7 @@ export const en = {
         source: "Source",
         setUp: "Set up",
         runsOn: "Triggers run on",
-        useSame: "Use the same",
+        useSame: "Same as How and where it runs",
         runNowToo: "Run now always works too",
         remove: "Remove",
         incomplete: "Not included when you save until it’s set up.",

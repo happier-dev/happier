@@ -19600,7 +19600,7 @@ const ja: WorkflowTriggersCopy = {
         source: "ソース",
         setUp: "設定",
         runsOn: "トリガーの実行先",
-        useSame: "同じものを使う",
+        useSame: "「実行方法と場所」と同じ",
         runNowToo: "「今すぐ実行」はいつでも使えます",
         remove: "削除",
         incomplete: "設定が終わるまで保存には含まれません。",

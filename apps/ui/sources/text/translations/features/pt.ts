@@ -19652,7 +19652,7 @@ const pt: WorkflowTriggersCopy = {
         source: "Origem",
         setUp: "Configurar",
         runsOn: "Os gatilhos são executados em",
-        useSame: "Usar o mesmo",
+        useSame: "Igual a «Como e onde é executado»",
         runNowToo: "Executar agora sempre funciona",
         remove: "Remover",
         incomplete: "Não entra ao salvar até estar configurado.",

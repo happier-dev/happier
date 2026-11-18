@@ -19680,7 +19680,7 @@ const ca: WorkflowTriggersCopy = {
         source: "Origen",
         setUp: "Configura",
         runsOn: "Els activadors s’executen a",
-        useSame: "Fes servir el mateix",
+        useSame: "Igual que «Com i on s’executa»",
         runNowToo: "Executa ara sempre funciona",
         remove: "Elimina",
         incomplete: "No s’inclou en desar fins que estigui configurat.",

@@ -19723,7 +19723,7 @@ const fr: WorkflowTriggersCopy = {
         source: "Source",
         setUp: "Configurer",
         runsOn: "Les déclencheurs s’exécutent sur",
-        useSame: "Utiliser le même",
+        useSame: "Comme « Comment et où il s’exécute »",
         runNowToo: "Exécuter maintenant marche toujours",
         remove: "Retirer",
         incomplete: "Pas inclus à l’enregistrement tant qu’il n’est pas configuré.",

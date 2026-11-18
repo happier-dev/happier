@@ -581,7 +581,8 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
                 action={{ label: t('common.retry'), onPress: visibility.retry }} />
                 : visibility.status === 'loading' || visibility.teams.length === 0 ? null
                     : visibility.teams.length === 1 && selectedTeam ? <Item title={t('workflows.triggers.editor.visibleTo')}
-                        subtitle={visibilityDescription} detail={selectedTeam.name ?? selectedTeam.id} mode="info" />
+                        // The sentence wraps whole; the Team name moves beneath on a phone (Item's detail layout).
+                        subtitle={visibilityDescription} subtitleLines={0} detail={selectedTeam.name ?? selectedTeam.id} mode="info" />
                         : <FieldSelect testID={`${rolesTestID}-visible-to`} title={t('workflows.triggers.editor.visibleTo')}
                             subtitle={visibilityDescription} items={visibility.teams.map(team => ({ id: team.id, title: team.name ?? team.id }))}
                             selectedId={selectedTeamId} onSelect={visibility.onChange} />}

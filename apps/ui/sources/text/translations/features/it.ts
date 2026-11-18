@@ -19666,7 +19666,7 @@ const it: WorkflowTriggersCopy = {
         source: "Origine",
         setUp: "Configura",
         runsOn: "I trigger vengono eseguiti su",
-        useSame: "Usa lo stesso",
+        useSame: "Come in «Come e dove viene eseguito»",
         runNowToo: "Esegui ora funziona sempre",
         remove: "Rimuovi",
         incomplete: "Non incluso al salvataggio finché non è configurato.",
