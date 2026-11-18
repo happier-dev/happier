@@ -5,7 +5,7 @@ import { BrowserEventV1Schema, BrowserNavigationStateChangedEventV1Schema, Brows
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
 import type { BrowserEventV1, BrowserCommandDispatchResultV1, BrowserCommandErrorCodeV1, BrowserCommandV1, BrowserSidecarErrorCodeV1, BrowserProfileV1, BrowserViewTargetV1, BrowserPlatformV1, MachineVitalsSampleV1 } from '@happier-dev/protocol';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
-import { isBrowserSidecarCdpCommandNotDispatched } from './cdpTransport';
+import { isBrowserSidecarCdpCommandNotDispatched, type BrowserSidecarCdpTransportError } from './cdpTransport';
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
@@ -60,6 +60,7 @@ export type BrowserSidecarCdpEventSubscriber = (notification: BrowserSidecarCdpE
  * no live diagnostics source (fail-closed); the control transport itself stays request/response.
  */
 export type BrowserSidecarCdpEventCapableTransport = BrowserSidecarCdpControlTransport & Readonly<{
+    closed?: Promise<BrowserSidecarCdpTransportError>;
     subscribeCdpEvents?(listener: BrowserSidecarCdpEventSubscriber): () => void;
 }>;
 
@@ -313,9 +314,11 @@ export function createBrowserSidecarCdpControlAdapter(
         unsubscribeCdp = undefined;
     }
 
-    function unbindView(view: BoundView, sourceDestroyed = false): BrowserEventV1 {
-        const event: BrowserEventV1 = { kind: 'viewClosed', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
-            browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: view.state.navigationGeneration };
+    function unbindView(view: BoundView, sourceDestroyed = false, unavailableReason?: string): BrowserEventV1 {
+        const event: BrowserEventV1 = { eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
+            browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: view.state.navigationGeneration,
+            ...(unavailableReason ? { kind: 'adapterUnavailable', adapterKind: 'chromiumSidecar', reasonCode: unavailableReason }
+                : { kind: 'viewClosed' }) };
         boundViews.delete(browserViewKey(view));
         // Deliver closure while capture's metadata subscription still exists.
         publishEvent(event);
@@ -324,6 +327,19 @@ export function createBrowserSidecarCdpControlAdapter(
         releaseCdpListener();
         return event;
     }
+
+    function dispose(unavailableReason?: string): void {
+        if (disposed) return;
+        disposed = true;
+        viewportOwner.dispose();
+        unsubscribeCdp?.();
+        unsubscribeCdp = undefined;
+        attachingTargets.clear();
+        for (const view of [...boundViews.values()]) unbindView(view, false, unavailableReason);
+        eventListeners.clear();
+        lifecycleListeners.clear();
+    }
+    void input.transport.closed?.then(error => dispose(error.code));
 
     function stateEvent(view: BoundView): Extract<BrowserEventV1, { kind: 'navigationStateChanged' }> {
         // Page script can copy entered material into title or a navigation URL. Public events,
@@ -722,18 +738,7 @@ export function createBrowserSidecarCdpControlAdapter(
             },
         },
         viewportOwner,
-        dispose() {
-            if (disposed) return;
-            disposed = true;
-            viewportOwner.dispose();
-            unsubscribeCdp?.();
-            unsubscribeCdp = undefined;
-            attachingTargets.clear();
-            const views = [...boundViews.values()];
-            for (const view of views) unbindView(view);
-            eventListeners.clear();
-            lifecycleListeners.clear();
-        },
+        dispose,
         subscribeViewLifecycle(listener) {
             lifecycleListeners.add(listener);
             return () => {

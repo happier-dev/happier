@@ -55,6 +55,7 @@ export function isBrowserSidecarCdpCommandNotDispatched(error: unknown): boolean
 }
 
 export type BrowserSidecarCdpTransport = BrowserSidecarCdpControlTransport & Readonly<{
+    closed: Promise<BrowserSidecarCdpTransportError>;
     /**
      * Subscribe to raw CDP protocol notifications (messages without an `id`). Used by the offline
      * diagnostics lane to feed the ring from the SAME live connection. Returns an unsubscribe handle.
@@ -129,6 +130,8 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
     const eventListeners = new Set<BrowserSidecarCdpEventSubscriber>();
     let nextId = 1;
     let disposedError: BrowserSidecarCdpTransportError | null = null;
+    let settleClosed!: (error: BrowserSidecarCdpTransportError) => void;
+    const closed = new Promise<BrowserSidecarCdpTransportError>(resolve => { settleClosed = resolve; });
 
     function rejectPending(request: PendingRequest, error: Error): void {
         if (!pending.delete(request.id)) return;
@@ -146,6 +149,7 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
         if (!disposedError) {
             disposedError = error;
         }
+        settleClosed(disposedError);
         for (const request of [...pending.values()]) {
             rejectPending(request, error);
         }
@@ -311,6 +315,7 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
     }
 
     return {
+        closed,
         openPage,
         async dispatchPageCommand(command) {
             return await sendCommand({
