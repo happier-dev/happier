@@ -102,6 +102,12 @@ describe('CLI Account opaque preset native roles', () => {
         expect(result, JSON.stringify(result)).toMatchObject(member ? { ok: false, errorCode: 'credential_scope_denied' } : originalMachineId
             ? { ok: true, result: { kind: 'refused', code: 'managed_not_found' } }
             : { ok: false, errorCode: 'controller_unavailable' });
+        if (member) {
+            expect(result).toMatchObject({ failureCause: { nativeErrorReason: 'prepared_image_custodian_required' } });
+            if (result.ok) throw new Error('Expected Archive refusal');
+            expect(result.error).toContain('original-host');
+            expect(result.error).toContain('owner');
+        }
         expect(observed).toHaveLength(originalMachineId && !member ? 2 : 0);
     });
 

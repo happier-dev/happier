@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { readCurrentAccountMachinePreparationCleanupHost } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedMachinePresetGetResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -16,8 +16,8 @@ import { createManagedPresetHydrator } from './presetHydration';
 /** Archive spends its admitted parent through retained native cleanup and the final row CAS. */
 export async function executeCliMachinePresetArchive(request: Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0],
     host: Readonly<{ credentials: StoredCredentials; serverUrl: string;
-        readPreparationCleanupUnavailable?: (input: Readonly<{ machineId: string; context: ActionExecutorContext; signal?: AbortSignal }>) =>
-            Promise<Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'] | undefined>;
+        readPreparationCleanupHost?: (input: Readonly<{ machineId: string; context: ActionExecutorContext; signal?: AbortSignal }>) =>
+            ReturnType<typeof readCurrentAccountMachinePreparationCleanupHost>;
         transport: NonNullable<ActionExecutorDeps['machinePresetAction']> }>) {
     const { input, context, signal } = request;
     const read = async () => {
@@ -54,13 +54,12 @@ export async function executeCliMachinePresetArchive(request: Parameters<NonNull
                 const destroyId = provisioner.data.preparation.actions.destroy;
                 const destroy = selected.manifest.contributes.actions.find(action => action.id === destroyId);
                 if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
-                if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
-                    cleanupUnavailable = await host.readPreparationCleanupUnavailable?.({
-                        machineId: prepared.binding.machineId, context, signal });
-                }
+                const cleanupHost = destroy.execution?.target !== 'account' && prepared.binding.machineId
+                    ? await host.readPreparationCleanupHost?.({ machineId: prepared.binding.machineId, context, signal }) : undefined;
+                cleanupUnavailable = cleanupHost?.unavailable;
                 if (!cleanupUnavailable) invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
                     credentialConfigurations: prepared.binding.credentialConfigurations, provisioner: provisioner.data,
-                    originalMachineId: prepared.binding.machineId,
+                    originalMachineId: prepared.binding.machineId, originalHost: cleanupHost?.host,
                     selected, context, signal, requestId: context.actionRequestId ?? prepared.operationId });
             }
             let first = true;

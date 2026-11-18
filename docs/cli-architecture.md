@@ -3558,6 +3558,10 @@ match that custodian before invoking any native preparation role. Client-authore
 preset content cannot transfer another Account's artifact. A Can-use carrier
 therefore cannot destroy the custodian's image; the custodian must perform that
 cleanup. Account-target cloud preparation retains requester credential scope.
+The refusal keeps `credential_scope_denied` and carries
+`prepared_image_custodian_required` through the existing Action cause. Recovery
+text identifies the host and its requester-visible custodian name, falling back
+to their IDs; private host metadata and credentials are excluded.
 
 The private prepared binding retains the original Prepare host for Machine-native
 image cleanup. Missing legacy placement or a different executing host returns

@@ -237,16 +237,17 @@ async function projectCurrentAccountMachineInventory(
 }
 
 /** Only a returned original Machine can establish permanent cleanup unavailability; absence proves nothing. */
-export async function readCurrentAccountMachinePreparationCleanupUnavailable(params: Readonly<{
+export async function readCurrentAccountMachinePreparationCleanupHost(params: Readonly<{
   machineId: string; token?: string; authorization?: ExternalActionExecutionAuthorizationV1;
   serverHttpBaseUrl?: string; signal?: AbortSignal;
-}>): Promise<Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'] | undefined> {
+}>): Promise<Readonly<{ host?: CurrentAccountMachineInventoryItem;
+  unavailable?: Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'];
+}>> {
   const [machine] = await listCurrentAccountMachines({ ...params, projection: 'hostFacts', machineIds: [params.machineId] });
   // No reachability probe is needed: the canonical resolver decides revoked and replaced before offline.
   const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: params.machineId, machine, machineReachable: false });
-  if (readiness.status === 'revoked') return 'machine_revoked';
-  if (readiness.status === 'replaced') return 'machine_replaced';
-  return undefined;
+  return { host: machine, unavailable: readiness.status === 'revoked' ? 'machine_revoked'
+    : readiness.status === 'replaced' ? 'machine_replaced' : undefined };
 }
 
 /**

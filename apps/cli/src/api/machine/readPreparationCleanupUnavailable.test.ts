@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { readCurrentAccountMachinePreparationCleanupUnavailable } from './resolveCurrentAccountMachineTarget';
+import { readCurrentAccountMachinePreparationCleanupHost } from './resolveCurrentAccountMachineTarget';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -41,7 +41,8 @@ it('reads only original Machine facts through the admitted requester and classif
   ] as const) {
     // HTTP is the boundary; inventory parsing, canonical readiness and signing remain real.
     get.mockResolvedValue(response({ machine: facts }));
-    expect(await readCurrentAccountMachinePreparationCleanupUnavailable(input)).toBe(expected);
+    expect(await readCurrentAccountMachinePreparationCleanupHost(input)).toEqual({
+      host: expect.objectContaining({ id: originalId }), unavailable: expected });
     const [url, config] = get.mock.calls.at(-1)!;
     expect(url).toBe(`https://requester-home.test${path}`);
     expect(config?.headers).toMatchObject({ Accept: 'application/json;happier-machine-projection=host-facts' });
@@ -51,13 +52,14 @@ it('reads only original Machine facts through the admitted requester and classif
       publicKey: keys.publicKey, signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
   }
   get.mockResolvedValue(response({ error: 'Machine not found' }, 404));
-  expect(await readCurrentAccountMachinePreparationCleanupUnavailable(input)).toBeUndefined();
+  expect(await readCurrentAccountMachinePreparationCleanupHost(input)).toEqual({ host: undefined, unavailable: undefined });
   const post = vi.spyOn(axios, 'post').mockResolvedValue(response({ results: [
     { machineId: originalId, status: 'found', machine: { ...row, revokedAt: 123,
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 } },
   ] }));
-  expect(await readCurrentAccountMachinePreparationCleanupUnavailable({ machineId: originalId,
-    token: 'direct-requester', serverHttpBaseUrl: input.serverHttpBaseUrl })).toBe('machine_revoked');
+  expect(await readCurrentAccountMachinePreparationCleanupHost({ machineId: originalId,
+    token: 'direct-requester', serverHttpBaseUrl: input.serverHttpBaseUrl })).toMatchObject({
+      host: { id: originalId }, unavailable: 'machine_revoked' });
   expect(post).toHaveBeenCalledWith('https://requester-home.test/v1/machines/read-batch', { machineIds: [originalId] },
     expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer direct-requester' }) }));
   const abort = new AbortController();
@@ -65,6 +67,6 @@ it('reads only original Machine facts through the admitted requester and classif
     abort.abort();
     return response({ machine: { ...row, revokedAt: 123 } });
   });
-  await expect(readCurrentAccountMachinePreparationCleanupUnavailable({ ...input, signal: abort.signal }))
+  await expect(readCurrentAccountMachinePreparationCleanupHost({ ...input, signal: abort.signal }))
     .rejects.toMatchObject({ name: 'AbortError' });
 });

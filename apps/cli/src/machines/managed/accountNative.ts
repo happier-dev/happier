@@ -1,4 +1,5 @@
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import type { CurrentAccountMachineInventoryItem } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
     bindManagedMachineRoleCredentials, createManagedOpaquePresetReviewedChildPortV1, ManagedMachineControllerError,
     ManagedMachineNativeEffectGuardRefusal,
@@ -39,6 +40,8 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     requestId: string;
     /** Retained Prepare placement; missing legacy placement cannot select a Machine effect. */
     originalMachineId?: string;
+    /** Requester-visible publication from Archive's existing original-host read. */
+    originalHost?: Pick<CurrentAccountMachineInventoryItem, 'id' | 'access'>;
 }>): ManagedNativeInvocation {
     const destroyId = input.provisioner.preparation?.actions.destroy;
     const destroy = input.selected.manifest.contributes.actions.find(action => action.id === destroyId);
@@ -47,8 +50,14 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     // transfer that custodian's prepared artifact to another Account.
     if (destroy && destroy.execution?.target !== 'account' && binding
         && binding.accountId !== binding.custodianAccountId) {
-        throw createActionExecuteFailureError({ ok: false,
-            errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+        const publishedCustodian = input.originalHost?.id === binding.machineId
+            ? input.originalHost.access?.custodian : undefined;
+        const custodianName = publishedCustodian?.accountId === binding.custodianAccountId
+            ? publishedCustodian.displayName.trim() || binding.custodianAccountId : binding.custodianAccountId;
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'credential_scope_denied',
+            error: `The image is on ${binding.machineId}; its custodian ${custodianName} must remove it, or Archive from there.`,
+            failureCause: { phase: 'machines.presets.archive', errorClass: 'Error', errorCode: 'credential_scope_denied',
+                nativeErrorReason: 'prepared_image_custodian_required', httpStatus: null } });
     }
     return createAccountNativeInvocation({ ...input, useReviewedParent: true,
         originalPreparation: { machineId: input.originalMachineId } });

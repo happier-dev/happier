@@ -35,12 +35,12 @@ it.each([
     { prepared: true, refuseFirstDelete: false, hostState: undefined },
     { prepared: false, refuseFirstDelete: false, hostState: undefined },
     { prepared: true, refuseFirstDelete: true, hostState: undefined },
-    ...(['ready-context', 'ready', 'member-ready', 'wrong-host', 'revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
+    ...(['ready-context', 'ready', 'member-ready', 'team-member-ready', 'wrong-host', 'revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
         prepared: true, refuseFirstDelete: false, hostState,
     })),
 ])('archives after native cleanup or confirmed permanent host loss and restores cold ($prepared/$refuseFirstDelete/$hostState)', async ({ prepared, refuseFirstDelete, hostState }) => {
     const machineNative = hostState !== undefined;
-    const member = hostState === 'member-ready';
+    const member = hostState === 'member-ready' || hostState === 'team-member-ready';
     const onInstalledHost = hostState === 'ready-context' || hostState === 'ready' || member || hostState === 'wrong-host';
     const permanentlyGone = hostState === 'revoked' || hostState === 'replaced';
     const controller = new AbortController();
@@ -91,7 +91,8 @@ it.each([
             snapshotId: 'owned-image', name: 'happier-prepared-original-build', organizationId: 'organization', launch: { snapshot: 'owned-image' },
         } };
         let preset = ManagedMachinePresetV1Schema.parse({ id: 'archive-preset', homeId, revision: 1,
-            owner: { kind: 'account', accountId: member ? 'archive-member' : accountId }, contentEncryptionMode: 'plain', recipients: [],
+            owner: hostState === 'team-member-ready' ? { kind: 'team', teamId: 'managed-team' }
+                : { kind: 'account', accountId: member ? 'archive-member' : accountId }, contentEncryptionMode: 'plain', recipients: [],
             content: { t: 'plain', v: { ...content, ...(prepared ? { prepared: { operationId: 'original-build', status: 'ready', artifact,
                 cliBinaryPath: '/opt/happier/bin/happier', binding: createManagedMachinePresetPreparationBindingV1({
                     content, cliIdentity: 'original-cli', credentialConfigurations,
@@ -117,7 +118,11 @@ it.each([
             credentialRevision: revision, configurationRevision: null }));
         app.post('/v1/machines/presets/get', async () => ({ kind: 'found', preset }));
         app.get('/v1/machines/original-prepare-host', async () => ({ machine: { id: 'original-prepare-host',
-            managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null } }));
+            managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
+            access: { custodian: { accountId, displayName: 'Published Custodian' }, role: 'use',
+                resourceMode: 'plain', accessState: 'ready' },
+            metadata: JSON.stringify({ host: 'owner-private-host-secret', credential: 'owner-private-credential-secret' }),
+        } }));
         app.post('/v1/machines/read-batch', async request => {
             const body = request.body as { machineIds: string[] };
             expect(body.machineIds).toEqual(['original-prepare-host']);
@@ -229,6 +234,13 @@ it.each([
             if (member) {
                 expect(nativePresent, JSON.stringify({ archived, nativeRoles })).toBe(true);
                 expect(archived, JSON.stringify({ archived, nativeRoles, homeRequests, preset })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+                expect(archived).toMatchObject({ failureCause: { phase: 'machines.presets.archive',
+                    nativeErrorReason: 'prepared_image_custodian_required' } });
+                if (archived.ok) throw new Error('Expected Archive refusal');
+                expect(archived.error).toContain('original-prepare-host');
+                expect(archived.error).toContain('Published Custodian');
+                expect(JSON.stringify(archived)).not.toContain('owner-private-host-secret');
+                expect(JSON.stringify(archived)).not.toContain('owner-private-credential-secret');
                 expect(nativeRoles).toEqual([]);
                 expect(nativePresenceAtArchive).toEqual([]);
                 expect(preset.archivedAt).toBeUndefined();

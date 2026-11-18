@@ -19,7 +19,7 @@ import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/worksp
 import { observeProjectServicePlacementActualV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
-import { listCurrentAccountMachines, readCurrentAccountMachinePreparationCleanupUnavailable } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { listCurrentAccountMachines, readCurrentAccountMachinePreparationCleanupHost } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -1085,13 +1085,13 @@ export function createAccountServerActionDeps(input: Readonly<{
     machinePresetArchive: async request => executeCliMachinePresetArchive(request, {
       credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
       serverUrl: serverHttpBaseUrl, transport: deps.machinePresetAction!,
-      readPreparationCleanupUnavailable: async ({ machineId, context, signal }) => {
+      readPreparationCleanupHost: async ({ machineId, context, signal }) => {
         const authorization = context.externalActionExecutionAuthorization;
         // The canonical header owner refuses an external credential without its
         // signed root before the direct requester token can be considered.
         if (!authorization) requireExternalActionHeaders(resolveRequestHeaders({ context,
           effectActionId: MACHINE_PRESET_ARCHIVE_ACTION_ID_V1, method: 'GET', path: `/v1/machines/${encodeURIComponent(machineId)}` }));
-        return await readCurrentAccountMachinePreparationCleanupUnavailable({ machineId, serverHttpBaseUrl, signal,
+        return await readCurrentAccountMachinePreparationCleanupHost({ machineId, serverHttpBaseUrl, signal,
           ...(authorization ? { authorization } : { token: input.token }) });
       },
     }),
