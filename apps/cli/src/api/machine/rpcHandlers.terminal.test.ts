@@ -85,6 +85,7 @@ import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatal
 import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 /** Held authenticated Home at this fixture's installed Machine boundary. */
 function registerMachineTerminalRpcHandlers(params: Parameters<typeof registerUnadmittedMachineTerminalRpcHandlers>[0]) {
@@ -1430,6 +1431,53 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(manager.list()).toEqual([]);
     } finally { registration.dispose(); await h.dispose(); }
   });
+
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])(
+    '%s refuses a placed inactive Session without a holder and still opens an ordinary Session',
+    async method => {
+      const h = await finiteHarness({ observeInteractiveStop: true });
+      const sessionCreationCorrespondenceV1 = buildSessionCreationCorrespondence({
+        identity: { callerCreationNamespace: 'owner', creationKey: 'placed-terminal' },
+        recipe: {
+          execution: { machineId: 'machine', directory: { kind: 'path', path: h.root } },
+          organization: { folderId: null, tagIds: [] },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+          managedCreationOrigin: 'machine_policy',
+          managedCreation: { homeId: 'stable-home', managedId: 'guest',
+            controller: { machineId: 'machine', installationId: 'installation' } },
+        },
+      });
+      h.get.mockImplementation(async url => {
+        const sessionId = new URL(String(url)).pathname.match(/^\/v2\/sessions\/([^/]+)$/)?.[1];
+        if (!sessionId) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        return { status: 200, data: { session: {
+          id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+          encryptionMode: 'plain', metadataVersion: 1, metadata: JSON.stringify({
+            machineId: 'machine', path: h.root,
+            ...(sessionId === 'placed-session' ? { sessionCreationCorrespondenceV1 } : {}),
+          }),
+          agentState: null, agentStateVersion: 0,
+          dataEncryptionKey: null, responsibleAccountId: null, responsibleAccount: null, share: null,
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+        } } };
+      });
+      const handlers = new Map<string, RpcHandler>();
+      const registration = registerMachineTerminalRpcHandlers({
+        rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+        deps: { env: {}, workingDirectory: h.root, sessionManager: h.sessionManager, accountReadRuntime: async () => h.runtime },
+      });
+      try {
+        const input = { terminalKey: 'shell', cwd: h.root };
+        const request = handlers.get(method)!;
+        await expect(request({ ...input, sessionId: 'ordinary-session' }, h.ingress)).resolves.toMatchObject({ ok: true });
+        await expect(request({ ...input, sessionId: 'placed-session' }, h.ingress)).resolves.toMatchObject({
+          ok: false, errorCode: 'terminal_unavailable',
+        });
+        expect(h.provider.spawned).toHaveLength(1);
+      } finally { registration.dispose(); await h.dispose(); }
+    },
+  );
 
   it('retains ordinary own Session authority without requiring an accepted Project or borrowing foreign Account ports', async () => {
     const h = await finiteHarness({ observeInteractiveStop: true });

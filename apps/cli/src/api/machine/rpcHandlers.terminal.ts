@@ -318,7 +318,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (context.signal.aborted) return err('terminal_forbidden');
       return { ok: true, cwd: root.cwd, custody: { kind: 'session', serverId: runtime.serverId,
         requesterAccountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId,
-        sessionId, rootPath: root.cwd } };
+        sessionId, rootPath: root.cwd, ...(workspace.requiresManagedTarget ? { requiresManagedTarget: true as const } : {}) } };
     } catch { return err('terminal_forbidden'); }
   };
 

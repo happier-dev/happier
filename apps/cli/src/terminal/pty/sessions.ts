@@ -89,7 +89,7 @@ export type TerminalPtyProjectCustody = TerminalPtyCustodyBase & Readonly<{
   projectKey: string;
 }>;
 export type TerminalPtySessionCustody = TerminalPtyCustodyBase & Readonly<{
-  kind: 'session'; sessionId: string; workspaceRefId?: never; projectKey?: never;
+  kind: 'session'; sessionId: string; requiresManagedTarget?: true; workspaceRefId?: never; projectKey?: never;
 }>;
 export type TerminalPtyMachineCustody = TerminalPtyCustodyBase & Readonly<{
   kind: 'machine'; sessionId?: never; workspaceRefId?: never; projectKey?: never;
@@ -740,6 +740,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
           ...launch, cols, rows,
         }, scopedTarget ? () => holder.detach() : undefined);
       } else {
+        if (input.custody?.kind === 'session' && input.custody.requiresManagedTarget) return okDisabled('terminal_unavailable');
         if (!params.ptyProvider) throw new Error('This terminal owner spawns no local terminals');
         await params.ptyProvider.prepare?.();
         pty = params.ptyProvider.spawn({

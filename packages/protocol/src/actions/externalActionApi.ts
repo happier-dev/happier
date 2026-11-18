@@ -1669,7 +1669,7 @@ export type ExternalActionRequesterAccountProjectionV1 = Readonly<{
   readOwnSessionWorkspace?(input: Readonly<{
     sessionId: string; machineId: string; currentMachineHost: string; currentMachineHomeDir: string;
     candidatePath?: string; signal?: AbortSignal;
-  }>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null>;
+  }>): Promise<Readonly<{ rootPath: string; requestedPath?: string; requiresManagedTarget?: true }> | null>;
   isCurrent(): Promise<boolean>;
   readArtifact(ref: PromptArtifactRefV1 & Readonly<{ serverId: string }>,
     options?: ProjectSourceArtifactReadOptionsV1 & Readonly<{ authorization?: ExternalActionExecutionAuthorizationV1 }>): Promise<Readonly<{

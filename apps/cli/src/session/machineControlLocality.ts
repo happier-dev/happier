@@ -1,5 +1,6 @@
 import { isSameMachineLocality } from '@happier-dev/protocol/machines/identity/machineLocality';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
@@ -114,7 +115,7 @@ export function resolveSessionMachineWorkspacePath(params: Readonly<{
 export async function readOwnSessionMachineWorkspace(input: Readonly<{
   credentials: StoredCredentials; serverHttpBaseUrl: string; sessionId: string; machineId: string;
   currentMachineHost: string; currentMachineHomeDir: string; candidatePath?: string; signal?: AbortSignal;
-}>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null> {
+}>): Promise<Readonly<{ rootPath: string; requestedPath?: string; requiresManagedTarget?: true }> | null> {
   const session = await fetchSessionById({ reason: 'session-control', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
     sessionId: input.sessionId, signal: input.signal, accessProjectionVersion: 1 });
   if (!session || session.id !== input.sessionId || session.effectiveAccess?.level !== 'owner') return null;
@@ -137,5 +138,9 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
   const requestedPath = input.candidatePath === undefined ? undefined
     : resolveSessionMachineWorkspacePath({ metadata, currentMachineId: input.machineId, candidatePath: input.candidatePath });
   if (input.candidatePath !== undefined && !requestedPath) return null;
-  return { rootPath, ...(requestedPath ? { requestedPath } : {}) };
+  const creation = SessionCreationCorrespondenceV1ReadSchema.safeParse(metadata.sessionCreationCorrespondenceV1);
+  // A policy-selected target can outlive the holder registration that serves this Session.
+  const requiresManagedTarget = creation.success && creation.data.recipe.managedCreationOrigin !== undefined
+    && creation.data.recipe.managedCreation !== undefined;
+  return { rootPath, ...(requestedPath ? { requestedPath } : {}), ...(requiresManagedTarget ? { requiresManagedTarget: true as const } : {}) };
 }
