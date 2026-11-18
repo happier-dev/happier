@@ -1,5 +1,5 @@
 import { getRepoDir, getStacksStorageRoot, resolveStackBaseDir } from '../../utils/paths/paths.mjs';
-import { resolveRepoStackIdentity } from '../../utils/stack/repo_stack_identity.mjs';
+import { isRepoStackIdentityName, resolveRepoStackIdentity } from '../../utils/stack/repo_stack_identity.mjs';
 import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
 
 function normalizeStackName(value, fallback = '') {
@@ -33,7 +33,21 @@ export function resolveRuntimeBuildAuthority({
     };
   }
 
+  // A repository's own Stack is its build authority. Selecting it by name must
+  // not make it a consumer of whichever checkout an inherited
+  // HAPPIER_STACK_REPO_DIR names: consumers adopt their producer's registry.
   const repoDir = getRepoDir(rootDir, env);
+  if (isRepoStackIdentityName(normalizedConsumerStackName)) {
+    return {
+      consumerStackName: normalizedConsumerStackName,
+      consumerStackBaseDir,
+      producerStackName: normalizedConsumerStackName,
+      producerStackBaseDir: consumerStackBaseDir,
+      repoDir,
+      explicit: false,
+    };
+  }
+
   const identity = resolveRepoStackIdentityImpl({
     repoRoot: repoDir,
     stacksStorageRoot: getStacksStorageRoot(env),

@@ -19,9 +19,8 @@ import {
   readStackRuntimeStateFile,
 } from '../utils/stack/runtime_state.mjs';
 import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
-import { loadDevTargetsConfig, parseDevTargetsConfig } from '../utils/dev_targets/config.mjs';
+import { loadDevTargetsConfig, parseDevTargetsConfig, writeDevTargetsConfigFile } from '../utils/dev_targets/config.mjs';
 import { resolveRemoteStackStatePaths } from '../utils/dev_targets/remote_commands.mjs';
-import { writeJsonAtomic } from '../utils/fs/json.mjs';
 import { hasRetainedServerData } from '../utils/dev_targets/retained_server_data.mjs';
 import { getServerLightDataDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
@@ -281,7 +280,7 @@ export async function configureSharedDatabasePreset({ stackName, sourceStackName
     commandExecution: own.config.commandExecution ?? sourcePlacement.config.commandExecution,
   });
   if (!own.daemonExplicitlySet) delete placementConfig.runtimePlacement.daemon;
-  await writeJsonAtomic(own.path, placementConfig);
+  await writeDevTargetsConfigFile(own.path, placementConfig);
   await ensureEnvFileUpdated({ envPath: consumerPath.envPath, updates: Object.entries({
     HAPPIER_STACK_SHARED_DB_SOURCE_STACK: sourceStackName,
     HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: sourceEnvPath,

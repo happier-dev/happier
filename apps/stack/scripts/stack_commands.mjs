@@ -53,8 +53,7 @@ import { formatSharedDatabaseCoWriterLines } from './stack/shared_database_cowri
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { hasExplicitStackRuntimeModeArg } from './runtime/shared/runtime_mode.mjs';
 import { DEFAULT_QA_TARGET_NAMES } from './utils/dev_targets/service_placement.mjs';
-import { loadDevTargetsConfig, parseDevTargetsConfig } from './utils/dev_targets/config.mjs';
-import { writeJsonAtomic } from './utils/fs/json.mjs';
+import { loadDevTargetsConfig, parseDevTargetsConfig, writeDevTargetsConfigFile } from './utils/dev_targets/config.mjs';
 import { resolveRepoStackIdentity } from './utils/stack/repo_stack_identity.mjs';
 import { ensureEnvFileMutated, ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
@@ -501,7 +500,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   if (!created) {
     throw stackAlreadyExistsError(stackName);
   }
-  if (qaPlacementConfig) await writeJsonAtomic(join(baseDir, 'dev-targets.json'), qaPlacementConfig);
+  if (qaPlacementConfig) await writeDevTargetsConfigFile(join(baseDir, 'dev-targets.json'), qaPlacementConfig);
   const res = { ok: true, stackName, envPath, port: port ?? null, serverComponent, portsMode: port == null ? 'ephemeral' : 'pinned' };
   if (emit) {
     printResult({

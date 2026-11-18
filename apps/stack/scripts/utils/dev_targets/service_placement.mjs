@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadDevTargetsConfig, parseDevTargetsConfig } from './config.mjs';
+import { loadDevTargetsConfig, parseDevTargetsConfig, writeDevTargetsConfigFile } from './config.mjs';
 import { redactFailureDiagnostic, runCaptureResult } from '../proc/proc.mjs';
 import { writeJsonAtomic } from '../fs/json.mjs';
 import { getRootDir, getRepoDir } from '../paths/paths.mjs';
@@ -56,7 +56,7 @@ export async function loadControlledRuntimeConfig({ stackName, sourceDir, preser
   if (own.registryReconciled) {
     const persisted = { ...own.config, runtimePlacement: { ...own.config.runtimePlacement } };
     if (!own.daemonExplicitlySet) delete persisted.runtimePlacement.daemon;
-    await writeJsonAtomic(own.path, persisted);
+    await writeDevTargetsConfigFile(own.path, persisted);
   }
   const qaExplicitlySet = own.config.runtimePlacement?.qa != null;
   if (preserveLocalPlacement && own.config.runtimePlacement?.server?.mode !== 'prefer-target') {
@@ -91,7 +91,7 @@ export async function loadControlledRuntimeConfig({ stackName, sourceDir, preser
     if (!selected) throw new Error('[dev-targets] no QA daemon host has a valid available-memory observation; no Machine pin was written');
     config = parseDevTargetsConfig({ ...config, runtimePlacement: { ...config.runtimePlacement,
       daemon: { mode: 'prefer-target', target: selected.target.name, fallback: 'local' } } });
-    await writeJsonAtomic(own.path, config);
+    await writeDevTargetsConfigFile(own.path, config);
     return { ...loaded, config, daemonExplicitlySet: true, initializedQaDaemonPlacement: selected };
   }
   return loaded;
@@ -138,7 +138,7 @@ export async function persistControlledServerPlacement({ stackName, sourceDir, t
     },
   });
   if (!loaded.daemonExplicitlySet) delete persisted.runtimePlacement.daemon;
-  await writeJsonAtomic(loaded.path, persisted);
+  await writeDevTargetsConfigFile(loaded.path, persisted);
 }
 
 function qaProbeFailure(message, result, env) {

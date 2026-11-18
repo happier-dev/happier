@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -7,6 +10,7 @@ import {
   resolveDevTargetExecutionPolicy,
   resolveDevTargetsConfigPath,
   upgradeDevTargetsConfigToVersion3,
+  writeDevTargetsConfigFile,
 } from './config.mjs';
 
 test('automatic placement accepts caller cache lifetimes without arbitrary duration limits', () => {
@@ -646,4 +650,25 @@ test('managed Windows WSL workers retain Linux execution and operator capacity',
   assert.throws(() => parseDevTargetsConfig({ ...config, targets: [{ ...config.targets[0],
     managedRuntime: { ...runtime, instance: 'worker;whoami' },
   }] }), /invalid.*WSL.*instance/i);
+});
+
+test('a dev-targets.json rewrite keeps the replaced bytes in a timestamped backup', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dev-targets-write-'));
+  try {
+    const path = join(directory, 'dev-targets.json');
+    const previous = `${JSON.stringify({ version: 3, targets: [] }, null, 2)}\n`;
+    await writeFile(path, previous);
+    const next = { version: 3, targets: [], commandExecution: { mode: 'local' } };
+
+    await writeDevTargetsConfigFile(path, next, { now: new Date('2026-11-18T08:50:39.123Z') });
+    await writeDevTargetsConfigFile(path, next, { now: new Date('2026-11-18T08:51:00.000Z') });
+
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), next);
+    const backups = (await readdir(directory)).filter(name => name !== 'dev-targets.json');
+    // An unchanged rewrite replaces nothing, so it keeps no backup.
+    assert.deepEqual(backups, ['dev-targets.json.20261118T085039123Z.bak']);
+    assert.equal(await readFile(join(directory, backups[0]), 'utf8'), previous);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

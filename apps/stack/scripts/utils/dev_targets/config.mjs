@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
 import {
@@ -529,6 +529,26 @@ export function resolveDevTargetsConfigPath({ stackName, env = process.env,
 export async function loadDevTargetExecutionConfig({ stackName, env = process.env } = {}) {
   const path = resolveDevTargetsConfigPath({ stackName, env });
   return await loadDevTargetsConfig({ path, env, allowMissing: !env.HAPPIER_EXEC_CONFIG_PATH });
+}
+
+/** The one writer of a Stack's dev-targets.json. Atomic, and a change keeps
+ * the replaced bytes beside it as dev-targets.json.<UTC timestamp>.bak, so a
+ * bad write (2026-11-18 08:50Z cross-stack overwrite) is recoverable. */
+export async function writeDevTargetsConfigFile(path, config, { now = new Date() } = {}) {
+  const contents = `${JSON.stringify(config, null, 2)}\n`;
+  const previous = await readFile(path, 'utf8').catch(error => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (previous === contents) return;
+  await mkdir(dirname(path), { recursive: true });
+  if (previous !== null) {
+    const stamp = now.toISOString().replace(/[-:.]/g, '');
+    await writeFile(`${path}.${stamp}.bak`, previous, { mode: 0o600 });
+  }
+  const temporary = `${path}.${process.pid}.tmp`;
+  await writeFile(temporary, contents, { mode: 0o600 });
+  await rename(temporary, path);
 }
 
 export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true,

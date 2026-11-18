@@ -1,6 +1,6 @@
 import './utils/env/env.mjs';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,7 @@ import {
   parseDevTargetsConfig,
   resolveDevTargetsConfigPath,
   upgradeDevTargetsConfigToVersion3,
+  writeDevTargetsConfigFile,
 } from './utils/dev_targets/config.mjs';
 import { getForegroundCommandResult, spawnForegroundCommand } from './utils/proc/proc.mjs';
 import { describeDevTargetSyncRecovery } from './utils/dev_targets/mutagen_runtime.mjs';
@@ -287,10 +288,7 @@ function setTargetCapacity(config, targetName, mode, kv) {
 
 async function writeConfig(path, config, repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')) {
   const { writeNativeExecutionProjection } = await import('./utils/dev_targets/native_execution_projection.mjs');
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, path);
+  await writeDevTargetsConfigFile(path, config);
   await writeNativeExecutionProjection({
     configPath: path,
     outputPath: join(dirname(path), 'dev-target-exec-v1.sh'),

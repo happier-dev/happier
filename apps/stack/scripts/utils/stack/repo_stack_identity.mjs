@@ -66,6 +66,11 @@ function writeTextFileBestEffort(path, contents, fileOps) {
   }
 }
 
+/** Names minted by resolveRepoStackIdentity: a repository's own Stack. */
+export function isRepoStackIdentityName(stackName) {
+  return /^repo-[a-z0-9-]+-[a-f0-9]{8,10}$/.test(String(stackName ?? ''));
+}
+
 export function resolveStacksStorageRoot(env = process.env) {
   const configured = String(env.HAPPIER_STACK_STORAGE_DIR ?? '').trim();
   if (configured === '~') return homedir();

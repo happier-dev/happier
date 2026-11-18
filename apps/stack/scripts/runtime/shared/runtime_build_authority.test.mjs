@@ -35,6 +35,29 @@ test('runtime builds for different consumers share the repository stack authorit
   assert.equal(second.consumerStackBaseDir, '/tmp/happier-stacks/qa-two');
 });
 
+test('a repository identity stack stays its own authority when the inherited repo dir names another checkout', () => {
+  // 2026-11-18 08:50:39Z: a 0.3 command run with the 0.2 Stack's inherited
+  // HAPPIER_STACK_REPO_DIR treated repo-dev (0.3) as a consumer of the 0.2
+  // registry and overwrote its dev-targets.json with the 0.2 host list.
+  const env = {
+    HAPPIER_STACK_STORAGE_DIR: '/tmp/happier-stacks',
+    HAPPIER_STACK_REPO_DIR: '/work/other-checkout',
+  };
+  const authority = resolveRuntimeBuildAuthority({
+    rootDir: '/tool',
+    consumerStackName: 'repo-dev-a1cc5e0671',
+    env,
+    resolveRepoStackIdentityImpl: ({ stacksStorageRoot }) => ({
+      stackName: 'repo-remote-dev-d72117acdb',
+      stackBaseDir: join(stacksStorageRoot, 'repo-remote-dev-d72117acdb'),
+    }),
+  });
+
+  assert.equal(authority.producerStackName, 'repo-dev-a1cc5e0671');
+  assert.equal(authority.producerStackBaseDir, '/tmp/happier-stacks/repo-dev-a1cc5e0671');
+  assert.equal(authority.consumerStackBaseDir, authority.producerStackBaseDir);
+});
+
 test('runtime build authority supports one explicit managed-stack override', () => {
   const env = {
     HAPPIER_STACK_STORAGE_DIR: '/tmp/happier-stacks',
