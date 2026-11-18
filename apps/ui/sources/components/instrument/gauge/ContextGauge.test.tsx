@@ -57,7 +57,7 @@ describe('ContextGauge (tier 2 ring)', () => {
         const { circumference } = ringGeometry(20, GAUGE_RING_STROKE_WIDTH);
         const sweep = findSweepProps(tree);
         expect(sweep.strokeDashoffset).toBeCloseTo(circumference);
-        expect(sweep.stroke).toBe('#2BACCC');
+        expect(sweep.stroke).toBe('#1F7A91');
         expect(tree.root.findAll((n) => typeof n.type === 'string' && n.props.testID === 'cg')[0]!.props.accessibilityLabel)
             .toBe('Context 0% used');
     });
@@ -70,7 +70,7 @@ describe('ContextGauge (tier 2 ring)', () => {
 
     it('shifts to the danger tone at 95%', async () => {
         const tree = await render(<ContextGauge usedPct={95} size={20} testID="cg" />);
-        expect(findSweepProps(tree).stroke).toBe('#FF3B30');
+        expect(findSweepProps(tree).stroke).toBe('#FF362B');
     });
 
     it('honors an explicit tone override instead of the low-usage accent', async () => {

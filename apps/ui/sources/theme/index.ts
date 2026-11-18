@@ -58,7 +58,8 @@ const lightThemeBase = {
             // and the elevated chip fill (#F0F0F0).
             tertiary: '#6C6C70',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.light.link,
-            destructive: '#FF3B30',
+            // Destructive copy is read on the page and its sheets: the system red's hue, deepened to 4.5:1 there.
+            destructive: '#E10C00',
             // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
             placeholder: '#6C6C70',
             disabled: '#C0C0C0',
@@ -73,10 +74,12 @@ const lightThemeBase = {
             purple: Platform.select({ ios: '#AF52DE', default: '#9C27B0' }),
         },
         state: {
+            // Each marker ink (dot, icon, border) holds 3:1 on its own tint over the page and its sheets;
+            // asserted in `themeContrast.test.ts`.
             success: {
-                foreground: '#34C759',
+                foreground: '#289B45',
                 // Lab status hues, deepened for small text on their tints; markers retain their ink.
-                textForeground: '#187733',
+                textForeground: '#187633',
                 background: 'rgba(52, 199, 89, 0.12)',
                 border: '#34C759',
             },
@@ -84,7 +87,7 @@ const lightThemeBase = {
             // lab's #FFF8F0 / #FFF0F0, and a glass plane keeps their hue instead of repainting an opaque
             // fill as its neutral inner coat (a warning badge turned grey on the glass composer).
             warning: {
-                foreground: '#FF9500',
+                foreground: '#CB7600',
                 textForeground: '#945700',
                 background: 'rgba(255, 149, 0, 0.06)',
                 border: '#FF9500',
@@ -98,7 +101,7 @@ const lightThemeBase = {
                 background: Color(PLANET_ATTENTION_HEX.light).alpha(0.12).rgb().string(),
             },
             danger: {
-                foreground: '#FF3B30',
+                foreground: '#FF362B',
                 textForeground: '#BE2525',
                 background: 'rgba(255, 59, 48, 0.075)',
                 border: '#FF3B30',
@@ -110,7 +113,7 @@ const lightThemeBase = {
                 border: '#007AFF',
             },
             neutral: {
-                foreground: '#8E8E93',
+                foreground: '#8B8B91',
                 textForeground: '#6C6C70',
                 background: '#F2F2F7',
                 border: '#D1D1D6',

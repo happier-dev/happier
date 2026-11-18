@@ -26,6 +26,17 @@ describe('theme profile contrast warnings', () => {
         expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('text.link')!)).toContain('background.canvas');
     });
 
+    it('warns when a state foreground is below the text contrast threshold', () => {
+        const profile: ThemeProfileV1 = {
+            schemaVersion: 1, id: 'state-text-warning', name: 'State text warning', createdAt: '', updatedAt: '',
+            base: { light: 'light', dark: 'dark' },
+            overrides: { light: { 'state.success.foreground': '#8A8A8A', 'state.success.background': '#FFFFFF' }, dark: {} },
+        };
+
+        expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('state.success.foreground')!))
+            .toEqual(['state.success.background']);
+    });
+
     it('keeps real Default palette failures visible at their role thresholds', () => {
         const profile: ThemeProfileV1 = {
             schemaVersion: 1, id: 'default', name: 'Default', createdAt: '', updatedAt: '',

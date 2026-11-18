@@ -32,11 +32,11 @@ import { darkTheme, lightTheme } from '.';
  * their measured ratios and owning lane, not silently allowlisted here. They
  * split into two groups: call-site misuse inside `components/browser/**` and
  * `components/sessions/localServices/**` (owned by lanes A3 and F0), and
- * properties of the global palette — `input.placeholder`,
- * `border.default` and the `#34C759` / `#FF9500` / `#FF3B30` status colours —
+ * properties of the global palette — `input.placeholder` and `border.default` —
  * whose correction repaints the whole product and is a design decision above
  * this change. Adding them here as passing entries would assert a clean bill of
- * health the corridors do not have.
+ * health the corridors do not have. (The light status marker inks were deepened
+ * to clear 3:1 on their own tints; that check lives in its own block below.)
  *
  * Every pairing here is platform-invariant. `accent.indigo`, `accent.purple`,
  * `state.info.foreground`, `border.default` and `border.strong` resolve through
@@ -340,6 +340,42 @@ describe('default tinted status text contrast', () => {
             expect(failures).toEqual([]);
         });
     }
+});
+
+/**
+ * The pairings the Themes editor checks for the Default palette (`themeProfileTokens.ts` contrastPairs):
+ * link and destructive copy are read on the page and its sheets (4.5:1), and each state marker ink (a
+ * dot, icon or border) sits on its own tint (3:1, WCAG 1.4.11). The tint is measured over the page and
+ * over a sheet, because status rows and pills stand on both.
+ */
+const READ_INK_TOKENS = ['text.link', 'text.destructive'] as const;
+const READ_INK_BACKGROUNDS = ['background.canvas', 'surface.base'] as const;
+const STATE_MARKER_VARIANTS = ['success', 'warning', 'danger', 'info', 'neutral', 'active'] as const;
+
+function defaultPaletteRoleFailures(colors: unknown, label: string): string[] {
+    const canvas = readTokenPath(colors, 'background.canvas');
+    const read = READ_INK_TOKENS.flatMap((token) => READ_INK_BACKGROUNDS.flatMap((background) => {
+        const ratio = contrastRatio(readTokenPath(colors, token), readTokenPath(colors, background), canvas);
+        return ratio >= 4.5 ? [] : [`${label}: ${token} on ${background} = ${ratio.toFixed(2)}:1 (needs 4.5:1)`];
+    }));
+    const markers = STATE_MARKER_VARIANTS.flatMap((variant) => READ_INK_BACKGROUNDS.flatMap((backdrop) => {
+        const ratio = contrastRatio(
+            readTokenPath(colors, `state.${variant}.foreground`),
+            readTokenPath(colors, `state.${variant}.background`),
+            readTokenPath(colors, backdrop),
+        );
+        return ratio >= 3 ? [] : [`${label}: state.${variant}.foreground on its tint over ${backdrop} = ${ratio.toFixed(2)}:1 (needs 3:1)`];
+    }));
+    return [...read, ...markers];
+}
+
+describe('default palette link, destructive and state marker contrast', () => {
+    it('keeps link and destructive copy readable and every state marker visible on its tint in both base themes', () => {
+        expect([
+            ...defaultPaletteRoleFailures(lightTheme.colors, 'light'),
+            ...defaultPaletteRoleFailures(darkTheme.colors, 'dark'),
+        ]).toEqual([]);
+    });
 });
 
 describe('default secondary text contrast on raised surfaces', () => {
