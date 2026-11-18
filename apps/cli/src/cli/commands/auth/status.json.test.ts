@@ -1,4 +1,6 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -357,6 +359,80 @@ describe('happier auth status --json', () => {
       });
     } finally {
       extendedScope.restore();
+      reloadConfiguration();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('reports the saved Home refusing as another identity, without sending the stored bearer', async () => {
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const homeEnvScope = createEnvKeyScope([...envKeys, 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL',
+      'HAPPIER_HOME_CARRIER_POLICY'] as const);
+    const authorizationHeaders: Array<string | undefined> = [];
+    // The Home behind the saved descriptor's address now reports a different identity.
+    const server = createServer((req, res) => {
+      authorizationHeaders.push(req.headers.authorization);
+      if (req.url !== '/v1/features') {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_replacement_home' } } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const serverUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}` : '';
+    try {
+      await withTempDir('happier-auth-status-json-home-refused-', async (home) => {
+        const output = captureConsoleText();
+        try {
+          homeEnvScope.patch({
+            HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined,
+            HAPPIER_LOCAL_SERVER_URL: undefined, HAPPIER_PUBLIC_SERVER_URL: undefined,
+            HAPPIER_ACTIVE_SERVER_ID: undefined, HAPPIER_HOME_CARRIER_POLICY: 'automatic',
+          });
+          writeFileSync(join(home, 'settings.json'), JSON.stringify({
+            schemaVersion: 5,
+            onboardingCompleted: true,
+            activeServerId: 'saved-home',
+            servers: {
+              'saved-home': {
+                id: 'saved-home', name: 'Saved Home', serverUrl, webappUrl: serverUrl,
+                homeConnectionDescriptor: {
+                  v: 1, homeServerIdentityId: 'srv_saved_home', canonicalServerUrl: serverUrl, revision: 1,
+                  endpoints: [{ kind: 'https', url: serverUrl }],
+                },
+                createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+              },
+            },
+          }), 'utf8');
+          mkdirSync(join(home, 'servers', 'saved-home'), { recursive: true });
+          writeFileSync(join(home, 'servers', 'saved-home', 'access.key'),
+            JSON.stringify({ token: 'token_for_saved_home', encryption: null }), 'utf8');
+          reloadConfiguration();
+
+          await handleAuthCommand(['status', '--json']);
+
+          const raw = output.text().trim();
+          expect(JSON.parse(raw)).toMatchObject({
+            ok: false,
+            kind: 'auth_status',
+            error: { code: 'auth_status_unavailable', reason: 'identity_mismatch' },
+          });
+          expect(raw).not.toContain('token_for_saved_home');
+          expect(authorizationHeaders.length).toBeGreaterThan(0);
+          expect(authorizationHeaders.every((value) => value === undefined)).toBe(true);
+          expect(process.exitCode).toBe(1);
+        } finally {
+          output.restore();
+        }
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      homeEnvScope.restore();
+      envScope = createEnvKeyScope(envKeys);
       reloadConfiguration();
       process.exitCode = prevExitCode;
     }

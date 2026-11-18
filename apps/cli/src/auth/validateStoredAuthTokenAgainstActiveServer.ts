@@ -45,6 +45,12 @@ function readAccountProfileLabel(body: unknown): string | null {
   return displayName || null;
 }
 
+/** A verification refusal's own typed code, such as `HOME_AUTHORITY_MISMATCH`. */
+function readTypedErrorCode(error: unknown): string | null {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+  return typeof code === 'string' && code.trim() ? code : null;
+}
+
 async function readJsonBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -71,21 +77,24 @@ export async function validateStoredAuthTokenAgainstServer(
   }
   const fetchImpl = params.fetchImpl ?? fetch;
   try {
-    const response = await withAbortTimeout(
+    // The body belongs to the same exchange, so its read stays inside this request's deadline.
+    const { response, body } = await withAbortTimeout(
       params.timeoutMs ?? 5_000,
-      async (requestSignal) => await fetchWithCredentialRedirectRefusal(`${baseUrl}/v1/account/profile`, {
-        method: 'GET',
-        headers: {
-          ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-          Authorization: `Bearer ${trimmedToken}`,
-          'Content-Type': 'application/json',
-        },
-        signal: requestSignal,
-      }, fetchImpl),
+      async (requestSignal) => {
+        const response = await fetchWithCredentialRedirectRefusal(`${baseUrl}/v1/account/profile`, {
+          method: 'GET',
+          headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+            Authorization: `Bearer ${trimmedToken}`,
+            'Content-Type': 'application/json',
+          },
+          signal: requestSignal,
+        }, fetchImpl);
+        return { response, body: await readJsonBody(response) };
+      },
       params.signal,
     );
 
-    const body = await readJsonBody(response);
     if (response.ok) {
       const accountId = (body as { id?: unknown } | null)?.id;
       if (typeof accountId === 'string' && accountId.trim().length > 0) {
@@ -139,13 +148,8 @@ export async function validateStoredAuthTokenAgainstActiveServer(
     signal,
   );
   if (!acquired.ok) {
-    return {
-      state: 'unknown',
-      httpStatus: null,
-      reasonCode: acquired.reason === 'fail_closed'
-        ? 'home-carrier-fail-closed'
-        : 'home-carrier-unavailable',
-    };
+    // The carrier's typed refusal (for example `identity_mismatch`) is the cause.
+    return { state: 'unknown', httpStatus: null, reasonCode: acquired.carrierFailure.reason };
   }
   try {
     const snapshot = await observeServerFeaturesSnapshot({
@@ -169,7 +173,7 @@ export async function validateStoredAuthTokenAgainstActiveServer(
     return {
       state: 'unknown',
       httpStatus: null,
-      reasonCode: error instanceof Error ? error.name : 'home-carrier-verification-failed',
+      reasonCode: readTypedErrorCode(error) ?? (error instanceof Error ? error.name : 'home-carrier-verification-failed'),
     };
   } finally {
     await acquired.close().catch(() => undefined);

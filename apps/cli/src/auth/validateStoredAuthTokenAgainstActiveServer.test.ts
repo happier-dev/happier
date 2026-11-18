@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveLoopbackHttpUrlMock = vi.hoisted(() => vi.fn((url: string) => url));
@@ -198,4 +200,55 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
     expect(descriptorRuntimeMock.verify).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it('reports the carrier verification refusal code, not a generic error name, and still closes the carrier', async () => {
+    const descriptor = {
+      v: 1 as const,
+      homeServerIdentityId: 'srv_stored_iroh_home',
+      canonicalServerUrl: 'http://localhost:3010',
+      revision: 2,
+      endpoints: [{ kind: 'iroh' as const, endpointId: 'e'.repeat(64) }],
+    };
+    const close = vi.fn(async () => {});
+    descriptorRuntimeMock.resolveTarget.mockResolvedValue({ descriptor, applicationUrl: descriptor.canonicalServerUrl, preferredTransport: 'iroh' });
+    descriptorRuntimeMock.acquire.mockResolvedValue({
+      ok: true,
+      runtime: { runtimeOrigin: 'http://127.0.0.1:49123', carrier: 'iroh', authenticatedCredentialDestination: { kind: 'iroh', endpointId: 'e'.repeat(64) } },
+      close,
+    });
+    descriptorRuntimeMock.verify.mockImplementation(() => {
+      throw Object.assign(new Error('The acquired enrollment runtime does not match the resolved Home authority'), { code: 'HOME_AUTHORITY_MISMATCH' });
+    });
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({ features: {} }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    const { validateStoredAuthTokenAgainstActiveServer } = await import('./validateStoredAuthTokenAgainstActiveServer');
+    await expect(validateStoredAuthTokenAgainstActiveServer('token-replaced-home')).resolves.toEqual({
+      state: 'unknown',
+      httpStatus: null,
+      reasonCode: 'HOME_AUTHORITY_MISMATCH',
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('settles within its request deadline when the profile body never ends', async () => {
+    // The Home sends response headers, then stalls the body forever.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"id":');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const baseUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}` : '';
+    try {
+      const { validateStoredAuthTokenAgainstServer } = await import('./validateStoredAuthTokenAgainstActiveServer');
+      await expect(validateStoredAuthTokenAgainstServer({ token: 'token-stalled-body', baseUrl, timeoutMs: 1_000 }))
+        .resolves.toMatchObject({ state: 'unknown', reasonCode: 'AbortError' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 15_000);
 });

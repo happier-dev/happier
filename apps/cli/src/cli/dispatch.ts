@@ -225,7 +225,61 @@ async function applyGlobalInvocationOptions(
     apiToken = validateCliApiTokenEnvironment(ambientApiToken);
   }
 
-  return { args, apiToken, explicitServerSelection };
+  return { args: hoistLeadingCommandFlags(args), apiToken, explicitServerSelection };
+}
+
+// Command-agnostic flags a caller may write before the command they belong to.
+const LEADING_COMMAND_FLAGS: ReadonlySet<string> = new Set(['--json']);
+const LEADING_COMMAND_VALUE_FLAGS: ReadonlySet<string> = new Set(['--server-id', '--machine-id', '--request-id']);
+
+function isCommandRoot(word: string | undefined): boolean {
+  return Boolean(word && !word.startsWith('-') && (findCommandDispatchDescriptor(word) || findCommandSurfaceEntry(word)));
+}
+
+/**
+ * `happier --json auth status` means `happier auth status --json`: when such flags
+ * precede a known command, they move behind it so the command, not the default
+ * Agent launch, receives the invocation.
+ */
+function hoistLeadingCommandFlags(args: string[]): string[] {
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index]!;
+    if (LEADING_COMMAND_FLAGS.has(arg)) index += 1;
+    else if (LEADING_COMMAND_VALUE_FLAGS.has(arg) && index + 1 < args.length) index += 2;
+    else break;
+  }
+  if (index === 0 || !isCommandRoot(args[index])) return args;
+  const rest = args.slice(index);
+  const terminator = rest.indexOf('--');
+  const leading = args.slice(0, index);
+  return terminator === -1
+    ? [...rest, ...leading]
+    : [...rest.slice(0, terminator), ...leading, ...rest.slice(terminator)];
+}
+
+/**
+ * The default Agent launch starts a long-lived Session runner. It runs only for an
+ * interactive terminal or an explicit `--started-by`/hosted Session start; a JSON
+ * request or a script that names no command is refused instead (nl3, 2026-11-18:
+ * `--json auth status` and `info --json` stayed alive for hours as Session runners).
+ */
+async function refuseImplicitAgentLaunch(args: readonly string[], command: string | undefined): Promise<void> {
+  const word = command && !command.startsWith('-') ? command : null;
+  const suggestedCommand = word ? resolveUnknownCommandSuggestion(word) : null;
+  const message = word
+    ? `${buildUnknownCommandMessage(word, suggestedCommand)} To start a Session from a script, name the Agent (for example \`happier claude\`) or pass \`--started-by terminal\`.`
+    : 'No command was given. Put options after the command, for example `happier auth status --json`.';
+  if (wantsJson(args)) {
+    await printJsonEnvelope({
+      ok: false,
+      kind: 'cli_dispatch',
+      error: { code: 'unknown_command', command: command ?? null, message, ...(suggestedCommand ? { suggestedCommand } : {}) },
+    }, { exitCode: 1 });
+    return;
+  }
+  console.error(errorFrame(message));
+  process.exitCode = 1;
 }
 
 async function launchCommandInTmux(
@@ -532,6 +586,12 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
       return;
     }
     if (subcommand && await failClosedReservedRootCommand(args, subcommand)) {
+      return;
+    }
+    const interactiveTerminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (!isHelpOrVersionRequest && (wantsJson(args)
+      || (!interactiveTerminal && !readStartedByArg(globalOptionArgs).present && !sessionStart))) {
+      await refuseImplicitAgentLaunch(args, subcommand);
       return;
     }
 

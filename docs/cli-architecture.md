@@ -868,6 +868,19 @@ Socket.IO's transport owner enforces its own payload limits. The host does not
 slice results against another transport's budget. References and Problems retain
 the response's completeness fact, including genuinely partial answers.
 
+## Root command dispatch and the implicit Agent launch (0.3 development)
+
+`apps/cli/src/cli/dispatch.ts` decides what an argument vector means. `--json`,
+`--server-id`, `--machine-id` and `--request-id` written before a known command
+move behind it, so `happier --json auth status` runs `auth status --json`. When
+the first argument names no command, the root falls through to the default Agent
+launch, which starts a long-lived Session runner. That fall-through runs only for
+an interactive terminal, an explicit `--started-by`, or a hosted Session start. A
+`--json` request or a script naming no command gets `cli_dispatch`
+`unknown_command` and exit 1. On 2026-11-18 one-shot calls such as
+`--json auth status` and `info --json` started Session runners and stayed alive
+for hours on a QA host.
+
 ## Explicit session creation targets (0.3 development)
 
 Foreground daemon handoff carries the original native Agent arguments in

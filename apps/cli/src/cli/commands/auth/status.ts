@@ -37,12 +37,17 @@ export async function handleAuthStatus(argv: string[] = [], signal?: AbortSignal
         await printJsonEnvelope({
           ok: false,
           kind: 'auth_status',
-          error: { code: 'auth_status_unavailable', message: 'Stored credentials could not be verified against the selected server.' },
+          error: {
+            code: 'auth_status_unavailable',
+            ...(readiness.credentialReason ? { reason: readiness.credentialReason } : {}),
+            message: 'Stored credentials could not be verified against the selected server.',
+          },
         });
         return;
       }
 
       console.log(warn('Stored credentials found, but server validation is unavailable'));
+      if (readiness.credentialReason) console.log(gray(`  Reason: ${readiness.credentialReason}`));
       console.log('  Your local credentials were kept. Try again when the selected server is reachable.');
       return;
     }

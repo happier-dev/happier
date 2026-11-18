@@ -31,6 +31,8 @@ export type ActiveServerAuthReadiness = Readonly<{
   credentialState: CredentialReadinessState;
   authenticated: boolean;
   unusableReason: ActiveServerAuthUnusableReason | null;
+  /** The validator's typed, non-secret reason when the credential is not valid (for example `identity_mismatch`). */
+  credentialReason: string | null;
   /** Readable label of the account the relay validated (from the same profile read); null when unknown. */
   accountLabel: string | null;
   machineId: string | null;
@@ -78,6 +80,7 @@ export async function resolveActiveServerAuthReadiness(
       credentialState: 'missing',
       authenticated: false,
       unusableReason: 'no-credentials',
+      credentialReason: null,
       accountLabel: null,
       machineId,
       machineRegistrationState,
@@ -108,6 +111,7 @@ export async function resolveActiveServerAuthReadiness(
     credentialState,
     authenticated: credentialState === 'valid',
     unusableReason: rejected ? 'credentials-rejected' : null,
+    credentialReason: validation.state === 'valid' ? null : validation.reasonCode,
     accountLabel: validation.state === 'valid' ? validation.accountLabel ?? null : null,
     machineId,
     machineRegistrationState,
