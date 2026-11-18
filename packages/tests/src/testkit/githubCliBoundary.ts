@@ -1,13 +1,18 @@
-import { startConnectedAccountTlsRecordingProxy } from './providers/connectedAccountTlsRecordingProxy';
+import { startConnectedAccountTlsRecordingProxy, type ConnectedAccountTlsResponse,
+  type RecordedConnectedAccountTlsRequest } from './providers/connectedAccountTlsRecordingProxy';
 
 /** Only GitHub HTTPS is substituted. The installed gh, Git, process execution,
  * credential stores and Happier admission/materialization remain real. */
-export async function startGithubCliBoundary() {
+export async function startGithubCliBoundary(options: Readonly<{
+  responseForRequest?: (request: RecordedConnectedAccountTlsRequest) => ConnectedAccountTlsResponse | undefined;
+}> = {}) {
   const deviceCode = 'GH-TEST-1116';
   const verificationURI = 'https://github.com/login/device';
   const proxy = await startConnectedAccountTlsRecordingProxy({
     additionalDnsNames: ['github.com', 'api.github.com'],
     responseForRequest: request => {
+      const response = options.responseForRequest?.(request);
+      if (response) return response;
       if (request.path === '/login/device/code') return { statusCode: 200, body: {
         device_code: 'constructed-device-attempt', user_code: deviceCode,
         verification_uri: verificationURI, expires_in: 900, interval: 5,

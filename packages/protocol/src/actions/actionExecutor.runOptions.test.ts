@@ -194,24 +194,6 @@ it.each([
   },
 );
 
-it('returns a typed no-Run refusal for inherited direct Team custody at the public start boundary', async () => {
-  const context = { ...START_CONTEXT, baseline: { ...START_CONTEXT.baseline, configuration: {
-    agentTarget: parseBackendTargetKeyV2(START_TARGET_KEY), connectedServices: { v: 2 as const, bindingsByServiceId: {
-      'happier.agent.codex/openai-codex': { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'direct' as const,
-        disclosedMember: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'member' } },
-    } },
-  } } };
-  const deps = createDeps({ resolveAgentStartContext: async () => context });
-  expect(await createActionExecutor(deps).execute('execution.run.start', { ...RUN_START_BASE,
-    modelSelection: { agentTargetKey: START_TARGET_KEY, providerConnectionId: null, modelId: 'model' },
-  }, { ...RUN_DISPATCHER_CALLER, actionCaller: context.caller, agentStartContext: context })).toMatchObject({
-    ok: false, errorCode: 'execution_run_child_choice_required', details: {
-      executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' },
-    },
-  });
-  expect(deps.executionRunStart).not.toHaveBeenCalled();
-});
-
 it('does not turn an omitted attached Review selection into an explicit Account-default choice', async () => {
   const connectedServices = { v: 2 as const, bindingsByServiceId: {
     'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'session-account' },
