@@ -330,7 +330,7 @@ preparation. The path must be absolute on the Home's preparation host. Preparati
 copies registered foreign-target archives into its own retained output and verifies
 the copied bytes against the producer's SHA-256. Targets being built locally keep
 the local producer. Bundle reuse includes the registered target/digest list;
-removing or replacing a registration requires preparation again. No Linux-to-Mac
+removing or replacing a registration requires preparation again. After every mac-host rebuild, re-register its new archive path and SHA-256 before preparing the Home again. No Linux-to-Mac
 cross-build or public fallback is introduced. Home captures its own descriptor in the
 existing Create admission. Update/Retry receives a new Home-owned snapshot through
 its admitted root or the existing authenticated Account context response; requester

@@ -35,7 +35,7 @@ export function readSourceGuestPayloadTargets(env) {
 
 // Registered archives come from this same producer on another native build host.
 // Rebuilt targets keep their local producer; registration supplies only the others.
-export function readSourceGuestPayloadArchiveImports(env) {
+export function readSourceGuestPayloadArchiveImports(env, { logger = console } = {}) {
   if (env.HAPPIER_DEV_GUEST_CLI_EXPORT !== '1') return [];
   const archives = JSON.parse(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA || '{}').archives ?? [];
   if (!Array.isArray(archives)) throw new Error('[source-bundle] guest archive metadata must contain an archive list');
@@ -47,7 +47,10 @@ export function readSourceGuestPayloadArchiveImports(env) {
         || typeof archive.archivePath !== 'string' || !isAbsolute(archive.archivePath)) {
       throw new Error('[source-bundle] invalid registered guest archive metadata');
     }
-    if (rebuilt.some(item => item.target.os === target.os && item.target.arch === target.arch)) continue;
+    if (rebuilt.some(item => item.target.os === target.os && item.target.arch === target.arch)) {
+      logger.error(`[source-bundle] registered guest archive skipped for ${target.os}/${target.arch}: local producer already builds this target`);
+      continue;
+    }
     imports.set(`${target.os}-${target.arch}`, { target: { os: target.os, arch: target.arch },
       sha256: archive.sha256, archivePath: archive.archivePath });
   }

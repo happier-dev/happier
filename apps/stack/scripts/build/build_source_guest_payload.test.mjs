@@ -25,7 +25,7 @@ import { adoptDependencyInstallation, resolveDependencyRefreshMarkerPath } from 
 import cliDistBuildManifest from '../../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createCliSourceLoader } from '../../../../packages/cli-common/cliSourceLoader.mjs';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
-import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
+import { readSourceGuestPayloadArchiveImports, readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 
 test('retained producer archives never enable a Home whose operator left export off', () => {
   const env = sourceGuestPayloadEnvironment({ root: '/retained/guest', identity: 'captured',
@@ -44,6 +44,19 @@ test('source guest payload defaults to the current native target without a confi
     { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '   ' }]) {
     assert.deepEqual(readSourceGuestPayloadTargets(env), [{ target, relativeDir: '' }]);
   }
+});
+
+test('registered archive for a locally rebuilt target logs why it is skipped', () => {
+  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
+  const logs = [];
+  const imports = readSourceGuestPayloadArchiveImports({
+    HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ archives: [{
+      target: { os: target.os, arch: target.arch }, sha256: 'a'.repeat(64), archivePath: '/tmp/local-rebuild.tar.gz',
+    }] }),
+  }, { logger: { error: message => logs.push(message) } });
+  assert.deepEqual(imports, []);
+  assert.deepEqual(logs, [`[source-bundle] registered guest archive skipped for ${target.os}/${target.arch}: local producer already builds this target`]);
 });
 
 const compilerFixtureOptions = { skip: process.platform === 'win32' ? 'compiler-process fixture uses POSIX executable scripts' : false };
