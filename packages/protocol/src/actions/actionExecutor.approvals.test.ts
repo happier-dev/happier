@@ -16,10 +16,11 @@ import { projectApprovalRequestForPublicRead, resolveApprovalRequestApproveAdmis
 import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import { createWorkflowTriggerActions } from './executor/workflowTriggerActions.js';
+import { createWorkflowActorConsentPortV1, createWorkflowTriggerActions } from './executor/workflowTriggerActions.js';
 import { createWorkflowDefinitionActions } from './executor/workflowDefinitions.js';
 import { createWorkflowActionExecutor } from './executor/workflowAccountActions.js';
-import { AutomationDefinitionReconcileRequestSchema, type AutomationDefinitionDetail } from '../automations/automationApiV3.js';
+import { AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema, type AutomationDefinitionDetail } from '../automations/automationApiV3.js';
+import { WorkflowDefinitionV1Schema } from '../workflows/workflowV1.js';
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '../automations/automationWorkflowRecipeV2.js';
 import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionResolverV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -34,7 +35,78 @@ import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deployme
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
 import { mapApprovalCreatedBySurface } from './executor/approvalPreparation.js';
 
+import { createActionAutomationHttpPortV1 } from './executor/actionAutomationAdmission.js';
+
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+
+it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Allow (caller request id: %s)', async actionRequestId => {
+  const selected = { automationId: 'shared-check', triggerId: 'shared-trigger', triggerRevision: 1,
+    workflowId: '11111111-1111-4111-8111-111111111111', workflowRevision: 1, ownerAccountId: 'author',
+    actionIds: ['notifications.notify_me'], phase: 'before', mode: 'wait' };
+  let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'notifications.notify_me',
+    actionArgs: { message: 'Deploy ready' }, approval: { flow: 'deferred', result: 'required' }, summary: 'Notify.',
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'home', accountId: 'actor', machineId: 'machine',
+      target: { kind: 'machine', machineId: 'machine', project: { machineId: 'machine', directory: '/repo' } },
+      actionId: 'notifications.notify_me', requestId: 'original-request' },
+    automaticChecks: { phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready', subjects: [],
+      selected: [selected], consents: [{ automationId: selected.automationId, triggerId: selected.triggerId,
+        decision: 'pending' }], runs: [], results: [], notices: [] },
+  });
+  const writes: AutomationDefinitionDetail[] = [];
+  const unused = async (): Promise<never> => { throw new Error('Unexpected consent boundary operation'); };
+  const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
+    blocks: [{ kind: 'action', id: 'notice', actionId: 'notifications.notify_me',
+      input: { message: { kind: 'literal', value: 'Reviewed notice' } } }] });
+  const triggers = createWorkflowTriggerActions({
+    nativeAccount: { accountId: 'actor', serverId: 'home', isCurrent: async () => true },
+    resolveWorkflow: async ref => {
+      const source = await resolveWorkflowDefinitionRefV1(ref, {
+        // The authorized Artifact read is the persistent boundary.
+        readArtifact: async id => id === selected.workflowId ? { definition } : null,
+      });
+      if (!source) throw new Error('Missing shared Workflow');
+      return source;
+    },
+    newId: kind => `actor-${kind}`,
+    openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain'
+      ? row.executionRecipe.workflow.v : null,
+    sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
+      workflow: { t: 'plain', v: context }, triggerEvidence: null, visibleTeamId: null, managedTarget: null }),
+    // Automation persistence is the system boundary; consent and durable approval stay real.
+    automations: { list: async () => ({ automations: [], nextCursor: null }),
+      listDetails: async () => ({ automations: [], nextCursor: null }), get: async () => null,
+      reconcile: unused, delete: unused, create: async input => {
+        const row = AutomationDefinitionDetailSchema.parse({ id: input.automationId, name: input.name,
+          description: input.description ?? null, enabled: input.enabled, workflowDefinitionId: input.workflowDefinitionId,
+          targetType: null, existingSessionId: null, templateVersion: 1, scopeSessionId: null, lastRunAt: null,
+          createdAt: 1, updatedAt: 1, assignments: [], executionRecipe: input.executionRecipe,
+          triggers: input.triggers.map(item => ({ ...item.trigger, id: item.triggerId, revision: 0,
+            createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null })) });
+        writes.push(row);
+        return row;
+      } },
+  });
+  const checks = createWorkflowActorConsentPortV1({ accountId: 'actor', actions: triggers,
+    resolveProject: async () => ({ machineId: 'machine', directory: '/repo' }) });
+  const decisionInput = { artifactId: 'approval', decision: 'approve' as const,
+    triggerConsent: { automationId: selected.automationId, triggerId: selected.triggerId, decision: 'allow' as const } };
+  const person = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+    serverId: 'home', runtimeAccountId: 'actor' };
+  const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: unused });
+  const executor = createExecutor({ approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+    actionAutomations: { ...port, ...checks },
+  });
+  // This is the actual Allow caller shape: the native UI supplies person authority,
+  // while the invocation owner supplies request identity.
+  const result = await executor.execute('approval.request.decide', decisionInput,
+    { ...person, ...(actionRequestId ? { actionRequestId } : {}) });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+  expect(stored.automaticChecks?.consents).toMatchObject([{ decision: 'allow', actorConsent: { ownerAccountId: 'actor' } }]);
+  expect(writes).toHaveLength(1);
+});
 
 it('retains qualified contributed identity when an approved automatic check settles', async () => {
   const qualifiedId = 'example.fixture/actions/write';

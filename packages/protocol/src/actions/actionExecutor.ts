@@ -3337,7 +3337,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
           throw error;
         }
-        ctx = { ...ctx, actionRequestId: ctx.actionRequestId || bytesToHex(randomBytes(16)) };
+        ctx = withInvocationRequestId(ctx);
         ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({
           actionId, context: ctx, selection, port: deps.actionAutomations,
         }) };
@@ -7792,6 +7792,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && ExecutionRunSendRequestSchema.safeParse(input).success;
   }
 
+  const withInvocationRequestId = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
+    actionRequestId: context.actionRequestId || bytesToHex(randomBytes(16)) });
+
   const prepareInvocationCore = async (
     actionId: ActionId,
     input: unknown,
@@ -7805,6 +7808,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
     });
     let ctx: ActionExecutorContext = normalizedContext;
+    // Native Allow is a reviewed invocation but does not enter hook selection.
+    if (actionId === 'approval.request.decide' && readRecord(input).decision === 'approve'
+      && readRecord(readRecord(input).triggerConsent).decision === 'allow') ctx = withInvocationRequestId(ctx);
     let preparedDiscussionPolicy: DiscussionPublicationPolicy | undefined;
     const originalPublisherSessionId = ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
       : ctx.surface === 'agent' ? normalizeId(ctx.defaultSessionId) : '';
