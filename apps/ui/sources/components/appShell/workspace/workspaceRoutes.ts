@@ -46,6 +46,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "discussions/new": "./(app)/discussions/new.tsx",
     "discussions/[discussionId]": "./(app)/discussions/[discussionId].tsx",
     "artifacts": "./(app)/artifacts/index.tsx",
+    "reviews": "./(app)/reviews/index.tsx",
     "artifacts/new": "./(app)/artifacts/new.tsx",
     "artifacts/[id]": "./(app)/artifacts/[id].tsx",
     "artifacts/edit/[id]": "./(app)/artifacts/edit/[id].tsx",
