@@ -3,6 +3,23 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import type { ReviewCommentFingerprintV1, ReviewCommentV1 } from './v1.js';
+import type { ReviewArtifactBodyV1, ReviewRoundBindingV1 } from '../reviewArtifactV1.js';
+
+export type ReviewFindingRoundContextV1 = Readonly<ReviewRoundBindingV1 &
+  Pick<ReviewArtifactBodyV1['rounds'][number], 'state' | 'reviewerIds'>>;
+export type ReviewFindingRoundStatusV1 = 'new' | 'still_there' | 'looks_addressed' | 'unknown';
+
+/** Appearance evidence never changes the person's independent finding decision. */
+export function projectReviewFindingRoundStatusV1(
+  comment: Pick<ReviewCommentV1, 'reviewId' | 'findingIdentity' | 'parentCommentId' | 'appearances'>,
+  round: ReviewFindingRoundContextV1,
+): ReviewFindingRoundStatusV1 | null {
+  if (comment.reviewId !== round.reviewId || !comment.findingIdentity || comment.parentCommentId) return null;
+  const appearances = comment.appearances ?? [];
+  const earlier = appearances.some(appearance => appearance.roundOrdinal < round.roundOrdinal);
+  if (appearances.some(appearance => appearance.roundOrdinal === round.roundOrdinal)) return earlier ? 'still_there' : 'new';
+  return earlier && round.state === 'completed' && round.reviewerIds.length > 0 ? 'looks_addressed' : 'unknown';
+}
 
 export type ReviewCommentFindingScopeV1 = readonly ['review', string, string] | readonly [
   readonly ['workspace', string, string] | readonly ['project', string | undefined],

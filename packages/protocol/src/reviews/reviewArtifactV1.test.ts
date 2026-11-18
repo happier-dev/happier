@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
+import { createReviewRecordPortV1, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
 import { ReviewReviewerOutcomeV1Schema } from './reviewPublicationEvidence.js';
 
 function fixture() {
@@ -24,6 +24,28 @@ function fixture() {
 }
 
 describe('durable Review rounds', () => {
+  it('retains the pinned capture address for each round independently of execution history', async () => {
+    const f = fixture();
+    const comparisonCapture = { target: { kind: 'machine' as const, machineId: 'source-machine' }, input: {
+      cwd: '/original/worktree', sessionId: 'capture-namespace', source: { kind: 'workingTree' as const }, comparisonId: 'a'.repeat(64),
+    } };
+    const { comparisonId: _pin, ...unboundCapture } = comparisonCapture.input;
+    expect(ReviewRoundComparisonCaptureV1Schema.safeParse({ ...comparisonCapture, input: unboundCapture }).success).toBe(false);
+    expect(ReviewRoundComparisonCaptureV1Schema.safeParse({ ...comparisonCapture,
+      input: { ...comparisonCapture.input, projection: { kind: 'index' } } }).success).toBe(false);
+    const start = { reviewId: 'captured-review', title: 'Review', subjectKind: 'comparison' as const,
+      sourceKind: 'workflow' as const, reviewerIds: [], startedAt: 1,
+      comparisonId: comparisonCapture.input.comparisonId, comparisonCapture };
+    const binding = await f.records.start(start);
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 2, runs: [] });
+    const nextCapture = { ...comparisonCapture, input: { ...comparisonCapture.input, comparisonId: 'b'.repeat(64) } };
+    await f.records.start({ ...start, startedAt: 3, newRound: true, comparisonId: nextCapture.input.comparisonId,
+      comparisonCapture: nextCapture });
+    expect((await f.records.read(start.reviewId))?.rounds).toMatchObject([
+      { ordinal: 1, comparisonId: comparisonCapture.input.comparisonId, comparisonCapture },
+      { ordinal: 2, comparisonId: nextCapture.input.comparisonId, comparisonCapture: nextCapture },
+    ]);
+  });
   it.each(['start', 'settle'] as const)('surfaces the Artifact CAS conflict during %s without silently retrying', async operation => {
     const f = fixture();
     const input = { reviewId: 'review-cas', title: 'Review', subjectKind: 'comparison' as const,

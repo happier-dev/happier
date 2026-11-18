@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as comments from './index.js';
 import type { ReviewCommentFingerprintV1 } from './v1.js';
-import { reviewCommentFindingScopeV1 } from './findingIdentity.js';
+import { projectReviewFindingRoundStatusV1, reviewCommentFindingScopeV1 } from './findingIdentity.js';
 import { matchesReviewCommentListFilters } from './queries.js';
 
 type IdentityApi = {
@@ -9,6 +9,23 @@ type IdentityApi = {
 };
 
 describe('semantic finding identity', () => {
+  it('separates observed round appearances from absence proven by complete executable coverage', () => {
+    const round = { reviewId: 'review', roundOrdinal: 2, state: 'completed' as const, reviewerIds: ['reviewer'] };
+    const finding = { reviewId: 'review', findingIdentity: 'a'.repeat(64),
+      appearances: [{ roundOrdinal: 1, runId: 'first', reviewerId: 'reviewer' }] };
+    const current = { roundOrdinal: 2, runId: 'second', reviewerId: 'reviewer' };
+    expect(projectReviewFindingRoundStatusV1(finding, round)).toBe('looks_addressed');
+    expect(projectReviewFindingRoundStatusV1({ ...finding, appearances: [...finding.appearances, current] }, round)).toBe('still_there');
+    expect(projectReviewFindingRoundStatusV1({ ...finding, appearances: [current] }, round)).toBe('new');
+    for (const state of ['running', 'partial', 'failed', 'cancelled'] as const) {
+      expect(projectReviewFindingRoundStatusV1(finding, { ...round, state })).toBe('unknown');
+    }
+    expect(projectReviewFindingRoundStatusV1(finding, { ...round, reviewerIds: [] })).toBe('unknown');
+    expect(projectReviewFindingRoundStatusV1({ ...finding, appearances: undefined }, round)).toBe('unknown');
+    expect(projectReviewFindingRoundStatusV1({ ...finding, appearances: [{ ...current, roundOrdinal: 3 }] }, round)).toBe('unknown');
+    expect(projectReviewFindingRoundStatusV1({ ...finding, reviewId: 'other-review' }, round)).toBeNull();
+    expect(projectReviewFindingRoundStatusV1({ ...finding, parentCommentId: 'root' }, round)).toBeNull();
+  });
   it('finds the canonical decision through a qualified later run appearance', () => {
     const root = { id: 'finding', reviewId: 'review-1', workspace: { machineId: 'machine-1', path: '/repo' },
       sessionId: 'session-1', runId: 'run-1', engineId: 'codex', state: 'dismissed' as const,

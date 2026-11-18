@@ -1,6 +1,9 @@
 import { z } from '../zodRuntimePolicy.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 import { projectReviewRoundOutcomeV1, type ReviewReviewerOutcomeV1 } from './reviewPublicationEvidence.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
+import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 export { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 
 export const ReviewSubjectKindV1Schema = z.enum(['comparison', 'pull_request', 'repository']);
@@ -11,6 +14,15 @@ export type ReviewSourceKindV1 = z.infer<typeof ReviewSourceKindV1Schema>;
 export type ReviewRoundStateV1 = z.infer<typeof ReviewRoundStateV1Schema>;
 export const ReviewRoundBindingV1Schema = z.strictObject({ reviewId: z.string(), roundOrdinal: z.number().check(z.int(), z.minimum(1)) });
 export type ReviewRoundBindingV1 = z.infer<typeof ReviewRoundBindingV1Schema>;
+/** The original SCM address, sealed with the round; opening it never captures current code. */
+export const ReviewRoundComparisonCaptureV1Schema = lazyZodSchema(() => z.strictObject({
+  target: ExternalActionTargetV1Schema._zod.def.options[0],
+  input: z.safeExtend(ScmComparisonCaptureInputSchema, {
+    comparisonId: z.nonoptional(ScmComparisonCaptureInputSchema.shape.comparisonId),
+    projection: z.optional(z.never()),
+  }),
+}));
+export type ReviewRoundComparisonCaptureV1 = z.infer<typeof ReviewRoundComparisonCaptureV1Schema>;
 export const ReviewRunReferenceV1Schema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('execution'), runId: z.string(), machineId: z.string(), sessionId: z.optional(z.string()) }),
   z.strictObject({ kind: z.literal('workflow'), runId: z.string() }),
@@ -35,6 +47,7 @@ export const ReviewArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(REV
   reviewId: z.string(), title: z.string() });
 export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), rounds: z.array(z.strictObject({
   ordinal: z.number().check(z.int(), z.minimum(1)), comparisonId: z.optional(z.string()),
+  comparisonCapture: z.optional(ReviewRoundComparisonCaptureV1Schema),
   state: ReviewRoundStateV1Schema, startedAt: z.number(), finishedAt: z.nullable(z.number()),
   reviewerIds: z.array(z.string()), runs: z.array(ReviewRunReferenceV1Schema),
   summary: z.optional(z.string()),
@@ -51,6 +64,7 @@ export interface ReviewArtifactTransportV1 {
 }
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
   sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; comparisonId?: string;
+  comparisonCapture?: ReviewRoundComparisonCaptureV1;
   reviewerIds: readonly string[]; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   outcome: Exclude<ReviewRoundStateV1, 'running'>; finishedAt: number; runs: readonly ReviewRunReferenceV1[];
@@ -86,12 +100,14 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
       if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
       const ordinal = lastOrdinal + 1;
+      const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;
       const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
         workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
         state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null };
       const next: ReviewArtifactV1 = { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: input.reviewId,
         title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
-          ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}), state: 'running', startedAt: input.startedAt,
+          ...(comparisonId ? { comparisonId } : {}),
+          ...(input.comparisonCapture ? { comparisonCapture: input.comparisonCapture } : {}), state: 'running', startedAt: input.startedAt,
           finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [] }] };
       if (!row) await transport.create({ artifactId: input.reviewId, ...content(next), reviewMetadata, signal: input.signal });
       else {
