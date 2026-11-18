@@ -43,7 +43,7 @@ const CATEGORIES = [
   {
     prefix: 'happier.review.',
     title: 'Review agents',
-    blurb: 'Review CLIs rather than general coding agents — no model choice, no resume.',
+    blurb: 'Native review integrations with engine-specific scope, model and authentication options. Start another review round after making changes.',
   },
   {
     prefix: 'happier.provider.',
@@ -107,7 +107,7 @@ const CATEGORIES = [
 const STANDALONE = {
   title: 'Everything else',
   blurb: 'Single-purpose plugins that do not belong to a family.',
-  ids: ['happier.app-context', 'happier.channels', 'happier.triage', 'happier.inspector', 'happier.posthog', 'happier.sentry', 'happier.linear', 'happier.jira', 'happier.outbound-notify'],
+  ids: ['happier.app-context', 'happier.channels', 'happier.triage', 'happier.inspector', 'happier.posthog', 'happier.sentry', 'happier.linear', 'happier.jira', 'happier.outbound-notify', 'happier.telemetry'],
 };
 
 export async function readBundledPluginRegistry() {
