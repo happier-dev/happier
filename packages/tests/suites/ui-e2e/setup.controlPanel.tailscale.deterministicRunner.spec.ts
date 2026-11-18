@@ -32,7 +32,6 @@ test.describe('ui e2e: tailscale secure access (deterministic runner)', () => {
     const uiWebEnv = {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
-        EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY: 'app.ui.onboardingTour',
         EXPO_PUBLIC_HAPPY_SERVER_URL: '',
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE: 'dev',

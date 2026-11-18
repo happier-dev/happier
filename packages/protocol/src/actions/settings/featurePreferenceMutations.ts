@@ -463,9 +463,6 @@ export const UI_FEATURE_REGISTRY = {
     'app.ui.onboardingShowcase': {
         settingsToggle: undefined,
     },
-    'app.ui.onboardingTour': {
-        settingsToggle: undefined,
-    },
     'app.ui.liveActivities': {
         settingsToggle: {
             showInSettings: true,

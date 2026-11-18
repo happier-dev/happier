@@ -729,12 +729,6 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
-  'app.ui.onboardingTour': {
-    description: 'Unified onboarding tour and demo-mode journey surfaces.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['app.ui.sessionGettingStartedGuidance'],
-    representation: 'client',
-  },
   'app.ui.liveActivities': {
     description: 'iOS Live Activities and Dynamic Island UI surfaces.',
     defaultFailMode: 'fail_closed',
