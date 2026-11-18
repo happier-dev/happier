@@ -22,7 +22,7 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { listDeploymentEnvironmentsInTx } from './deploymentReadService';
-import { listDeploymentDomainPageInTx } from './deploymentAccountPageReadService';
+import { listDeploymentDataPageInTx, listDeploymentDomainPageInTx } from './deploymentAccountPageReadService';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
@@ -692,6 +692,18 @@ describe('deployment detail admission cost', () => {
             for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(200);
         });
     });
+
+    it.each([['Domains', listDeploymentDomainPageInTx], ['Data', listDeploymentDataPageInTx]] as const)(
+        'retains the Home mismatch cause on the Account %s page without exposing it publicly', async (_page, listPage) => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            expect(await inTx(tx => listPage(tx, owner.id, { serverId }))).toMatchObject({ ok: true });
+            const failure = await inTx(tx => listPage(tx, owner.id, { serverId: `srv_${'x'.repeat(32)}` }));
+            expect(failure).toEqual({ ok: false, error: 'deployment_unavailable' });
+            expect(readActionOutputDiagnostic(failure)).toMatchObject({
+                phase: 'deployment.account.page.server', causeKind: 'server_mismatch',
+            });
+        },
+    );
 
     it('returns admitted Project Source names on the Account Domains page', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

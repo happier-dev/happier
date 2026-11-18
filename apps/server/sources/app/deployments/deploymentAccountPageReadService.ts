@@ -119,7 +119,9 @@ async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kin
         sources = await resolveProjectSourcesAccessInTx(tx, actorAccountId, [...new Set(candidates.map(row => row.environment.projectSourceId))], authentication, { includeDeleted: true });
         actorStatus = 'active'; // Portable reads below acquire the caller through the incumbent Artifact owner.
     }
-    if (serverIdentity !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (serverIdentity !== input.serverId) return deploymentFailure('deployment_unavailable', {
+        phase: 'deployment.account.page.server', causeKind: 'server_mismatch',
+    });
     const artifacts = new Map<string, ReturnType<typeof projectArtifactHttpRead>>();
     const domains: { domain: ReturnType<typeof projectDeploymentDomainHeader>; environment: ReturnType<typeof projectDeploymentEnvironmentHeader> }[] = [];
     const projectSources = new Map<string, ReturnType<typeof projectDeploymentSourcePresentation>>();
