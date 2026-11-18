@@ -545,7 +545,7 @@ export function createCliProjectActionDeps(
       return output.success ? output.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
     },
     projectsOpen: async (input, context) => {
-      const { OpenProjectResultV1Schema } = await import('@happier-dev/protocol/projects/openProjectV1');
+      const { OpenProjectResultV1Schema, readProjectOpenUnsentRefusalV1 } = await import('@happier-dev/protocol/projects/openProjectV1');
       const installed = params.machineActionDirectTargetTransport;
       const open = async () => OpenProjectResultV1Schema.parse(await (installed?.machineId === input.machineId
         && installed.openProject && context.originalActionEnvelope ? installed.openProject(input, context) : callMachineAction({
@@ -562,7 +562,7 @@ export function createCliProjectActionDeps(
       })));
       try { return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, open) : open()); }
       catch (error) {
-        if (readRpcRequestDisposition(error) === 'notSent') return { kind: 'refused', code: 'machine_unreachable' };
+        if (readRpcRequestDisposition(error) === 'notSent') return readProjectOpenUnsentRefusalV1(error);
         throw error;
       }
     },

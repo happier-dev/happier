@@ -1,5 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { isRpcMethodNotFoundError, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
@@ -103,6 +104,13 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
   z.strictObject({ kind: z.literal('outcomeUnknown'), operationId: z.optional(IdSchema) }),
 ]));
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;
+
+export function readProjectOpenUnsentRefusalV1(error: unknown): z.infer<typeof OpenProjectRefusalV1Schema> {
+  return {
+    kind: 'refused',
+    code: isRpcMethodNotFoundError(error) ? RPC_ERROR_CODES.UPDATE_REQUIRED : 'machine_unreachable',
+  };
+}
 
 /** Settlement and operation history consume the same finite Open refusal. */
 /** The refusal stays the typed details so Action operation failures can retain it without re-validation. */

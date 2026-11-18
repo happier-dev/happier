@@ -4617,6 +4617,9 @@ its room remains `RPC_METHOD_NOT_AVAILABLE`;
 an absent daemon retains `target_unavailable`. Session-owned routes keep their
 own current-publisher availability decision.
 
+An unsent CLI Project Open with `RPC_METHOD_NOT_FOUND` returns
+`RPC_UPDATE_REQUIRED` for the selected Machine.
+
 The selected socket's final lookup uses the same distinction: failed or incomplete
 revalidation returns `RPC_TRANSPORT_UNAVAILABLE` with phase
 `rpc.target.revalidation` (and `ETIMEDOUT` for an adapter timeout). It never

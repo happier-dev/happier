@@ -13,6 +13,8 @@ import { buildProjectLastOpenedMemoryKeyV1, type AuthoringMemoryRowV1 } from '@h
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipV1Schema,
   type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { createCliActionDeps } from './createCliActionDeps';
 import * as machineTransport from '@/session/transport/rpc/machineRpc';
@@ -80,6 +82,16 @@ describe('project definition exact Machine transport', () => {
       requestId: 'original-request', externalAction: { context, effectActionId: 'projects.open',
         installationId: 'source-install', privateKey } }));
     expect(ambient).not.toHaveBeenCalled();
+    boundary.mockRejectedValueOnce(markRpcRequestDisposition(
+      new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND), 'notSent'));
+    await expect(deps.projectsOpen!(input, context)).resolves.toMatchObject({
+      kind: 'refused', code: RPC_ERROR_CODES.UPDATE_REQUIRED,
+    });
+    boundary.mockRejectedValueOnce(markRpcRequestDisposition(
+      new RpcError('Temporary routing failure', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE), 'notSent'));
+    await expect(deps.projectsOpen!(input, context)).resolves.toMatchObject({
+      kind: 'refused', code: 'machine_unreachable',
+    });
   });
   it('carries the qualified workspace, admitted authority and cancellation to the exact Machine, validates output and refuses another Home', async () => {
     const token = 'project-token';
