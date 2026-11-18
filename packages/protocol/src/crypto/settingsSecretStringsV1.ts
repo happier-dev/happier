@@ -2,7 +2,7 @@ import tweetnacl from 'tweetnacl';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
 import {
-  deriveAccountMachineKeyFromRecoverySecret,
+  resolveAccountContentSecretKey,
   type AccountScopedCryptoMaterial,
 } from './accountScopedCipher.js';
 import { deriveKey } from './keyDerivation.js';
@@ -43,9 +43,7 @@ function byteArraysEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 export function deriveSettingsSecretsKeySetV1(material: AccountScopedCryptoMaterial): SettingsSecretsKeySetV1 {
-  const canonicalSeed = material.type === 'dataKey'
-    ? material.machineKey
-    : deriveAccountMachineKeyFromRecoverySecret(material.secret);
+  const canonicalSeed = resolveAccountContentSecretKey(material);
   const writeKey = deriveSettingsSecretsKeyV1(canonicalSeed);
   const readKeys: Uint8Array[] = [writeKey];
 

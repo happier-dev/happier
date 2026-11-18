@@ -36,7 +36,7 @@ import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol
 import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
   type ExternalActionRequesterAccountContextPurposeV1,
   type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { PrepareExternalActionRequesterAccountContext } from '../externalActions/executeExternalAction';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
@@ -558,7 +558,7 @@ export async function admitRequesterAccountActionContext(input: RequesterAccount
     phase = 'requester_content_key';
     if (currentness.mode === 'e2ee' && currentness.contentKeyFingerprint && input.credentials.encryption) {
       const encryption = input.credentials.encryption;
-      const key = encryption.type === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(encryption.secret) : encryption.machineKey;
+      const key = resolveAccountContentSecretKey(encryption);
       if (computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(key).publicKey) !== currentness.contentKeyFingerprint) return refused();
     }
     bindRequesterSessionCredentialScope(input.credentials, { serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl });

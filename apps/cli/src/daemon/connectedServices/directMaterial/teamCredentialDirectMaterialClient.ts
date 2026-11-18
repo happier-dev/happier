@@ -1,6 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { computeTeamCredentialSourceMemberKeyV1, materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import type { TeamCredentialDirectMaterialExpected, TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialStoredV1, TeamCredentialDirectMaterialOpenRequestV1, TeamCredentialDirectMaterialMineResponseV1, TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams';
@@ -193,8 +193,7 @@ export function createRequesterTeamCredentialDirectMaterialClient(input: Readonl
       if (mode !== 'e2ee') return { mode: 'e2ee_unavailable' };
       const encryption = input.credentials.encryption;
       if (!encryption) return { mode: 'e2ee_unavailable' };
-      return { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey'
-        ? encryption.machineKey : deriveAccountMachineKeyFromRecoverySecret(encryption.secret) };
+      return { mode: 'e2ee', secretKeyOrSeed: resolveAccountContentSecretKey(encryption) };
     },
   });
 }

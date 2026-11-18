@@ -3,7 +3,7 @@ import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/
 import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1, preparePluginCollectionLogicalMutationRequestV1, type PluginCollectionLogicalMutationRequestOutcomeV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -655,8 +655,7 @@ function openCollectionResourceKey(envelope: string, material: AccountScopedCryp
     if (!material) return null;
     try {
         return openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(envelope, 'base64'),
-            recipientSecretKeyOrSeed: material.type === 'legacy'
-                ? deriveAccountMachineKeyFromRecoverySecret(material.secret) : material.machineKey });
+            recipientSecretKeyOrSeed: resolveAccountContentSecretKey(material) });
     } catch { return null; }
 }
 

@@ -45,7 +45,7 @@ import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfile
 import type { SavedSecret } from '@happier-dev/protocol';
 import { sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import tweetnacl from 'tweetnacl';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -574,7 +574,7 @@ export function prepareSavedSecretResourceCreateForOperation(input: Readonly<{
   if (!hasUsableAccountSettingsEncryptionMaterial(input.credentials)) throw new Error('saved_secret_encryption_unavailable');
   const encryption = input.credentials.encryption;
   const randomBytes = input.randomBytes ?? getRandomBytes;
-  const recipientMachineKey = encryption.type === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(encryption.secret) : null;
+  const recipientMachineKey = encryption.type === 'legacy' ? resolveAccountContentSecretKey(encryption).slice() : null;
   const resourceDataKey = randomBytes(32);
   try {
     const publicKey = encryption.type === 'dataKey' ? encryption.publicKey : tweetnacl.box.keyPair.fromSecretKey(recipientMachineKey!).publicKey;

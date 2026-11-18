@@ -1,5 +1,5 @@
 import nacl from 'tweetnacl';
-import { deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from './accountScopedCipher.js';
+import { resolveAccountContentSecretKey, type AccountScopedCryptoMaterial } from './accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from './base64.js';
 import { parseSerializedJsonValue } from './serializedJsonValue.js';
 import type { SessionDataKeyOpenResult } from './sessionDataKeyBundleV0.js';
@@ -38,8 +38,7 @@ export function createAccountKvCipher(params: Readonly<{
   if (params.mode === 'e2ee' && !material) {
     throw new AccountKvCipherError('account_stored_json_encryption_material_unavailable');
   }
-  const aes = material ? params.dataKeyCipher(material.type === 'dataKey'
-    ? material.machineKey : deriveAccountMachineKeyFromRecoverySecret(material.secret)) : null;
+  const aes = material ? params.dataKeyCipher(resolveAccountContentSecretKey(material)) : null;
   return {
     seal: async value => aes ? await aes.seal(value)
       : encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value }))),

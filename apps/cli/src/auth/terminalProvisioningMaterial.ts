@@ -1,7 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { resolveTerminalProvisioningVariantV2 } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import type { StoredCredentials } from '@/persistence';
@@ -53,7 +53,7 @@ export function resolveTerminalProvisioningMaterial(
     if (encryption.secret.length !== 32) {
       throw new Error('Stored legacy recovery-secret material has an invalid length');
     }
-    contentPrivateKey = deriveAccountMachineKeyFromRecoverySecret(encryption.secret);
+    contentPrivateKey = resolveAccountContentSecretKey(encryption);
   }
   const fingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(contentPrivateKey).publicKey);
   if (!currentness?.contentKeyFingerprint || currentness.contentKeyFingerprint !== fingerprint) {

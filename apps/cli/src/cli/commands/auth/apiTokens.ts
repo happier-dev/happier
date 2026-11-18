@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { AccountApiTokenLabelV1Schema, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensServerErrorV1Schema, formatAccountApiTokenCredentialV1, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openApiTokenEncryptionAccessV1, wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { ActionExecuteResult, AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
@@ -149,9 +149,7 @@ async function prepareEncryption(
   if ((material.type === 'legacy' ? material.secret : material.machineKey).length !== 32) {
     throw new ApiTokenCommandError('api_token_encryption_not_ready');
   }
-  const contentPrivateKey = material.type === 'legacy'
-    ? deriveAccountMachineKeyFromRecoverySecret(material.secret)
-    : new Uint8Array(material.machineKey);
+  const contentPrivateKey = resolveAccountContentSecretKey(material).slice();
   try {
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(contentPrivateKey).publicKey;
     if ((material.type === 'dataKey' && !tweetnacl.verify(material.publicKey, publicKey))

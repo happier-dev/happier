@@ -1,6 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
 
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { readSessionKeyBoundSharedMetadataV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { decodeBase64, decrypt, encodeBase64 } from '../encryption';
@@ -24,9 +24,7 @@ export function openSessionDataEncryptionKey(params: {
     if (encodeBase64(encrypted) !== encryptedBase64) return null;
     return openEncryptedDataKeyEnvelopeV1({
       envelope: encrypted,
-      recipientSecretKeyOrSeed: encryption.type === 'legacy'
-        ? deriveAccountMachineKeyFromRecoverySecret(credentialKey)
-        : credentialKey,
+      recipientSecretKeyOrSeed: resolveAccountContentSecretKey(encryption),
     });
   } catch {
     return null;

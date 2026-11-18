@@ -8,7 +8,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createRequesterAccountSettingsPublication } from '@/settings/accountSettings/requesterAccountSettingsPublication';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -135,7 +135,7 @@ export function createRequesterEncryptionResolver(credentials: StoredCredentials
     if (signal?.aborted || !await isCurrent() || !credentials.encryption) return null;
     const encryption = credentials.encryption;
     return { serverIdentityId, material: encryption.type === 'legacy'
-      ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(encryption.secret) }
+      ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(encryption) }
       : encryption };
   };
 }

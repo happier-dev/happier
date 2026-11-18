@@ -214,7 +214,7 @@ import {
   ConnectedServiceIdSchema,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 
@@ -11762,9 +11762,7 @@ export async function startDaemonSessionControlRuntime(
                 ? credentialMaterial.secret.length === 32
                   ? {
                       type: 'dataKey' as const,
-                      machineKey: deriveAccountMachineKeyFromRecoverySecret(
-                        credentialMaterial.secret,
-                      ),
+                      machineKey: resolveAccountContentSecretKey(credentialMaterial),
                     }
                   : null
                 : credentialMaterial.machineKey.length === 32

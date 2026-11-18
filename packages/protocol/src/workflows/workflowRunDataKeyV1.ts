@@ -2,7 +2,7 @@ import tweetnacl from 'tweetnacl';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1,
   type AutomationAccountCurrentnessWitnessV1 } from '../automations/automationAccountCurrentnessV1.js';
-import { deriveAccountMachineKeyFromRecoverySecret } from '../crypto/accountScopedCipher.js';
+import { resolveAccountContentSecretKey } from '../crypto/accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
 import type { WorkflowRunRecipientCensusResponseV1, WorkflowRunRecipientKeyEnvelopeV1,
@@ -23,9 +23,7 @@ export type WorkflowRunEncryptionV1 = Readonly<{
 
 function machineKey(encryption: WorkflowRunReadEncryptionV1): Uint8Array {
   if (encryption.witness.mode !== 'e2ee' || !('material' in encryption)) throw new Error('workflow_run_key_unavailable');
-  return encryption.material.material.type === 'legacy'
-    ? deriveAccountMachineKeyFromRecoverySecret(encryption.material.material.secret)
-    : encryption.material.material.machineKey;
+  return resolveAccountContentSecretKey(encryption.material.material);
 }
 
 /** Admission and Account transition both allocate one independent key per Run. */

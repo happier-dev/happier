@@ -16,7 +16,7 @@ import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
 import { isDeploymentEnvironmentPlacementActionV1, readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ExternalActionActionIdV1Schema, type ExternalActionExecutionAuthorizationV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -106,9 +106,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
       credentials.encryption?.type === 'legacy'
         ? {
             type: 'dataKey' as const,
-            machineKey: deriveAccountMachineKeyFromRecoverySecret(
-              credentials.encryption.secret,
-            ),
+            machineKey: resolveAccountContentSecretKey(credentials.encryption),
           }
         : credentials.encryption;
     const actionSpec = getActionSpec(operation.actionId);

@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import tweetnacl from 'tweetnacl';
 
-import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, resolveAccountContentSecretKey, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
@@ -114,8 +114,7 @@ export function createMachineDataEncryptionKeyV1(params: Readonly<{
 }>): Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey'; dataEncryptionKey: Uint8Array }> {
   const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
     material: params.material, ...(params.dataKeyPublicKey ? { dataKeyPublicKey: params.dataKeyPublicKey } : {}) });
-  const accountSecret = snapshot.material.type === 'dataKey' ? snapshot.material.machineKey
-    : deriveAccountMachineKeyFromRecoverySecret(snapshot.material.secret);
+  const accountSecret = resolveAccountContentSecretKey(snapshot.material);
   const encryptionKey = params.randomBytes(ENCRYPTED_DATA_KEY_V1_BYTES);
   const dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({ dataKey: encryptionKey,
     recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(accountSecret).publicKey, randomBytes: params.randomBytes });

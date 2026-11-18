@@ -19,7 +19,7 @@ import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 
 import { beginActiveSavedSecretCatalogRefresh, commitActiveSavedSecretCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, resolveActiveSavedSecretCatalogCollisionState, withdrawActiveSavedSecretCatalog, type ActiveAccountSettingsSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { deriveKey } from '@/utils/deriveKey';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createSavedSecretMaterializerFromSnapshotV1, savedSecretOperationAdmissionReason, type SavedSecretOperationAdmissionFailureReason, type SavedSecretCatalogResourceInputV1, type SavedSecretCatalogState } from "./savedSecretCatalog";
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
@@ -77,9 +77,7 @@ function isHealthySavedSecretResourceMaterialV1(
 async function accountContentPrivateKey(token: string, suppliedCredentials?: StoredCredentials): Promise<Uint8Array | null> {
   const credentials = suppliedCredentials ?? await readStoredCredentials().catch(() => null);
   if (!credentials || credentials.token !== token || !credentials.encryption) return null;
-  return credentials.encryption.type === 'dataKey'
-    ? credentials.encryption.machineKey
-    : deriveKey(credentials.encryption.secret, 'Happy EnCoder', ['content']);
+  return resolveAccountContentSecretKey(credentials.encryption);
 }
 
 /** Hydrates through the admitted Account publication owner, active or invocation-local. */

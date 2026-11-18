@@ -90,7 +90,7 @@ import { assertResolvedHomeTargetIdentity, type ResolvedHomeTarget } from '@happ
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import { listCurrentAccountMachines, readCurrentAccountMachineHostFactsFromPublication, type CurrentAccountMachineInventoryItem } from '@/api/machine/resolveCurrentAccountMachineTarget';
@@ -1015,8 +1015,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (workflowMode.mode === 'e2ee') {
       try {
         const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
-        workflowMaterial = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
-          ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+        workflowMaterial = { type: 'dataKey', machineKey: resolveAccountContentSecretKey(keyed) };
       } catch { return fail('content_unavailable'); }
     }
     const project = input.target.project;
@@ -1098,8 +1097,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (workflowBinding && accountId !== publisherAccountId) return fail('content_unavailable');
     try { if (!controllerCodec && !material) {
       const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
-      material = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
-        ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) }; }
+      material = { type: 'dataKey', machineKey: resolveAccountContentSecretKey(keyed) }; }
     } catch { return fail('content_unavailable'); }
   }
   const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
@@ -1344,8 +1342,7 @@ export async function deliverAdmittedExternalActionRoot(input: Readonly<{
   if (input.envelope.v === 2) {
     try {
       const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
-      material = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
-        ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+      material = { type: 'dataKey', machineKey: resolveAccountContentSecretKey(keyed) };
     } catch { return fail('content_unavailable'); }
   }
   const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: root.machineId,

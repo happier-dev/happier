@@ -25,7 +25,7 @@ import {
   type MachinePoolViewV1,
 } from '@happier-dev/protocol/machines/pools/v1';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { AccountEncryptionCredentials } from '@/persistence';
 
@@ -69,9 +69,7 @@ export function deriveCliPrivateLabelAccountKey(
   if (!encryption) return null;
   const source = encryption.type === 'legacy' ? encryption.secret : encryption.machineKey;
   if (source.byteLength !== tweetnacl.box.secretKeyLength) return null;
-  return encryption.type === 'legacy'
-    ? deriveAccountMachineKeyFromRecoverySecret(source)
-    : new Uint8Array(source);
+  return resolveAccountContentSecretKey(encryption).slice();
 }
 
 function censusUrl(endpoint: string, recipientCensusPath: string): string {

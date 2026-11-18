@@ -7,7 +7,7 @@ import type { ActionExecutorContext, ExternalActionExecutionAuthorizationV1, Ext
   ExternalActionTargetV1 } from '@happier-dev/protocol';
 import { ExternalActionWorkflowSessionLeafV1Schema, type InstalledWorkflowSessionLeafAdmission } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkflowActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -66,7 +66,7 @@ export async function prepareInstalledWorkflowActionAuthorizationWithEnvelope(in
     serverBaseUrl: input.serverHttpBaseUrl, signal: input.context.signal };
   const encryption = await fetchAccountEncryptionCurrentness(encryptionRequest);
   const material = input.credentials.encryption?.type === 'legacy'
-    ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(input.credentials.encryption.secret) }
+    ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(input.credentials.encryption) }
     : input.credentials.encryption;
   return prepareExternalActionRequesterAccountAuthorizationWithEnvelope({ ...input, accountId,
     requestId, token: input.credentials.token, tokenEpochHint, accountEncryptionMode: encryption.mode,

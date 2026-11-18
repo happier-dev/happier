@@ -1,9 +1,10 @@
+import tweetnacl from 'tweetnacl';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
-import { decodeBase64, encodeBase64, getRandomBytes, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
-import { deriveKey } from '@/utils/deriveKey';
+import { decodeBase64, encodeBase64, getRandomBytes } from '@/api/encryption';
 
 export type ResourceDataKey =
   | Readonly<{ mode: 'plain'; dataKey: null; dataEncryptionKey: null }>
@@ -24,9 +25,7 @@ function requireEncryption(credentials: ContentEncryption): Pick<Credentials, 'e
 }
 
 async function recipientSecret(credentials: Pick<Credentials, 'encryption'>): Promise<Uint8Array> {
-  return credentials.encryption.type === 'dataKey'
-    ? credentials.encryption.machineKey
-    : deriveKey(credentials.encryption.secret, 'Happy EnCoder', ['content']);
+  return resolveAccountContentSecretKey(credentials.encryption);
 }
 
 /** A new resource owns a fresh DEK; plain resources require no Account key. */
@@ -39,7 +38,7 @@ export async function createResourceDataKey(params: Readonly<{
   const credentials = requireEncryption(params.credentials);
   const publicKey = credentials.encryption.type === 'dataKey'
     ? credentials.encryption.publicKey
-    : libsodiumPublicKeyFromSecretKey(await recipientSecret(credentials));
+    : tweetnacl.box.keyPair.fromSecretKey(await recipientSecret(credentials)).publicKey;
   if (params.expectedContentPublicKeyFingerprint !== undefined
     && computeContentPublicKeyFingerprint(publicKey) !== params.expectedContentPublicKeyFingerprint) {
     throw new ResourceDataKeyUnavailableError();
