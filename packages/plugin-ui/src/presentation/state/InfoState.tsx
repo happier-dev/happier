@@ -192,7 +192,12 @@ export function HappierStateLine(props: Readonly<{
       </View>
       {/* Beside the sentence the growing sentence leaves it at the line's end; moved beneath, it starts on the
           sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
-      {props.action && !actionsAfter ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : { flexShrink: 0, marginLeft: sentenceEdgePx }}>{props.action}</View> : null}
+      {/* On the trailing edge the recovery stands on the sentence's first line, like the glyph, never centred on a
+          wrapped paragraph (LABPARITY-ACCEPT-B-1118 fix 11): a box one text line tall centres it there. */}
+      {props.action && !actionsAfter ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : {
+        flexShrink: 0, marginLeft: sentenceEdgePx, alignSelf: 'flex-start',
+        height: props.textLineHeightPx ?? metrics.text.lineHeight, justifyContent: 'center',
+      }}>{props.action}</View> : null}
       {props.below ? <View style={{ flexBasis: '100%', paddingLeft: sentenceEdgePx }}>{props.below}</View> : null}
     </View>
   );

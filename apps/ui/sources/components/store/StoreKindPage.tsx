@@ -1237,13 +1237,15 @@ const styles = StyleSheet.create((theme) => ({
   // The band's one filter row on a wide page: the catalog leads, the kind's either-or ends it, centred on one line.
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
   filterRowEnd: { marginLeft: 'auto' },
-  body: { gap: theme.space.s16 },
+  // No gap of its own: a state line hands over to the results' first section title, whose top air is the section
+  // rhythm (lab phone-lists-1115 S1: line → "Apps" ~39); only Load more stands a step below the list.
+  body: {},
   pageStatus: { paddingTop: theme.space.s12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   // In MainScreenHeader's band, which already stands on the sheets' edge: no second inset (OWNER-UI-1115B A1, chip under the title).
   phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', marginBottom: theme.space.s8 },
   // On the page text edge with the section titles above it.
-  more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12,
+  more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12, marginTop: theme.space.s16,
     paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
   moreNote: { color: theme.colors.text.secondary, flexShrink: 1 },
   // The condition chips stand on the search field's inset, not on the sheet's edge (VISUAL-136 D4).
