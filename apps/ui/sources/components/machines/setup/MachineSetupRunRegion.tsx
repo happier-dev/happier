@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 
 import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionOperationLedger';
 import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations/ActionOperationSudoQuestion';
@@ -21,7 +22,7 @@ import {
   type ActionOperationProjection,
 } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import type { MachineSetupState } from './useMachineSetup';
 
 type StoppedNoticeProps = Readonly<{
@@ -181,6 +182,16 @@ export function MachineSetupRunRegion(
         current: position.current, total: position.total, machine: props.machineName,
       })
     : null;
+  // A finished run says what is now on the Machine and when it finished (lab L7-done), from the preset
+  // identity and settlement the operation carries; a run that names no preset keeps its own title.
+  const finished = progressOperation.snapshot.state === 'succeeded' ? progressOperation.snapshot : null;
+  const finishedPreset = finished && domainRef.preset?.name ? domainRef.preset : null;
+  const finishedTitle = finishedPreset?.name
+    ? t('machinePresets.setup.tab.presetIsOn', { preset: finishedPreset.name, revision: finishedPreset.revision, machine: props.machineName })
+    : null;
+  const finishedLine = finishedTitle && typeof finished?.settledAt === 'number'
+    ? t('machinePresets.setup.tab.finishedAt', { time: formatHappierAsOfTime(finished.settledAt, Date.now(), getPreferredLanguage()) })
+    : null;
   // The step that asks: the one waiting on the person, else the one running when the question came.
   const asking = sudoPrompt
     ? steps.items.find((item) => item.needsAttention)
@@ -223,7 +234,7 @@ export function MachineSetupRunRegion(
               <ActionOperationRows
                 operations={operations}
                 showDivider={!positionText}
-                runCard={() => ({ line: positionText ?? props.machineName })}
+                runCard={() => ({ line: positionText ?? finishedLine ?? props.machineName, title: finishedTitle })}
                 onOpenOperation={(operation) =>
                   openActionOperationDetail({
                     serverId: operation.serverId,

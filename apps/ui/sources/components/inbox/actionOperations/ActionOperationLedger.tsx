@@ -75,7 +75,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
      * neutral (a document mark, no status colour or age) and its second line is the host's line about where the
      * run is, in place of the source title.
      */
-    runCard?: Readonly<{ line: string | null }>;
+    runCard?: Readonly<{ line: string | null; title?: string | null }>;
 }>) {
     const { theme } = useUnistyles();
     const isRecordingVisible = useSessionRecordingVisibility();
@@ -175,7 +175,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     return (
         <Item
             testID={`inbox.action-operation.${snapshot.operationId}`}
-            title={snapshot.title}
+            title={runCard?.title ?? snapshot.title}
             subtitle={subtitleText}
             detail={detailText || undefined}
             accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
@@ -232,7 +232,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
     showDivider?: boolean;
     narrow?: boolean;
     /** Rows heading a run card that says the run's state (see ActionOperationRow `runCard`). */
-    runCard?: (operation: ActionOperationProjection) => Readonly<{ line: string | null }>;
+    runCard?: (operation: ActionOperationProjection) => Readonly<{ line: string | null; title?: string | null }>;
 }>) {
     useServerProfilesGeneration();
     const sessionAddresses = React.useMemo(() => props.operations.flatMap((operation) => {

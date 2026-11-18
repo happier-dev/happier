@@ -752,6 +752,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 retryFrom: ({ step }: { step: string }) => `Torna-ho a provar des de ${step}`,
                 stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Pas ${current} de ${total} a ${machine}`,
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Aturat al pas ${current} de ${total} a ${machine}`,
+                presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} revisió ${revision} és a ${machine}`,
+                finishedAt: ({ time }: { time: string }) => `Acabat a les ${time}`,
                 readOnly: "Pots fer servir aquesta màquina. La configuració la canvien el propietari i qui la gestiona.",
                 reviewTitle: "Revisa els canvis",
                 reviewRemove: "Revisa l’eliminació",

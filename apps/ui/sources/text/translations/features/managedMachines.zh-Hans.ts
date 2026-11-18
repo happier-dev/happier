@@ -752,6 +752,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 retryFrom: ({ step }: { step: string }) => `从 ${step} 重试`,
                 stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} 上第 ${current}/${total} 步`,
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `在 ${machine} 上第 ${current}/${total} 步停止`,
+                presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} 修订版 ${revision} 已在 ${machine} 上`,
+                finishedAt: ({ time }: { time: string }) => `${time} 完成`,
                 readOnly: "你可以使用此机器。其设置由所有者和管理者更改。",
                 reviewTitle: "查看更改",
                 reviewRemove: "查看移除",

@@ -752,6 +752,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 retryFrom: ({ step }: { step: string }) => `Riprova da ${step}`,
                 stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Passaggio ${current} di ${total} su ${machine}`,
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Fermato al passaggio ${current} di ${total} su ${machine}`,
+                presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} revisione ${revision} è su ${machine}`,
+                finishedAt: ({ time }: { time: string }) => `Terminato alle ${time}`,
                 readOnly: "Puoi usare questa macchina. La configurazione la cambiano il proprietario e chi la gestisce.",
                 reviewTitle: "Rivedi le modifiche",
                 reviewRemove: "Rivedi la rimozione",

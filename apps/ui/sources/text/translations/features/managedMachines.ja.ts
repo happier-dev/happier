@@ -752,6 +752,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 retryFrom: ({ step }: { step: string }) => `${step} から再試行`,
                 stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} でステップ ${current}/${total}`,
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} のステップ ${current}/${total} で停止`,
+                presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} リビジョン ${revision} は ${machine} に適用済み`,
+                finishedAt: ({ time }: { time: string }) => `${time} に完了`,
                 readOnly: "このマシンを使用できます。セットアップの変更は所有者と管理者が行います。",
                 reviewTitle: "変更を確認",
                 reviewRemove: "削除を確認",

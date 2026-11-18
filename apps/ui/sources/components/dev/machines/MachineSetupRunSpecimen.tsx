@@ -104,7 +104,7 @@ export function MachineSetupRunSpecimen(
         kind: 'machineSetup',
         serverId: scope.serverId,
         machineId,
-        preset: { id: 'acme-dev-box', revision: 7 },
+        preset: { id: 'acme-dev-box', revision: 7, name: 'Acme dev box' },
         steps: stepsFor(props.state),
         ...(props.state === 'needs-you'
           ? {
