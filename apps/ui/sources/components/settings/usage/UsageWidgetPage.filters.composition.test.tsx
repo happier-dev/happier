@@ -1137,6 +1137,67 @@ describe('mounted Usage page scope commands', () => {
         expect(frames, 'every committed frame retains the selected Cost while acknowledged inputs are admitted').toEqual(frames.map(() => 'cost'));
     });
 
+    it('retains Cost while acknowledged bindings await their layout publication', async () => {
+        const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
+            import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
+        ]);
+        const credentials = { token: createServedHomeAccountToken('account-a'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-metric-delayed-publication.test', accountId: 'account-a',
+            credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                return artifacts.handle(request.path + request.url.search, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const frames: string[] = [];
+        let observe: (() => void) | undefined;
+        const screen = await renderMeasuredPage(<React.Profiler id="metric-delayed-publication" onRender={() => observe?.()}>
+            <InjectedAuthProvider credentials={credentials}>
+                <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                    <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            </InjectedAuthProvider>
+        </React.Profiler>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const bar = () => screen.findByType(UsageFilterBar);
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(WidgetSurface)).toHaveLength(8);
+            expect(bar().props.metricPending).toBe(false);
+        });
+        await flushHookEffects({ cycles: 20 });
+        act(() => bar().props.onMetricChange('tokens'));
+        await waitForHomeGovernance(() => {
+            expect(bar().props.metricPending).toBe(false);
+            expect(bar().props.metric).toBe('tokens');
+        });
+
+        const storage = getStorage();
+        const publish = storage.getState().updateArtifact;
+        const held: Parameters<typeof publish>[0][] = [];
+        let holdPublication = true;
+        const publicationSpy = vi.spyOn(storage.getState(), 'updateArtifact').mockImplementation(artifact => {
+            if (holdPublication) held.push(artifact);
+            else publish(artifact);
+        });
+        observe = () => frames.push(bar().props.metric);
+        act(() => bar().props.onMetricChange('cost'));
+        await waitForHomeGovernance(() => expect(bar().props.metricPending).toBe(false));
+        expect(bar().props.metric, 'an acknowledged write must not clear Cost before its bindings are admitted').toBe('cost');
+        expect(frames).toContain('cost');
+        holdPublication = false;
+        await act(async () => { for (const artifact of held) publish(artifact); });
+        await waitForHomeGovernance(() => expect(bar().props.metric).toBe('cost'));
+        publicationSpy.mockRestore();
+    });
+
     it('defers never-near widgets and keeps admitted content mounted through partial visibility and scroll return', async () => {
         // Change viewport demand without also advancing the accounting period's end.
         const observedAt = Date.now();

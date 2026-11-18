@@ -322,9 +322,9 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const metric = pendingMetric?.lifetime === metricLifetime ? pendingMetric.metric : widgetMetric;
   React.useEffect(() => {
     // Acknowledgement ends write activity; the admitted publication ends selection handoff.
-    if (pendingMetric?.lifetime === metricLifetime && !pendingMetric.writing && ready?.isCurrent())
+    if (pendingMetric?.lifetime === metricLifetime && !pendingMetric.writing && ready?.isCurrent() && widgetMetric === pendingMetric.metric)
       setPendingMetric(current => current === pendingMetric ? null : current);
-  }, [metricLifetime, pendingMetric, ready]);
+  }, [metricLifetime, pendingMetric, ready, widgetMetric]);
   const metricApproval = useActionApprovalContinuation({
     scopeKey: JSON.stringify(props.authority?.scope ?? null),
     serverId: props.authority?.scope.serverId ?? '',
