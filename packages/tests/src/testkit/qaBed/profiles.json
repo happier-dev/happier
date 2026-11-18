@@ -1,23 +1,7 @@
 {
-  "small": {
-    "sessions": 12,
-    "longSessions": 1,
-    "longMessages": 120,
-    "machines": 2,
-    "artifacts": 6
-  },
-  "large": {
-    "sessions": 300,
-    "longSessions": 3,
-    "longMessages": 1200,
-    "machines": 6,
-    "artifacts": 100
-  },
-  "deploy-preview": {
-    "sessions": 0,
-    "longSessions": 0,
-    "longMessages": 0,
-    "machines": 1,
-    "artifacts": 0
-  }
+  "small": { "sessions": 12, "longMessages": [120], "machines": 2, "artifacts": 6, "agentTurns": false },
+  "large": { "sessions": 300, "longMessages": [1200, 1200, 1200], "machines": 6, "artifacts": 100, "agentTurns": false },
+  "huge": { "sessions": 12, "longMessages": [10000, 50000], "machines": 2, "artifacts": 6, "agentTurns": true },
+  "deploy-preview": { "sessions": 0, "longMessages": [], "machines": 1, "artifacts": 0, "agentTurns": false },
+  "demo": { "sessions": 4, "longMessages": [], "machines": 1, "artifacts": 1, "agentTurns": false }
 }

@@ -495,6 +495,8 @@ Profiles: `small` is 12 Sessions (one 120-message transcript), 2 Machines and 6 
 
 `deploy-preview` creates a listed Project with Production and a deployed `purpose: preview` Environment for reviewing deployment screens. These are **records only**: the seeder uses the ordinary encrypted Project row, signed HTTP admission and receipt settlement APIs, never dispatches a deployment, and makes no platform or forge writes. The receipt has no workload or health observations. The example address `https://preview.records-only.invalid/` is marked with a warning and unavailable network exposure; it has no DNS or native route. Its saved preview admission Workflow has no triggers. This profile has one offline fixture Machine and no seeded Sessions.
 
+`demo` seeds the demo story world (`packages/tests/src/testkit/qaBed/demoStory.ts`): one offline fixture Machine, four named Sessions and one Artifact. The featured Session holds one agent turn with an Edit diff and a test run's terminal output, and it waits on one pending approval. Use it for visual QA and screenshots of the key flows; the future demo app reads the same story.
+
 To seed an existing running QA Home without creating another stack:
 
 ```bash

@@ -10,12 +10,15 @@ import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployme
 import { fetchArtifactViaApi, decodeEncryptedArtifactJsonBase64ForCliAccessKey } from '../artifactApi';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
+import { fetchAllMessages, fetchSessionsV2 } from '../sessions';
 import { startServerLight, type StartedServer } from '../process/serverLight';
 import { createRunDirs } from '../runDir';
 import { isQaBedProfileName, seedQaBedAccount } from './seedQaBedAccount';
+import { QA_BED_DEMO_STORY } from './demoStory';
 
 let server: StartedServer | undefined;
-afterAll(async () => { await server?.stop(); });
+let demoServer: StartedServer | undefined;
+afterAll(async () => { await server?.stop(); await demoServer?.stop(); });
 
 it('admits the record-only deployment preview bed through the canonical profile owner', () => {
   expect(isQaBedProfileName('deploy-preview')).toBe(true);
@@ -68,4 +71,32 @@ it('seeds Production and a deployed preview as ordinary API records without a da
     dataEncryptionKeyBase64: saved.dataEncryptionKey, cliAccessKey: buildTestAccountCliAuthCredentials({ auth: seeded.auth, mode: 'dataKey' }) });
   expect(readDeploymentDomainServingUrlV1(JSON.parse(opened?.body ?? 'null'))).toBe('https://preview.records-only.invalid/');
   expect(domain.targetLinkId).toBe(detail.ok ? detail.targetLinks[0]?.id : undefined);
+}, 240_000);
+
+it('seeds the demo story world: named Sessions, a featured turn with a diff and terminal output, and a pending approval', async () => {
+  const profile = 'demo';
+  expect(isQaBedProfileName(profile)).toBe(true);
+  if (!isQaBedProfileName(profile)) throw new Error('demo profile unavailable');
+  demoServer = await startServerLight({ testDir: createRunDirs({ runLabel: 'qa-bed' }).testDir('demo'), dbProvider: 'sqlite' });
+  const seeded = await seedQaBedAccount({ baseUrl: demoServer.baseUrl, profile, seed: 4242 });
+  const cliAccessKey = buildTestAccountCliAuthCredentials({ auth: seeded.auth, mode: 'dataKey' });
+  const open = <T>(encryptedJsonBase64: string, dataEncryptionKeyBase64: unknown) => decodeEncryptedArtifactJsonBase64ForCliAccessKey<T>({
+    encryptedJsonBase64, dataEncryptionKeyBase64: String(dataEncryptionKeyBase64), cliAccessKey });
+
+  const { sessions } = await fetchSessionsV2(demoServer.baseUrl, seeded.auth.token, { limit: 50 });
+  const named = sessions.map(session => ({ session, name: open<{ name: string }>(session.metadata, session.dataEncryptionKey)?.name }));
+  expect(named.map(entry => entry.name).sort()).toEqual(QA_BED_DEMO_STORY.sessions.map(story => story.name).sort());
+  expect(seeded.summary).toMatchObject({ profile, machines: 1, sessions: QA_BED_DEMO_STORY.sessions.length });
+
+  const featured = named.find(entry => entry.session.id === seeded.summary.demo?.featuredSessionId);
+  if (!featured) throw new Error('featured demo Session missing');
+  expect(featured.name).toBe(QA_BED_DEMO_STORY.sessions.find(story => story.featured)?.name);
+  const agentState = open<{ requests?: Record<string, { tool: string }> }>(String(featured.session.agentState), featured.session.dataEncryptionKey);
+  expect(agentState?.requests?.[QA_BED_DEMO_STORY.pendingApproval.id]?.tool).toBe(QA_BED_DEMO_STORY.pendingApproval.tool);
+
+  const turn = (await fetchAllMessages(demoServer.baseUrl, seeded.auth.token, featured.session.id))
+    .map(row => JSON.stringify(open<unknown>(row.content.c, featured.session.dataEncryptionKey)));
+  expect(turn).toHaveLength(QA_BED_DEMO_STORY.featuredTurn(String).length);
+  expect(turn.some(message => message.includes('"name":"Edit"') && message.includes('old_string'))).toBe(true);
+  expect(turn.some(message => message.includes('"tool_result"') && message.includes('PASS'))).toBe(true);
 }, 240_000);

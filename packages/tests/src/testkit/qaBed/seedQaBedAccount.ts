@@ -11,12 +11,19 @@ import { encryptDataKeyBase64 } from '../rpcCrypto';
 import { createSessionWithCiphertexts } from '../sessions';
 import { perfFixtureId } from '../stress/scenarios/perfProfile';
 import { runStressTasksWithConcurrencyLimit } from '../stress/scenarios/runStressTasksWithConcurrencyLimit';
+import { QA_BED_DEMO_STORY } from './demoStory';
 import profileSizes from './profiles.json' with { type: 'json' };
 
 /**
  * The QA bed Account shapes. `large` keeps the sizes the 2026-11-15 signed-in
  * device and web lanes measured (300 Sessions, 3 × 1,200-message transcripts),
- * so new numbers stay comparable with theirs.
+ * so new numbers stay comparable with theirs. `huge` holds one 10,000- and one
+ * 50,000-message transcript of realistic agent turns (tool calls, large diffs,
+ * long terminal output, attachment listings) for transcript-length scaling work. Every message
+ * goes through the ordinary message write, as a live Session's do (the historical import would
+ * mark each one "Recovered history"), so `huge` takes tens of minutes to seed.
+ * `demo` seeds the demo story world (`demoStory.ts`) instead of fixture text; its sizes match it.
+ * `longMessages` lists one transcript length per long Session (the first Sessions).
  */
 export const QA_BED_PROFILES = profileSizes;
 
@@ -35,6 +42,7 @@ export type QaBedSeedSummary = Readonly<{
   longSessionIds: readonly string[];
   deployments?: Readonly<{ serverId: string; projectId: string; projectSourceId: string; productionEnvironmentId: string;
     previewEnvironmentId: string; deploymentId: string }>;
+  demo?: Readonly<{ featuredSessionId: string; pendingApprovalId: string }>;
 }>;
 
 export type SeededQaBedAccount = Readonly<{
@@ -61,6 +69,53 @@ function fixtureMessage(localId: string, index: number): unknown {
   };
 }
 
+const TURN_TOOLS = ['Bash', 'Edit', 'Read', 'Bash', 'Grep', 'Edit'] as const;
+
+function fixtureTerminalOutput(index: number, lines: number): string {
+  return Array.from({ length: lines }, (_, line) =>
+    `${String(line + 1).padStart(4, ' ')} | fixture build step ${index}.${line} ok (${(line * 37) % 1000} ms) src/module${line % 40}/file${line % 9}.ts`).join('\n');
+}
+
+function fixtureDiffSide(index: number, lines: number, side: 'old' | 'new'): string {
+  return Array.from({ length: lines }, (_, line) =>
+    `  const value${line} = ${side === 'old' ? 'computeLegacy' : 'computeNext'}(input${index}, ${line}); // fixture`).join('\n');
+}
+
+/**
+ * One message of a realistic agent turn, in the 0.2 Claude output shapes: a user
+ * prompt (every 5th one lists attachments), assistant text with markdown, a tool
+ * call (Bash, Edit with a large diff, Read, Grep) and its result (every 4th one is
+ * long terminal output). Nine messages per turn: prompt, text, three tool calls with
+ * their results, and a closing text.
+ */
+function fixtureAgentTurnMessage(localId: string, index: number, idPrefix: string): unknown {
+  const turn = Math.floor(index / 9);
+  const step = index % 9;
+  if (step === 0) {
+    const attachments = turn % 5 === 0
+      ? `\n\n[attachments]\n- /uploads/fixture-screenshot-${turn}.png\n- /uploads/fixture-log-${turn}.txt\n[/attachments]`
+      : '';
+    return { role: 'user', content: { type: 'text', text: `fixture request ${turn}: update module ${turn % 40}${attachments}` } };
+  }
+  if (step === 1 || step === 8) return fixtureMessage(localId, index | 1);
+  const call = (step - 2) >> 1;
+  const toolUseId = `toolu_${idPrefix}_${turn}_${call}`.replace(/[^A-Za-z0-9_]/g, '_');
+  const name = TURN_TOOLS[(turn + call) % TURN_TOOLS.length];
+  if (step % 2 === 0) {
+    const input = name === 'Edit'
+      ? { file_path: `/home/qa/p0/src/module${turn % 40}/file${call}.ts`, old_string: fixtureDiffSide(turn, 60, 'old'),
+        new_string: fixtureDiffSide(turn, 80, 'new') }
+      : name === 'Read' ? { file_path: `/home/qa/p0/src/module${turn % 40}/file${call}.ts` }
+        : name === 'Grep' ? { pattern: `computeLegacy${call}`, path: '/home/qa/p0/src' }
+          : { command: `yarn test module${turn % 40}`, description: `Run module ${turn % 40} tests` };
+    return { role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: localId,
+      message: { content: [{ type: 'tool_use', id: toolUseId, name, input }] } } } };
+  }
+  const output = (turn + call) % 4 === 0 ? fixtureTerminalOutput(turn, 200) : fixtureTerminalOutput(turn, 12);
+  return { role: 'agent', content: { type: 'output', data: { type: 'user', uuid: localId,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: output }] } } } };
+}
+
 /**
  * Create one fresh Account and seed it through the server's public HTTP API, so
  * every stored row has the shape the server itself writes. Sessions are created
@@ -83,6 +138,7 @@ export async function seedQaBedAccount(params: Readonly<{
   const label = params.label ?? 'qa';
   const auth = await createTestAuth(baseUrl);
   const installation = params.profile === 'deploy-preview' ? createMachineInstallationIdentityFixture() : undefined;
+  const story = params.profile === 'demo' ? QA_BED_DEMO_STORY : undefined;
   const credentials = buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' });
   if (!('encryption' in credentials)) throw new Error('QA bed seeding needs data-key credentials');
   const recipientPublicKey = Buffer.from(credentials.encryption.publicKey, 'base64');
@@ -93,12 +149,13 @@ export async function seedQaBedAccount(params: Readonly<{
   const machineIds = await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.machines }, (_, index) => index), concurrency, async (index: number) => {
       const dataKey = randomBytes(32);
-      const host = `${label}-dev-${String(index).padStart(3, '0')}`;
+      const host = story?.machine.host ?? `${label}-dev-${String(index).padStart(3, '0')}`;
+      const homeDir = story?.machine.homeDir ?? '/home/qa';
       const registered = await registerMachineIdentity({
         baseUrl, token: auth.token, machineId: perfFixtureId(seed, 'machine', index),
         // The fields a released daemon publishes; the client rejects metadata without them.
-        metadata: encryptDataKeyBase64({ host, platform: ['linux', 'darwin', 'win32'][index % 3], homeDir: '/home/qa',
-          happyHomeDir: '/home/qa/.happier', happyCliVersion: '0.0.0-qa-bed-fixture', displayName: host }, dataKey),
+        metadata: encryptDataKeyBase64({ host, platform: story?.machine.platform ?? ['linux', 'darwin', 'win32'][index % 3], homeDir,
+          happyHomeDir: `${homeDir}/.happier`, happyCliVersion: '0.0.0-qa-bed-fixture', displayName: story?.machine.displayName ?? host }, dataKey),
         dataEncryptionKey: wrapDataKey(dataKey),
         ...(installation ? { installation } : {}),
       });
@@ -109,35 +166,50 @@ export async function seedQaBedAccount(params: Readonly<{
   const sessions = await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.sessions }, (_, index) => index), concurrency, async (index: number) => {
       const dataKey = randomBytes(32);
+      const storySession = story?.sessions[index];
+      const storyUuid = (message: number) => `${label}-${seed}-${index}-${message}`;
+      const storyMessages = storySession && story
+        ? storySession.featured ? story.featuredTurn(storyUuid) : story.shortExchange(storySession.name, storyUuid)
+        : undefined;
+      const pendingApproval = storySession?.featured ? story?.pendingApproval : undefined;
       const created = await createSessionWithCiphertexts({
         baseUrl, token: auth.token, tag: `${label}-s-${seed}-${index}`,
-        metadataCiphertextBase64: encryptDataKeyBase64({ name: `${label} session ${index}`, path: `/home/qa/p${index % 12}`,
-          homeDir: '/home/qa', machineId: machineIds[index % machineIds.length], host: `${label}-dev`,
+        metadataCiphertextBase64: encryptDataKeyBase64({ name: storySession?.name ?? `${label} session ${index}`,
+          path: storySession?.path ?? `/home/qa/p${index % 12}`, homeDir: story?.machine.homeDir ?? '/home/qa',
+          machineId: machineIds[index % machineIds.length], host: story?.machine.host ?? `${label}-dev`,
           version: '0.0.0-qa-bed-fixture', flavor: 'claude' }, dataKey),
         dataEncryptionKeyBase64: wrapDataKey(dataKey),
-        agentStateCiphertextBase64: encryptDataKeyBase64({ requests: {}, completedRequests: {} }, dataKey),
+        agentStateCiphertextBase64: encryptDataKeyBase64({
+          requests: pendingApproval ? { [pendingApproval.id]: { tool: pendingApproval.tool, arguments: pendingApproval.arguments,
+            createdAt: Date.now() } } : {},
+          completedRequests: {},
+        }, dataKey),
       });
-      const count = index < sizes.longSessions ? sizes.longMessages : shortSessionMessageCount(index);
+      const longCount: number | undefined = sizes.longMessages[index];
+      const count = storyMessages?.length ?? longCount ?? shortSessionMessageCount(index);
       for (let message = 0; message < count; message++) {
-        const localId = `${label}-${seed}-${index}-${message}`;
+        const localId = storyUuid(message);
         const written = await fetchJson<{ didWrite?: boolean }>(`${baseUrl}/v2/sessions/${created.sessionId}/messages`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json', 'Idempotency-Key': localId },
-          body: JSON.stringify({ localId, content: { t: 'encrypted', c: encryptDataKeyBase64(fixtureMessage(localId, message), dataKey) } }),
+          body: JSON.stringify({ localId, content: { t: 'encrypted', c: encryptDataKeyBase64(storyMessages?.[message]
+            ?? (sizes.agentTurns ? fixtureAgentTurnMessage(localId, message, `${seed}_${index}`) : fixtureMessage(localId, message)), dataKey) } }),
           timeoutMs: 20_000,
         });
         if (written.status !== 200) throw new Error(`QA bed message write failed (status=${written.status})`);
       }
-      return { sessionId: created.sessionId, messages: count, long: index < sizes.longSessions };
+      return { sessionId: created.sessionId, messages: count, long: longCount !== undefined, featured: storySession?.featured === true };
     });
 
   await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.artifacts }, (_, index) => index), concurrency, async (index: number) => {
       await createEncryptedArtifactViaApi({ baseUrl, token: auth.token, artifactId: perfFixtureId(seed, 'artifact', index),
-        headerJson: { title: `${label} artifact ${index}` }, bodyJson: { text: 'fixture notes\n'.repeat(16 + (index % 32)) },
+        headerJson: { title: story?.artifact.title ?? `${label} artifact ${index}` },
+        bodyJson: { text: story?.artifact.body ?? 'fixture notes\n'.repeat(16 + (index % 32)) },
         cliAccessKey: credentials });
     });
 
+  const featuredSessionId = sessions.find((session) => session.featured)?.sessionId;
   const deploymentFixture = installation
     ? await (await import('./seedDeployPreview')).seedDeployPreview({ baseUrl, auth, machineId: machineIds[0], installation })
     : undefined;
@@ -152,6 +224,7 @@ export async function seedQaBedAccount(params: Readonly<{
       artifacts: sizes.artifacts + (deploymentFixture?.artifactsCreated ?? 0),
       longSessionIds: sessions.filter((session) => session.long).map((session) => session.sessionId),
       ...(deploymentFixture ? { deployments: deploymentFixture.summary } : {}),
+      ...(story && featuredSessionId ? { demo: { featuredSessionId, pendingApprovalId: story.pendingApproval.id } } : {}),
     },
   };
 }
