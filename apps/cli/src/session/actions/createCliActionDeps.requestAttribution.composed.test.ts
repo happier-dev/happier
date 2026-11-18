@@ -514,6 +514,24 @@ describe('CLI input requester through protected custody and danger approval', ()
     expect(cardCount).toBe(1);
   });
 
+
+  it.each(['ui', 'voice'] as const)('keeps causal permission authority for an existing %s Session send', async surface => {
+    const { credentials, accept, accepted, acceptedLocalIds } = installHomeBoundary('e2ee');
+    const deps = createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode: 'e2ee', ctx: null, serverId,
+      machineAdmissionTransport: async request => { accept(request.content, request.localId); return { status: 'accepted', localId: request.localId }; } });
+    const result = await deps.sessionSendMessage({ sessionId, localId, message: 'Existing Session authority', requestedAction: { v: 1, kind: 'enqueue' },
+      context: { surface, callerSurface: surface, authority: 'present_user', callerPermissionMode: 'default', serverId,
+        runtimeAccountId: accountId, actionCaller: { kind: 'host' } }, callerSurface: surface, actionCaller: { kind: 'host' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'accepted', localId });
+    expect(accepted.length, JSON.stringify({ result, accepted: accepted.length, acceptedLocalIds: acceptedLocalIds })).toBe(1);
+    expect(accepted[0], JSON.stringify(accepted[0])).toBeDefined();
+    const request = SessionInputRequestV1Schema.parse(accepted[0]?.meta?.happierInputRequestV1);
+    expect(request.actionRequestAttributionV1).toMatchObject({ requestRef: localId,
+      requester: { accountId, serverId }, persona, origin: null });
+    expect(request.producer).toBe(surface === 'ui' ? 'happierApp' : 'voiceInput');
+    expect(request.permission).toEqual({});
+  });
+
   it.each((['e2ee', 'plain'] as const).flatMap(mode => (['cli', 'ui', 'voice'] as const).map(surface => ({ mode, surface }))))('attributes an admitted shared Machine $surface $mode send to its authenticated Account rather than the custodian', async ({ mode, surface }) => {
     const { credentials, accept, accepted } = installHomeBoundary(mode);
     expect(await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId, expectedSessionAddress: persona,
