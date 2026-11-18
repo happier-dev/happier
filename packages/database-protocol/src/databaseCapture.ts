@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import type { ProtocolComposableSchema, ProtocolJsonValue } from '@happier-dev/protocol/plugins/actions/protocolComposableSchema';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DatabaseFailureV1Schema } from './databaseOperations.js';
@@ -125,91 +126,91 @@ export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('vie
     z.strictObject({ view: z.literal('endpoints'), result: DatabaseCaptureEndpointsListResultV1Schema }),
 ]);
 export type DatabaseCaptureResourceInputV1 = z.infer<typeof DatabaseCaptureResourceInputV1Schema>;
-export const DatabaseCaptureResourceInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureResourceInputV1Schema);
+export const DatabaseCaptureResourceInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureResourceInputV1Schema>, DatabaseCaptureResourceInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureResourceInputV1Schema);
 
 export type DatabaseCaptureProjectV1 = z.infer<typeof DatabaseCaptureProjectV1Schema>;
-export const DatabaseCaptureProjectV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureProjectV1Schema);
+export const DatabaseCaptureProjectV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureProjectV1Schema>, DatabaseCaptureProjectV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureProjectV1Schema);
 
 export type DatabaseCaptureSourceV1 = z.infer<typeof DatabaseCaptureSourceV1Schema>;
-export const DatabaseCaptureSourceV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureSourceV1Schema);
+export const DatabaseCaptureSourceV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureSourceV1Schema>, DatabaseCaptureSourceV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureSourceV1Schema);
 
 export type DatabaseCaptureCursorV1 = z.infer<typeof DatabaseCaptureCursorV1Schema>;
-export const DatabaseCaptureCursorV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureCursorV1Schema);
+export const DatabaseCaptureCursorV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureCursorV1Schema>, DatabaseCaptureCursorV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureCursorV1Schema);
 
 export type DatabaseCapturePageV1 = z.infer<typeof DatabaseCapturePageV1Schema>;
-export const DatabaseCapturePageV1ProtocolSchema = projectZodProtocolSchema(DatabaseCapturePageV1Schema);
+export const DatabaseCapturePageV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCapturePageV1Schema>, DatabaseCapturePageV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCapturePageV1Schema);
 
 export type DatabaseCaptureCoverageV1 = z.infer<typeof DatabaseCaptureCoverageV1Schema>;
-export const DatabaseCaptureCoverageV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureCoverageV1Schema);
+export const DatabaseCaptureCoverageV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureCoverageV1Schema>, DatabaseCaptureCoverageV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureCoverageV1Schema);
 
 export type DatabaseCaptureSummaryV1 = z.infer<typeof DatabaseCaptureSummaryV1Schema>;
-export const DatabaseCaptureSummaryV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureSummaryV1Schema);
+export const DatabaseCaptureSummaryV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureSummaryV1Schema>, DatabaseCaptureSummaryV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureSummaryV1Schema);
 
 export type DatabaseCaptureRepeatedQueryV1 = z.infer<typeof DatabaseCaptureRepeatedQueryV1Schema>;
-export const DatabaseCaptureRepeatedQueryV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureRepeatedQueryV1Schema);
+export const DatabaseCaptureRepeatedQueryV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureRepeatedQueryV1Schema>, DatabaseCaptureRepeatedQueryV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureRepeatedQueryV1Schema);
 
 export type DatabaseCaptureEndpointCursorV1 = z.infer<typeof DatabaseCaptureEndpointCursorV1Schema>;
-export const DatabaseCaptureEndpointCursorV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureEndpointCursorV1Schema);
+export const DatabaseCaptureEndpointCursorV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureEndpointCursorV1Schema>, DatabaseCaptureEndpointCursorV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureEndpointCursorV1Schema);
 
 export type DatabaseCaptureEndpointV1 = z.infer<typeof DatabaseCaptureEndpointV1Schema>;
-export const DatabaseCaptureEndpointV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureEndpointV1Schema);
+export const DatabaseCaptureEndpointV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureEndpointV1Schema>, DatabaseCaptureEndpointV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureEndpointV1Schema);
 
 export type DatabaseCaptureLogCorrelationV1 = z.infer<typeof DatabaseCaptureLogCorrelationV1Schema>;
-export const DatabaseCaptureLogCorrelationV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureLogCorrelationV1Schema);
+export const DatabaseCaptureLogCorrelationV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureLogCorrelationV1Schema>, DatabaseCaptureLogCorrelationV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureLogCorrelationV1Schema);
 
 export type DatabaseCaptureResourceSnapshotV1 = z.infer<typeof DatabaseCaptureResourceSnapshotV1Schema>;
-export const DatabaseCaptureResourceSnapshotV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureResourceSnapshotV1Schema);
+export const DatabaseCaptureResourceSnapshotV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureResourceSnapshotV1Schema>, DatabaseCaptureResourceSnapshotV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureResourceSnapshotV1Schema);
 
 export type DatabaseCaptureStatusInputV1 = z.infer<typeof DatabaseCaptureStatusInputV1Schema>;
-export const DatabaseCaptureStatusInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureStatusInputV1Schema);
+export const DatabaseCaptureStatusInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureStatusInputV1Schema>, DatabaseCaptureStatusInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureStatusInputV1Schema);
 
 export type DatabaseCaptureStatusResultV1 = z.infer<typeof DatabaseCaptureStatusResultV1Schema>;
-export const DatabaseCaptureStatusResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureStatusResultV1Schema);
+export const DatabaseCaptureStatusResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureStatusResultV1Schema>, DatabaseCaptureStatusResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureStatusResultV1Schema);
 
 export type DatabaseCaptureQueriesListInputV1 = z.infer<typeof DatabaseCaptureQueriesListInputV1Schema>;
-export const DatabaseCaptureQueriesListInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureQueriesListInputV1Schema);
+export const DatabaseCaptureQueriesListInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureQueriesListInputV1Schema>, DatabaseCaptureQueriesListInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureQueriesListInputV1Schema);
 
 export type DatabaseCaptureQueriesListResultV1 = z.infer<typeof DatabaseCaptureQueriesListResultV1Schema>;
-export const DatabaseCaptureQueriesListResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureQueriesListResultV1Schema);
+export const DatabaseCaptureQueriesListResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureQueriesListResultV1Schema>, DatabaseCaptureQueriesListResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureQueriesListResultV1Schema);
 
 export type DatabaseCaptureQueryGetInputV1 = z.infer<typeof DatabaseCaptureQueryGetInputV1Schema>;
-export const DatabaseCaptureQueryGetInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureQueryGetInputV1Schema);
+export const DatabaseCaptureQueryGetInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureQueryGetInputV1Schema>, DatabaseCaptureQueryGetInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureQueryGetInputV1Schema);
 
 export type DatabaseCaptureQueryGetResultV1 = z.infer<typeof DatabaseCaptureQueryGetResultV1Schema>;
-export const DatabaseCaptureQueryGetResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureQueryGetResultV1Schema);
+export const DatabaseCaptureQueryGetResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureQueryGetResultV1Schema>, DatabaseCaptureQueryGetResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureQueryGetResultV1Schema);
 
 export type DatabaseCaptureTracesListInputV1 = z.infer<typeof DatabaseCaptureTracesListInputV1Schema>;
-export const DatabaseCaptureTracesListInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureTracesListInputV1Schema);
+export const DatabaseCaptureTracesListInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureTracesListInputV1Schema>, DatabaseCaptureTracesListInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureTracesListInputV1Schema);
 
 export type DatabaseCaptureTracesListResultV1 = z.infer<typeof DatabaseCaptureTracesListResultV1Schema>;
-export const DatabaseCaptureTracesListResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureTracesListResultV1Schema);
+export const DatabaseCaptureTracesListResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureTracesListResultV1Schema>, DatabaseCaptureTracesListResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureTracesListResultV1Schema);
 
 export type DatabaseCaptureTraceGetInputV1 = z.infer<typeof DatabaseCaptureTraceGetInputV1Schema>;
-export const DatabaseCaptureTraceGetInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureTraceGetInputV1Schema);
+export const DatabaseCaptureTraceGetInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureTraceGetInputV1Schema>, DatabaseCaptureTraceGetInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureTraceGetInputV1Schema);
 
 export type DatabaseCaptureTraceGetResultV1 = z.infer<typeof DatabaseCaptureTraceGetResultV1Schema>;
-export const DatabaseCaptureTraceGetResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureTraceGetResultV1Schema);
+export const DatabaseCaptureTraceGetResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureTraceGetResultV1Schema>, DatabaseCaptureTraceGetResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureTraceGetResultV1Schema);
 
 export type DatabaseCaptureLogsListInputV1 = z.infer<typeof DatabaseCaptureLogsListInputV1Schema>;
-export const DatabaseCaptureLogsListInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureLogsListInputV1Schema);
+export const DatabaseCaptureLogsListInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureLogsListInputV1Schema>, DatabaseCaptureLogsListInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureLogsListInputV1Schema);
 
 export type DatabaseCaptureLogsListResultV1 = z.infer<typeof DatabaseCaptureLogsListResultV1Schema>;
-export const DatabaseCaptureLogsListResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureLogsListResultV1Schema);
+export const DatabaseCaptureLogsListResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureLogsListResultV1Schema>, DatabaseCaptureLogsListResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureLogsListResultV1Schema);
 
 export type DatabaseCaptureEndpointsListInputV1 = z.infer<typeof DatabaseCaptureEndpointsListInputV1Schema>;
-export const DatabaseCaptureEndpointsListInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureEndpointsListInputV1Schema);
+export const DatabaseCaptureEndpointsListInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureEndpointsListInputV1Schema>, DatabaseCaptureEndpointsListInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureEndpointsListInputV1Schema);
 
 export type DatabaseCaptureEndpointsListResultV1 = z.infer<typeof DatabaseCaptureEndpointsListResultV1Schema>;
-export const DatabaseCaptureEndpointsListResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureEndpointsListResultV1Schema);
+export const DatabaseCaptureEndpointsListResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureEndpointsListResultV1Schema>, DatabaseCaptureEndpointsListResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureEndpointsListResultV1Schema);
 
 export type DatabaseCaptureClearInputV1 = z.infer<typeof DatabaseCaptureClearInputV1Schema>;
-export const DatabaseCaptureClearInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureClearInputV1Schema);
+export const DatabaseCaptureClearInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureClearInputV1Schema>, DatabaseCaptureClearInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureClearInputV1Schema);
 
 export type DatabaseCaptureClearResultV1 = z.infer<typeof DatabaseCaptureClearResultV1Schema>;
-export const DatabaseCaptureClearResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureClearResultV1Schema);
+export const DatabaseCaptureClearResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureClearResultV1Schema>, DatabaseCaptureClearResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureClearResultV1Schema);
 
 export type DatabaseCaptureConfigureInputV1 = z.infer<typeof DatabaseCaptureConfigureInputV1Schema>;
-export const DatabaseCaptureConfigureInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureConfigureInputV1Schema);
+export const DatabaseCaptureConfigureInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureConfigureInputV1Schema>, DatabaseCaptureConfigureInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureConfigureInputV1Schema);
 
 export type DatabaseCaptureConfigureResultV1 = z.infer<typeof DatabaseCaptureConfigureResultV1Schema>;
-export const DatabaseCaptureConfigureResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureConfigureResultV1Schema);
+export const DatabaseCaptureConfigureResultV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureConfigureResultV1Schema>, DatabaseCaptureConfigureResultV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureConfigureResultV1Schema);
