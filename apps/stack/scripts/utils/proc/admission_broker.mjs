@@ -1078,7 +1078,16 @@ export function createAdmissionBroker({ root,
           }
           await observe();
           // A removed root ends this broker: its state, slots and clients are gone with it.
-          rootWatcher = watch(root, () => { if (!existsSync(root)) void this.close(); });
+          // Its own socket's removal is the observable part: inotify reports no removal of
+          // a directory that still holds a bound socket, only the unlink of the entries in
+          // it (P03-BROKER-W2: test brokers outlived their removed /tmp/ha-* roots). A
+          // replaced socket also means clients now reach another broker, so this one ends.
+          const ownSocket = lstatSync(address).ino;
+          rootWatcher = watch(root, () => {
+            let socketIno;
+            try { socketIno = lstatSync(address).ino; } catch {}
+            if (!existsSync(root) || socketIno !== ownSocket) void this.close();
+          });
           rootWatcher.on('error', () => {});
           started = true;
           for (const socket of pendingConnections) if (!socket.destroyed) accept(socket);
