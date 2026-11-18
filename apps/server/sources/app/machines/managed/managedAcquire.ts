@@ -9,7 +9,7 @@ import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
-    ManagedMachineError, invalidateManagedMachineInTx,
+    ManagedMachineError, invalidateManagedMachineInTx, publishManagedMachinePolicyChangeInTx,
     requireManagedControllerInTx, requireManagedHomeInTx, sameManagedInput,
     type ManagedDeclaration,
     createManagedMachineDeclaredSchema,
@@ -193,8 +193,15 @@ export async function admitManagedAcquire(params: Readonly<{
                             { admittedInput: jsonPathEquals(['enrollmentAccountId'], params.requesterAccountId) },
                             { retention: jsonPathEquals(['kind'], 'until-delete') }],
                     }, orderBy: { createdAt: 'asc' } });
-                    if (idle) return { machine: projectManagedMachineOpaque(idle),
-                        presetContent: readManagedOpaquePresetContent(idle), replayed: true };
+                    if (idle) {
+                        const { resourceBoundSessionEnded, ...admission } = readManagedAdmissionState(idle.admittedInput);
+                        if (resourceBoundSessionEnded) {
+                            await tx.managedMachine.update({ where: { id: idle.id }, data: { admittedInput: admission } });
+                            await publishManagedMachinePolicyChangeInTx(tx, idle, [params.requesterAccountId]);
+                        }
+                        return { machine: projectManagedMachineOpaque(idle),
+                            presetContent: readManagedOpaquePresetContent(idle), replayed: true };
+                    }
                     if (!await hasMachinePresetAcquireCapacityInTx(tx, { homeId: review.homeId,
                         id: preset.id, maximum: selected.preset.simultaneousLimit?.maximum ?? null })) {
                         throw new ManagedMachineError('preset_limit_reached');

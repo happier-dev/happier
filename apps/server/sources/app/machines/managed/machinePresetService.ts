@@ -895,6 +895,7 @@ export async function migrateAccountManagedMachinePresetsForModeInTx(
                     ? { custodianAccountId: input.accountId }
                     : {}),
                 launch: { equals: rewrite.sourceLaunch },
+                admittedInput: { equals: readManagedJsonEqualityOperand(rewrite.row.admittedInput) },
             },
             data: { launch: rewrite.targetLaunch, admittedInput: rewrite.targetAdmission,
                 resource: getActivePrismaRuntime().DbNull,

@@ -14,6 +14,8 @@ const sessionDeleteTargetSelect = {
     id: true,
     accountId: true,
     active: true,
+    archivedAt: true,
+    managedCreationId: true,
     metadataLayoutVersion: true,
     updatedAt: true,
 } satisfies Prisma.SessionSelect;

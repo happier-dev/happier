@@ -5,6 +5,7 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
+import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from './managedCreationBirth';
 import { cancelWorkflowRun } from '@/app/workflows/workflowRunService';
 import { reportManagedIntent } from './managedMutations';
@@ -56,7 +57,7 @@ describe('creation scope retention at the real archive owner', () => {
         expect(await admit()).toBe(false);
     });
 
-    it('admits a Can-use member\'s bound birth on the custodian\'s controller and refuses everyone else', async () => {
+    it.each(['archive', 'delete'] as const)('releases a Can-use member\'s binding on Session %s', async end => {
         // Machine-policy and explicit Session-preset acquisitions keep the controller's Account as custodian
         // and record the member as the admitted requester; the member's Session is that guest's birth.
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -77,6 +78,18 @@ describe('creation scope retention at the real archive owner', () => {
         expect(await admit(member.id, 'another-machine')).toBe(false);
         expect(await admit(owner.id)).toBe(false);
         expect(await admit(other.id)).toBe(false);
+        const session = await db.session.create({ data: { accountId: member.id, tag: randomUUID(), metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: row.id } });
+        await expect(admit(member.id)).rejects.toMatchObject({ name: 'ManagedCreationBusyError' });
+        if (end === 'archive') {
+            await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: session.id, wasArchived: false, archivedAt: new Date() }));
+        } else {
+            expect(await deleteOwnedSession({ reason: 'user_request', ownerAccountId: member.id, sessionId: session.id })).toEqual({ ok: true });
+        }
+        expect(await admit(member.id)).toBe(false);
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({
+            allocation: 'bound', creationState: 'active', archivedAt: null, resource: row.resource,
+        });
     });
 
     it('binds only the admitted creator choice and cannot attach Delete to a Keep acquisition', async () => {

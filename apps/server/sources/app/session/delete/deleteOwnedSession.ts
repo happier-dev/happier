@@ -13,6 +13,7 @@ import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams
 import { publishSessionAfterCommit } from '@/app/session/publishSessionAfterCommit';
 
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
+import { applyManagedCreationScopeEndInTx } from '@/app/machines/managed/managedCreationBirth';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
 import { loadSessionDeleteRecipients } from './loadSessionDeleteRecipients';
 
@@ -166,6 +167,10 @@ export async function deleteSessionWithRecipientsInTx(
         reason: params.reason,
         sessionDeleteWhere: Object.keys(sessionDeleteWhere).length > 0 ? sessionDeleteWhere : undefined,
         afterSessionWriteBoundary: async () => {
+            if (session.archivedAt === null && session.managedCreationId) {
+                await applyManagedCreationScopeEndInTx(tx, { managedId: session.managedCreationId, accountId: session.accountId,
+                    source: { kind: 'session', sessionId: session.id }, endedAt: Date.now(), releaseBindingOnly: true });
+            }
             await publishSessionProviderBrokerConsumersChangedInTx(tx, params.sessionId);
             recipientCursors.push(...await markAccountsChanged(tx, { accountIds: [...recipientAccountIds],
                 kind: 'session', entityId: params.sessionId, hint: deletionHint }));

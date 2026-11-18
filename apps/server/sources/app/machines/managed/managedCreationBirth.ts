@@ -4,7 +4,8 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { isManagedMachineCreator } from './managedRead';
 import type { ManagedMachineBirthSourceV1 } from '@happier-dev/protocol/machines/managed/birthSourceV1';
-import { readManagedAdmissionState, invalidateManagedMachineInTx, type StoredManagedMachine, readManagedController, resolveManagedMachineRoleInTx, sameManagedInput } from './managedRows';
+import { readManagedAdmissionState, invalidateManagedMachineInTx, publishManagedMachinePolicyChangeInTx,
+    type StoredManagedMachine, readManagedController, resolveManagedMachineRoleInTx, sameManagedInput } from './managedRows';
 
 /** Optimistic shared selection lost to an incumbent birth; the caller may acquire again. */
 export class ManagedCreationBusyError extends Error {
@@ -75,22 +76,35 @@ export async function bindManagedCreationScopeRetentionInTx(tx: Tx, row: StoredM
 /** Session/Run owners emit or withdraw their end; submitted native effects retain their settlement owner. */
 export async function applyManagedCreationScopeEndInTx(tx: Tx, input: Readonly<{
     managedId: string | null; accountId: string; source: ManagedMachineBirthSourceV1; endedAt: number | null;
+    releaseBindingOnly?: true;
 }>): Promise<void> {
     if (!input.managedId) return;
+    // Serialize the admission write with birth and merge in any earlier controller update.
+    await lockManagedCreationResourceInTx(tx, input.managedId);
     const row = await tx.managedMachine.findUnique({ where: { id: input.managedId } });
     if (!row || row.creationState !== 'active' || row.archivedAt !== null) return;
     const admission = readManagedAdmissionState(row.admittedInput);
+    if (admission.enrollmentAccountId !== input.accountId) return;
     const scope = admission.creationScopeRetention;
-    if (!scope || (input.endedAt === null ? scope.endedAt === undefined : scope.endedAt !== undefined)
-        || admission.enrollmentAccountId !== input.accountId
-        || !sameManagedInput(scope.source, input.source)) return;
-    const { endedAt: _previousEnd, ...retainedScope } = scope;
+    const release = input.source.kind === 'session' && input.endedAt !== null
+        && admission.acquisitionMode === 'resource-bound' && row.custodianAccountId !== input.accountId
+        && !admission.resourceBoundSessionEnded
+        && !await tx.session.findFirst({ where: { id: { not: input.source.sessionId },
+            accountId: input.accountId, managedCreationId: row.id, archivedAt: null },
+            select: { id: true } });
+    const changedScope = !input.releaseBindingOnly && scope && sameManagedInput(scope.source, input.source)
+        && (input.endedAt === null ? scope.endedAt !== undefined : scope.endedAt === undefined)
+        ? scope : undefined;
+    if (!release && !changedScope) return;
+    const { endedAt: _previousEnd, ...retainedScope } = changedScope ?? {};
     await tx.managedMachine.update({ where: { id: row.id }, data: {
-        intentRevision: { increment: 1 },
-        admittedInput: { ...admission, creationScopeRetention: { ...retainedScope,
-            ...(input.endedAt === null ? {} : { endedAt: input.endedAt }) } },
+        ...(changedScope ? { intentRevision: { increment: 1 } } : {}),
+        admittedInput: { ...admission, ...(release ? { resourceBoundSessionEnded: true } : {}),
+            ...(changedScope ? { creationScopeRetention: { ...retainedScope,
+                ...(input.endedAt === null ? {} : { endedAt: input.endedAt }) } } : {}) },
     } });
-    await invalidateManagedMachineInTx(tx, row);
+    if (changedScope) await invalidateManagedMachineInTx(tx, row);
+    else await publishManagedMachinePolicyChangeInTx(tx, row, [input.accountId]);
 }
 
 /** Exact non-content birth lookup shared by the public read and retention edit admission. */

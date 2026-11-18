@@ -162,7 +162,8 @@ export async function requireManagedMachineAccessInTx(tx: Tx,
 }
 /** Only explicit admitted requester identity grants creation-scoped access. */
 export function isManagedMachineCreator(row: Pick<StoredManagedMachine, 'admittedInput'>, actorAccountId: string): boolean {
-    return readManagedAdmissionState(row.admittedInput).enrollmentAccountId === actorAccountId;
+    const admission = readManagedAdmissionState(row.admittedInput);
+    return admission.enrollmentAccountId === actorAccountId && !admission.resourceBoundSessionEnded;
 }
 /** Creation recovery/cancellation does not grant native power or controller management. */
 export async function requireManagedCreationAccessInTx(tx: Tx,

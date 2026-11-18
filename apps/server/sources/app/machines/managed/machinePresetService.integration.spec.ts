@@ -32,6 +32,8 @@ import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
+import { validateManagedCreationBirthInTx } from './managedCreationBirth';
+import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
 import { admitManagedControl, reportManagedAcquire, reportManagedIntent, reportManagedResize, submitManagedAcquire } from './managedMutations';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -1538,6 +1540,35 @@ describe("Machine preset relational owner", () => {
             input: { ...request.input, requestId: 'opaque-snapshot-after-archive',
                 input: { ...request.input.input, selection: { kind: 'preset', homeId, id, revision: 2 } } },
         })).rejects.toMatchObject({ code: 'preset_archived' });
+    });
+
+    it('requires fresh acquisition before a member can birth another Session on a kept guest', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(owner.id, homeId);
+        const id = 'preset-member-local-reuse';
+        expect((await requestPreset(owner.id, 'create', taggedPlainPreset({ id, homeId,
+            owner: { kind: 'account', accountId: owner.id }, name: 'Kept member guest', privateFields: { launch },
+            controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }))).statusCode).toBe(200);
+        // The Home's signed Session child supplies the installed controller's Machine policy admission.
+        const request = (requestId: string) => ({ custodianAccountId: owner.id, requesterAccountId: member.id,
+            machinePolicySandbox: true as const, requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false,
+                acquisitionMode: 'resource-bound' as const, reuseIdle: true as const,
+                input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller } } });
+        const firstRequest = request('member-local-first');
+        const first = await admitManagedAcquire(firstRequest);
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: { allocation: 'bound' } });
+        const birth = { homeId, managedId: first.machine.id, controller };
+        const admitBirth = () => inTx(tx => validateManagedCreationBirthInTx(tx, { accountId: member.id, birth }));
+        expect(await admitBirth()).not.toBe(false);
+        const session = await db.session.create({ data: { accountId: member.id, tag: 'member-local-session', metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: first.machine.id } });
+        await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: session.id, wasArchived: false, archivedAt: new Date() }));
+        expect(await admitManagedAcquire(firstRequest)).toMatchObject({ replayed: true, machine: { id: first.machine.id } });
+        expect(await admitBirth()).toBe(false);
+        expect(await admitManagedAcquire(request('member-local-next'))).toMatchObject({ machine: { id: first.machine.id } });
+        expect(await admitBirth()).not.toBe(false);
     });
 
     it('reuses only an unoccupied kept local resource from the same custodian and preset configuration', async () => {

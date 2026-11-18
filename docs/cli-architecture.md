@@ -1417,9 +1417,12 @@ preset. Home binds acquisition to the signed Session child and its exact
 controller, and the member remains the Session requester.
 Retry retains that mode and resource identity. Shared-kept selection uses the
 existing managed row and Session association, scoped to the same custody, preset
-revision and controller. A nonarchived Session keeps its association occupied;
-archiving releases it. The atomic Session birth owns the exclusive association
-before target installation or execution.
+revision and controller. A nonarchived Session keeps its association occupied.
+Archiving or deleting the final Session on a Can-use member's guest releases the
+member's birth binding. A new acquisition may rebind the held guest after
+admission. Retrying the original acquisition cannot restore the binding.
+The atomic Session birth owns the exclusive association before target
+installation or execution.
 
 Provisioner `sessionPlacement` supplies locality and native-sandbox support;
 billing and transport do not. Providers' `resolveManagedAgentSandbox` consumes

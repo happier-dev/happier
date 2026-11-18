@@ -771,6 +771,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
                 const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision,
                     creationState: row.creationState,
                     launch: { equals: readManagedJsonEqualityOperand(row.launch) },
+                    admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) },
                 }, data: {
                     allocation: "bound",
                     resource: getActivePrismaRuntime().DbNull,
@@ -792,7 +793,8 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             if (row.allocation !== "may-exist") throw new ManagedMachineError("intent_changed");
             const result = canonical.result;
             const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision,
-                creationState: row.creationState, allocation: "may-exist", launch: { equals: readManagedJsonEqualityOperand(row.launch) } }, data: {
+                creationState: row.creationState, allocation: "may-exist", launch: { equals: readManagedJsonEqualityOperand(row.launch) },
+                admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } }, data: {
                 launch: replacementLaunch,
                 admittedInput: nextAdmission,
                 resource: getActivePrismaRuntime().DbNull,
@@ -828,7 +830,9 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             const projected = ManagedMachineV1Schema.parse(parsed.data);
             if (row.resource !== null && !sameManagedInput(current.resource, projected.resource)) throw new ManagedMachineError("resource_mismatch");
             if (canonical.bootstrapInstalled && current.bootstrapInstalled && !canonical.observation) return { machine: current };
-            const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: row.creationState }, data: {
+            const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: row.creationState,
+                ...(canonical.bootstrapInstalled ? { admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } } : {}),
+            }, data: {
                 allocation: "bound", resource: projected.resource,
                 ...factsUpdate,
                 ...(canonical.bootstrapInstalled ? { admittedInput: markManagedBootstrapInstalled(row.admittedInput) } : {}),

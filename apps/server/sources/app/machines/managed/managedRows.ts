@@ -137,6 +137,7 @@ const StoredManagedAdmissionSchema = z.strictObject({
     guestCli: z.optional(GuestCliIdentityV1Schema),
     acquisitionMode: z.optional(z.literal('resource-bound')),
     reuseIdle: z.optional(z.literal(true)),
+    resourceBoundSessionEnded: z.optional(z.literal(true)),
     bootstrapInstalled: z.optional(z.literal(true)),
     creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema),
     enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
@@ -704,6 +705,12 @@ export async function readManagedMachinePolicyPublicationAudienceInTx(tx: Tx, ro
         resourceAccountIds: [...new Set([...recipients, ...(creatorAccountId ? [creatorAccountId] : [])])] };
 }
 
+export async function publishManagedMachinePolicyChangeInTx(tx: Tx,
+    row: Pick<StoredManagedMachine, 'id' | 'controllerMachineId'>, accountIds: readonly string[]): Promise<void> {
+    await markAccountsChanged(tx, { accountIds, kind: 'account', entityId: row.id,
+        hint: { managedMachinePolicy: true, ...(row.controllerMachineId ? { machineId: row.controllerMachineId } : {}) } satisfies ManagedMachinePolicyChangeHintV1 });
+}
+
 export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<void> {
     const { controllerAccountIds, resourceAccountIds, controllerReplaced, children } = await fenceManagedMachinePublicationInTx(tx, async () => {
         const fresh = await tx.managedMachine.findUnique({ where: { id: row.id } });
@@ -733,8 +740,7 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
         return { accountIds: [...resourceAccountIds, ...children.flatMap(child => child.accountIds)], controllerAccountIds, resourceAccountIds,
             controllerReplaced: fresh !== null && fresh.controllerMachineId !== row.controllerMachineId, children };
     });
-    await markAccountsChanged(tx, { accountIds: resourceAccountIds, kind: "account", entityId: row.id,
-        hint: { managedMachinePolicy: true, ...(row.controllerMachineId ? { machineId: row.controllerMachineId } : {}) } satisfies ManagedMachinePolicyChangeHintV1 });
+    await publishManagedMachinePolicyChangeInTx(tx, row, resourceAccountIds);
     // Old/new controller publications coalesce at the same Account-row key.
     // Retain the former controller's retirement wake under its own Machine key.
     if (controllerReplaced && row.controllerMachineId) await markAccountsChanged(tx, {
