@@ -16,6 +16,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { deriveActionChildRequestIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
@@ -41,6 +42,7 @@ const { useMountedActionExecution } = await import('@/components/approvals/useMo
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { t } = await import('@/text');
+const { Modal } = await import('@/modal');
 const { Pressable } = await import('react-native');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
 const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
@@ -219,14 +221,28 @@ it('refuses agent self-approval on legacy Give a copy despite explicit Allow, an
     await act(async () => { agentController.abort(); });
     expect(await invocation).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
     const artifactsBeforeTouch = homes.artifacts(serverId).list().map(row => row.id).sort();
+    vi.mocked(Modal.confirm).mockClear();
+    // The native presenter is a system boundary. Hold its answer so opening
+    // the editor without waiting for the person's confirmation is observable.
+    let answerConfirmation: ((confirmed: boolean) => void) | undefined;
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { answerConfirmation = resolve; }));
     phase = 'touch-open';
     await screen.pressByTestIdAsync('legacy-give-copy');
     // Explicit UI Ask uses native confirmation (docs/actions.md), not a second
     // approval Artifact that an agent could decide on the person's behalf.
     phase = 'await-native-confirmation';
+    await waitForHomeGovernance(() => expect(vi.mocked(Modal.confirm).mock.calls.length > 0
+        || (templatePane?.details.tabs.length ?? 0) > 0).toBe(true));
+    expect(Modal.confirm).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Modal.confirm).mock.calls[0]?.[0]).toContain(getActionSpec('template.open').title);
+    expect(templatePane?.details.tabs ?? []).toEqual([]);
+    expect(homes.artifacts(serverId).list().map(row => row.id).sort()).toEqual(artifactsBeforeTouch);
+    phase = 'confirm-touch';
+    await act(async () => { answerConfirmation!(true); });
     await waitForHomeGovernance(() => expect(templatePane?.details.tabs).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'bot-template.editor', resource: { kind: 'bot-template.editor', serverId, artifactId } }),
     ])));
+    expect(Modal.confirm).toHaveBeenCalledTimes(1);
     expect(homes.artifacts(serverId).list().map(row => row.id).sort()).toEqual(artifactsBeforeTouch);
     expect(readApproval().status).toBe('open');
     await screen.unmount();
