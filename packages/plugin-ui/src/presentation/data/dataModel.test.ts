@@ -182,5 +182,7 @@ describe('one duration in every reader', () => {
     expect(formatHappierDuration(1420, 'en')).toBe('1.42 sec');
     expect(formatHappierDuration(1400, 'en')).toBe('1.40 sec');
     expect(formatHappierDuration(12_000, 'en')).toBe('12.0 sec');
+    expect(formatHappierDuration(999.6, 'en')).toBe('1.00 sec');
+    expect(formatHappierDuration(999.4, 'en')).toBe('999 ms');
   });
 });

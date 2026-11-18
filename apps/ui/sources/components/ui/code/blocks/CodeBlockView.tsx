@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
 import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlighting/evaluateCodeHighlightingBudget';
-import { CodeBlockViewFrame } from './CodeBlockViewFrame';
+import { CODE_BLOCK_LINE_HEIGHT, CodeBlockViewFrame } from './CodeBlockViewFrame';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { Text } from '@/components/ui/text/Text';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
@@ -62,7 +62,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 const newline = code.indexOf('\n', lineOffset);
                 lineOffset = newline < 0 ? code.length : newline + 1;
                 return (
-                    <View key={index} style={{ minHeight: 20 }}>
+                    <View key={index} style={{ minHeight: CODE_BLOCK_LINE_HEIGHT }}>
                         {shouldHighlight ? (
                             <SimpleSyntaxHighlighter
                                 code={line}
@@ -77,7 +77,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                                 style={{
                                     fontFamily: resolveCodeMonoFontFamily(),
                                     fontSize: 14,
-                                    lineHeight: 20,
+                                    lineHeight: CODE_BLOCK_LINE_HEIGHT,
                                     color: theme.colors.text.primary,
                                     flexShrink: wrap ? undefined : 0,
                                 }}

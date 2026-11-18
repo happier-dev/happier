@@ -27,7 +27,7 @@ export type CodeBlockViewFrameProps = Readonly<{
     children: React.ReactNode;
 }>;
 
-/** The code line height both code views set; marked bands sit on it. */
+/** The code line height: both code views set it, and marked bands sit on it. */
 export const CODE_BLOCK_LINE_HEIGHT = 20;
 /** The code's own horizontal padding inside the well. */
 const CODE_PADDING_HORIZONTAL = 12;
@@ -139,9 +139,10 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                     testID={scrollTestID}
                     showsHorizontalScrollIndicator={false}
                     style={[styles.scroll, besideOverlaidCopy, themeSurfaceStyles.surface({ surface: 'code-block', part: 'body', state: 'default' })]}
-                    contentContainerStyle={contentPaddingStyle}
+                    // A marked block's content is at least the well's width, so its band runs edge to edge past short lines.
+                    contentContainerStyle={marked ? [contentPaddingStyle, styles.markedContent] : contentPaddingStyle}
                 >
-                    {marked ? <View>{marked}{children}</View> : children}
+                    {marked ? <View style={styles.markedBody}>{marked}{children}</View> : children}
                 </HorizontalOverflowScrollView>
             )}
         </View>
@@ -149,6 +150,13 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
 });
 
 const styles = StyleSheet.create((theme) => ({
+    markedContent: {
+        flexGrow: 1,
+        minWidth: '100%',
+    },
+    markedBody: {
+        flexGrow: 1,
+    },
     markedLines: {
         position: 'absolute',
         top: 0,

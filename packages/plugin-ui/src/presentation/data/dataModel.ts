@@ -48,7 +48,8 @@ export function formatHappierDataValue(value: HappierDataValue | null, locale?: 
  */
 export function formatHappierDuration(ms: number, locale?: string): string {
   const locales = locale === undefined ? undefined : [locale];
-  if (Math.abs(ms) < 1000) {
+  // Rounded first, so 999.6 ms reads "1.00 sec" rather than "1,000 ms".
+  if (Math.abs(Math.round(ms)) < 1000) {
     return new Intl.NumberFormat(locales, { style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 })
       .format(Math.round(ms));
   }

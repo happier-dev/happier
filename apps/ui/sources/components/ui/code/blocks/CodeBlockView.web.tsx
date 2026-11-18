@@ -14,7 +14,7 @@ import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 
 import type { CodeBlockViewProps } from './codeBlockViewTypes';
-import { CodeBlockViewFrame } from './CodeBlockViewFrame';
+import { CODE_BLOCK_LINE_HEIGHT, CodeBlockViewFrame } from './CodeBlockViewFrame';
 
 // A browser also breaks a line after a hyphen, which splits `--bind` into `-` and `-bind`. Each word is
 // one unbreakable unit, so a wrapped command breaks only at whitespace; a word wider than the block still folds.
@@ -132,7 +132,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                             {
                                 fontFamily: resolveCodeMonoFontFamily(),
                                 fontSize: 14,
-                                lineHeight: 20,
+                                lineHeight: CODE_BLOCK_LINE_HEIGHT,
                                 color: theme.colors.text.primary,
                     },
                     webWhitespaceStyle,
@@ -172,7 +172,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 {
                     fontFamily: resolveCodeMonoFontFamily(),
                     fontSize: 14,
-                    lineHeight: 20,
+                    lineHeight: CODE_BLOCK_LINE_HEIGHT,
                     color: theme.colors.text.primary,
                 },
                 webWhitespaceStyle,

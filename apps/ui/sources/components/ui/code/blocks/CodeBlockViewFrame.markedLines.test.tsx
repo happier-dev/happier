@@ -34,6 +34,9 @@ describe('CodeBlockViewFrame marked lines', () => {
         expect(style.top).toBe(2 * CODE_BLOCK_LINE_HEIGHT);
         expect(style.height).toBe(CODE_BLOCK_LINE_HEIGHT);
         expect(style.backgroundColor).toBe(useUnistyles().theme.colors.state.danger.background);
+        // The scrolled content spans at least the well, so the band reaches its edge past a short line.
+        const spanning = screen.tree.root.findAll((node) => flatten(node.props?.contentContainerStyle).minWidth === '100%');
+        expect(spanning.length).toBeGreaterThan(0);
         // A wrapped block has no one-line rows to place a band on.
         const wrapped = await renderScreen(<CodeBlockViewFrame code={'40 a'} wrap showHeaderRow={false} scrollTestID="wrapped" markedLines={[1]}>
             <React.Fragment>code</React.Fragment>
