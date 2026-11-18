@@ -548,12 +548,14 @@ function DiscussionsListReady(props: Readonly<{
                 }
                 return (
                     <View style={styles.paneInvite}>
+                        {/* A section of the People pane, not its hero (lab P1-CP "None yet"): one quiet line under the
+                            section header, so Follow and Access keep their place instead of sitting under a centered card. */}
                         <SurfaceStateCard
                             testID="session-conversations-empty"
                             kind="empty"
+                            size="line"
                             iconName="chat-circle"
                             title={t('session.collaboration.pane.inviteTitle')}
-                            reason={t('session.collaboration.pane.inviteBody')}
                             action={{ label: t('session.collaboration.discussion.newDiscussion'), onPress: openNewDiscussion }}
                         />
                     </View>
