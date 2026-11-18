@@ -41,8 +41,9 @@ describe('CLI Account opaque preset native roles', () => {
     it.each([
         { originalMachineId: undefined, member: false },
         { originalMachineId: 'original-host', member: false },
+        { originalMachineId: 'original-host', member: false, replay: true },
         { originalMachineId: 'original-host', member: true },
-    ])('runs original-host Archive cleanup only with retained custodian placement ($originalMachineId/member=$member)', async ({ originalMachineId, member }) => {
+    ])('runs original-host Archive cleanup only with retained custodian placement ($originalMachineId/member=$member)', async ({ originalMachineId, member, replay }) => {
         const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
         const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
             bundled: createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-machine-lima', manifest }) });
@@ -61,7 +62,7 @@ describe('CLI Account opaque preset native roles', () => {
                     { action: { pluginId: launch.provider.pluginId, localId: provisioner.preparation!.actions.destroy }, role: 'preparationDestroy' }],
                 executeAdmittedAction: async ({ context }) => {
                     const invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
-                        provisioner, selected, context, requestId, credentialConfigurations, ...{ originalMachineId } });
+                        provisioner, selected, context, requestId, credentialConfigurations, ...{ originalMachineId, executingMachineId: 'original-host' } });
                     await invoke('preparationInspect', { nativeOperation: { native: 'original-image' } });
                     await invoke('preparationDestroy', { nativeOperation: { native: 'original-image' } });
                     return { ok: true, result: { kind: 'refused', code: 'managed_not_found' } };
@@ -81,7 +82,8 @@ describe('CLI Account opaque preset native roles', () => {
         });
         const result = await executor.execute('machines.presets.archive', archiveInput, {
             surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: member ? 'member' : 'owner',
-            runtimeActionMachineId: 'original-host',
+            // Approved replay rebuilds Account context without this host-only field.
+            ...(replay ? {} : { runtimeActionMachineId: 'original-host' }),
             ...(member ? { externalActionTarget: { kind: 'machine' as const, machineId: 'original-host' } } : {}),
             ...(member ? { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
                 v: 1, token: 'member-archive-admission', binding: { accountId: 'member', custodianAccountId: 'owner',

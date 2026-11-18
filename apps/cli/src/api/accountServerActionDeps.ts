@@ -238,6 +238,8 @@ async function executeAccountSecurityGet<TOutputSchema extends z.ZodMiniType>(
  */
 export function createAccountServerActionDeps(input: Readonly<{
   token: string;
+  /** Executing host identity captured by the daemon, retained across approval replay. */
+  machineId?: string;
   /** Called immediately before a Home Action request is handed to Axios. */
   onRequestIssued?: () => void;
   /** Existing Machine installation key used only for Home-authorized external Action requests. */
@@ -1084,7 +1086,7 @@ export function createAccountServerActionDeps(input: Readonly<{
     },
     machinePresetArchive: async request => executeCliMachinePresetArchive(request, {
       credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
-      serverUrl: serverHttpBaseUrl, transport: deps.machinePresetAction!,
+      serverUrl: serverHttpBaseUrl, executingMachineId: input.machineId, transport: deps.machinePresetAction!,
       readPreparationCleanupHost: async ({ machineId, context, signal }) => {
         const authorization = context.externalActionExecutionAuthorization;
         // The canonical header owner refuses an external credential without its

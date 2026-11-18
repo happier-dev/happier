@@ -15,7 +15,7 @@ import { createManagedPresetHydrator } from './presetHydration';
 
 /** Archive spends its admitted parent through retained native cleanup and the final row CAS. */
 export async function executeCliMachinePresetArchive(request: Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0],
-    host: Readonly<{ credentials: StoredCredentials; serverUrl: string;
+    host: Readonly<{ credentials: StoredCredentials; serverUrl: string; executingMachineId?: string;
         readPreparationCleanupHost?: (input: Readonly<{ machineId: string; context: ActionExecutorContext; signal?: AbortSignal }>) =>
             ReturnType<typeof readCurrentAccountMachinePreparationCleanupHost>;
         transport: NonNullable<ActionExecutorDeps['machinePresetAction']> }>) {
@@ -60,6 +60,7 @@ export async function executeCliMachinePresetArchive(request: Parameters<NonNull
                 if (!cleanupUnavailable) invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
                     credentialConfigurations: prepared.binding.credentialConfigurations, provisioner: provisioner.data,
                     originalMachineId: prepared.binding.machineId, originalHost: cleanupHost?.host,
+                    executingMachineId: host.executingMachineId,
                     selected, context, signal, requestId: context.actionRequestId ?? prepared.operationId });
             }
             let first = true;

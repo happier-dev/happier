@@ -40,6 +40,8 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     requestId: string;
     /** Retained Prepare placement; missing legacy placement cannot select a Machine effect. */
     originalMachineId?: string;
+    /** Host-captured identity; approval replay does not reconstruct it from caller context. */
+    executingMachineId?: string;
     /** Requester-visible publication from Archive's existing original-host read. */
     originalHost?: Pick<CurrentAccountMachineInventoryItem, 'id' | 'access'>;
 }>): ManagedNativeInvocation {
@@ -60,7 +62,7 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
                 nativeErrorReason: 'prepared_image_custodian_required', httpStatus: null } });
     }
     return createAccountNativeInvocation({ ...input, useReviewedParent: true,
-        originalPreparation: { machineId: input.originalMachineId } });
+        originalPreparation: { machineId: input.originalMachineId, executingMachineId: input.executingMachineId } });
 }
 
 function createAccountNativeInvocation(input: Readonly<{
@@ -73,7 +75,7 @@ function createAccountNativeInvocation(input: Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
     requestId: string;
-    originalPreparation?: Readonly<{ machineId?: string }>;
+    originalPreparation?: Readonly<{ machineId?: string; executingMachineId?: string }>;
 }>): ManagedNativeInvocation {
     const { launch, provisioner, selected } = input;
     const reviewedParent = input.useReviewedParent ? readHostAdmittedReviewedParentV1(input.context.hostReviewedChild) : null;
@@ -85,7 +87,7 @@ function createAccountNativeInvocation(input: Readonly<{
         const declaration = selected.manifest.contributes.actions.find(action => action.id === localId);
         if (!declaration) throw new ManagedMachineControllerError('provider_unavailable');
         if (input.originalPreparation && declaration.execution?.target !== 'account') {
-            const machineId = input.context.runtimeActionMachineId ?? input.context.externalActionExecutionAuthorization?.binding.machineId;
+            const machineId = input.originalPreparation.executingMachineId;
             // Cross-host routing waits for Home's original-placement admission. Never substitute today's controller.
             if (!input.originalPreparation.machineId || input.originalPreparation.machineId !== machineId) {
                 throw createActionExecuteFailureError({ ok: false,

@@ -1093,6 +1093,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     });
     const accountServerActionDeps = createAccountServerActionDeps({
       token: credentials.token,
+      ...(params.machineId ? { machineId: params.machineId } : {}),
       ...(params.onAccountServerRequestIssued ? { onRequestIssued: params.onAccountServerRequestIssued } : {}),
       credentials,
       ...fixedHome,
