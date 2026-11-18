@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineIsolationGetResultV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
+import type { SessionProjectFilesSourceV1, SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -12,6 +13,7 @@ import { Typography } from '@/constants/Typography';
 import type { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
 import { isOpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { t } from '@/text';
+import { ProjectFilesOutcomeChoice } from './ProjectFilesOutcomeChoice';
 
 const NO_SERVERS: readonly string[] = Object.freeze([]);
 
@@ -47,6 +49,16 @@ export function SessionIsolationOutcomeLine(
     /** The chosen Machine is offline: the draft waits, and the line says what happens once it is back. */
     offline?: boolean;
     onOverrideChange?: (value: 'directly' | undefined) => void;
+    /**
+     * The per-Session Project files choice (lab F2): a fresh sandbox's line then leads with what happens to the
+     * folder, and that verb phrase opens the choice. Hosts that start no Session omit it.
+     */
+    projectFiles?: Readonly<{
+      /** The folder whose files go in; absent before one is chosen. */
+      source: SessionProjectFilesSourceV1 | undefined;
+      override: SessionProjectFilesV1 | undefined;
+      onChange: (value: SessionProjectFilesV1 | undefined) => void;
+    }>;
     testID?: string;
   }>,
 ): React.ReactElement | null {
@@ -116,13 +128,29 @@ export function SessionIsolationOutcomeLine(
       />
     );
   const name = preset?.name ?? t('machineDetailPage.isolation.summary.unnamed');
-  const text =
-    outcome.choice.lifecycle === 'fresh'
+  // A fresh sandbox gets the folder's files: the line says how first, and that phrase changes it for this Session.
+  const projectFiles = outcome.choice.lifecycle === 'fresh' ? props.projectFiles : undefined;
+  const effective = projectFiles ? projectFiles.override ?? preset?.projectFiles : undefined;
+  const text = projectFiles
+    ? effective?.kind === 'sync' && effective.mode === 'keep_both_in_sync'
+      ? t('machineDetailPage.projectFiles.withFresh', { name, machine })
+      : t('machineDetailPage.projectFiles.intoFresh', { name, machine })
+    : outcome.choice.lifecycle === 'fresh'
       ? t('machineDetailPage.isolation.outcome.fresh', { name, machine })
       : t('machineDetailPage.isolation.outcome.kept', { name, machine });
   return (
     <OutcomeRow
       testID={testID}
+      lead={projectFiles ? (
+        <ProjectFilesOutcomeChoice
+          testID={`${testID}.project-files`}
+          source={projectFiles.source}
+          presetDefault={preset?.projectFiles}
+          override={projectFiles.override}
+          onChange={projectFiles.onChange}
+          preset={preset && props.serverId ? { serverId: props.serverId, id: preset.id, name: preset.name } : null}
+        />
+      ) : undefined}
       // The sandbox's own mark, as the Isolation page draws it; a preset not read yet takes the generic one.
       mark={preset && props.serverId ? <ManagedPresetMark serverId={props.serverId} preset={preset} size={OUTCOME_MARK_SIZE} /> : undefined}
       glyph="cube"
@@ -165,6 +193,8 @@ function OutcomeRow(
   props: Readonly<{
     testID: string;
     text: string;
+    /** A control that reads as the sentence's first words (the Project files verb phrase). */
+    lead?: React.ReactNode;
     glyph: IconName;
     mark?: React.ReactNode;
     warning?: boolean;
@@ -185,6 +215,7 @@ function OutcomeRow(
       {/* The mark keeps its column; the sentence and its link wrap beside it, so a narrow field (a workflow's
           Machine) never drops the sentence under a lone mark. */}
       <View style={styles.body}>
+        {props.lead}
         <Text style={props.warning ? styles.warning : styles.text}>
           {props.text}
         </Text>

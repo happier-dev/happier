@@ -14,6 +14,7 @@ import type { NewSessionScreenModel } from '../newSessionScreenModelTypes';
 const STEP_LABEL = {
   create: () => t('machineDetailPage.isolation.progress.create'),
   install: () => t('machineDetailPage.isolation.progress.install'),
+  copy: () => t('machineDetailPage.projectFiles.copying'),
   setup: () => t('machineDetailPage.isolation.progress.setup'),
   ready: () => t('machineDetailPage.isolation.progress.ready'),
 } as const;
@@ -29,7 +30,9 @@ export function buildSessionIsolationProgressBadge(
   const progress = isolation?.progress;
   if (!progress || progress.kind !== 'session_starting') return null;
   const machine = isolation.machineName ?? t('common.machine');
-  const described = describeManagedCreationProgress(machine, progress);
+  // A Session with a folder gets its files before Setup runs (lab F6).
+  const described = describeManagedCreationProgress(machine, progress,
+    { projectFiles: isolation.projectFilesOutcome?.source !== undefined });
   if (described.steps.length === 0) return null;
   const stages: ManagedProgressModel['stages'] = described.steps.map(
     (step) => ({

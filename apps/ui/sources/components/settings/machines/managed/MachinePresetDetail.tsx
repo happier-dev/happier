@@ -24,6 +24,10 @@ export type ManagedFieldChoice = Readonly<{
   id: string;
   title: string;
   subtitle?: string;
+  /** A designation beside the choice's check ("Default", "Advanced"). */
+  rightElement?: React.ReactNode;
+  /** A choice this row cannot store right now; it stays listed so the set reads whole. */
+  disabled?: boolean;
 }>;
 
 /** A row that names what it controls and offers its choices in a bordered field (plan 51 rows). */
@@ -35,6 +39,8 @@ export type ManagedFieldRowModel = Readonly<{
   value?: string | null;
   onChange?: (id: string) => void;
   disabled?: boolean;
+  /** One quiet line under the row's description, for a consequence of the current choice. */
+  note?: React.ReactNode;
 }>;
 
 export type ManagedLinkedMachine = Readonly<{
@@ -89,6 +95,8 @@ export type MachinePresetDetailModel = Readonly<{
   onArchive?: () => void;
   archivePending?: boolean;
   notice?: React.ReactNode;
+  /** "Project files", right after Setup: how each new machine gets the session's folder (lab F1). */
+  projectFiles?: React.ReactNode;
   /** "Prepare ahead", right after Setup because it bakes that setup; absent unless the preset keeps an image. */
   prepare?: React.ReactNode;
 }>;
@@ -167,6 +175,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         scope={model.setup.scope}
         onEdit={model.setup.onEdit}
       />
+      {model.projectFiles ?? null}
       {model.prepare ?? null}
       {model.controller ? (
         <ItemGroup
@@ -324,6 +333,7 @@ export function ManagedFieldRow(
         icon={row.leading}
         mode="info"
         showChevron={false}
+        {...(row.note ? { subtitleAccessory: row.note } : {})}
       />
     );
   }
@@ -348,12 +358,15 @@ export function ManagedFieldRow(
           accessoryLayout: 'adaptive',
           disabled: row.disabled,
           subtitleLines: 0,
+          ...(row.note ? { subtitleAccessory: row.note } : {}),
         },
       }}
       items={row.choices.map((choice) => ({
         id: managedFieldChoiceId(choice.id),
         title: choice.title,
         subtitle: choice.subtitle,
+        ...(choice.rightElement ? { rightElement: choice.rightElement } : {}),
+        ...(choice.disabled ? { disabled: true } : {}),
       }))}
       onSelect={(id) => {
         setOpen(false);

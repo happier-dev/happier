@@ -93,14 +93,18 @@ export function createManagedCpuOptionsFixture(sizes: readonly Readonly<{
 export function createPlainManagedMachinePresetFixture(input: Readonly<{
     id: string; homeId: string; revision: number; name: string; owner: ManagedMachinePresetV1['owner'];
     launch?: ManagedMachinePresetContentV1['launch']; setup?: ManagedMachinePresetContentV1['setup'];
+    preparation?: ManagedMachinePresetContentV1['preparation'];
+    projectFiles?: ManagedMachinePresetContentV1['projectFiles'];
     controller?: ManagedMachinePresetV1['controller']; controllerPoolId?: ManagedMachinePresetV1['controllerPoolId'];
     retention?: ManagedMachinePresetV1['retention']; wakeOnAcceptedMessage?: boolean; archivedAt?: number;
     controllerDisplayName?: ManagedMachinePresetContentV1['controllerDisplayName'];
     teamAcquireDelegated?: ManagedMachinePresetV1['teamAcquireDelegated']; simultaneousLimit?: ManagedMachinePresetV1['simultaneousLimit'];
 }>) {
-    const { name, launch, setup, controllerDisplayName, ...structural } = input;
+    const { name, launch, setup, preparation, projectFiles, controllerDisplayName, ...structural } = input;
     const content = ManagedMachinePresetContentV1Schema.parse({ v: 1, name,
         ...(launch ? { launch } : {}), ...(setup ? { setup } : {}),
+        ...(preparation === undefined ? {} : { preparation }),
+        ...(projectFiles === undefined ? {} : { projectFiles }),
         ...(controllerDisplayName === undefined ? {} : { controllerDisplayName }) });
     const sealed = sealManagedMachinePresetContentV1({ presetId: input.id, mode: 'plain', content });
     const wire = ManagedMachinePresetV1Schema.parse({ ...structural,

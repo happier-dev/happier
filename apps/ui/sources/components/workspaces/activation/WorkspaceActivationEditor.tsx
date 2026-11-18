@@ -71,7 +71,8 @@ export function WorkspaceActivationModeField(props: Readonly<{
             title: props.title,
             subtitle: props.subtitle,
             ...(props.icon ? { icon: props.icon } : {}),
-            itemProps: { disabled: props.disabled, ...(props.testID ? { testID: props.testID } : {}) },
+            // A field select sits beside its label while there is room and moves beneath it on a phone.
+            itemProps: { accessoryLayout: 'adaptive', disabled: props.disabled, ...(props.testID ? { testID: props.testID } : {}) },
         }}
         items={props.items}
         onSelect={(id) => { if (!props.disabled) props.onSelect(id); }}
@@ -85,6 +86,8 @@ type WorkspaceActivationContentPolicyProps = Readonly<{
     onIncludeIgnoredModeChange: (value: 'exclude' | 'include_selected') => void;
     patternsDraft: string;
     onPatternsDraftChange: (value: string) => void;
+    /** A host that saves on its own takes the typed patterns once, when the field is left. */
+    onPatternsEndEditing?: () => void;
     disabled?: boolean;
     testIdPrefix?: string;
 }>;
@@ -123,9 +126,66 @@ export function WorkspaceActivationContentPolicyRows(props: WorkspaceActivationC
         {props.includeIgnoredMode === 'include_selected' ? <WorkspaceSyncIgnoredIncludePatternsField
             value={props.patternsDraft}
             onChangeText={props.onPatternsDraftChange}
+            onEndEditing={props.onPatternsEndEditing}
             editable={!props.disabled}
         /> : null}
     </>;
+}
+
+/**
+ * The rows' draft for a host that owns one content policy: the ignored-files mode and the typed patterns stay
+ * local until they make a policy, which `onChange` receives with its digest. A host that saves on its own
+ * (`commitPatterns: 'endEditing'`) takes the patterns when the field is left, not on every keystroke.
+ */
+export function useWorkspaceContentPolicyRows(input: Readonly<{
+    policy: WorkspaceContentPolicyV1 | null;
+    onChange: (policy: WorkspaceContentPolicyV1) => void;
+    commitPatterns?: 'change' | 'endEditing';
+    disabled?: boolean;
+    testIdPrefix?: string;
+}>): WorkspaceActivationContentPolicyProps | null {
+    const policy = input.policy;
+    const hasIncludes = Boolean(policy?.extraIncludePatterns.length);
+    const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>(hasIncludes ? 'include_selected' : 'exclude');
+    const [patternsDraft, setPatternsDraft] = React.useState(() => policy?.extraIncludePatterns.join(', ') ?? '');
+    const patterns = policy?.extraIncludePatterns;
+    React.useEffect(() => { setIncludeIgnoredMode(hasIncludes ? 'include_selected' : 'exclude'); }, [hasIncludes]);
+    React.useEffect(() => {
+        setPatternsDraft(current => {
+            const parsed = parseSessionHandoffIgnoredIncludeGlobs(current);
+            return parsed.length === (patterns?.length ?? 0) && parsed.every((value, index) => value === patterns?.[index])
+                ? current : patterns?.join(', ') ?? '';
+        });
+    }, [patterns]);
+    if (!policy) return null;
+    const updatePolicy = (patch: Partial<Omit<WorkspaceContentPolicyV1, 'policyDigest'>>) => {
+        const { policyDigest: _digest, ...current } = policy;
+        const next = { ...current, ...patch };
+        input.onChange({ ...next, policyDigest: computeWorkspaceSyncPolicyDigest(next) });
+    };
+    const commitOnEnd = input.commitPatterns === 'endEditing';
+    return {
+        contentSelection: policy.selection,
+        onContentSelectionChange: selection => updatePolicy({ selection }),
+        includeIgnoredMode,
+        onIncludeIgnoredModeChange: mode => {
+            setIncludeIgnoredMode(mode);
+            updatePolicy({ extraIncludePatterns: mode === 'include_selected' ? parseSessionHandoffIgnoredIncludeGlobs(patternsDraft) : [] });
+        },
+        patternsDraft,
+        onPatternsDraftChange: value => {
+            setPatternsDraft(value);
+            if (!commitOnEnd) updatePolicy({ extraIncludePatterns: parseSessionHandoffIgnoredIncludeGlobs(value) });
+        },
+        ...(commitOnEnd ? { onPatternsEndEditing: () => {
+            const parsed = parseSessionHandoffIgnoredIncludeGlobs(patternsDraft);
+            if (parsed.length !== policy.extraIncludePatterns.length || parsed.some((value, index) => value !== policy.extraIncludePatterns[index])) {
+                updatePolicy({ extraIncludePatterns: parsed });
+            }
+        } } : {}),
+        disabled: input.disabled,
+        testIdPrefix: input.testIdPrefix,
+    };
 }
 
 /**
@@ -141,29 +201,16 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
 }>) {
     const action = props.action;
     const policy = action.kind === 'copy_once' || action.kind === 'create_relationship' ? action.contentPolicy : null;
-    const hasIncludes = Boolean(policy?.extraIncludePatterns.length);
     const [open, setOpen] = React.useState(false);
     const [filesExpanded, setFilesExpanded] = React.useState(false);
-    const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>(hasIncludes ? 'include_selected' : 'exclude');
-    const [patternsDraft, setPatternsDraft] = React.useState(() => policy?.extraIncludePatterns.join(', ') ?? '');
-    const patterns = policy?.extraIncludePatterns;
-    React.useEffect(() => { setIncludeIgnoredMode(hasIncludes ? 'include_selected' : 'exclude'); }, [hasIncludes]);
-    React.useEffect(() => {
-        setPatternsDraft(current => {
-            const parsed = parseSessionHandoffIgnoredIncludeGlobs(current);
-            return parsed.length === (patterns?.length ?? 0) && parsed.every((value, index) => value === patterns?.[index])
-                ? current : patterns?.join(', ') ?? '';
-        });
-    }, [patterns]);
+    const policyRows = useWorkspaceContentPolicyRows({ policy, disabled: props.disabled, testIdPrefix: props.testIdPrefix,
+        onChange: contentPolicy => {
+            if (action.kind === 'copy_once' || action.kind === 'create_relationship') props.onChange({ ...action, contentPolicy });
+        } });
+    const includeIgnoredMode = policyRows?.includeIgnoredMode ?? 'exclude';
     const selectedId = action.kind === 'create_relationship' ? action.mode : action.kind;
     const options = SESSION_HANDOFF_WORKSPACE_SYNC_MODE_OPTIONS.filter(option => option.id !== 'none');
     const selected = options.find(option => option.id === selectedId);
-    const updatePolicy = (patch: Partial<Omit<WorkspaceContentPolicyV1, 'policyDigest'>>) => {
-        if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return;
-        const { policyDigest: _digest, ...current } = action.contentPolicy;
-        const next = { ...current, ...patch };
-        props.onChange({ ...action, contentPolicy: { ...next, policyDigest: computeWorkspaceSyncPolicyDigest(next) } });
-    };
     const contentTitle = policy ? SESSION_HANDOFF_CONTENT_SELECTION_OPTIONS.find(option => option.id === policy.selection)?.titleKey : undefined;
     const ignoredTitle = SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS.find(option => option.id === includeIgnoredMode)!.titleKey;
     return <>
@@ -191,7 +238,7 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
                 setOpen(false);
             }}
         />
-        {policy ? <ExpandableItem
+        {policy && policyRows ? <ExpandableItem
             // The last row of its host's sheet: no hairline after it (the sheet's edge closes it).
             showDivider={false}
             expanded={filesExpanded}
@@ -201,21 +248,6 @@ export function WorkspaceActivationSyncFields(props: Readonly<{
                 title={t('projects.open.copyFiles')}
                 subtitle={[contentTitle ? t(contentTitle) : null, t(ignoredTitle)].filter(Boolean).join(' · ')}
                 showChevron />}
-        ><WorkspaceActivationContentPolicyRows
-            contentSelection={policy.selection}
-            onContentSelectionChange={selection => updatePolicy({ selection })}
-            includeIgnoredMode={includeIgnoredMode}
-            onIncludeIgnoredModeChange={mode => {
-                setIncludeIgnoredMode(mode);
-                updatePolicy({ extraIncludePatterns: mode === 'include_selected' ? parseSessionHandoffIgnoredIncludeGlobs(patternsDraft) : [] });
-            }}
-            patternsDraft={patternsDraft}
-            onPatternsDraftChange={value => {
-                setPatternsDraft(value);
-                updatePolicy({ extraIncludePatterns: parseSessionHandoffIgnoredIncludeGlobs(value) });
-            }}
-            disabled={props.disabled}
-            testIdPrefix={props.testIdPrefix}
-        /></ExpandableItem> : null}
+        ><WorkspaceActivationContentPolicyRows {...policyRows} /></ExpandableItem> : null}
     </>;
 }

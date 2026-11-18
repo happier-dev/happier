@@ -23,6 +23,8 @@ export const NoticeLine = React.memo(function NoticeLine(props: Readonly<{
     /** What the line is about (a model); it truncates first, so the title always stays readable. */
     subject?: string | null;
     title: string;
+    /** A consequence sentence wraps under its glyph instead of truncating like a status. */
+    wrap?: boolean;
     action?: Readonly<{
         testID?: string;
         label: string;
@@ -40,7 +42,7 @@ export const NoticeLine = React.memo(function NoticeLine(props: Readonly<{
             theme={presentationTheme}
             subject={props.subject}
             title={props.title}
-            renderText={renderNoticeLineText}
+            renderText={props.wrap ? renderWrappingNoticeLineText : renderNoticeLineText}
             icon={props.tooltip ? <Tooltip testID={props.tooltipTestID} label={props.tooltip}>{icon}</Tooltip> : icon}
             action={props.action ? (
                 <IconButton
@@ -60,6 +62,10 @@ export const NoticeLine = React.memo(function NoticeLine(props: Readonly<{
 });
 
 /** App `Text`, so in-app font scaling applies; the line's layout and type role stay the shared owner's. */
+const renderWrappingNoticeLineText: HappierNoticeLineTextRender = (input) => (
+    <Text testID={input.testID} style={input.style as React.ComponentProps<typeof Text>['style']}>{input.text}</Text>
+);
+
 const renderNoticeLineText: HappierNoticeLineTextRender = (input) => (
     <Text testID={input.testID} numberOfLines={1} style={input.style as React.ComponentProps<typeof Text>['style']}>{input.text}</Text>
 );

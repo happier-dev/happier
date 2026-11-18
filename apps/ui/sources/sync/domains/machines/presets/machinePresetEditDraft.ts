@@ -14,7 +14,7 @@ export type MachinePresetCreationDraft = Readonly<{ launch: NonNullable<ManagedM
     & Pick<ManagedMachinePresetV1, 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage' | 'simultaneousLimit'>;
 
 /** Editing intent, not a persisted record or an admitted creation receipt. */
-export type MachinePresetEditDraft = Readonly<Pick<ManagedMachinePresetContentV1, 'name' | 'setup'> & {
+export type MachinePresetEditDraft = Readonly<Pick<ManagedMachinePresetContentV1, 'name' | 'setup' | 'preparation' | 'projectFiles'> & {
     /** Undefined deliberately removes creation; the CRUD owner must clear both persisted fields. */
     creation?: MachinePresetCreationDraft;
 }>;
@@ -46,7 +46,9 @@ export function machinePresetEditDraftContent(draft: MachinePresetEditDraft): Pi
     return {
         privateContent: { v: 1, name: draft.name,
             ...(creation ? { launch: creation.launch } : {}),
-            ...(draft.setup === undefined ? {} : { setup: draft.setup }) },
+            ...(draft.setup === undefined ? {} : { setup: draft.setup }),
+            ...(draft.preparation === undefined ? {} : { preparation: draft.preparation }),
+            ...(draft.projectFiles === undefined ? {} : { projectFiles: draft.projectFiles }) },
         ...(creation ? {
             ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId }
                 : creation.controller ? { controller: creation.controller } : {}),

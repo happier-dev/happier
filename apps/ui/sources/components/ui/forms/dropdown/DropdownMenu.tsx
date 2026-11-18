@@ -34,6 +34,11 @@ const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
 
 /** A menu that is not tied to its trigger's width reads as a menu, not a sheet: this is its widest. */
 export const DROPDOWN_MENU_MAX_WIDTH_PX = 320;
+/**
+ * A field's menu whose rows explain themselves (a subtitle under each choice) needs room to read them: a narrow
+ * field hangs it at least this wide, from the edge facing the room (lab machine-sandboxes-1115 F1, 440).
+ */
+export const DESCRIBED_FIELD_MENU_MIN_WIDTH_PX = 440;
 
 export type DropdownMenuItem = Readonly<{
     id: string;
@@ -422,6 +427,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : DROPDOWN_MENU_MAX_WIDTH_PX);
+    const describedFieldMenu = matchTriggerWidth && menuItems.some((item) => Boolean(item.subtitle));
     // A menu is as tall as its content and the window allow (the Popover clamps to the room on its
     // side); it never cuts a list off at a fixed height. A caller's explicit cap still wins.
     const { height: windowHeight } = usePresentationWindowDimensions();
@@ -904,7 +910,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         web: props.popoverPortalWebTarget ? { target: props.popoverPortalWebTarget } : true,
                         native: true,
                         matchAnchorWidth: matchTriggerWidth,
-                        anchorAlign: props.popoverAnchorAlign,
+                        ...(describedFieldMenu ? { anchoredMinWidth: DESCRIBED_FIELD_MENU_MIN_WIDTH_PX } : {}),
+                        anchorAlign: props.popoverAnchorAlign ?? (describedFieldMenu ? 'auto' : undefined),
                         anchorAlignVertical: props.popoverAnchorAlignVertical ?? 'start',
                     }}
                     boundaryRef={props.popoverBoundaryRef}

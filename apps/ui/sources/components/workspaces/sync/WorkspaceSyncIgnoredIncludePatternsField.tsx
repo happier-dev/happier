@@ -12,6 +12,8 @@ import { t } from '@/text';
 export function WorkspaceSyncIgnoredIncludePatternsField(props: Readonly<{
     value: string;
     onChangeText: (value: string) => void;
+    /** Leaving the field: a host that saves on its own takes the patterns here. */
+    onEndEditing?: () => void;
     editable?: boolean;
     showDivider?: boolean;
 }>) {
@@ -27,6 +29,7 @@ export function WorkspaceSyncIgnoredIncludePatternsField(props: Readonly<{
                     accessibilityLabel={label}
                     value={props.value}
                     onChangeText={props.onChangeText}
+                    onBlur={props.onEndEditing}
                     placeholder={t('settingsSession.handoff.includeIgnoredMode.globsPlaceholder')}
                     monospace
                     editable={props.editable}

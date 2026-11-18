@@ -2960,6 +2960,58 @@ describe('reachable preset detail', () => {
     );
   });
 
+  it('Project files: one How files get in select and its option group save through the one editor draft, and Prepare ahead keeps them', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    let stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true },
+      projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' } });
+    harness.answer(serverId, '/v1/machines/presets/get', { select: () => ({ body: { kind: 'found', preset: stored } }) });
+    harness.answer(serverId, '/v1/machines/presets/update', { select: body => {
+      const input = body as { patch: { content?: { t: string; v: { preparation?: unknown; projectFiles?: unknown } } } };
+      stored = createPlainManagedMachinePresetFixture({ ...preset, revision: stored.revision + 1,
+        preparation: input.patch.content?.v.preparation as { enabled: boolean },
+        projectFiles: input.patch.content?.v.projectFiles as Parameters<typeof createPlainManagedMachinePresetFixture>[0]['projectFiles'] });
+      return { body: { kind: 'saved', preset: stored } };
+    } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    const saved = () => harness.requestsFor('/v1/machines/presets/update')
+      .map(request => (request.input as { patch: { content?: { v: { preparation?: unknown; projectFiles?: { kind: string; mode?: string; contentPolicy?: { selection: string } } } } } }).patch.content?.v);
+    const field = (testID: string) => screen.findAllByType(DropdownMenu)
+      .find(menu => menu.props.itemTrigger?.itemProps?.testID === testID);
+    try {
+      await waitForHomeGovernance(() => expect(field('machine-preset.project-files.how')?.props.itemTrigger?.itemProps?.disabled).toBe(false));
+      expect(field('machine-preset.project-files.how')?.props.selectedId).toBe('keep_both_in_sync');
+      // Two-way sync says the one thing it adds, and its group carries the conflict rule before the content rows.
+      expect(screen.findByTestId('machine-preset.project-files.deletions')).not.toBeNull();
+      expect(screen.findByTestId('machine-preset.project-files.conflict')).not.toBeNull();
+      // The option list marks Copy once Default and Two-way Advanced; Git clone can't be stored from the select alone.
+      const items = field('machine-preset.project-files.how')!.props.items as ReadonlyArray<{ id: string; disabled?: boolean; rightElement?: unknown }>;
+      expect(items.map(item => item.id)).toEqual(['copy_once', 'git_clone', 'keep_synced', 'keep_both_in_sync']);
+      expect(items.find(item => item.id === 'git_clone')?.disabled).toBe(true);
+      expect(items.filter(item => item.rightElement).map(item => item.id)).toEqual(['copy_once', 'keep_both_in_sync']);
+      // A Prepare ahead edit keeps the preset's Project files.
+      await act(async () => {
+        (screen.tree.findByProps({ testID: 'machine-preset.prepare.updates', testIDPrefix: 'machine-preset.prepare.updates' }).props as
+          { onChange: (next: string) => void }).onChange('rebuild-automatically');
+      });
+      await waitForHomeGovernance(() => expect(saved()).toHaveLength(1));
+      expect(saved()[0]).toMatchObject({ preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' },
+        projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' } });
+      await waitForHomeGovernance(() => expect(stored.revision).toBe(preset.revision + 1));
+      // Choosing Copy once stores it and keeps Prepare ahead.
+      await act(async () => field('machine-preset.project-files.how')!.props.onSelect('copy_once'));
+      await waitForHomeGovernance(() => expect(saved()).toHaveLength(2));
+      expect(saved()[1]).toMatchObject({ projectFiles: { kind: 'copy_once' },
+        preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' } });
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.project-files.deletions')).toBeNull());
+      // The option group's shipped content rows edit its content policy.
+      await waitForHomeGovernance(() => expect(field('machine-preset.project-files.content-content-selection-trigger')).toBeDefined());
+      await act(async () => field('machine-preset.project-files.content-content-selection-trigger')!.props.onSelect('all_files'));
+      await waitForHomeGovernance(() => expect(saved()).toHaveLength(3));
+      expect(saved()[2]).toMatchObject({ projectFiles: { kind: 'copy_once', contentPolicy: { selection: 'all_files' } } });
+    } finally { await screen.unmount(); }
+  });
+
   it('says how much storage the ready prepared image keeps', async () => {
     const serverId = await seed();
     const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');

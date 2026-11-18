@@ -6,6 +6,7 @@ import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
 
 installMachinesSettingsCommonModuleMocks();
@@ -58,6 +59,35 @@ describe('session isolation outcome line', () => {
         expect(text).toContain('machineDetailPage.isolation.outcome.offline');
         expect(text).not.toContain('machineDetailPage.isolation.outcome.fresh');
         expect(link).toBeUndefined();
+    });
+
+    it('leads a fresh sandbox with what happens to the folder; its verb phrase is the one per-Session choice', async () => {
+        const { SessionIsolationOutcomeLine } = await import('./SessionIsolationOutcomeLine');
+        const outcome = proposeMachineIsolationOutcome(stored, 'sessions') ?? undefined;
+        const onChange = vi.fn();
+        const source = { target: { serverId: 'home', machineId: 'devbox' }, directory: '/home/leeroy/code/happier' };
+        const renderLine = (override?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1) =>
+            renderScreen(React.createElement(SessionIsolationOutcomeLine, { serverId: null, machineName: 'devbox', snapshot: stored,
+                outcome, onOverrideChange: vi.fn(), projectFiles: { source, override, onChange } }));
+        const textOf = (screen: Awaited<ReturnType<typeof renderLine>>) =>
+            screen.findAllByType(Text as never).map(node => String(node.props.children)).join(' ');
+        const menuOf = (screen: Awaited<ReturnType<typeof renderLine>>) => screen.findAllByType(DropdownMenu)
+            .find(menu => menu.props.testID === 'session-isolation-outcome.project-files')!;
+        const copy = await renderLine();
+        expect(textOf(copy)).toContain('machineDetailPage.projectFiles.intoFresh');
+        expect(textOf(copy)).not.toContain('machineDetailPage.isolation.outcome.fresh');
+        // An unset preset copies once; Run directly stays beside it.
+        expect(menuOf(copy).props.selectedId).toBe('copy_once');
+        expect(findTestInstanceByTypeWithProps(copy, TextLinkButton, { testID: 'session-isolation-outcome.link' })?.props.label)
+            .toBe('machineDetailPage.isolation.outcome.runDirectlyOnce');
+        menuOf(copy).props.onSelect('keep_both_in_sync');
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'sync', mode: 'keep_both_in_sync' });
+        const twoWay = await renderLine({ kind: 'sync', mode: 'keep_both_in_sync' });
+        expect(textOf(twoWay)).toContain('machineDetailPage.projectFiles.withFresh');
+        expect(menuOf(twoWay).props.selectedId).toBe('keep_both_in_sync');
+        // Choosing the preset's own option goes back to the default rather than pinning a copy of it.
+        menuOf(twoWay).props.onSelect('copy_once');
+        expect(onChange).toHaveBeenLastCalledWith(undefined);
     });
 
     it('says the one-time override and puts the sandbox back', async () => {

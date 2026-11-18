@@ -15,15 +15,15 @@ describe('Project files authoring in the current placement', () => {
             managedMachineSelection: { selection: ManagedCreationSelectionV1Schema.parse({ kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }) },
             hydratedPlacement: { kind: 'preset', homeId: 'home', presetId: 'preset', projectFilesSource,
                 projectFiles: { kind: 'sync', mode: 'keep_both_in_sync', contentPolicy } } }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['folder', 'conflict', 'included']);
+        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['conflict', 'included']);
         expect(hook.getCurrent().projectFilesConflictMode).toBe('keep_both_in_sync');
         expect(hook.getCurrent().sessionPlacement).toMatchObject({ projectFilesSource,
             projectFiles: { kind: 'sync', mode: 'keep_both_in_sync', contentPolicy } });
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'copy_once', contentPolicy }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['folder', 'included']);
+        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['included']);
         expect(hook.getCurrent().projectFilesConflictMode).toBeUndefined();
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'sync', mode: 'keep_synced', contentPolicy }));
-        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['folder', 'included']);
+        expect(hook.getCurrent().projectFilesFieldKeys).toEqual(['included']);
         expect(hook.getCurrent().projectFilesConflictMode).toBeUndefined();
         const gitAccount = { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'work' };
         await act(async () => hook.getCurrent().onProjectFilesChange({ kind: 'git_clone', branch: 'feature/work', gitAccount,

@@ -25,6 +25,23 @@ describe('Session sandbox creation progress', () => {
     expect(presentation.steps.map(step => step.state)).toEqual(states);
   });
 
+  it('puts Copying project files before Setup, because setup needs the files (lab F6)', () => {
+    const copying = describeManagedCreationProgress('Guest', { kind: 'session_starting', operationAddress,
+      operation: { ...operation, progress: { kind: 'phase', phase: 'project_files_copy', label: 'Copying project files' } } },
+      { projectFiles: true });
+    expect(copying.steps.map(step => step.id)).toEqual(['create', 'install', 'copy', 'setup', 'ready']);
+    expect(copying.steps.map(step => step.state)).toEqual(['upcoming', 'upcoming', 'running', 'upcoming', 'upcoming']);
+    // The step is reserved from the start for a Session that gets project files, so nothing moves when it begins.
+    const creating = describeManagedCreationProgress('Guest', { kind: 'session_starting', operationAddress,
+      operation: { ...operation, progress: { kind: 'phase', phase: 'machines.managed.acquire', label: 'Creating' } } },
+      { projectFiles: true });
+    expect(creating.steps.map(step => step.id)).toEqual(['create', 'install', 'copy', 'setup', 'ready']);
+    // A Session without a folder keeps the four steps.
+    expect(describeManagedCreationProgress('Guest', { kind: 'session_starting', operationAddress,
+      operation: { ...operation, progress: { kind: 'phase', phase: 'setup', label: 'Setup' } } }).steps.map(step => step.id))
+      .toEqual(['create', 'install', 'setup', 'ready']);
+  });
+
   it('keeps Ready pending after acquisition success and completes only at Session success', () => {
     expect(describeManagedCreationProgress('Guest', { kind: 'acquiring',
       operation: { ...operation, actionId: 'machines.managed.acquire', state: 'succeeded' } }).steps).toEqual([]);

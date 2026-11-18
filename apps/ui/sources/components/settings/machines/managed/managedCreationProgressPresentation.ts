@@ -9,7 +9,7 @@ import type { ManagedMachineCreationProgress } from './managedMachineCreation';
 import type { SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
 
 export type ManagedCreationProgressStep = Readonly<{
-  id: 'create' | 'install' | 'setup' | 'ready';
+  id: 'create' | 'install' | 'copy' | 'setup' | 'ready';
   state: Extract<SetupStepState, 'done' | 'running' | 'upcoming' | 'failed'>;
 }>;
 
@@ -21,6 +21,8 @@ export type ManagedCreationProgressStep = Readonly<{
 export function describeManagedCreationProgress(
   machineName: string,
   progress: ManagedMachineCreationProgress,
+  /** The Session gets its folder's files: "Copying project files" takes its place before Setup (lab F6). */
+  options?: Readonly<{ projectFiles?: boolean }>,
 ) {
   const setup =
     progress.kind === 'setup_pending' || progress.kind === 'failed'
@@ -45,16 +47,21 @@ export function describeManagedCreationProgress(
   const steps: ManagedCreationProgressStep[] = [];
   if (progress.kind === 'session_starting') {
     const phase = operation?.progress?.kind === 'phase' ? operation.progress.phase : undefined;
-    const current = phase === 'setup' ? 2
-      : phase === 'ssh.installCli' || phase?.startsWith('ssh.installCli.') ? 1
+    // Setup needs the files, so the copy comes first; its step is reserved before it starts, so nothing moves.
+    const ids: readonly ManagedCreationProgressStep['id'][] = options?.projectFiles || phase === 'project_files_copy'
+      ? ['create', 'install', 'copy', 'setup', 'ready'] : ['create', 'install', 'setup', 'ready'];
+    const currentId: ManagedCreationProgressStep['id'] | null = phase === 'setup' ? 'setup'
+      : phase === 'project_files_copy' ? 'copy'
+      : phase === 'ssh.installCli' || phase?.startsWith('ssh.installCli.') ? 'install'
         : phase === 'machines.managed.acquire' || phase === 'native.readiness.wait'
-          || phase === 'ssh.readiness.wait' || phase === 'ssh.trust' ? 0 : -1;
+          || phase === 'ssh.readiness.wait' || phase === 'ssh.trust' ? 'create' : null;
+    const current = currentId ? ids.indexOf(currentId) : -1;
     // Only the observed phase is claimed: earlier effects may have been skipped or prepared.
     // Session success completes Ready; its receiver owns settling the required bound Setup.
     if (current >= 0 || operation?.state === 'succeeded') {
       const currentState: ManagedCreationProgressStep['state'] = operation?.state === 'succeeded' ? 'done'
         : failed ? 'failed' : observedStatus?.tone === 'active' ? 'running' : 'upcoming';
-      for (const [index, id] of (['create', 'install', 'setup', 'ready'] as const).entries()) {
+      for (const [index, id] of ids.entries()) {
         steps.push({ id, state: index === current ? currentState
           : id === 'ready' && operation?.state === 'succeeded' ? 'done' : 'upcoming' });
       }

@@ -8,10 +8,11 @@ export type NewSessionProjectFilesOutcome = Readonly<{
     source?: SessionProjectFilesSourceV1;
 }> & (Readonly<{ origin: 'default' }> | Readonly<{ origin: 'override'; choice: SessionProjectFilesV1 }>);
 
-export type NewSessionProjectFilesFieldKey = 'folder' | 'included' | 'repository' | 'branch' | 'gitAccount' | 'conflict';
-const COPY_FIELDS = ['folder', 'included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
+// The folder is the composer's own chip, never a Project files row (lab round 4, owner decision 5).
+export type NewSessionProjectFilesFieldKey = 'included' | 'repository' | 'branch' | 'gitAccount' | 'conflict';
+const COPY_FIELDS = ['included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
 const CLONE_FIELDS = ['repository', 'branch', 'gitAccount'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
-const TWO_WAY_FIELDS = ['folder', 'conflict', 'included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
+const TWO_WAY_FIELDS = ['conflict', 'included'] as const satisfies readonly NewSessionProjectFilesFieldKey[];
 
 /** Project files is part of the current placement, never an independent preference. */
 export function useNewSessionProjectFilesPlacement(input: Readonly<{

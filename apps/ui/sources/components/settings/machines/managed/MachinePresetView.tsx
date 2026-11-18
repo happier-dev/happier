@@ -28,6 +28,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
+import { MachinePresetProjectFilesSection } from './MachinePresetProjectFilesSection';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
@@ -104,7 +106,8 @@ function MachinePresetPrepareSection(props: Readonly<{
                 value={enabled} disabled={!onChange} onValueChange={next => onChange?.({ ...props.preparation, enabled: next })} />} />
         {/* A ready image says the storage it keeps when the builder measured it; an unknown size stays unsaid (S1). */}
         {showsImage ? <Item testID="machine-preset.preparation" title={status}
-            {...(preparation.estimates?.storageBytes != null ? { subtitle: formatMachineBytes(preparation.estimates.storageBytes, 'storage') } : {})}
+            {...(preparation.estimates?.storageBytes != null ? { subtitle: t('machinePresets.prepareStorageKept',
+                { size: formatMachineBytes(preparation.estimates.storageBytes, 'storage') }) } : {})}
             subtitleLines={0} mode="info" showChevron={false}
             loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
         {/* Only while an image is kept ready: what a Happier update does to it, with its cost (lab F5). */}
@@ -235,9 +238,14 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const desiredEdit = { ...savingEdit, ...pendingEdit };
     // Prepare ahead is private content: the one editor draft carries it, with the preset's own name, setup and launch.
     const desiredPreparation: PresetPreparation = desiredEdit.privateContent?.preparation ?? preset?.preparation ?? { enabled: false };
-    const editPreparation = (next: PresetPreparation) => {
+    // Project files is private content too: every in-place edit carries both, so one never drops the other.
+    const desiredProjectFiles = desiredEdit.privateContent ? desiredEdit.privateContent.projectFiles : preset?.projectFiles;
+    const editContent = (next: Readonly<{ preparation?: PresetPreparation; projectFiles?: SessionProjectFilesV1 }>) => {
         if (!creation) return;
-        edit(machinePresetEditDraftUpdatePatch({ name: creation.name, setup: creation.setup, preparation: next,
+        const projectFiles = next.projectFiles ?? desiredProjectFiles;
+        const preparation = next.preparation ?? (desiredEdit.privateContent ? desiredEdit.privateContent.preparation : preset?.preparation);
+        edit(machinePresetEditDraftUpdatePatch({ name: creation.name, setup: creation.setup,
+            ...(preparation ? { preparation } : {}), ...(projectFiles ? { projectFiles } : {}),
             creation: { launch: creation.launch,
                 ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId } : creation.controller ? { controller: creation.controller } : {}),
                 ...(creation.retention ? { retention: creation.retention } : {}),
@@ -422,12 +430,15 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
         ...(visiblePreset.preparation?.enabled || visiblePreset.prepared !== undefined
             ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
+        // How each new machine gets the session's folder; an archived preset makes none.
+        ...(!archived ? { projectFiles: <MachinePresetProjectFilesSection testID="machine-preset.project-files" value={desiredProjectFiles}
+            {...(canManage && !approval.approvalPending ? { onChange: (projectFiles: SessionProjectFilesV1) => editContent({ projectFiles }) } : {})} /> } : {}),
         // Offered wherever its provider can keep an image ready, and kept for a preset that already prepares.
         ...(!archived && (provisioner?.descriptor.preparation || visiblePreset.preparation?.enabled || visiblePreset.prepared)
             ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
                 preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh}
                 preparation={desiredPreparation}
-                {...(canManage && !approval.approvalPending ? { onPreparationChange: editPreparation } : {})} /> } : {}),
+                {...(canManage && !approval.approvalPending ? { onPreparationChange: (preparation: PresetPreparation) => editContent({ preparation }) } : {})} /> } : {}),
         ...archiveActions,
         archivePending: busy, notice,
     };
