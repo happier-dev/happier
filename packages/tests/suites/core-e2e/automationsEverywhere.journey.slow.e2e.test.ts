@@ -16,7 +16,7 @@ import { WorkflowDefinitionCreateResultV1Schema, WorkflowRunGetResultV1Schema,
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { AutomationEligibleEventCatalogEntryV1Schema } from '@happier-dev/protocol/daemon/automationEligibleEvents';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
@@ -150,7 +150,7 @@ describe('Automations everywhere: composed ship journey', () => {
     });
     expect(opened.ok).toBe(true);
     if (!opened.ok) throw new Error(`Session on P: ${opened.errorCode}`);
-    const session = SessionSpawnNewResultV1Schema.parse(opened.result);
+    const session = SessionSpawnNewActionResultV1Schema.parse(opened.result);
     expect(session.type).toBe('success');
     if (session.type !== 'success') throw new Error('Session on P did not start');
     expect(await b.readSessionMetadata(session.sessionId)).toMatchObject({

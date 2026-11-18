@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { applyTrustedLocalPluginFixture, reloadTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
+import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 
@@ -47,7 +47,8 @@ describe('Shared approval profiles: contributed target admission', () => {
     await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: action.pluginId, version: '1.0.0', type: 'module' }));
     await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(PluginManifestV2Schema.parse({
       schemaVersion: 2, id: action.pluginId, version: '1.0.0', displayName: 'Approval profile deploy fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' },
       contributes: { actions: [{ id: action.localId, title: 'Deploy fixture', scopes: ['global'],
         surfaces: ['cli', 'agent', 'mcp', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'writesRemote',
         confirmation: { title: 'Deploy fixture', body: 'Deploy through the external fixture provider.' },
@@ -64,7 +65,6 @@ describe('Shared approval profiles: contributed target admission', () => {
     const plugin = { daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken,
       pluginRoot, pluginId: action.pluginId };
     await applyTrustedLocalPluginFixture({ ...plugin, interactionId: 'profile-deploy-install' });
-    await reloadTrustedLocalPluginFixture({ ...plugin, changedPaths: ['daemon.mjs'] });
     // A raw Account read would allow this operation. The Ask profile must
     // change the result, independently of the manifest's dangerous default.
     expect(await actor.execute('actions.policy.set', { actionId, audience: 'agent', mode: 'allowed' }))

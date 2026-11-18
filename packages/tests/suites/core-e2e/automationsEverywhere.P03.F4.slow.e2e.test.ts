@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
@@ -68,10 +70,12 @@ describe('Shared approval profiles: Team default', () => {
     });
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.errorCode);
-    const session = SessionSpawnNewResultV1Schema.parse(spawned.result);
+    const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
     expect(session.type).toBe('success');
     if (session.type !== 'success') throw new Error('Team-default Session did not start');
-    expect(await member.readSessionMetadata(session.sessionId)).toMatchObject({
+    const inheritedMetadata = await member.readSessionMetadata(session.sessionId);
+    expect(inheritedMetadata, JSON.stringify({ approvalProfileId: inheritedMetadata.approvalProfileId,
+      approvalProfileTeamOrGroupDerived: inheritedMetadata.approvalProfileTeamOrGroupDerived })).toMatchObject({
       approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: true,
     });
     // The real Action admission retains the member's Ask despite the Team
@@ -93,6 +97,76 @@ describe('Shared approval profiles: Team default', () => {
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
     if (!accepted.ok) throw new Error(accepted.errorCode);
     expect(accepted.result).not.toMatchObject({ kind: 'approval_request_created' });
+  }, 0);
+
+  it('AE.P03.SEC-continue-profile requires review before a retained inherited id becomes a personal pick', async () => {
+    const member = await fixture.createAccount('continuing-member');
+    const machine = await fixture.enrollDaemon(member);
+    await fixture.assertKnownGoodSessionControl(member, machine);
+    const teamResult = await owner.executeAsPerson('teams.create', { v: 1,
+      initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token), name: 'Continuation approvals', requestKey: randomUUID(),
+    }, { presentUserConfirmation: { actionId: 'teams.create' } });
+    expect(teamResult.ok, JSON.stringify(teamResult)).toBe(true);
+    if (!teamResult.ok) throw new Error(teamResult.errorCode);
+    const teamId = TeamSummaryV1Schema.parse(teamResult.result).id;
+    expect(await owner.executeAsPerson('teams.members.add', { v: 1, teamId,
+      accountId: readAccountIdFromToken(member.credentials.token), role: 'member', historyAccess: 'all_existing',
+    }, { presentUserConfirmation: { actionId: 'teams.members.add' } })).toMatchObject({ ok: true });
+    const profileResult = await owner.executeAsPerson('actions.policy.set', { profileChange: { kind: 'create', profile: {
+      name: 'Inherited continuation profile', actions: { 'session.stop': { approvalRequiredSurfaces: [] } },
+      approvalWaivedSurfaces: { 'session.stop': ['agent', 'mcp'] },
+    } } });
+    expect(profileResult.ok, JSON.stringify(profileResult)).toBe(true);
+    if (!profileResult.ok) throw new Error(profileResult.errorCode);
+    const profileChange = ActionPolicyOutputSchemas['actions.policy.set'].parse(profileResult.result);
+    if (!('profileChange' in profileChange) || !('id' in profileChange.profileChange)
+      || typeof profileChange.profileChange.id !== 'string') throw new Error('Profile create did not return its Artifact id');
+    const profileId = profileChange.profileChange.id;
+    expect(await owner.executeReviewed('artifact.access.grants.set', { artifactId: profileId,
+      principal: { kind: 'team', teamId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+    expect(await owner.executeAsPerson('teams.policy.set', { v: 1, teamId,
+      managedDefaults: { team: { approvalProfileId: profileId }, groups: {} },
+    }, { presentUserConfirmation: { actionId: 'teams.policy.set' } })).toMatchObject({ ok: true });
+    expect(await member.execute('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'ask_first' }))
+      .toMatchObject({ ok: true });
+    expect(await member.execute('actions.policy.set', { actionId: 'session.spawn_new', audience: 'agent', mode: 'allowed' }))
+      .toMatchObject({ ok: true });
+    expect(await member.execute('actions.policy.set', { actionId: 'session.approval_profile.set', audience: 'agent', mode: 'ask_first' }))
+      .toMatchObject({ ok: true });
+    const input = { executionTarget: machine.target, directory: { kind: 'path' as const, path: machine.workspaceDir },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      primaryTeamId: teamId, terminal: { mode: 'plain' as const } };
+    const sourceResult = await member.execute('session.spawn_new', input);
+    expect(sourceResult.ok, JSON.stringify(sourceResult)).toBe(true);
+    if (!sourceResult.ok) throw new Error(sourceResult.errorCode);
+    const source = SessionSpawnNewActionResultV1Schema.parse(sourceResult.result);
+    if (source.type !== 'success') throw new Error('Inherited source Session did not start');
+    expect(await member.readSessionMetadata(source.sessionId)).toMatchObject({
+      approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: true,
+    });
+    const context = { surface: 'mcp' as const, authority: 'account_automation' as const, defaultSessionId: source.sessionId };
+    const updatedAtMs = Date.now();
+    for (const continuation of [
+      { sourceContext: { v: 1, kind: 'session_replay', sourceSessionId: source.sessionId, forkPoint: { type: 'latest' } } },
+      { configuration: { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'retained-provider-session' },
+        mode: { value: null, updatedAtMs }, model: { value: null, updatedAtMs, selectionSource: 'inherited' },
+        permissionIntent: { value: null, updatedAtMs }, options: {} } },
+    ]) {
+      // A caller prefilling the source id cannot bypass the existing profile
+      // control through either retainsConfiguration branch (SEC-REVIEW-BUILT).
+      const continued = await member.execute('session.spawn_new', { ...input, ...continuation, approvalProfileId: profileId }, context);
+      expect(continued.ok, JSON.stringify(continued)).toBe(true);
+      if (!continued.ok) throw new Error(continued.errorCode);
+      const review = ActionApprovalRequestCreatedResultSchema.parse(continued.result);
+      expect(await member.execute('approval.request.decide', { artifactId: review.artifactId, decision: 'reject' }))
+        .toMatchObject({ ok: true });
+    }
+    expect(await member.readSessionMetadata(source.sessionId)).toMatchObject({
+      approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: true,
+    });
+    // The inherited Allow still cannot loosen the Account's Ask afterwards.
+    expect(await member.execute('session.stop', { sessionId: source.sessionId }, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
   }, 0);
 
   it('AE.P03.F5-project-default captures the project profile over the Team default and preserves creation-time choices', async () => {
@@ -132,14 +206,14 @@ describe('Shared approval profiles: Team default', () => {
     { presentUserConfirmation: { actionId: 'teams.policy.set' } })).toMatchObject({ ok: true });
     expect(await manager.execute('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'allowed' }))
       .toMatchObject({ ok: true });
-    const createdSource = await owner.execute('projects.sources.create', { serverId: fixture.serverId,
+    const createdSource = await owner.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       requestKey: randomUUID(), name: 'Shared project approvals', owner: { kind: 'team', teamId } });
     expect(createdSource.ok, JSON.stringify(createdSource)).toBe(true);
     if (!createdSource.ok) throw new Error(createdSource.errorCode);
     const source = ProjectSourcesReadOutputV1Schema.parse(createdSource.result);
     if (!source.ok) throw new Error(source.error);
     const sourceAddress = { serverId: fixture.serverId, sourceId: source.source.id };
-    const saved = await manager.execute('projects.sources.update', { ...sourceAddress,
+    const saved = await manager.executeReviewed('projects.sources.update', { ...sourceAddress,
       expectedRevision: source.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent',
         defaults: { approvalProfileId: projectProfileId } } } });
     expect(saved.ok, JSON.stringify(saved)).toBe(true);
@@ -150,13 +224,21 @@ describe('Shared approval profiles: Team default', () => {
     if (!savedSource.ok || !savedSource.sessionDefaults) throw new Error('Project defaults leaf missing');
     const defaultsRevision = savedSource.sessionDefaults.revision;
     // A visible Source does not confer its manager's write authority.
-    const refused = await reader.execute('projects.sources.update', { ...sourceAddress,
+    const refused = await reader.executeReviewed('projects.sources.update', { ...sourceAddress,
       expectedRevision: source.source.revision, patch: { sessionDefaults: { expectedRevision: defaultsRevision,
         defaults: { approvalProfileId: teamProfileId } } } });
     expect(refused).toMatchObject({ ok: true, result: { ok: false, error: 'source_access_denied' } });
     expect(await reader.execute('projects.sources.read', sourceAddress)).toMatchObject({ ok: true, result: {
       canManage: false, sessionDefaults: { revision: defaultsRevision, defaults: { approvalProfileId: projectProfileId } },
     } });
+    // The recipient is a separately authenticated Account. A's successful
+    // defaults write is not evidence of B's effective inheritance (QA-B).
+    expect(await reader.executeAsPerson(PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, { sourceRef: sourceAddress }))
+      .toMatchObject({ ok: true, result: { canManageSource: false,
+        sourceDefaultsRow: { revision: defaultsRevision, defaults: { approvalProfileId: projectProfileId } },
+        context: { projectDefaults: { approvalProfileId: projectProfileId },
+          teamDefaults: { team: { approvalProfileId: teamProfileId } } },
+      } });
     const projectContext = { sourceRef: sourceAddress,
       projectRef: { serverId: fixture.serverId, projectKey: `approval-project-${randomUUID()}` } };
     const spawn = async (approvalProfileId?: string | null, selectedProject: typeof projectContext | false = projectContext) => {
@@ -168,7 +250,7 @@ describe('Shared approval profiles: Team default', () => {
       });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error(result.errorCode);
-      const session = SessionSpawnNewResultV1Schema.parse(result.result);
+      const session = SessionSpawnNewActionResultV1Schema.parse(result.result);
       if (session.type !== 'success') throw new Error('Project-default Session did not start');
       return session;
     };
@@ -197,7 +279,7 @@ describe('Shared approval profiles: Team default', () => {
 
     // OWNER-1915: a shared Account-owned Source uses the same defaults leaf,
     // existing manager admission and tighten-only application; no Move is needed.
-    const personalSourceResult = await owner.execute('projects.sources.create', { serverId: fixture.serverId,
+    const personalSourceResult = await owner.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       requestKey: randomUUID(), name: 'Shared personal project approvals',
       audience: [{ principal: { kind: 'team', teamId }, level: 'view' }] });
     expect(personalSourceResult.ok, JSON.stringify(personalSourceResult)).toBe(true);
@@ -205,7 +287,7 @@ describe('Shared approval profiles: Team default', () => {
     const personalSource = ProjectSourcesReadOutputV1Schema.parse(personalSourceResult.result);
     if (!personalSource.ok) throw new Error(personalSource.error);
     const personalAddress = { serverId: fixture.serverId, sourceId: personalSource.source.id };
-    expect(await manager.execute('projects.sources.update', { ...personalAddress,
+    expect(await manager.executeReviewed('projects.sources.update', { ...personalAddress,
       expectedRevision: personalSource.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent',
         defaults: { approvalProfileId: projectProfileId } } } })).toMatchObject({ ok: true, result: {
       ok: true, source: { owner: { kind: 'account', accountId: readAccountIdFromToken(owner.credentials.token) } },

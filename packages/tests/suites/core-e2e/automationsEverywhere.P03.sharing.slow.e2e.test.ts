@@ -7,8 +7,10 @@ import { connectUiActionClient } from '@happier-tests/ui-action-client';
 
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
+import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -65,10 +67,21 @@ describe('Shared approval profiles: recipients', () => {
     } } });
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error(created.errorCode);
-    const result = created.result as { profileChange: { id: string; revision: { headerVersion: number; bodyVersion: number } } };
+    const result = ActionPolicyOutputSchemas['actions.policy.set'].parse(created.result);
+    if (!('profileChange' in result) || result.profileChange.kind !== 'create') throw new Error('Profile creation did not return its Artifact');
     const profile = result.profileChange;
-    expect(await owner.executeReviewed('artifact.access.grants.set', { artifactId: profile.id,
-      principal: { kind: 'team', teamId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+    const granted = await owner.executeReviewed('artifact.access.grants.set', { artifactId: profile.id,
+      principal: { kind: 'team', teamId }, accessLevel: 'view' });
+    const creation = !granted.ok ? await runWithServerHttpBaseUrl(fixture.actionServerApiUrl, async () => {
+      const [ownerRead, recipientRead] = await Promise.all([
+        createCredentialedAccountArtifactStore(owner.credentials).read(profile.id),
+        createCredentialedAccountArtifactStore(recipient.credentials).read(profile.id),
+      ]);
+      return { profileId: profile.id, expectedOwner: readAccountIdFromToken(owner.credentials.token),
+        ownerRead: ownerRead ? { ownerAccountId: ownerRead.ownerAccountId, access: ownerRead.access } : null,
+        recipientRead: recipientRead ? { ownerAccountId: recipientRead.ownerAccountId, access: recipientRead.access } : null };
+    }) : undefined;
+    expect(granted.ok, JSON.stringify({ granted, creation })).toBe(true);
     return profile;
   }
 
@@ -105,15 +118,15 @@ describe('Shared approval profiles: recipients', () => {
     }, context);
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.errorCode);
-    const session = SessionSpawnNewResultV1Schema.parse(spawned.result);
+    const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
     expect(session.type).toBe('success');
     if (session.type !== 'success') throw new Error('Shared-profile Session did not start');
     expect((await recipient.readSessionMetadata(session.sessionId)).approvalProfileId).toBe(profile.id);
-    expect(await recipient.execute('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
+    expect(await recipient.executeReviewed('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
       expectedRevision: profile.revision, profile: { name: 'Recipient rewrite' } } })).toMatchObject({
       ok: false, errorCode: 'forbidden',
     });
-    expect(await ui!.execute('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
+    expect(await ui!.executeConfirmed('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
       expectedRevision: profile.revision, profile: { name: 'Recipient UI rewrite' } } }, context)).toMatchObject({
       ok: false, errorCode: 'forbidden',
     });
@@ -128,7 +141,7 @@ describe('Shared approval profiles: recipients', () => {
     });
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.errorCode);
-    const session = SessionSpawnNewResultV1Schema.parse(spawned.result);
+    const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
     if (session.type !== 'success') throw new Error('Revocation Session did not start');
     await connectRecipient();
     expect(await profiles(recipient)).toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
@@ -141,9 +154,10 @@ describe('Shared approval profiles: recipients', () => {
       actionCaller: { kind: 'session' as const, sessionId: session.sessionId } };
     const expectedMissing = { ok: true, result: { kind: 'approval_request_created',
       approvalProfile: { status: 'missing', requestedId: profile.id } } };
-    expect(await recipient.execute('session.stop', { sessionId: session.sessionId }, caller)).toMatchObject(expectedMissing);
-    expect(await ui!.execute('session.stop', { sessionId: session.sessionId }, { ...caller,
-      serverId: ui!.serverId })).toMatchObject(expectedMissing);
+    const cliAdmission = await recipient.execute('session.stop', { sessionId: session.sessionId }, caller);
+    expect(cliAdmission, JSON.stringify(cliAdmission)).toMatchObject(expectedMissing);
+    const uiAdmission = await ui!.execute('session.stop', { sessionId: session.sessionId }, { ...caller, serverId: ui!.serverId });
+    expect(uiAdmission, JSON.stringify(uiAdmission)).toMatchObject(expectedMissing);
     const refusedRead = await recipient.execute('artifact.get', { artifactId: profile.id });
     expect(refusedRead).toMatchObject({ ok: false });
     if (refusedRead.ok) throw new Error('Revoked profile remained readable');
