@@ -28,8 +28,11 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
         }
         if (failures.length) throw new AggregateError(failures, 'Private reference cleanup failed');
     })();
+    // Docker retains direct source-network membership itself. In particular,
+    // split host/port facts are not listener URLs and need no reconstruction.
     const addresses = input.referenceAddresses.filter(address => address.machineId === input.host.machineId
-        && address.installationId === input.installationId && address.phase === 'runtime' && (address.route?.kind === 'iroh' || address.route?.kind === 'local'));
+        && address.installationId === input.installationId && address.phase === 'runtime'
+        && address.route?.kind === 'iroh');
     if (!addresses.length) return { close };
     const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'reference_unavailable', error: 'Retained private service reference is unavailable; retry or redeploy' }); };
     try {
@@ -37,13 +40,13 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
         const restored = new Map<string, ActionExecuteFailure | undefined>();
         for (const address of addresses) {
             const route = address.route;
-            if (route?.kind !== 'iroh' && route?.kind !== 'local') continue;
+            if (route?.kind !== 'iroh') continue;
             const key = JSON.stringify([address.source, address.address, route.containerNetworkId]);
             if (restored.has(key)) continue;
             restored.set(key, undefined);
             const admission = await resolvePrivateServiceExportAdmissionForHost({ ...input, environment,
                 source: address.source, retainedRoute: route.kind, actionId: 'machines.services.list' });
-            if ((admission.kind !== 'iroh' && admission.kind !== 'local') || admission.kind === 'iroh' && !input.host.acquireServiceExportForward) return unavailable();
+            if (admission.kind !== 'iroh' || !input.host.acquireServiceExportForward) return unavailable();
             const saved = new URL(address.address);
             const port = Number(saved.port);
             if (!port || saved.protocol !== `${admission.scheme}:`) return unavailable();
@@ -62,7 +65,6 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
                 },
                 ...(!networkId ? { preferredListenPort: port } : {}) })).catch(error => { throw privateServiceForwardAcquisitionError(error); });
             resources.push(forward);
-            if (!networkId && admission.kind === 'local' && forward.port !== port) return unavailable();
             if (networkId) {
                 if (!input.docker || !input.engine) return unavailable();
                 const bridge = await acquirePrivateServiceContainerBridge({ docker: input.docker, engine: input.engine,

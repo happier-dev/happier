@@ -1,6 +1,6 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +63,7 @@ const environment: DeploymentEnvironmentDetailV1 = {
     environment: { v: 1, id: 'environment', serverId: 'home', projectSourceId: 'source', revision: 2,
         owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard',
         deployerMode: 'managers', controllerMachineId: 'machine', buildMachineId: 'machine', runtimeTargetLinkId: 'link',
-        ...artifact, capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true,
+        ...artifact, capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true, manageBindings: true,
             manageTargets: true, delete: true }, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 },
     content: { name: 'Staging', retainPreviousDeployments: 1, bindings: [],
         definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } } },
@@ -494,11 +494,12 @@ describe('own-server installed host acquisition', () => {
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
             installationId: 'installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
             privateKey: Buffer.from(keys.secretKey).toString('base64url') });
-        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase, name: 'PORT',
+        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase, name: 'PORT', grantRef: randomUUID(),
             source: { kind: 'value', value: '3000' } });
         const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', environmentId: 'environment',
-            machineId: 'machine', installationId: 'installation', binding: { purpose: 'variable', phase, name: 'PORT' } },
-            installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', definition: { kind: 'value', value: '3000' } } });
+            machineId: 'machine', installationId: 'installation', binding: { purpose: 'variable', phase, grantRef: binding.grantRef } },
+            installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', binding: { purpose: binding.purpose,
+                phase: binding.phase, name: binding.name, grantRef: binding.grantRef }, definition: { kind: 'value', value: '3000' } } });
         let withdrawn = false;
         const network = vi.spyOn(axios, 'request').mockImplementation(async config => {
             if (!config.url?.endsWith('/environment/secret-launch-admission')) throw new Error('Unexpected transport');
@@ -611,13 +612,14 @@ describe('own-server installed host acquisition', () => {
                 { purpose: 'variable', phase: 'runtime', name: 'PRIMARY_URL',
                     source: { kind: 'deploymentFact', fact: 'primaryUrl' } },
             ] : []),
-        ].map(binding => EnvironmentVariableBindingV1Schema.parse(binding));
+        ].map(binding => EnvironmentVariableBindingV1Schema.parse({ ...binding, grantRef: randomUUID() }));
         const grants = bindings.map(binding => {
             if (binding.source.kind === 'secret') throw new Error('Non-secret fixture required');
             return sealMachineSecretGrant({ subject: {
                 v: 1, kind: 'environmentValues', environmentId: 'environment', machineId: 'machine', installationId: 'installation',
-                binding: { purpose: 'variable', phase: binding.phase, name: binding.name },
-            }, installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', definition: binding.source } });
+                binding: { purpose: 'variable', phase: binding.phase, grantRef: binding.grantRef },
+            }, installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', binding: { purpose: binding.purpose,
+                phase: binding.phase, name: binding.name, grantRef: binding.grantRef }, definition: binding.source } });
         });
         // The Home HTTP boundary admits the installation; sealing, opening,
         // exact definitions and phase selection remain the real P42 path.
@@ -736,9 +738,11 @@ describe('own-server installed host acquisition', () => {
             composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['db'] };
         const exported = { key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
             exposure: 'privateNetwork' as const, privateNetwork: 'tailnet-exact' };
+        const localExport = { key: 'local-database', service: 'db', containerPort: 5432, scheme: 'postgres',
+            exposure: 'loopback' as const, transport: { kind: 'iroh' as const } };
         const sourceEnvironment = { ...environment, environment: { ...environment.environment, id: 'data',
             runtimeTargetLinkId: 'data-link' }, content: { ...environment.content, definition,
-            ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: false, serviceExports: [exported] } },
+            ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: false, serviceExports: [exported, localExport] } },
             targetLinks: [{ ...environment.targetLinks[0]!, targetLink: { ...environment.targetLinks[0]!.targetLink,
                 id: 'data-link', environmentId: 'data', machines: [sourceMachineId],
                 members: [{ machineId: sourceMachineId, installationId: 'installation', state: 'active' as const }], activeDeploymentId: 'data-deployment' } }] };
@@ -749,11 +753,12 @@ describe('own-server installed host acquisition', () => {
                 { target: '5432', published: '25432', bindAddress: '100.64.0.7', protocol: 'tcp' },
                 { target: 5432, published: 35432, bindAddress: '100.64.0.7', protocol: 'udp' }] },
             observedAt: 123, freshness: 'current' };
-        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'DATABASE_URL',
+        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'DATABASE_URL', grantRef: randomUUID(),
             source: { kind: 'reference', environmentId: 'data', export: 'database', via: 'privateNetwork' } });
         const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', environmentId: 'environment',
-            machineId: 'machine', installationId: 'installation', binding: { purpose: 'variable', phase: 'runtime', name: 'DATABASE_URL' } },
-            installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', definition: binding.source } });
+            machineId: 'machine', installationId: 'installation', binding: { purpose: 'variable', phase: binding.phase, grantRef: binding.grantRef } },
+            installationPublicKey: keys.publicKey, content: { kind: 'environmentValues', binding: { purpose: binding.purpose,
+                phase: binding.phase, name: binding.name, grantRef: binding.grantRef }, definition: binding.source } });
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         let privateAddress = '100.64.0.7';
         let networkState = 'ready';
@@ -789,8 +794,14 @@ describe('own-server installed host acquisition', () => {
             const service = await mounted.lease.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId: homeServerIdentityId, machineId: sourceMachineId,
                 environmentId: 'data', environmentInstanceId, deploymentId: 'data-deployment', release, composeService: 'db',
                 serviceId: `${environmentInstanceId}/db`, specIdentity: 'db', isCurrent: () => true,
+                appliedServiceExports: [exported, localExport],
                 releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
                     async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                    nativeContainers: () => [{ id: 'source-container', composeProject: 'data', service: 'db',
+                        containerName: 'data-db-1', networkNames: ['data-default'] }],
+                    async nativeDocker() { return { engineId: 'local-engine', async run() {
+                        return { exitCode: 0, stdout: JSON.stringify([{ Id: 'source-network', Name: 'data-default', Driver: 'bridge', Scope: 'local' }]) };
+                    } }; },
                     runtimeFacts() { return nativeFacts; }, async stop() { return { status: 'stopped' }; },
                 } } } });
             serviceReferenceSocket.io.mockImplementation(() => createApiSessionSocketStub({
@@ -828,12 +839,28 @@ describe('own-server installed host acquisition', () => {
                     expect(value.env.DATABASE_URL).toBe('postgres://100.64.0.7:25432');
                     expect(value.referenceAddresses).toEqual([{ machineId: 'machine', installationId: 'installation',
                         phase: 'runtime', name: 'DATABASE_URL', source: binding.source, address: 'postgres://100.64.0.7:25432',
-                        route: { kind: 'privateNetwork', networkIdentity: 'tailnet-exact' } }]);
+                        route: sourceMachineId === 'machine' ? { kind: 'local' }
+                            : { kind: 'privateNetwork', networkIdentity: 'tailnet-exact' } }]);
                 } finally { value.dispose(); }
                 const readsBeforeDns = machineHttp.mock.calls.length;
                 expect(await acquired.secrets.resolveNonSecret!({ kind: 'reference', environmentId: 'environment',
                     export: 'database', via: 'auto' })).toBe('postgres://db:5432');
                 expect(machineHttp.mock.calls.length - readsBeforeDns).toBe(0);
+                if (sourceMachineId === 'machine') {
+                    const source = { kind: 'reference' as const, environmentId: 'data', export: 'local-database', via: 'auto' as const };
+                    const initial = await acquired.secrets.resolveNonSecret!(source);
+                    expect(initial).toEqual({ value: 'postgres://127.0.0.1:15432', route: { kind: 'local' } });
+                    const prepared = await acquired.prepareReferenceContainerNetwork!({ engine: { kind: 'native', id: 'local-engine' },
+                        networkId: 'consumer-network', localReferences: [{ machineId: 'machine', installationId: 'installation',
+                            phase: 'runtime', name: 'DATABASE_URL', source, address: 'postgres://127.0.0.1:15432', route: { kind: 'local' } }],
+                        docker: { engineId: 'local-engine', async run(args) {
+                            expect(args).toEqual(['network', 'inspect', 'data-default']);
+                            return { exitCode: 0, stdout: JSON.stringify([{ Id: 'source-network', Name: 'data-default', Driver: 'bridge', Scope: 'local' }]) };
+                        } } });
+                    expect(prepared).toEqual({ localNetworks: [{ source: { environmentId: 'data', export: 'local-database' }, networkId: 'source-network' }] });
+                    expect(await acquired.secrets.resolveNonSecret!(source)).toEqual({ value: 'postgres://data-db-1:5432',
+                        route: { kind: 'local', containerNetworkId: 'source-network' } });
+                }
                 nativeFacts = { ...nativeFacts, freshness: 'unavailable' };
                 await expect(prepare()).rejects.toMatchObject({ code: 'reference_unavailable' });
                 nativeFacts = { ...nativeFacts, freshness: 'current' };
@@ -1080,13 +1107,14 @@ describe('own-server installed host acquisition', () => {
         const installed = { version: 1 as const, installationId: 'installation', createdAt: 1,
             publicKey: Buffer.from(installationKeys.publicKey).toString('base64url'), privateKey: Buffer.from(installationKeys.secretKey).toString('base64url') };
         const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installed);
-        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'COMMIT_SHA',
+        const binding = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', phase: 'runtime', name: 'COMMIT_SHA', grantRef: randomUUID(),
             source: { kind: 'deploymentFact', fact: 'commitSha' } });
         if (binding.source.kind !== 'deploymentFact') throw new Error('Deployment fact fixture required');
         const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', environmentId: 'environment',
             machineId: 'machine', installationId: 'installation',
-            binding: { purpose: 'variable', phase: binding.phase, name: binding.name } }, installationPublicKey: installationKeys.publicKey,
-            content: { kind: 'environmentValues', definition: binding.source } });
+            binding: { purpose: 'variable', phase: binding.phase, grantRef: binding.grantRef } }, installationPublicKey: installationKeys.publicKey,
+            content: { kind: 'environmentValues', binding: { purpose: binding.purpose,
+                phase: binding.phase, name: binding.name, grantRef: binding.grantRef }, definition: binding.source } });
         mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'checkout', serverId: 'home',
             machineId: 'machine', rootPath: checkout, source: { sourceId: 'source', revision: 1 }, createdAtMs: 1 })]);
         let privateReads = 0;

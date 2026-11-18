@@ -2533,13 +2533,16 @@ deployment output schema failure; no server header limit is raised.
 
 ## Local private service reference routes (unreleased 0.3)
 
-The private service reference resolver selects the native loopback publication
-when source and consumer share a Machine. Cross-Machine exports continue using
-Iroh; direct-route grants still require distinct endpoints. Local references
-reuse the existing container bridge and retained observation custody. Receipt
-reference addresses record the closed `local` route with an optional
-`containerNetworkId`, so restart recovery restores the same bridge without an
-Iroh self-route. Missing export observations carry `service_export_unavailable`
+The private service reference resolver selects the native publication
+when source and consumer share a Machine. Cross-Machine exports retain their
+private-network or Iroh route; direct-route grants still require distinct endpoints. Local Compose
+consumers on that same Docker engine join the source container's existing
+network and receive its native DNS name and container port. They do not use a
+host gateway or published port. Host-network and build consumers keep the
+native host publication. Receipt reference addresses record the existing
+`local` route with the source `containerNetworkId`; Docker owns its attachment
+across daemon restarts, without a bridge or Iroh self-route to restore. Older
+development gateway addresses require redeployment. Missing export observations carry `service_export_unavailable`
 through the existing deployment exception and Action failure-cause projectors.
 
 This is the unpublished 0.3 direct cut: matching Protocol and daemon readers

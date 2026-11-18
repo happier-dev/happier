@@ -38,6 +38,7 @@ import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
 import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
 import { acquirePrivateServiceContainerBridge, PrivateServiceContainerBridgeUnavailableError } from './privateServiceContainerBridge';
+import { resolvePrivateServiceLocalContainerAddress } from './privateServiceLocalNetwork';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
 import { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
@@ -210,14 +211,21 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     isCurrent: () => !released });
                 const retainedLease = lease;
                 let referenceContainerNetwork: Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['prepareReferenceContainerNetwork']>>[0] | undefined;
-                const referenceBridges = new Map<ServiceExportMachineForward, ReturnType<typeof acquirePrivateServiceContainerBridge> | undefined>();
+                const referenceBridges = new Map<ServiceExportMachineForward, {
+                    bridge?: ReturnType<typeof acquirePrivateServiceContainerBridge>;
+                    local?: Extract<import('./privateServiceReference').PrivateServiceExportAdmissionForHost, { kind: 'local' }>;
+                    address?: Awaited<ReturnType<typeof resolvePrivateServiceLocalContainerAddress>>;
+                }>();
                 let telemetryForward: ServiceExportMachineForward | undefined;
                 const materializeBridge = async (forward: ServiceExportMachineForward) => {
-                    if (!referenceContainerNetwork) return forward;
-                    let bridge = referenceBridges.get(forward);
+                    const retained = referenceBridges.get(forward)!;
+                    if (retained.local) return retained.address ?? forward;
+                    if (!referenceContainerNetwork?.networkId) return forward;
+                    let bridge = retained.bridge;
                     if (!bridge) {
-                        bridge = acquirePrivateServiceContainerBridge({ ...referenceContainerNetwork, forward, signal: hostSignal });
-                        referenceBridges.set(forward, bridge);
+                        bridge = acquirePrivateServiceContainerBridge({ ...referenceContainerNetwork,
+                            networkId: referenceContainerNetwork.networkId, forward, signal: hostSignal });
+                        retained.bridge = bridge;
                     }
                     try { return await bridge; }
                     catch (error) {
@@ -248,10 +256,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     }
                     finally { signal.removeEventListener('abort', abort); }
                     const forward: ServiceExportMachineForward = { ...nativeForward, async close() {
-                        try { await (await referenceBridges.get(forward))?.close(); }
+                        try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
                         finally { referenceBridges.delete(forward); await nativeForward.close(); }
                     } };
-                    referenceBridges.set(forward, undefined);
+                    referenceBridges.set(forward, selected.kind === 'local' ? { local: selected } : {});
                     return forward;
                 } });
                 const selectedArchives = structuredClone(content?.ownServer?.imageArchives ?? []);
@@ -298,10 +306,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                         // existing bridge reads this address per TCP connection.
                                         get port() { const current = readEndpoint?.(); return Number(current ? new URL(current).port : initial.port); },
                                         observedPath: 'direct', async close() {
-                                            try { await (await referenceBridges.get(forward))?.close(); }
+                                            try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
                                             finally { referenceBridges.delete(forward); }
                                         } };
-                                    referenceBridges.set(forward, undefined);
+                                    referenceBridges.set(forward, {});
                                     telemetryForward = referenceForwards.adopt(forward);
                                 }
                                 const address = await materializeBridge(telemetryForward);
@@ -337,8 +345,20 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     async prepareReferenceContainerNetwork(network) {
                         referenceContainerNetwork = network;
                         // The native owner lends Docker for this callback only.
-                        // Inspect/bind every reviewed forward before returning.
-                        await Promise.all([...referenceBridges.keys()].map(materializeBridge));
+                        // Local exports borrow their source network; remote
+                        // carriers and host telemetry retain their host bridge.
+                        await Promise.all([...referenceBridges].map(async ([forward, retained]) => {
+                            const local = retained.local;
+                            if (local && network.localReferences?.some(reference => reference.source.environmentId === local.serviceExport.service.environmentId
+                                && reference.source.export === local.serviceExport.exportKey)) {
+                                retained.address = await resolvePrivateServiceLocalContainerAddress({ admission: local,
+                                    owner: retainedLease.registry.projectManagedServices, homeServerIdentityId,
+                                    docker: network.docker, signal: network.signal });
+                            } else await materializeBridge(forward);
+                        }));
+                        return { localNetworks: [...referenceBridges.values()].flatMap(retained => retained.local && retained.address
+                            ? [{ source: { environmentId: retained.local.serviceExport.service.environmentId,
+                                export: retained.local.serviceExport.exportKey }, networkId: retained.address.networkId }] : []) };
                     },
                     retainServiceReferences(consumers) {
                         referenceForwards.retain(consumers.map(consumer => consumer.retirementSignal),

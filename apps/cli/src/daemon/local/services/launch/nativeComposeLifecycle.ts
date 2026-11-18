@@ -57,7 +57,8 @@ import { createNativeComposeActivatedProject } from './nativeComposeActivatedPro
 import { readNativeComposePorts } from './nativeComposePorts';
 import { projectNativeComposeConfigurationDetails } from './nativeComposeConfigurationDetails';
 import { createNativeComposeProgressOutput } from './nativeComposeProgress';
-import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
+import { attachNativeComposeReferenceNetworks, prepareNativeComposeReferenceNetwork,
+    readNativeComposeReferenceConsumers, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
 import { projectNativeComposeAppEnrollments, type NativeComposeAppEnrollment } from './nativeComposeAppEnrollments';
 export type { NativeResticCommandInput } from './nativeResticCommand';
 import { activateNativeComposeStartFirst, assertNativeComposeStartFirstConfiguration, type NativeComposeRoutingGeneration, type NativeComposeStartFirstInput,
@@ -126,12 +127,8 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     executionDirectory?: string;
     exec: ExecService;
     envPort: DeploymentExecEnvPortV1;
-    prepareReferenceContainerNetwork?(request: Readonly<{
-        docker: import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort;
-        engine: NativeComposeEngineFacts;
-        networkId: string;
-        signal?: AbortSignal;
-    }>): Promise<void>;
+    prepareReferenceContainerNetwork?(request: import('./nativeComposeReferenceNetwork').NativeComposeReferenceNetworkRequest):
+        Promise<import('./nativeComposeReferenceNetwork').NativeComposeReferenceNetworkPreparation | void>;
     onReferenceAddresses?(addresses: NonNullable<HostAuthorizedPluginExecLaunch['deploymentReferenceAddresses']>): void;
     onTelemetryProjection?(facts: readonly NativeComposeTelemetryProjectionFact[]): void;
     source: DeploymentSourceMaterializationV1;
@@ -1065,22 +1062,29 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     const prepareReferenceNetwork = async (current: NativeComposeProjectRender, capture: RenderCapture,
         context?: MachineNativeEffectContext, signal?: AbortSignal): Promise<() => Promise<void>> => {
         if (!input.prepareReferenceContainerNetwork || input.phase === 'build') return async () => {};
-        const referenceAddresses = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')
+        const referenceAddresses = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'iroh')
             .map(address => address.address);
+        const localReferences = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'local'
+            && readNativeComposeReferenceConsumers({ model: capture.model, services: current.services,
+                referenceAddresses: [address.address] }).length > 0);
         const consumerServices = capture.telemetryProjection.filter(fact => fact.requiresTelemetryEndpoint).map(fact => fact.service);
-        if (!referenceAddresses.length && !consumerServices.length) return async () => {};
+        if (!referenceAddresses.length && !consumerServices.length && !localReferences.length) return async () => {};
         const networkInput = { model: capture.model, services: current.services, referenceAddresses, consumerServices };
         const network = readNativeComposeReferenceNetwork(networkInput);
-        if (!network) return async () => {};
+        if (!network && !localReferences.length) return async () => {};
         const docker = await owner.readNativeDocker({ render: current, signal });
         try {
-            const networkId = context && current.engine.kind === 'native'
+            const networkId = !network ? undefined : context && current.engine.kind === 'native'
                 ? await machineNativeEffectAdmission.runStage(context, () => prepareNativeComposeReferenceNetwork({
                     docker, ...networkInput, projectName,
                     sourceRoot: input.source.rootPath, directory: root!,
                     imageReference: imageReferences(current.services[0]!).activationRef, signal }))
                 : network.name;
-            if (networkId) await input.prepareReferenceContainerNetwork({ docker, engine: current.engine, networkId, signal });
+            const prepared = await input.prepareReferenceContainerNetwork({ docker, engine: current.engine,
+                ...(networkId ? { networkId } : {}), localReferences, signal });
+            if (prepared?.localNetworks.length) attachNativeComposeReferenceNetworks({ model: capture.model,
+                unresolvedModel: capture.unresolvedModel, services: current.services,
+                referenceAddresses: localReferences, networks: prepared.localNetworks });
             // Keep the native loan through the following attachment preparation.
             return docker.dispose;
         } catch (error) { await docker.dispose(); throw error; }

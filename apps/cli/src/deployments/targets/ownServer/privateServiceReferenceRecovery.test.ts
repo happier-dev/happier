@@ -93,3 +93,27 @@ it('recovers a native local reference without acquiring an Iroh self-route', asy
         } finally { await lease.release(); }
     }, { buildReference: true, referenceIroh: true, referenceBindAddress: '127.0.0.1' });
 });
+
+it('leaves retained local container DNS and split host/port references with Docker after daemon recovery', async () => {
+    await withOwnServerBuildFixture(async ({ host, request, environment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source owner required');
+        try {
+            const source = { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' } as const;
+            const restored = await restorePrivateServiceReferencesForHost({ environmentId: environment.environment.id,
+                referenceAddresses: [
+                    { name: 'DATABASE_URL', address: 'postgres://source-project-db-1:5432', source },
+                    { name: 'DB_MOVE_HOST', address: 'source-project-db-1', source: { ...source, component: 'host' as const } },
+                    { name: 'DB_MOVE_PORT', address: '5432', source: { ...source, component: 'port' as const } },
+                ].map(address => ({ ...address, machineId: host.machineId, installationId: 'installation-c', phase: 'runtime' as const,
+                    route: { kind: 'local' as const, containerNetworkId: 'source-network' } })),
+                host: { ...host, async acquireServiceExportForward() { throw new Error('A direct Docker route needs no forward'); } },
+                context: request.context, signal: new AbortController().signal, owner: lease.registry.projectManagedServices,
+                homeServerIdentityId: host.serverId, installationId: 'installation-c',
+                privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
+                async readEnvironment() { throw new Error('Native container networking does not need listener recovery'); },
+            });
+            await restored.close();
+        } finally { await lease.release(); }
+    }, { buildReference: true, referenceIroh: true, referenceBindAddress: '127.0.0.1' });
+});

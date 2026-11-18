@@ -164,12 +164,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
             nativeContext: MachineNativeEffectContext;
             signal?: AbortSignal;
         }>): Promise<void>;
-        prepareReferenceContainerNetwork?(request: Readonly<{
-            docker: import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort;
-            engine: import('@happier-dev/cli-common/machineSetup').NativeDockerEngineFacts;
-            networkId: string;
-            signal?: AbortSignal;
-        }>): Promise<void>;
+        prepareReferenceContainerNetwork?: import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeEnvironmentProjectInput['prepareReferenceContainerNetwork'];
         retainServiceReferences?(consumers: readonly Pick<import('@/plugins/runtime/invocation/services/managedServicesOwner').ProjectManagedServiceHandle,
             'retirementSignal' | 'reportDependencyFailure'>[]): void;
         /** Invocation-owned empty cwd; build tools must not discover source .env files. */

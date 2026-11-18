@@ -41,7 +41,8 @@ export type PrivateServiceExportAdmissionForHost =
     | Readonly<{ kind: 'compose'; url: string }>
     | Readonly<{ kind: 'privateNetwork'; url: string; networkIdentity: string }>
     | Readonly<{ kind: 'iroh'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>
-    | Readonly<{ kind: 'local'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>;
+    | Readonly<{ kind: 'local'; machineId: string; scheme: string; containerPort: number;
+        serviceExport: Omit<TcpTunnelServiceExportBindingV1, 'destination'> & Readonly<{ destination: Readonly<{ host: string; port: number }> }> }>;
 
 export type PrivateServiceAppliedExportHostInput = Readonly<{
     kind: 'applied'; exportKey: string; machineId: string; installationId: string;
@@ -113,7 +114,7 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
         : ApiClient.create(host.credentials).then(api => api.getMachine(machineId, { signal })));
     const consumer = await readMachine(host.machineId);
     const observerNetworks = consumer?.daemonState?.reachability?.privateNetworks ?? [];
-    const urls = new Set<string>();
+    const networkAdmissions = new Map<string, Extract<PrivateServiceExportAdmissionForHost, { kind: 'local' | 'privateNetwork' }>>();
     const forwards: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>[] = [];
     for (const member of link.members) {
         if (member.state !== 'active' || input.targetMachineId && member.machineId !== input.targetMachineId) continue;
@@ -144,7 +145,8 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
             if (iroh) {
                 const admitted = selectIrohExport(exported, row, { environmentId: source.environmentId,
                     machineId: member.machineId, installationId: member.installationId });
-                if (admitted) forwards.push(member.machineId === host.machineId ? { ...admitted, kind: 'local' } : admitted);
+                if (admitted) forwards.push(member.machineId === host.machineId
+                    ? { ...admitted, kind: 'local', containerPort: exported.containerPort } : admitted);
             }
             if (!network || input.retainedRoute !== undefined) continue;
             if (row.environmentId !== source.environmentId || row.deployment?.installationId !== member.installationId
@@ -158,13 +160,18 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
                     if (Number(port.target) !== exported.containerPort || port.protocol !== 'tcp'
                         || !Number.isInteger(published) || published < 1 || published > 65535
                         || port.bindAddress !== address) continue;
-                    urls.add(`${exported.scheme}://${family === 6 ? `[${address}]` : address}:${published}`);
+                    const url = `${exported.scheme}://${family === 6 ? `[${address}]` : address}:${published}`;
+                    networkAdmissions.set(url, member.machineId === host.machineId ? { kind: 'local',
+                        machineId: member.machineId, scheme: exported.scheme, containerPort: exported.containerPort, serviceExport: {
+                            ...row.deployment, exportKey: exported.key, generation: row.generation,
+                            destination: { host: address, port: published },
+                        } } : { kind: 'privateNetwork', url, networkIdentity: exported.privateNetwork! });
                 }
             }
         }
     }
-    if (input.retainedRoute === undefined && network && urls.size === 1)
-        return { kind: 'privateNetwork', url: [...urls][0]!, networkIdentity: exported.privateNetwork! };
+    if (input.retainedRoute === undefined && network && networkAdmissions.size === 1)
+        return networkAdmissions.values().next().value!;
     // Explicit network references keep exact-network semantics. Loopback-only
     // Iroh exports retain their existing privateNetwork reference syntax.
     if (iroh && (source.via === 'auto' || !network || input.retainedRoute !== undefined))

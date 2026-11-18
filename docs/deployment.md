@@ -1768,19 +1768,32 @@ reconnect leaves the Iroh carrier running; cold observation recovery rebinds the
 address recorded in the receipt. A port conflict is visible and requires retry or
 redeployment rather than silently changing a running container's environment.
 
-For native Linux Docker, the existing admitted Compose lifecycle creates its
-consumer network before runtime binding materialization. A Node bridge binds that
+For Iroh references and host telemetry on native Linux Docker, the existing
+admitted Compose lifecycle creates its consumer network before runtime binding
+materialization. A Node bridge binds that
 network's host gateway only and admits its subnet; it never binds all host
-interfaces. This also applies to a same-Machine private share from another
-Environment: its `local` route and an Iroh route use the same bridge, including
-separate host and port bindings. Same-Environment references use Compose service
-DNS; host-network consumers can use the original host endpoint.
-Compose owns network creation and labels, using a zero-replica
-projection without starting a helper container. Docker Desktop, remote/rootless
+interfaces.
+A same-Machine private share from another Environment instead attaches its
+consuming Compose service to the source container's existing Docker network and
+uses that container's native DNS name and container port. This `local` route
+bypasses the host publication and host INPUT chain, so a normal default-deny
+host firewall needs no exception. The native owner requires the same Docker
+engine and retains each consumer's existing network membership. Separate host
+and port bindings use the same selected source address. Same-Environment
+references use Compose service DNS; host-network and build consumers retain
+the original host endpoint.
+Compose owns host-bridge network creation and labels, using a zero-replica
+projection without starting a helper container. For those host listeners, Docker Desktop, remote/rootless
 gateways outside the daemon's host namespace, unsupported network drivers and
-consumers without a common network return typed unavailability.
+consumers without a common network return typed unavailability. Local source
+attachment requires a user-defined bridge with Docker DNS; a built-in bridge
+or a different Docker engine returns typed unavailability.
 Receipt reference addresses retain `route.kind: 'iroh'`, the acquisition's
 observed direct/relay/unknown path and, for containers, the actual network id.
+Local container receipts retain `route.kind: 'local'` and the source network id;
+Docker retains that attachment across daemon restarts, without a host listener
+to reconstruct. Older development containers embedding gateway addresses need
+redeployment; there is no gateway fallback for new local container references.
 Admission, destination connection and carrier failures use existing deployment
 recovery and service diagnostics. A later successful new connection clears a
 destination failure; an older connection's traffic does not prove recovery.

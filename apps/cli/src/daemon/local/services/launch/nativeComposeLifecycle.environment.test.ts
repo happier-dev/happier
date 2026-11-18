@@ -397,7 +397,7 @@ describe('Environment project native activation', () => {
         const telemetryNames = telemetry ? ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'] : [];
         const telemetryFacts: unknown[] = [];
         const reviewReferenceAddress = localReference ? '127.0.0.1' : 'http://127.0.0.1:44111';
-        const containerReferenceAddress = localReference ? '172.22.0.1' : 'http://172.22.0.1:44111';
+        const containerReferenceAddress = localReference ? 'source-project-db-1' : 'http://172.22.0.1:44111';
         let referenceAddress = reviewReferenceAddress;
         let referencePort = '32991';
         const config = JSON.stringify({ os: 'linux', architecture: 'amd64', config: {} });
@@ -489,7 +489,12 @@ describe('Environment project native activation', () => {
                 if (request.args.includes('up')) {
                     const projection = await readNativeProjection(request);
                     expect(projection.services.web.environment[referenceName]).toBe(ownCollector ? authoredCollector : containerReferenceAddress);
-                    if (localReference) expect(projection.services.web.environment.DB_MOVE_PORT).toBe('32992');
+                    if (localReference && !selectedSubset) {
+                        expect(projection.services.web.environment.DB_MOVE_PORT).toBe('5432');
+                        expect(projection.services.web.networks).toMatchObject({ default: {}, 'happier-private-source-network': {} });
+                        expect(projection.networks['happier-private-source-network']).toEqual({ name: 'source-network', external: true });
+                        expect(Object.keys(projection.services.db.networks ?? {})).not.toContain('happier-private-source-network');
+                    }
                     if (ownCollector) expect(projection.services.web.environment).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS');
                 }
                 if (selectedSubset && request.args.includes('up')) {
@@ -519,9 +524,10 @@ describe('Environment project native activation', () => {
                 services: ['web', 'db'], images: ['web', 'db'].map(service => ({ service, platform: 'linux/amd64', configDigest, manifestDigest })), io,
                 async prepareReferenceContainerNetwork(request) {
                     if (ownCollector) throw new Error('Own collector must not acquire the managed bridge');
-                    expect(request.networkId).toBe('reference-consumer-network');
+                    expect(request.networkId).toBe(localReference ? undefined : 'reference-consumer-network');
                     referenceAddress = containerReferenceAddress;
-                    referencePort = '32992';
+                    referencePort = localReference ? '5432' : '32992';
+                    if (localReference) return { localNetworks: [{ source: { environmentId: 'database-env', export: 'database' }, networkId: 'source-network' }] };
                 },
                 onTelemetryProjection(facts) { telemetryFacts.push(...facts); },
                 async settleNative() {} });

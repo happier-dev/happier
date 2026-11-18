@@ -128,12 +128,14 @@ it.each([undefined, 'host', 'port'] as const)('materializes a same-Machine loopb
     }, { buildReference: true, referenceBindAddress: '127.0.0.1' });
 });
 
-// Owner ruling 2026-11-10: auto prefers the shared observed publication, then Iroh.
+// Owner ruling 2026-11-18: a same-Machine observed publication is local;
+// native Compose can attach its consumer to the source network.
 it.each([
-    { via: 'auto', shared: true, iroh: true, expected: 'privateNetwork' },
+    { via: 'auto', shared: true, iroh: true, expected: 'localNetwork' },
+    { via: 'auto', shared: true, iroh: false, expected: 'localNetwork' },
     { via: 'auto', shared: false, iroh: true, expected: 'local' },
     { via: 'auto', shared: false, iroh: false, expected: 'refusal' },
-    { via: 'privateNetwork', shared: true, iroh: true, expected: 'privateNetwork' },
+    { via: 'privateNetwork', shared: true, iroh: true, expected: 'localNetwork' },
 ] as const)('selects $expected with via=$via shared=$shared iroh=$iroh', async ({ via, shared, iroh, expected }) => {
     await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -151,10 +153,10 @@ it.each([
             const admission = await resolvePrivateServiceExportAdmissionForHost(input);
             // The authored declaration must also cross the real schema.
             expect(DeploymentServiceExportV1Schema.safeParse(referenceEnvironment.content.ownServer!.serviceExports![0]).success).toBe(true);
-            if (expected === 'privateNetwork') {
-                expect(admission).toEqual({ kind: 'privateNetwork', url: 'postgres://100.64.0.7:25432', networkIdentity: 'network' });
+            if (expected === 'localNetwork') {
+                expect(admission).toMatchObject({ kind: 'local', serviceExport: { destination: { host: '100.64.0.7', port: 25432 } } });
                 expect(await resolvePrivateServiceReferenceMaterialForHost(input)).toEqual({ value: 'postgres://100.64.0.7:25432',
-                    route: { kind: 'privateNetwork', networkIdentity: 'network' } });
+                    route: { kind: 'local' } });
             } else {
                 expect(admission).toMatchObject({ kind: 'local', serviceExport: { destination: { host: '127.0.0.1', port: 25433 } } });
             }
@@ -181,27 +183,6 @@ it('uses Iroh for a cross-Machine export', async () => {
             expect(material).toEqual({ value: 'postgres://127.0.0.1:32567', route: { kind: 'iroh', observedPath: 'relay' } });
         } finally { await lease.release(); }
     }, { referenceIroh: true, referenceBindAddress: '127.0.0.1' });
-});
-
-it('materializes a local loopback publication through the existing container bridge', async () => {
-    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
-        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-        if (!lease) throw new Error('Source owner required');
-        try {
-            const material = await resolvePrivateServiceReferenceMaterialForHost({
-                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
-                environment, readEnvironment: async () => referenceEnvironment, host,
-                context: request.context, actionId: request.actionId, signal: new AbortController().signal,
-                owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
-                installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
-                async materializeForwardAddress(forward) {
-                    expect(forward).toMatchObject({ host: '127.0.0.1', port: 25432 });
-                    return { host: '172.18.0.1', port: 32567, networkId: 'consumer-network' };
-                },
-            });
-            expect(material).toEqual({ value: 'postgres://172.18.0.1:32567', route: { kind: 'local', containerNetworkId: 'consumer-network' } });
-        } finally { await lease.release(); }
-    }, { buildReference: true, referenceIroh: true, referenceBindAddress: '127.0.0.1' });
 });
 
 it('preserves an IPv6 native loopback publication and its persisted local route', async () => {
