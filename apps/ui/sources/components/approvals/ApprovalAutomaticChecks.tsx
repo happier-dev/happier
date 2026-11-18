@@ -204,10 +204,14 @@ export const ApprovalAutomaticChecks = React.memo(
     );
     const checkingRun = checks.phase === 'checking'
       ? (checks.selected.find((row) => runOf(row) !== null) ?? checks.selected[0] ?? null) : null;
-    const pendingWorkflowId = pending ? selectedByKey.get(actionAutomationTriggerKeyV1(pending))?.workflowId ?? null : null;
+    const pendingSelection = pending ? selectedByKey.get(actionAutomationTriggerKeyV1(pending)) ?? null : null;
+    const pendingWorkflowId = pendingSelection?.workflowId ?? null;
+    const reviewKey = pendingSelection ? JSON.stringify([actionAutomationTriggerKeyV1(pendingSelection),
+      pendingSelection.triggerRevision, pendingSelection.workflowId, pendingSelection.workflowRevision]) : null;
     // Review steps opens in place; a check that asks again because its steps changed opens with them shown.
-    const [reviewToggled, setReviewToggled] = React.useState<boolean | null>(null);
-    const reviewOpen = pendingWorkflowId !== null && (reviewToggled ?? pending?.review?.reason === 'steps');
+    const [reviewToggled, setReviewToggled] = React.useState<Readonly<{ key: string | null; open: boolean }> | null>(null);
+    const reviewOpen = pendingWorkflowId !== null && (reviewToggled?.key === reviewKey
+      ? reviewToggled.open : pending?.review?.reason === 'steps');
     const disclosure = useCoreDisclosureToggleBinding();
     const changedBlockIds = React.useMemo(() => new Set(pending?.review?.changedSteps?.map((step) => step.blockId) ?? []),
       [pending?.review?.changedSteps]);
@@ -265,7 +269,7 @@ export const ApprovalAutomaticChecks = React.memo(
               testID={props.testID ? `${props.testID}:review` : undefined}
               label={t('workflows.triggers.checks.reviewSteps')}
               open={reviewOpen}
-              onPress={() => setReviewToggled(!reviewOpen)}
+              onPress={() => setReviewToggled({ key: reviewKey, open: !reviewOpen })}
               caret={disclosure.renderCaret(reviewOpen)}
               renderLabel={disclosure.renderLabel}
               focusColor={disclosure.focusColor}

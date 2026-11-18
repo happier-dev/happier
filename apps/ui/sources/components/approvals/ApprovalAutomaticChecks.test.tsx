@@ -4,6 +4,7 @@ import {
   ApprovalAutomaticChecksV1Schema,
   type ApprovalAutomaticChecksV1,
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -130,6 +131,36 @@ describe('Action before checks on the approval card', () => {
     await act(async () => { toggle!.props.onPress(); });
     expect(screen.findByTestId('checks:review-steps')).not.toBeNull();
     expect(navigation.spies.push).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
+
+  it('opens changed steps for the next pending check after the person collapses the previous review', async () => {
+    const workflowId = 'builtin:open-a-pull-request';
+    const definition = resolveBuiltinWorkflowDefinitionV1('open-a-pull-request')?.definition;
+    const changedBlockId = definition?.blocks[0]?.id;
+    if (!changedBlockId) throw new Error('Expected the built-in check to have a reviewable step');
+    const next = { ...selected, automationId: 'automation-next', triggerId: 'trigger-next', workflowId };
+    const nextRef = { automationId: next.automationId, triggerId: next.triggerId };
+    const review = { reason: 'steps' as const, changedSteps: [{ sourceKey: 'workflow', blockId: changedBlockId }] };
+    const initial = checks({ selected: [{ ...selected, workflowId }, next],
+      consents: [{ ...ref, decision: 'pending', review }, { ...nextRef, decision: 'pending', review }] });
+    const view = (value: ApprovalAutomaticChecksV1) => <ApprovalAutomaticChecks checks={value}
+      actionTitle="Deploy" serverId={null} testID="checks" />;
+    const screen = await renderScreen(view(initial));
+    expect(screen.findByTestId(`checks:review-steps:step:${changedBlockId}:changed`)).not.toBeNull();
+    await screen.pressByTestIdAsync('checks:review');
+    expect(screen.findByTestId('checks:review-steps')).toBeNull();
+    const following = checks({ ...initial,
+      consents: [{ ...ref, decision: 'skip' }, { ...nextRef, decision: 'pending', review }] });
+    await screen.update(view(following));
+    expect(screen.findByTestId(`checks:review-steps:step:${changedBlockId}:changed`)).not.toBeNull();
+    // The person's choice still holds while this same check remains pending.
+    await screen.pressByTestIdAsync('checks:review');
+    await screen.update(view(following));
+    expect(screen.findByTestId('checks:review-steps')).toBeNull();
+    await screen.update(view(checks({ ...following,
+      selected: [{ ...selected, workflowId }, { ...next, workflowRevision: next.workflowRevision + 1 }] })));
+    expect(screen.findByTestId(`checks:review-steps:step:${changedBlockId}:changed`)).not.toBeNull();
     await screen.unmount();
   });
 
