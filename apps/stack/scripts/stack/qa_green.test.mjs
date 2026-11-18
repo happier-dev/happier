@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
-import { readQaGreen, runQaGreenPass } from './qa_green.mjs';
+import { readQaGreen, resolveQaGreenStateDir, runQaGreenPass } from './qa_green.mjs';
 import { selectReloadSourceRevision } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 
 async function gitRepo(t) {
@@ -79,4 +79,17 @@ test('a corrupt green record reads as absent, never as a revision', async t => {
   await mkdir(stateDir, { recursive: true });
   await writeFile(join(stateDir, 'green.json'), '{"revision":"not-a-sha"}');
   assert.equal(await readQaGreen({ stateDir }), null);
+});
+
+// 2026-11-18 09:50Z: commits from a session whose env selected another stack (a 0.2 repo-remote-dev
+// authority) kicked the check into a second state dir, so two pointers and two concurrent bed reloads existed.
+test('the green state belongs to the repository, whatever stack the committer\'s env selects', async t => {
+  const { repoDir } = await gitRepo(t);
+  const storage = join(repoDir, '..', 'stacks');
+  const plain = await resolveQaGreenStateDir({ repoDir, env: { HAPPIER_STACK_STORAGE_DIR: storage } });
+  const selected = await resolveQaGreenStateDir({ repoDir, env: { HAPPIER_STACK_STORAGE_DIR: storage,
+    HAPPIER_STACK_STACK: 'repo-remote-dev-d72117acdb', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-remote-dev-d72117acdb',
+    HAPPIER_STACK_REPO_DIR: '/elsewhere/0.2' } });
+  assert.equal(selected, plain);
+  assert.ok(plain.startsWith(storage));
 });

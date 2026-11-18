@@ -34,12 +34,12 @@ async function isAncestor(repoDir, ancestor, descendant) {
   catch (error) { if (error.code === 1) return false; throw error; }
 }
 
-/** One place per repository: beside the repository producer's dev-targets.json. */
+/** One place per repository, beside its repository dev stack's dev-targets.json. Derived from the repository and the
+ * machine's stack storage only: a committer's env that selects another stack must not split the pointer. */
 export async function resolveQaGreenStateDir({ repoDir, env = process.env }) {
-  const { resolveRuntimeBuildAuthority } = await import('../runtime/shared/runtime_build_authority.mjs');
-  const { producerStackBaseDir } = resolveRuntimeBuildAuthority({ rootDir: repoDir,
-    env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir }, createRepoIdentityIfMissing: false });
-  return join(producerStackBaseDir, 'qa-green');
+  const { resolveRepoStackIdentity, resolveStacksStorageRoot } = await import('../utils/stack/repo_stack_identity.mjs');
+  const { stackBaseDir } = resolveRepoStackIdentity({ repoRoot: resolve(repoDir), stacksStorageRoot: resolveStacksStorageRoot(env) });
+  return join(stackBaseDir, 'qa-green');
 }
 
 /** `{ revision, checkedAt, durationMs }`, or null when no commit has been proven yet. */
@@ -83,8 +83,9 @@ export async function checkRevisionOnBed({ repoDir, stackName, revision, env = p
   const { refuseWorkingLockfileDrift } = await import('../runtime/launch/reloadLockfilePreflight.mjs');
   try { await refuseWorkingLockfileDrift({ repoDir }); }
   catch (error) { if (error.code === 'working_lockfile_differs_from_head') return { status: 'UNAVAILABLE', code: error.code }; throw error; }
-  const childEnv = { ...env };
-  for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete childEnv[name];
+  // The bed's own env selects everything; a committer's stack selection (HAPPIER_STACK_*) must not leak in.
+  const childEnv = Object.fromEntries(Object.entries(env).filter(([name]) => !/^(GIT_(INDEX_FILE|DIR|WORK_TREE|COMMON_DIR)|HAPPIER_STACK_)/.test(name)
+    || name === 'HAPPIER_STACK_STORAGE_DIR'));
   const child = spawn(process.execPath, [join(repoDir, 'apps/stack/scripts/repo_local.mjs'), 'stack', 'start', stackName,
     '--runtime=source', '--restart', '--verify', '--no-ui', `--rev=${revision}`], { cwd: repoDir, env: childEnv, stdio: ['ignore', 'pipe', 'inherit'] });
   let out = '';
