@@ -5738,6 +5738,9 @@ test('native launcher leaves a pressured local Linux host with no admitted owner
     '',
   ].join('\n'));
 
+  // A routing controller refuses --local test runs (P03-LOCAL-GUARD); this
+  // allowance belongs to a local Linux host without an execution config.
+  const localHostStorageDir = join(root, 'local-host-stacks');
   const result = spawnSync('/bin/sh', [launcher, '--local', '--', 'vitest', 'run', 'fixture.test.ts'], {
     cwd: repoRoot,
     env: {
@@ -5745,7 +5748,7 @@ test('native launcher leaves a pressured local Linux host with no admitted owner
       HOME: root,
       XDG_RUNTIME_DIR: root,
       DBUS_SESSION_BUS_ADDRESS: '',
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STORAGE_DIR: localHostStorageDir,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
     },
@@ -5763,7 +5766,7 @@ test('native launcher leaves a pressured local Linux host with no admitted owner
     env: {
       ...executionNeutralEnv,
       HOME: root,
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STORAGE_DIR: localHostStorageDir,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
     },
@@ -5781,7 +5784,7 @@ test('native launcher leaves a pressured local Linux host with no admitted owner
       env: {
         ...executionNeutralEnv,
         HOME: root,
-        HAPPIER_STACK_STORAGE_DIR: storageDir,
+        HAPPIER_STACK_STORAGE_DIR: localHostStorageDir,
         PATH: `${binDir}:/usr/bin:/bin`,
         TMPDIR: root,
       },

@@ -213,8 +213,16 @@ async function main() {
       const repository = resolve(process.argv[3]);
       const executorRepository = fileURLToPath(new URL('../../../../../', import.meta.url));
       if (repository !== resolve(executorRepository) && existsSync(join(repository, 'package.json'))) {
-        const { bootstrapRemoteDependencies } = await import('./remote_dependency_bootstrap.mjs');
-        await bootstrapRemoteDependencies({ repoDir: repository, toolsOnly: true });
+        // A borrowed tree belongs to its lender and is consumed as installed;
+        // the worker replica still installs its own tree from this lockfile.
+        const { inspectBorrowedNodeModulesLink } = await import('../proc/dependency_refresh.mjs');
+        const lender = await inspectBorrowedNodeModulesLink(repository);
+        if (lender) {
+          process.stderr.write(`[dev-targets] ${repository} borrows node_modules from ${lender}; Protocol export publication uses those tools as installed\n`);
+        } else {
+          const { bootstrapRemoteDependencies } = await import('./remote_dependency_bootstrap.mjs');
+          await bootstrapRemoteDependencies({ repoDir: repository, toolsOnly: true });
+        }
       }
       // Export formats belong to the target checkout, including historical worktrees.
       const { prepareProtocolExports } = await import(pathToFileURL(generator).href);

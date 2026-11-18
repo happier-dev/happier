@@ -99,6 +99,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   preparationBuildMode: 'strict', preparationScope: '',
   workspaceSync: '1',
   compilerSuite: '0',
+  testRunner: '0', sourceUpdate: '0',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
@@ -420,6 +421,14 @@ const FINAL_COMMAND_RULES = [
     entryRepositoryPath: ['scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs'] },
     set: { placement: 'primary-only', commandClass: 'workspace-build-coordinator',
       heavyClass: '', localCompile: '0', bootstrap: '0', validation: '0' } },
+  // Test-runner payloads. The controller refuses them under explicit --local
+  // and local fallback: agents' suites run routed (owner 2026-11-18).
+  { when: { workerTool: ['vitest'] }, set: { testRunner: '1' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['1'] }, set: { testRunner: '1' } },
+  { when: { command: ['node', 'nodejs'], entry: ['run-playwright-with-heartbeat.mjs'] }, set: { testRunner: '1' } },
+  { when: { managerNode: ['1'], entry: ['run-playwright-with-heartbeat.mjs'] }, set: { testRunner: '1' } },
+  { when: { command: ['playwright'], entry: ['test'] }, set: { testRunner: '1' } },
+  { when: { command: ['jest'] }, set: { testRunner: '1' } },
 ];
 function commandBasename(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
@@ -817,6 +826,10 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
         ? demand.requiresDependencyBootstrap || demand.hasProcessBoundary ? 'validation' : 'native-source-test'
         : policy.heavyClass });
   }
+  // A test run that regenerates tracked files (`vitest -u`, an `env UPDATE_*=1`
+  // fixture regeneration) writes the checkout itself: a replica's writes never return.
+  if (policy.testRunner === '1' && (facts.vitestArguments.some(arg => arg === '-u' || arg === '--update' || arg.startsWith('--update='))
+    || Object.keys(facts.commandEnvironment ?? {}).some(name => name.startsWith('UPDATE_')))) policy.sourceUpdate = '1';
   if (facts.entryRepositoryPath === 'apps/cli/scripts/buildPublication.mjs' && policy.selfPublisher === '1') {
     // The publication owner defines its ordered strict producers. Metadata
     // consumes those actual steps rather than maintaining a second sequence.
@@ -827,6 +840,16 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
     if (HEAVYWEIGHT_COMPILE_CLASSES.includes(policy.heavyClass)) policy.localCompile = '1';
   }
   return { policy: { ...policy, component: normalizeCommandPath(facts.component) }, facts, skipCompilerSetup };
+}
+
+// A shell batch is a test run when any static phase is one, including phases
+// after a `cd` that placement does not model (`cd apps/ui && npx vitest run …`).
+async function shellBatchRunsTests(commandArgs, options) {
+  if (!['sh', 'bash'].includes(commandBasename(commandArgs[0] ?? ''))) return false;
+  const phases = await readShellCommandPrefix(commandArgs, {
+    repoRoot: resolve(options.repoRoot ?? COMMAND_REPO_ROOT), cwd: options.cwd ?? process.cwd(),
+  });
+  return phases.some(args => resolveRemoteCommandPolicy(args, options).testRunner === '1');
 }
 
 /** Finite work owns publication resources, not installed-tree consumption.
@@ -1147,6 +1170,7 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
       if (policy.heavyClass) policy.selfPublisher = phasesOwnAdmission ? '1' : '0';
       if (placementHeavyClass && placementHeavyClass !== policy.heavyClass) policy.placementHeavyClass = placementHeavyClass;
       policy.requiredTools = [...requiredTools].join(' ');
+      if (await shellBatchRunsTests(commandArgs, options)) policy.testRunner = '1';
       return policy;
     }
   }
@@ -1197,6 +1221,7 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     heavyClass = resolved.admissionClass || 'compilation';
   }
   const result = { ...policy, selfPublisher, heavyClass, requiredTools: [...requiredTools].join(' ') };
+  if (await shellBatchRunsTests(commandArgs, options)) result.testRunner = '1';
   placementHeavyClass = largestHeavyweightClass(placementHeavyClass,
     await resolveShellPrefixPlacementClass(commandArgs, options), await resolveRemoteValidationPlacementClass(result, {
     repoRoot: options.repoRoot ?? COMMAND_REPO_ROOT, env: options.env,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -97,4 +97,47 @@ test('cold sibling prepares generator dependencies and warm publication reuses t
     assert.equal(result.status, 0, state + ': ' + result.stderr);
     assert.equal(await readFile(join(protocol, 'prepared'), 'utf8'), 'true');
   }
+});
+
+// A private sibling worktree borrows its owner's node_modules. Publication
+// imports the lender's tools as installed; the worker replica installs its
+// own tree, so routing such a worktree needs no controller-side install.
+test('borrowed sibling publishes exports with its lender tools without installing', {
+  skip: process.platform === 'win32' ? 'POSIX installer executable fixture' : false,
+}, async t => {
+  const base = await mkdtemp(join(tmpdir(), 'hstack-protocol-borrowed-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const lender = join(base, 'owner');
+  const tool = join(lender, 'node_modules', 'generator-tool');
+  await mkdir(tool, { recursive: true });
+  await writeFile(join(tool, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }));
+  await writeFile(join(tool, 'index.js'), 'export const ready = "lender";');
+  const root = join(base, 'worktree');
+  await mkdir(root);
+  await writeFile(join(root, 'package.json'), JSON.stringify({ private: true, packageManager: 'pnpm@12.14.0' }));
+  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+  await symlink(join('..', 'owner', 'node_modules'), join(root, 'node_modules'));
+  const protocol = join(root, 'packages/protocol');
+  await mkdir(join(protocol, 'scripts'), { recursive: true });
+  await writeFile(join(protocol, 'package.json'), '{"name":"@happier-dev/protocol","type":"module"}');
+  await writeFile(join(protocol, 'scripts/generate-exports.mjs'), `
+    import { writeFile } from 'node:fs/promises';
+    import { ready } from 'generator-tool';
+    export async function prepareProtocolExports({ packageRoot }) {
+      await writeFile(packageRoot + '/prepared', String(ready));
+    }
+  `);
+  const bin = join(base, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'pnpm'), '#!/bin/sh\nexit 9\n'); // The borrowed tree is never installed into.
+  await chmod(join(bin, 'pnpm'), 0o755);
+  const result = spawnSync(process.execPath, [entry, '--prepare-protocol-exports', root], {
+    encoding: 'utf8', env: { ...process.env, PATH: bin + delimiter + process.env.PATH,
+      CI: '', HAPPIER_DEV_TARGET_EXECUTION: '', HAPPIER_STACK_SKIP_REFRESH_DEPS: '',
+      HAPPIER_STACK_DISABLE_REFRESH_DEPS: '', npm_execpath: '', npm_lifecycle_event: '' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(join(protocol, 'prepared'), 'utf8'), 'lender');
+  assert.match(result.stderr, /borrows node_modules/);
 });

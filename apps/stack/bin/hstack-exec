@@ -816,6 +816,58 @@ validate_launcher_payload() {
   esac
 }
 
+# Stack execution configs live under this root; an unset HOME has none.
+resolve_execution_storage_root() {
+  storage_root=${HAPPIER_STACK_STORAGE_DIR-}
+  case "$storage_root" in
+    '') [ -n "${HOME-}" ] || return 1; storage_root="$HOME/.happier/stacks" ;;
+    '~') [ -n "${HOME-}" ] || return 1; storage_root=$HOME ;;
+    '~/'*) [ -n "${HOME-}" ] || return 1; storage_root="$HOME/${storage_root#'~/'}" ;;
+  esac
+}
+
+# The controller is the host that routes: one of its Stack execution
+# projections places commands on remote targets. Read without sourcing it.
+projection_routes_commands() {
+  [ -r "$1" ] && awk -F= '$1 == "command_mode" { mode = $2 } $1 == "target_count" { count = $2 }
+    END { gsub(/\047/, "", mode); gsub(/\047/, "", count); exit !(mode != "local" && count + 0 > 0) }' "$1"
+}
+host_routes_commands() {
+  if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
+    projection_routes_commands "$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh"
+    return
+  fi
+  resolve_execution_storage_root || return 1
+  for routing_projection in "$storage_root"/repo-*/dev-target-exec-v1.sh; do
+    projection_routes_commands "$routing_projection" && return 0
+  done
+  return 1
+}
+
+# Owner 2026-11-18 (P03-LOCAL-GUARD): the controller does not run agents' test
+# suites; they run routed. Placed workers, nested payloads and CI keep their
+# local execution, as does a run that regenerates tracked files (its writes
+# would stay on a replica). Call with the command policy resolved for "$@".
+refuse_controller_local_tests() {
+  controller_local_test_context=$1
+  shift
+  [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ] && [ "${HAPPIER_HSTACK_EXECUTION-}" != 1 ] && [ -z "${CI-}" ] \
+    && [ "$(uname -s 2>/dev/null || true)" = Linux ] && host_routes_commands || return 0
+  if [ "${policy_testRunner-0}" != 1 ]; then
+    # Only the package-policy owner reads a shell batch's phases.
+    case "$policy_command" in sh|bash) resolve_self_publisher_policy "$@" ;; *) return 0 ;; esac
+    [ "${policy_testRunner-0}" = 1 ] || return 0
+  fi
+  if [ "${policy_sourceUpdate-0}" = 1 ]; then
+    printf '[preferred-execution] %s test run allowed on the controller: it regenerates tracked files, which only this checkout keeps\n' \
+      "$controller_local_test_context" >&2
+    return 0
+  fi
+  printf '[preferred-execution] HSTACK_LOCAL_TEST_REFUSED: %s test runs are refused on the controller; run them routed: ./apps/stack/bin/hstack-exec -- <same command> (AUTO), or --target=nl3\n' \
+    "$controller_local_test_context" >&2
+  exit 1
+}
+
 if [ "${1-}" = --local ]; then
   if [ -n "$explicit_target" ]; then
     printf '%s\n' '[preferred-execution] --target and --local cannot be combined' >&2
@@ -840,6 +892,7 @@ if [ "${1-}" = --local ]; then
       exit 1
     fi
   fi
+  refuse_controller_local_tests --local "$@"
   if [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-0}" != 1 ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then
     printf '%s\n' \
       '[preferred-execution] explicit --local bypasses automatic load distribution; use it only when the command must run on the authoritative machine' >&2
@@ -897,21 +950,7 @@ fi
 
 storage_root=${HAPPIER_STACK_STORAGE_DIR-}
 if [ -z "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
-  if [ -z "$storage_root" ]; then
-    if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
-    storage_root="$HOME/.happier/stacks"
-  else
-    case "$storage_root" in
-      '~')
-        if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
-        storage_root=$HOME
-        ;;
-      '~/'*)
-        if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
-        storage_root="$HOME/${storage_root#'~/'}"
-        ;;
-    esac
-  fi
+  resolve_execution_storage_root || run_local_without_target_config "$@"
 
   if [ -d "$storage_root" ] && [ ! -r "$storage_root" ]; then
     run_local_without_target_config "$@"
@@ -2050,6 +2089,7 @@ if [ -z "$selected" ]; then
     printf '%s\n' '[preferred-execution] no remote execution target is reachable' >&2
     exit 1
   fi
+  refuse_controller_local_tests 'local fallback' "$@"
   printf '%s\n' '[preferred-execution] no remote execution target is reachable; configured fallback=local, running locally' >&2
   run_local "$@"
 fi
@@ -2463,6 +2503,7 @@ handle_selected_command_connection_failure() {
     printf '%s\n' '[preferred-execution] no execution target accepted a command connection' >&2
     exit 1
   fi
+  refuse_controller_local_tests 'local fallback' "$@"
   printf '%s\n' '[preferred-execution] no remote execution target is reachable: no target accepted a command connection; configured fallback=local, running locally' >&2
   run_local "$@"
 }

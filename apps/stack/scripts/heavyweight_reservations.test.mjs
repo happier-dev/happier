@@ -32,6 +32,8 @@ esac
   writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   const env = { ...buildNativeAdmissionFixtureEnv(), PATH: `${fixture.path('bin')}:/usr/bin:/bin`, CI: '',
     FIXTURE_MEMORY: memory, HAPPIER_DEV_TARGET_EXECUTION: '',
+    // A local host without the caller's real Stack execution configs (P03-LOCAL-GUARD).
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
     HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
   const run = (machine, check = false, extraEnv = {}) => spawnSync('/bin/sh', [launcher,
     check ? '--heavyweight-admission-check' : '--heavyweight-admission', '--class=validation', `--machine=${machine}`,

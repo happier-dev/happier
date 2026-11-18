@@ -1068,6 +1068,15 @@ In current 0.3 development, heavyweight compilation on the Linux controller refu
 by default. Use AUTO by omitting `--local`, or explicitly authorize
 `--local --allow-local-compilation -- <command> [args...]`. The override retains memory admission
 and the local floor, including under CI; already-placed workers do not require it.
+Test runs (Vitest, Jest, Playwright `test`, `node --test`, test package scripts, and shell batches
+whose phases run them) are refused under `--local` on a Linux host that routes commands to targets, and when a configured
+local fallback would run them there: run them routed by omitting `--local`, or pick a worker with
+`--target=<name>`. There is no override. A run that regenerates tracked files (`vitest -u`, or an
+`env UPDATE_<NAME>=1` prefix after `--`) stays local, because a replica's writes never return; the
+launcher logs that reason. Already-placed workers, nested payloads and CI are unaffected. A private
+sibling worktree whose `node_modules` links to another checkout routes like any sibling: the
+controller publishes its Protocol exports with the lender's installed tools and the worker
+replica installs its own tree.
 The checkout-local `./apps/stack/bin/hstack-exec -- ...` launcher exposes that same owner for
 potentially broad read-only repository work (`rg`, `find`, inventories/counts), tests, typechecks,
 lint/static analysis, and builds that write only ignored artifacts. Keep tracked-source or Git

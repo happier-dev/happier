@@ -308,7 +308,8 @@ function isPathInside(rootPath, candidatePath) {
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
 
-async function inspectBorrowedNodeModulesLink(installDir) {
+/** The lender's node_modules path when `installDir` borrows another checkout's tree, else null. */
+export async function inspectBorrowedNodeModulesLink(installDir) {
   const nodeModules = join(installDir, 'node_modules');
   try {
     if (!(await lstat(nodeModules)).isSymbolicLink()) return null;

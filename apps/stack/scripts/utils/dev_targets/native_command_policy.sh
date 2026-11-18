@@ -121,6 +121,8 @@ native_command_policy_base() {
   policy_preparationScope=''
   policy_workspaceSync='1'
   policy_compilerSuite='0'
+  policy_testRunner='0'
+  policy_sourceUpdate='0'
   if { [ "$policy_command" = 'bun' ]; } && { [ "$policy_entry" = 'build' ]; } && { [ "$policy_compile" = '1' ]; }; then
     policy_requiredTools='bun'
   fi
@@ -702,6 +704,24 @@ native_command_policy_finish() {
     policy_localCompile='0'
     policy_bootstrap='0'
     policy_validation='0'
+  fi
+  if { [ "$policy_workerTool" = 'vitest' ]; }; then
+    policy_testRunner='1'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '1' ]; }; then
+    policy_testRunner='1'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'run-playwright-with-heartbeat.mjs' ]; }; then
+    policy_testRunner='1'
+  fi
+  if { [ "$policy_managerNode" = '1' ]; } && { [ "$policy_entry" = 'run-playwright-with-heartbeat.mjs' ]; }; then
+    policy_testRunner='1'
+  fi
+  if { [ "$policy_command" = 'playwright' ]; } && { [ "$policy_entry" = 'test' ]; }; then
+    policy_testRunner='1'
+  fi
+  if { [ "$policy_command" = 'jest' ]; }; then
+    policy_testRunner='1'
   fi
 }
 native_package_manager() { case "$1" in npm|npx|pnpm|yarn) return 0 ;; *) return 1 ;; esac; }

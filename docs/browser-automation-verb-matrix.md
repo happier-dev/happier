@@ -13,7 +13,7 @@ hand-patching it:
 
 ```
 cd apps/ui
-UPDATE_AUTOMATION_VERB_MATRIX=1 ../../apps/stack/bin/hstack-exec --local -- \
+../../apps/stack/bin/hstack-exec --local -- env UPDATE_AUTOMATION_VERB_MATRIX=1 \
   node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts --maxWorkers=1 --no-file-parallelism \
   sources/sync/domains/browser/adapters/automationVerbMatrix.closure.test.ts
 ```
