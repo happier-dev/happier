@@ -115,7 +115,7 @@ it('discovers, links and pages native history through all six admitted callbacks
     expect(source).toEqual({ kind: 'museNative', museHome: join(scratch, 'data/muse') });
 
     // Native session/list truncates firstUserPrompt inside the delivery frame.
-    // Preserve explicit names, but never present this truncated frame as a title.
+    // The canonical title projector preserves the visible prompt text and explicit names.
     const previews = structuredClone(reopened);
     const listRow = readMuseRecord(previews[4]);
     const listMessage = readMuseRecord(listRow.message);
@@ -130,7 +130,7 @@ it('discovers, links and pages native history through all six admitted callbacks
     const listed = value(await callbacks.listCandidates({ ...invocation, source, maxItems: 7 }));
     expect(listed.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ remoteSessionId: id })]));
     expect(listed.nextCursor).toBeNull();
-    expect(listed.candidates[0]).not.toHaveProperty('title');
+    expect(listed.candidates[0]?.title).toBe('Dynamic resource context');
     expect(listed.candidates[1]?.title).toBe('A deliberate name');
 
     await phase(reopened, [9]);
