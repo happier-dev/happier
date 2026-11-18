@@ -11,6 +11,7 @@ import {
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 import { db } from '@/storage/db';
 import { logger } from '@/utils/logging/log';
+import { createSessionPublisherPresence, expireSessionPublisherCandidates } from '@/app/presence/sessionPublisherPresence';
 import { readSessionDetail } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { inTx } from '@/storage/inTx';
@@ -475,6 +476,47 @@ describe('Team credential Provider broker admission', () => {
             expect(warn).toHaveBeenCalledWith({ module: 'provider-broker-admission', operation: 'request',
                 reasonCode: 'session_not_active', refusalReason: 'session_missing_or_inactive' });
         } finally { warn.mockRestore(); }
+    });
+
+    it('keeps an admitted Session carrier retryable across presence expiry and refuses it after publisher close', async () => {
+        const fixture = await createBrokerFixture('carrier-presence', { application: {
+            ...FIXTURE_APPLICATION, protocol: 'openai-chat',
+        } });
+        const resource = await fixture.createResource('carrier-presence-provider');
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const publisher = createSessionPublisherPresence();
+        const socket = {};
+        const registration = await publisher.registerPublisher({
+            socket,
+            binding: { accountId: fixture.requester.id, machineId: fixture.worker.id, sessionId: session.id },
+            completeActivitySnapshot: { state: 'active', activeCount: 1 },
+        });
+        if (registration.status !== 'registered') throw new Error(`publisher registration failed: ${registration.status}`);
+        const input = { resource, sessionId: session.id, authentication: TEST_AUTHENTICATION };
+        const opened = await fixture.open(input);
+        if (!opened.ok) throw new Error(`broker open failed: ${opened.reasonCode}`);
+        const refresh = () => fixture.open({ ...input, refreshAuthority: opened.authority });
+        await expect(refresh()).resolves.toMatchObject({ ok: true });
+
+        await expect(expireSessionPublisherCandidates({
+            candidates: [{ sessionId: session.id, observedFence: registration.committedFence }],
+        })).resolves.toMatchObject([{ status: 'expired' }]);
+        await expect(refresh()).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+        await expect(fixture.open(input)).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+        await expect(fixture.catalog({ authority: opened.authority, resource }))
+            .resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+        await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'offline', generation: true }))
+            .resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+        await expect(db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).resolves.toBe(0);
+
+        await expect(publisher.touchPublisher({ socket })).resolves.toMatchObject({ status: 'touched' });
+        await expect(refresh()).resolves.toMatchObject({ ok: true });
+        await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'recovered', generation: true }))
+            .resolves.toMatchObject({ ok: true });
+
+        await expect(publisher.closePublisher({ socket })).resolves.toMatchObject({ status: 'closed' });
+        await expect(refresh()).resolves.toEqual({ ok: false, reasonCode: 'session_not_active' });
     });
 
     it.each(['machine-agent37', 'machine-boat'] as const)('admits declared managed provider roles for %s under the requesting native Action', async plugin => {

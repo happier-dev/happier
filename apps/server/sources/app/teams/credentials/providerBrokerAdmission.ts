@@ -30,7 +30,7 @@ import { signProviderBrokerRouteGrantV1 } from '@/app/machines/peer/mediation/si
 import { projectTeamCredentialProviderModels } from './providerModelProjection';
 import type { MachinePoolCandidateSnapshot } from '@/app/machines/pools/machinePoolService';
 import { verifyRunnerBrokerOpenSelectionInTx } from '@/app/ephemeralRunner/runnerBrokerOpenSelection';
-import { acquireProviderBrokerConsumerAdmissionInTx, admitProviderBrokerConsumerInTx, admitProviderBrokerTopology, readProviderBrokerInitiatorEndpointInTx } from '@/app/providers/brokerConsumerAdmission';
+import { acquireProviderBrokerConsumerAdmissionInTx, admitProviderBrokerConsumerInTx, admitProviderBrokerTopology, classifyProviderBrokerSessionPresence, readProviderBrokerInitiatorEndpointInTx } from '@/app/providers/brokerConsumerAdmission';
 
 type ProviderProjectionReader = (input: Readonly<{
     custodianAccountId: string;
@@ -82,7 +82,7 @@ type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { er
     | 'broker_custodian_mismatch' | 'binding_resource_mismatch' | 'binding_delivery_mismatch'
     | 'binding_broker_entitlement_missing' | 'runner_selection_missing' | 'resource_lookup_missing'
     | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
-    | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_turn_not_in_progress'
+    | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_presence_unavailable' | 'session_turn_not_in_progress'
     | 'session_turn_binding_mismatch' | 'execution_run_occurrence_mismatch' | 'execution_run_turn_not_active'
     | 'broker_job_resource_moved';
 
@@ -194,6 +194,7 @@ function closedFailure(reasonCode: Failure['reasonCode'], refusalReason: BrokerR
 }
 
 function consumerAdmissionFailure(reasonCode: ProviderBrokerAdmissionFailureCodeV1): Failure {
+    if (reasonCode === 'broker_unavailable') return brokerUnavailable('session_presence_unavailable');
     return reasonCode === 'resource_forbidden'
         ? closedFailure(reasonCode, 'consumer_machine_access_missing')
         : failure(reasonCode);
@@ -1149,11 +1150,16 @@ async function readActiveBrokerJobInTx(
     const session = row?.sessionAccountId ? {
         accountId: row.sessionAccountId, active: Number(row.sessionActive) === 1,
         archivedAt: Number(row.sessionArchived) === 1 ? true : null,
+        publisherFenceCurrent: Number(row.sessionPublisherFenceCurrent) === 1,
         latestTurnId: row.latestTurnId, latestTurnStatus: row.latestTurnStatus,
     } : null;
-    if (sessionId !== null && (!session || session.accountId !== grant.initiator.accountId
-        || !session.active || session.archivedAt !== null)) {
-        return closedFailure('session_not_active', 'session_missing_or_inactive');
+    if (sessionId !== null) {
+        if (!session || session.accountId !== grant.initiator.accountId || session.archivedAt !== null) {
+            return closedFailure('session_not_active', 'session_missing_or_inactive');
+        }
+        const refusal = classifyProviderBrokerSessionPresence(session);
+        if (refusal === 'broker_unavailable') return brokerUnavailable('session_presence_unavailable');
+        if (refusal) return closedFailure(refusal, 'session_missing_or_inactive');
     }
     let turnId: string | null = null;
     if (grant.consumer.kind === 'execution_run') {

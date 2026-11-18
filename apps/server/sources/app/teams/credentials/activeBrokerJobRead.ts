@@ -10,6 +10,7 @@ type ActiveBrokerJobRow = Readonly<{
     sessionAccountId: string | null;
     sessionActive: number | bigint;
     sessionArchived: number | bigint;
+    sessionPublisherFenceCurrent: number | bigint;
     latestTurnId: string | null;
     latestTurnStatus: string | null;
     turnId: string | null;
@@ -45,6 +46,7 @@ export async function readActiveBrokerJobRowsInTx(tx: Tx, input: Readonly<{
         s."accountId" AS "sessionAccountId",
         CASE WHEN s."active" THEN 1 ELSE 0 END AS "sessionActive",
         CASE WHEN s."archivedAt" IS NOT NULL THEN 1 ELSE 0 END AS "sessionArchived",
+        CASE WHEN s."publisherGenerationLastActiveAt" = s."lastActiveAt" THEN 1 ELSE 0 END AS "sessionPublisherFenceCurrent",
         s."latestTurnId", s."latestTurnStatus", t."turnId", t."usageActorAccountId",
         t."teamCredentialResourceId", t."credentialDeliveryMode"
         FROM "Account" a

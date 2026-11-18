@@ -2044,6 +2044,10 @@ a publication after startup cannot invalidate the capture that admitted it.
 Home's request owner checks whether the admitted job remains active. Personal
 Gateway requests consume the same Home activity lookup at each new request;
 an inactive answer refuses dispatch without aborting a response already open.
+If Session presence expires while the current publisher can still restore it,
+Home refuses broker admission with retryable `broker_unavailable`. The person
+can retry when the publisher reconnects. A confirmed inactive or archived
+Session receives `session_not_active`.
 Local cancellation releases the caller's join, while explicit release retires the exact
 operation without an additional authorization read. A new acquisition admits
 the then-current source and refuses unavailable source reads through the typed

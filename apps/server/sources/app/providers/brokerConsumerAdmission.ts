@@ -20,6 +20,16 @@ type AdmittedConsumerSession = Readonly<{
     latestTurnStatus: string | null;
 }>;
 
+/** Presence expiry preserves the current publisher fence so its next heartbeat
+ * can restore reachability. Both refusals keep the broker closed. */
+export function classifyProviderBrokerSessionPresence(session: Readonly<{
+    active: boolean;
+    publisherFenceCurrent: boolean;
+}>): 'session_not_active' | 'broker_unavailable' | null {
+    if (session.active) return null;
+    return session.publisherFenceCurrent ? 'broker_unavailable' : 'session_not_active';
+}
+
 /** Capture custody during preparation, then admit the complete Account cohort
  * before final deciding reads. Serializing admission excludes grant/lifecycle
  * publication (NO KEY UPDATE) and physical erasure (UPDATE), while reusing the
@@ -92,12 +102,20 @@ export async function admitProviderBrokerConsumerInTx(tx: Tx, input: Readonly<{
     const sessionId = input.consumer.kind === 'session' ? input.consumer.sessionId : input.executionRun?.parentSessionId;
     let session: AdmittedConsumerSession | null = null;
     if (sessionId) {
-        session = await tx.session.findUnique({ where: { id: sessionId }, select: {
+        const observed = await tx.session.findUnique({ where: { id: sessionId }, select: {
             accountId: true, active: true, archivedAt: true, primaryTeamId: true, latestTurnId: true, latestTurnStatus: true,
+            lastActiveAt: true, publisherGenerationLastActiveAt: true,
         } });
-        if (!session || session.accountId !== input.accountId || !session.active || session.archivedAt !== null) {
+        if (!observed || observed.accountId !== input.accountId || observed.archivedAt !== null) {
             return { ok: false, reasonCode: 'session_not_active' };
         }
+        const { lastActiveAt, publisherGenerationLastActiveAt, ...sessionFacts } = observed;
+        const refusal = classifyProviderBrokerSessionPresence({
+            active: sessionFacts.active,
+            publisherFenceCurrent: publisherGenerationLastActiveAt?.getTime() === lastActiveAt.getTime(),
+        });
+        if (refusal) return { ok: false, reasonCode: refusal };
+        session = sessionFacts;
         if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, accountId: input.accountId,
             machineId: input.initiatorMachineId, sessionId })) return { ok: false, reasonCode: 'resource_forbidden' };
     }
