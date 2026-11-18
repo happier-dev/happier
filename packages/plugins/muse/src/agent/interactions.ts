@@ -30,10 +30,11 @@ function toolInput(params: NativeRecord): Record<string, JsonValue> {
     return {};
 }
 function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagentId: string) => Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined): NativePermissionChoicesV1 {
+    const toolName = typeof params.toolName === 'string' ? params.toolName : undefined;
     // MSP formats tool identities as inline code; host choice labels/previews
     // are plain text. Preserve literal backticks in commands and other operands.
-    const plainToolLabel = (text: string) => typeof params.toolName === 'string' && params.toolName
-        ? text.replaceAll('`' + params.toolName + '`', params.toolName) : text;
+    const plainToolLabel = (text: string) => toolName ? text.replaceAll('`' + toolName + '`', toolName) : text;
+    const redundantToolPreview = toolName ? `tool ${toolName}` : undefined;
     const requirement = readMuseRecord(params.currentRequirementId);
     requiredString(requirement, 'approvalId');
     if (typeof requirement.sourceIndex !== 'number') throw protocolError('Muse omitted the approval requirement source index');
@@ -47,8 +48,9 @@ function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagent
         const id = requiredString(choice, 'choiceId');
         const nativeLabel = requiredString(choice, 'label');
         const label = id === 'allow_local_mcp_tool' ? 'Always allow in Muse' : plainToolLabel(nativeLabel);
+        const rulePreview = typeof choice.rulePreview === 'string' ? plainToolLabel(choice.rulePreview) : undefined;
         return { id, label, decision, scope,
-            ...(typeof choice.rulePreview === 'string' ? { rulePreview: plainToolLabel(choice.rulePreview) } : {}),
+            ...(rulePreview !== undefined && rulePreview !== redundantToolPreview ? { rulePreview } : {}),
             ...(choice.acceptsFeedback === true ? { allowsFeedback: true } : {}),
             response: { approved: decision !== 'denied' && decision !== 'abort', decision } };
     });

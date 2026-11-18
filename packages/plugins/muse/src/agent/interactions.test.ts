@@ -156,10 +156,11 @@ it.each([
             ? { ...row, message: { ...message, params: { ...params,
                 subject: { kind: 'tool', toolName: nativeToolName }, toolName: nativeToolName, rawArgs: '{"query":"pebble"}',
                 availableChoices: Array.isArray(params.availableChoices)
-                    ? params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_local_prefix'
+                    ? [...params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_local_prefix'
                         ? { choiceId: 'allow_local_mcp_tool', label: 'Always allow this MCP tool', rulePreview: toolRule,
                             decision: 'approvedPolicyAmendment', scope: 'localPersistent' }
-                        : value) : [],
+                        : value), { choiceId: 'allow_session', label: 'Allow for this session',
+                        rulePreview: `tool ${nativeToolName}`, decision: 'approvedForSession', scope: 'session' }] : [],
             } } }
             : row;
     }) }));
@@ -187,9 +188,13 @@ it.each([
             expect(pending?.arguments).toEqual({ query: 'pebble' });
             const nativePolicy = pending?.nativeChoices?.choices.find(choice => choice.id === 'allow_local_mcp_tool');
             expect(nativePolicy).toMatchObject({
-                label: 'Always allow in Muse', rulePreview: `tool ${nativeToolName}`,
+                label: 'Always allow in Muse',
                 scope: 'localPersistent', response: { decision: 'approved_execpolicy_amendment' },
             });
+            expect(nativePolicy).not.toHaveProperty('rulePreview');
+            const sessionGrant = pending?.nativeChoices?.choices.find(choice => choice.scope === 'session');
+            expect(sessionGrant).toMatchObject({ response: { decision: 'approved_for_session' } });
+            expect(sessionGrant).not.toHaveProperty('rulePreview');
             expect(nativePolicy?.followUp).toBeUndefined();
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
                 label: 'Always allow for this Account', scope: 'localPersistent', response: { decision: 'approved' },

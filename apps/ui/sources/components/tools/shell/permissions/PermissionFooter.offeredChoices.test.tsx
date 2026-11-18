@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 
 import {
   createTestSessionTranscriptSource,
@@ -78,6 +80,7 @@ async function renderFooter(
     }[];
     respondToPermission?: ReturnType<typeof vi.fn>;
     onRender?: () => void;
+    nativeChoices?: NativePermissionChoicesV1;
   }> = {},
 ) {
   const source = createSource(input.respondToPermission as never);
@@ -91,7 +94,7 @@ async function renderFooter(
         id: 'edit-1',
         turnId: 'turn-3',
         status: 'pending',
-        nativeChoices,
+        nativeChoices: input.nativeChoices ?? nativeChoices,
         ...(input.availability
           ? { nativeChoiceAvailability: input.availability }
           : {}),
@@ -171,6 +174,26 @@ describe('PermissionFooter offered native choices', () => {
     expect(screen.getTextContent()).toContain(
       'capabilities.session.toolAsk.savedForLater',
     );
+  });
+
+  it('distinguishes a Muse-local grant from an Account grant on a phone', async () => {
+    const [once, session, always, reject] = nativeChoices.choices;
+    const account = createMcpCatalogPermissionChoiceV1({
+      mcpTool: { server: 'docs', tool: 'edit', serverTitle: 'Docs', item: { serverId: 'docs-id' },
+        decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } },
+      grant: once!, existingChoices: nativeChoices.choices,
+    });
+    if (!account) throw new Error('Expected an Account catalog grant');
+    const { screen } = await renderFooter({ nativeChoices: {
+      ...nativeChoices, source: 'muse', choices: [once!, session!, always!, account, reject!],
+    } });
+    await layOut(screen, 390);
+
+    const rowHasText = (choiceId: string, text: string) => screen
+      .findByTestId(`permission-footer.choice.${choiceId}`)?.findAll(node => node.children.includes(text)).length;
+    expect(rowHasText(session!.id, 'capabilities.session.toolAsk.untilSessionEnds')).toBeGreaterThan(0);
+    expect(rowHasText(account.id, 'capabilities.session.toolAsk.savedForLater')).toBeGreaterThan(0);
+    expect(rowHasText(always!.id, 'capabilities.session.toolAsk.savedInMuseSettings')).toBeGreaterThan(0);
   });
 
   it('withholds a lasting choice from a shared approver with its reason, while once and session still answer', async () => {
