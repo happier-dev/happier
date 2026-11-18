@@ -14448,7 +14448,7 @@ settingsSession: {
         sessionDefaults: {
             description: ({ project }: { project: string }) => `${project} 中新工作階段的起始方式`,
             scopeMe: "我自己",
-            scopeTeam: ({ team }: { team: string }) => `${team} 團隊`,
+            scopeTeam: ({ team }: { team: string }) => `${team}`,
             scopeShared: "所有人",
             lineMe: "僅限你的工作階段。儲存到你的帳戶。",
             lineTeam: ({ project, team }: { project: string; team: string }) => `從 ${team} 的來源開啟 ${project} 的所有人都從這裡開始。`,

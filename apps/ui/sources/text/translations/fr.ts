@@ -18777,7 +18777,7 @@ settingsSession: {
     sessionDefaults: {
         description: ({ project }: { project: string }) => `Comment démarrent les nouvelles sessions dans ${project}`,
         scopeMe: "Pour moi",
-        scopeTeam: ({ team }: { team: string }) => `Pour l’équipe ${team}`,
+        scopeTeam: ({ team }: { team: string }) => `Pour ${team}`,
         scopeShared: "Pour tout le monde",
         lineMe: "Seulement tes sessions. Enregistré dans ton compte.",
         lineTeam: ({ project, team }: { project: string; team: string }) => `Toute personne qui ouvre ${project} depuis la source de ${team} démarre ici.`,

@@ -18522,7 +18522,7 @@ settingsSession: {
     sessionDefaults: {
         description: ({ project }: { project: string }) => `${project} 中新会话的起始方式`,
         scopeMe: "我自己",
-        scopeTeam: ({ team }: { team: string }) => `${team} 团队`,
+        scopeTeam: ({ team }: { team: string }) => `${team}`,
         scopeShared: "所有人",
         lineMe: "仅限你的会话。保存到你的账户。",
         lineTeam: ({ project, team }: { project: string; team: string }) => `从 ${team} 的源打开 ${project} 的所有人都从这里开始。`,

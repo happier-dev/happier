@@ -17710,7 +17710,7 @@ La meva pregunta: `,
         sessionDefaults: {
             description: ({ project }: { project: string }) => `Com comencen les sessions noves a ${project}`,
             scopeMe: "Per a mi",
-            scopeTeam: ({ team }: { team: string }) => `Per a l’equip ${team}`,
+            scopeTeam: ({ team }: { team: string }) => `Per a ${team}`,
             scopeShared: "Per a tothom",
             lineMe: "Només les teves sessions. Es desa al teu compte.",
             lineTeam: ({ project, team }: { project: string; team: string }) => `Tothom qui obri ${project} des de la font de ${team} comença aquí.`,

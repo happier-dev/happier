@@ -18817,7 +18817,7 @@ settingsSession: {
     sessionDefaults: {
         description: ({ project }: { project: string }) => `${project} の新しいセッションの始まり方`,
         scopeMe: "自分用",
-        scopeTeam: ({ team }: { team: string }) => `${team} チーム用`,
+        scopeTeam: ({ team }: { team: string }) => `${team} 用`,
         scopeShared: "全員用",
         lineMe: "あなたのセッションだけ。アカウントに保存されます。",
         lineTeam: ({ project, team }: { project: string; team: string }) => `${team} のソースから ${project} を開く全員がここから始まります。`,

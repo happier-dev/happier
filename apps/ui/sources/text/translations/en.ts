@@ -22302,7 +22302,7 @@ const enProjects = {
   sessionDefaults: {
       description: ({ project }: { project: string }) => `How new sessions in ${project} start`,
       scopeMe: "For me",
-      scopeTeam: ({ team }: { team: string }) => `For the ${team} team`,
+      scopeTeam: ({ team }: { team: string }) => `For ${team}`,
       scopeShared: "For everyone",
       lineMe: "Only your sessions. Saved to your account.",
       lineTeam: ({ project, team }: { project: string; team: string }) => `Everyone opening ${project} from ${team}’s source starts here.`,

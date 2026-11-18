@@ -18856,7 +18856,7 @@ settingsSession: {
     sessionDefaults: {
         description: ({ project }: { project: string }) => `Как начинаются новые сессии в ${project}`,
         scopeMe: "Для меня",
-        scopeTeam: ({ team }: { team: string }) => `Для команды ${team}`,
+        scopeTeam: ({ team }: { team: string }) => `Для ${team}`,
         scopeShared: "Для всех",
         lineMe: "Только ваши сессии. Сохраняется в вашем аккаунте.",
         lineTeam: ({ project, team }: { project: string; team: string }) => `Все, кто открывает ${project} из источника ${team}, начинают отсюда.`,

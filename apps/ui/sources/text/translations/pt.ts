@@ -19009,7 +19009,7 @@ settingsSession: {
     sessionDefaults: {
         description: ({ project }: { project: string }) => `Como começam as novas sessões em ${project}`,
         scopeMe: "Para mim",
-        scopeTeam: ({ team }: { team: string }) => `Para a equipa ${team}`,
+        scopeTeam: ({ team }: { team: string }) => `Para ${team}`,
         scopeShared: "Para todos",
         lineMe: "Só as tuas sessões. Guardado na tua conta.",
         lineTeam: ({ project, team }: { project: string; team: string }) => `Quem abrir ${project} a partir da fonte de ${team} começa aqui.`,
