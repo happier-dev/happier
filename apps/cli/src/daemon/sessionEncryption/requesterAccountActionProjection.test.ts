@@ -2066,6 +2066,12 @@ describe('admitted requester Action projection', () => {
     } finally { await material?.dispose(); await retained?.release(); await admitted.dispose(); }
     expect(await retained?.isCurrent()).toBe(false);
     expect(await retained?.savedSecretOperationContext.isCurrent()).toBe(false);
+    await expect(prepareRequesterOperationMaterial({ requesterAccount: admitted, retainedCustody: retained,
+      reloadController: createPluginReloadController() })).rejects.toMatchObject({
+      data: { code: 'agent_isolation_unavailable', details: {
+        phase: 'requester_material_admission', reason: 'requester_account_context_retired',
+      } },
+    });
   });
 
   it('keeps template operation requester ports usable after its transport is cancelled', async () => {

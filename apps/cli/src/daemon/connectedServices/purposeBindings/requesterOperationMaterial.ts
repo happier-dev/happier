@@ -39,12 +39,13 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
     && binding.installationId === selected.requester.installationId
     && account.serverHttpBaseUrl === operationContext.serverHttpBaseUrl
     && operationContext.credentials === account.credentials;
-  const unavailable = () => Object.assign(new PluginError({ code: 'agent_isolation_unavailable',
+  const unavailable = (reason: 'requester_authority_unavailable' | 'requester_account_context_retired' = 'requester_authority_unavailable') =>
+    Object.assign(new PluginError({ code: 'agent_isolation_unavailable',
     message: 'Requester material is unavailable', retryable: false,
-    details: { phase: 'requester_material_admission', reason: 'requester_authority_unavailable' } }), { rpcErrorCode: 'agent_isolation_unavailable' });
+    details: { phase: 'requester_material_admission', reason } }), { rpcErrorCode: 'agent_isolation_unavailable' });
   if (!matches()) throw unavailable();
   const release = (() => {
-    try { return account.retain(); } catch { throw unavailable(); }
+    try { return account.retain(); } catch { throw unavailable('requester_account_context_retired'); }
   })();
   const lifetime = new AbortController();
   let disposed = false;
