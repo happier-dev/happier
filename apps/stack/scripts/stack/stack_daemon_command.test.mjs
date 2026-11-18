@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chmod, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { installStubDaemonSourceBuildInputs } from '../testkit/core/source_runtime_fixture.mjs';
@@ -69,6 +69,42 @@ test('daemon stop reaches retained cleanup while stale source status stays refus
   assert.equal(stop.runtimePath, runtimePath);
   await assert.rejects(() => resolveStackDaemonCommandContext({ ...input, argv: ['status'] }),
     { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' });
+});
+
+// P03-INFRA-ASKS (FLEET DISPATCH 11-18): repo-dev is a live (`stack dev`) Stack. Its
+// selected daemon capture links the moving dependency installation, so each
+// dependency publication makes it refuse (`closure_changed`). A named daemon start
+// must prepare current source like the default daemon, not join that selection.
+test('a named daemon on a live Stack prepares current source instead of joining a stale selection', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-live-named-daemon-' });
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+  const stackName = 'live-named-daemon';
+  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
+    HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_RUNTIME_MODE: 'live' };
+  const stackBaseDir = resolveStackBaseDir(stackName, env).baseDir;
+  const bundleDir = join(dirname(stackBaseDir), 'source-bundles', 'runtime-live-selected');
+  const cliDir = join(bundleDir, 'apps', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await writeFile(entrypoint, 'throw new Error("stale selection must not be launched");\n');
+  // A linked (uncaptured) capture whose recorded installation no longer matches.
+  const markerPath = fixture.path('install/node_modules/.happier-stack-dependencies-ready');
+  const generationPath = fixture.path('install/dependency-install.lock.generation');
+  await mkdir(dirname(markerPath), { recursive: true });
+  await writeFile(markerPath, JSON.stringify({ identity: 'current-install' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'g2', completedGeneration: 'g2' }));
+  await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ identity: 'live-selected', entrypoint, cliDir, env: {},
+    dependencyPublication: { identity: 'previous-install', generation: 'g1', completedGeneration: 'g1', writerActive: false, markerPath, generationPath },
+    runtimeDependencyClosure: { identity: 'previous-closure', imports: [] } }));
+  await mkdir(join(stackBaseDir, 'source-runtime'), { recursive: true });
+  await writeFile(join(stackBaseDir, 'source-runtime', 'selected-daemon.json'), JSON.stringify({ entrypoint }));
+  // The fixture checkout has no sources, so current-source preparation fails at the
+  // producer: the point is that the start reaches preparation instead of refusing.
+  const emptyRoot = fixture.path('empty-checkout/apps/stack');
+  await mkdir(emptyRoot, { recursive: true });
+  const error = await resolveStackDaemonCommandContext({ rootDir: emptyRoot, stackName, identity: 'qa-named', env,
+    argv: ['start', '--runtime=source'], activeRuntimeState: null }).then(() => null, caught => caught);
+  assert.notEqual(error?.code, 'SOURCE_RUNTIME_RELOAD_REQUIRED', 'a live named start must not join the stale selection');
 });
 
 // P03-TOOLING-ISOLATION (Usage 18:35Z): a daemon-only restart of a revision-tree
