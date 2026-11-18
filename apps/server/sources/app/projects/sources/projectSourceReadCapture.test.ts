@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Tx } from '@/storage/inTx';
 import { createDbMaintenanceClient } from '@/storage/prisma';
-import { resolveProjectSourcesAccessInTx, type ProjectSourceRow } from './projectSourceService';
+import { resolveProjectSourcesAccessInTx, sourceFromRow, type ProjectSourceRow } from './projectSourceService';
 import type { ProjectSourceAccessCapture } from './projectSourceReadCapture';
 
 describe('Source page capture cost', () => {
+    it('projects the server Source creation time as optional public metadata', () => {
+        const row: ProjectSourceRow = { id: 'source', createdByAccountId: 'owner', revision: 1, name: 'Source',
+            owner: { kind: 'account', accountId: 'owner' }, audience: [], attachments: [], repository: null,
+            defaultRef: null, subdir: null, deletedAt: null, createdAt: new Date(1_700_000_000_000), updatedAt: new Date(0) };
+        expect(sourceFromRow(row)).toEqual({ success: true, data: expect.objectContaining({ createdAt: 1_700_000_000_000 }) });
+    });
+
     it('uses one database read while keeping the real Source, Team and Group evaluators', async () => {
         vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
         const source: ProjectSourceRow = { id: 'source', createdByAccountId: 'owner', revision: 1, name: 'Group Source',

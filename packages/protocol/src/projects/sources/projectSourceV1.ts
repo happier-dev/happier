@@ -61,6 +61,8 @@ export const ProjectSourceV1Schema = lazyZodSchema(() => z.strictObject({
   repository: z.optional(ProjectSourceRepositorySelectorV1Schema),
   defaultRef: z.optional(z.string().check(z.trim(), z.minLength(1))), subdir: z.optional(ProjectSourceSubdirV1Schema),
   audience: z.array(ProjectSourceGrantV1Schema), createdByAccountId: z.string().check(z.minLength(1)),
+  /** Server-observed creation time in epoch milliseconds. Older Source rows may omit it. */
+  createdAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   attachments: z.optional(z.array(SourceAttachmentV1Schema)),
   /** Demand-read labels; not authorable or persisted on the Source. */
   audienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)),

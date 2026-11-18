@@ -61,7 +61,7 @@ export function sourceFromRow(row: SourceRow) {
         ...(row.defaultRef === null ? {} : { defaultRef: row.defaultRef }),
         ...(row.subdir === null ? {} : { subdir: row.subdir }),
         audience: row.audience, owner: row.owner ?? { kind: 'account', accountId: row.createdByAccountId },
-        createdByAccountId: row.createdByAccountId, attachments: row.attachments,
+        createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), attachments: row.attachments,
     });
 }
 
