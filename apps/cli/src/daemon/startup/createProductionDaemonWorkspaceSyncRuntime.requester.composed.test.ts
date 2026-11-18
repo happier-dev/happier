@@ -1,4 +1,5 @@
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
 import { join } from 'node:path';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
@@ -464,6 +465,8 @@ it.skipIf(process.platform !== 'linux').each(['manage', 'use'] as const)('materi
 });
 
 it.skipIf(process.platform !== 'linux')('preserves the primary Sync refusal when prepared target cleanup also refuses', async () => {
+  const relationshipWarning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+  onTestFinished(() => { relationshipWarning.mockRestore(); });
   executionBoundary.member = false;
   const refusals: string[] = [];
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
@@ -487,9 +490,10 @@ it.skipIf(process.platform !== 'linux')('preserves the primary Sync refusal when
   expect(refusals).toContain('primary');
   expect(refusals).toContain('cleanup');
   expect(result).toMatchObject({ errorCode: 'relationship_not_ready' });
-  expect(setup.rpcDiagnostics).toContainEqual({ message: 'Sync handler failure', data: expect.arrayContaining([
-    expect.objectContaining({ errors: expect.arrayContaining([expect.objectContaining({ code: 'target_unavailable' })]) }),
-  ]) });
+  expect(relationshipWarning).toHaveBeenCalledWith('[Workspace Sync] Relationship create failed', expect.objectContaining({
+    method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+    errors: expect.arrayContaining([expect.objectContaining({ code: 'target_unavailable' })]),
+  }));
   expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
 

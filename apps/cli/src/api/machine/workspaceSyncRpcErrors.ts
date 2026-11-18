@@ -72,20 +72,16 @@ type WorkspaceSyncRpcFailureCause = Readonly<{
   message: string;
 }>;
 
-function projectAggregateCause(error: AggregateError): AggregateError {
-  const errors = error.errors.map(value => {
-    const message = redactBugReportSensitiveText(value instanceof Error ? value.message : 'Unknown Workspace Sync error');
-    const projected = new Error(message);
-    projected.name = redactBugReportSensitiveText(value instanceof Error ? value.name : 'UnknownThrownValue');
+function projectAggregateCauses(error: AggregateError): WorkspaceSyncRpcFailureCause[] {
+  return error.errors.map((value: unknown) => {
     const code = value instanceof Error && 'code' in value && typeof value.code === 'string'
       ? value.code : readRpcErrorCode(value);
-    if (code) {
-      const safeCode = redactBugReportSensitiveText(code);
-      Object.assign(projected, { code: safeCode, rpcErrorCode: safeCode });
-    }
-    return projected;
+    return {
+      code: code ? redactBugReportSensitiveText(code) : null,
+      name: redactBugReportSensitiveText(value instanceof Error ? value.name : 'UnknownThrownValue'),
+      message: redactBugReportSensitiveText(value instanceof Error ? value.message : 'Unknown Workspace Sync error'),
+    };
   });
-  return new AggregateError(errors, redactBugReportSensitiveText(error.message));
 }
 
 export function projectWorkspaceSyncRpcError(error: unknown, method: string, requestId?: string): unknown {
@@ -115,9 +111,11 @@ export function projectWorkspaceSyncRpcError(error: unknown, method: string, req
       const projected = Object.assign(new RpcError(code === undefined || code === 'machine_manage_required'
         ? `Workspace linking could not complete. ${cause.name}${cause.code ? ` (${cause.code})` : ''}: ${cause.message}`
         : cause.message, code === undefined || code === 'machine_manage_required' ? 'workspace_sync_unavailable' : code, failureCause),
-      { ...(code === undefined || code === 'machine_manage_required' ? {} : { code }),
-        ...(error instanceof AggregateError ? { cause: projectAggregateCause(error) } : { cause }), failureCause });
-      logger.warnLocalFile('[Workspace Sync] Relationship create failed', { method, requestId, cause, failureCause });
+      { ...(code === undefined || code === 'machine_manage_required' ? {} : { code }), cause, failureCause });
+      logger.warnLocalFile('[Workspace Sync] Relationship create failed', {
+        method, requestId, cause, failureCause,
+        ...(error instanceof AggregateError ? { errors: projectAggregateCauses(error) } : {}),
+      });
       return projected;
     }
     if (code !== undefined && error instanceof Error) {
