@@ -286,16 +286,18 @@ export function createMachineManagedServices(input: Readonly<{
                         input.notifyActivity);
                     },
                 } : {};
+                const instanceControls = native.controls?.(instance);
                 const handle = Object.freeze<MachineManagedServiceHandle>({
                     ...serviceExec,
                     homeServerIdentityId,
                     ...wrapped, kind: 'adopted', serverId: request.serverId, machineId: request.machineId,
                     watch, instance, serviceId: watch.watchId, instanceId: process.snapshot().instanceId, endpointKind: 'native',
                     lifecyclePurpose: watch.lifecyclePurpose, actionScope: { kind: 'machine', machineId: request.machineId },
+                    // The adapter decides per instance; the listing never offers a control it refuses.
                     capabilities: Object.freeze({ exec: Boolean(serviceExec.executeServiceCommand),
-                        start: process.nativeControlCapabilities?.start === true,
-                        stop: process.nativeControlCapabilities?.stop === true,
-                        restart: process.nativeControlCapabilities?.restart === true,
+                        start: process.nativeControlCapabilities?.start === true && instanceControls?.start !== false,
+                        stop: process.nativeControlCapabilities?.stop === true && instanceControls?.stop !== false,
+                        restart: process.nativeControlCapabilities?.restart === true && instanceControls?.restart !== false,
                         logs: Boolean(native.logs), accounting: Boolean(native.accounting) }),
                     retirementSignal: lifetime.signal, isCurrent,
                     async inspectCurrentOccurrence() { assertCurrent(); if (!process.inspectCurrentOccurrence) unavailable();

@@ -177,6 +177,16 @@ describe('bundled systemd Machine services', () => {
             expect(await runtime.execute({ actionId: 'machines.services.unwatch', context, input: { ...target,
                 watchId: row.watchId!, expectedRevision: row.watchRevision! } })).toMatchObject({ kind: 'applied' });
             expect(await readFile(statePath, 'utf8')).toBe('active');
+            // A system unit is observed but not controlled by the daemon user, so the
+            // listed row must not offer the controls its adapter will refuse.
+            expect(await runtime.execute({ actionId: 'machines.services.watch', context, input: { ...target,
+                candidateId: systemCandidate.candidateId, expectedRevision: systemCandidate.revision, lifecyclePurpose: 'infrastructure' } })).toMatchObject({ kind: 'applied' });
+            const systemListed = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
+            if (systemListed.kind !== 'snapshot') throw new Error('Expected watched system service');
+            expect(systemListed.services).toMatchObject([{ native: { displayName: 'system-worker.service' },
+                capabilities: { start: false, stop: false, restart: false } }]);
+            expect(await runtime.execute({ actionId: 'machines.services.unwatch', context, input: { ...target,
+                watchId: systemListed.services[0]!.watchId!, expectedRevision: systemListed.services[0]!.watchRevision! } })).toMatchObject({ kind: 'applied' });
             await writeFile(denySystemPath, 'denied');
             expect(await runtime.execute({ actionId: 'machines.services.discovery',
                 input: { ...target, adapter: { pluginId: 'happier.machine.services', localId: 'systemd' } }, context })).toMatchObject({

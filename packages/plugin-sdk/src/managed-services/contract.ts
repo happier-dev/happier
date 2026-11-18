@@ -364,6 +364,10 @@ export interface ManagedServiceNativeLifecycleV1 {
      * Existing resource-only adapters may ignore it; it is never serialized or plugin-supplied.
      */
     inspect(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1>;
+    /** The adapter's own control admission for this exact instance. Hosts offer
+     * start/stop/restart only where it answers true; omission means every
+     * declared control method applies to every instance. */
+    controls?(instance: ManagedServiceNativeInstanceV1): Readonly<{ start: boolean; stop: boolean; restart: boolean }>;
     /** Controls the existing admitted resource; never recreates it or runs a Project launcher. */
     start?(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions,
         context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1>;

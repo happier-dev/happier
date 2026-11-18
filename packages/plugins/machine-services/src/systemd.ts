@@ -74,10 +74,16 @@ async function inspect(instance: ManagedServiceNativeInstanceV1, options?: Plugi
     };
 }
 
+/** System mutation requires the actual host P10 authority, not a sudo/polkit fallback:
+ * only the daemon user's own manager is controlled. Listing and control share this. */
+function controllable(selected: ReturnType<typeof parseInstance>): boolean {
+    return process.platform === 'linux' && selected.scope === 'user';
+}
+
 async function control(verb: 'start' | 'restart', instance: ManagedServiceNativeInstanceV1,
     options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1> {
     const selected = parseInstance(instance);
-    if (process.platform !== 'linux' || selected.scope !== 'user') return { kind: 'unsupported', code: 'systemd_control_unsupported' };
+    if (!controllable(selected)) return { kind: 'unsupported', code: 'systemd_control_unsupported' };
     const result = await command(selected.scope, [verb, '--', selected.unit], options, context);
     if (!result.complete) return { kind: 'failed', code: `systemd_${verb}_unconfirmed` };
     return await inspect(instance, options, context);
@@ -123,12 +129,15 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
         return { kind: failures.length ? 'partial' : 'ready', candidates, failures };
     },
     inspect,
+    controls(instance) {
+        const supported = controllable(parseInstance(instance));
+        return { start: supported, stop: supported, restart: supported };
+    },
     start: (instance, options, context) => control('start', instance, options, context),
     restart: (instance, options, context) => control('restart', instance, options, context),
     async stop(instance, options, context) {
         const selected = parseInstance(instance);
-        // System mutation requires the actual host P10 authority, not a sudo/polkit fallback.
-        if (process.platform !== 'linux' || selected.scope !== 'user') return { status: 'unsupported' };
+        if (!controllable(selected)) return { status: 'unsupported' };
         const result = await command(selected.scope, ['stop', '--', selected.unit], options, context);
         if (!result.complete) return { status: 'termination_incomplete' };
         const current = await inspect(instance, options, context);

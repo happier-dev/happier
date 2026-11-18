@@ -382,6 +382,7 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                     }
                     return result;
                 } } : {}),
+                ...(lifecycle.controls ? { controls: (candidate: ManagedServiceNativeInstanceV1) => lifecycle.controls!(exactInstance(candidate)) } : {}),
                 ...(lifecycle.start ? { start: captureControl(lifecycle.start) } : {}),
                 ...(lifecycle.restart ? { restart: captureControl(lifecycle.restart) } : {}),
                 ...(lifecycle.accounting ? { async accounting(candidates: readonly ManagedServiceNativeInstanceV1[], options?: PluginCancellationOptions) {
