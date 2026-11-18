@@ -443,7 +443,7 @@ fn initialize_window_frame(
         .app_handle()
         .state::<WindowSizingState>()
         .frames
-        .initialize(path, value);
+        .initialize(path, value, crate::desktop_window::is_app_window(window.label()));
     Ok(())
 }
 
@@ -576,7 +576,12 @@ impl FramePersistence {
             .or_else(|| read_json(path))
     }
 
-    fn initialize(&self, path: PathBuf, value: PersistedWindowState) {
+    fn initialize(&self, path: PathBuf, value: PersistedWindowState, persist_initial: bool) {
+        // A restorable window can keep its opening frame for its entire lifetime.
+        if persist_initial && self.saved(&path).as_ref() != Some(&value) {
+            self.record(path, FrameObservation::Normal(value));
+            return;
+        }
         if let Ok(mut frames) = self.frames.lock() {
             frames
                 .entry(path)
@@ -995,7 +1000,7 @@ mod tests {
             units: PersistedWindowUnits::Logical,
             monitor_name: Some("secondary".into()),
         };
-        frames.initialize(path.clone(), normal.clone());
+        frames.initialize(path.clone(), normal.clone(), false);
         frames.record(path.clone(), FrameObservation::Normal(normal.clone()));
         frames.flush();
         assert!(!path.exists());
@@ -1017,6 +1022,30 @@ mod tests {
         frames.record(path.clone(), FrameObservation::Normal(moved.clone()));
         frames.flush();
         assert_eq!(read_json(&path), Some(moved));
+    }
+
+    #[test]
+    fn an_unmoved_destination_window_frame_is_available_after_relaunch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("destination_089aec9b-2b09-498b-bb09-53b1d41f5d7f.json");
+        let frames = FramePersistence::default();
+        let opened = PersistedWindowState {
+            x: 356.0,
+            y: 102.0,
+            width: 800.0,
+            height: 600.0,
+            maximized: false,
+            units: PersistedWindowUnits::Logical,
+            monitor_name: Some("Built-in Retina Display".into()),
+        };
+
+        frames.initialize(path.clone(), opened.clone(), true);
+        assert_eq!(frames.saved(&path), Some(opened.clone()));
+
+        frames.record(path.clone(), FrameObservation::Normal(opened.clone()));
+        frames.flush();
+
+        assert_eq!(FramePersistence::default().saved(&path), Some(opened));
     }
 
     #[test]
@@ -1044,7 +1073,7 @@ mod tests {
             y: 70.0,
             ..saved
         };
-        frames.initialize(path.clone(), replacement.clone());
+        frames.initialize(path.clone(), replacement.clone(), false);
         fs::remove_file(&parent).unwrap();
         frames.flush();
         assert_eq!(read_json(&path), Some(replacement));
