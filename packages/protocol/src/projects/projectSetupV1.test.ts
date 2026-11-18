@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROJECT_SETUP_ARTIFACT_KIND_V1, projectSharedSetupDigestV1, readAcceptedProjectSetupV1 } from './projectSetupV1.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
+import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
 
 describe('accepted Project setup detail boundary', () => {
   const manifest = ProjectManifestV1Schema.parse({ version: 1,
@@ -36,7 +37,8 @@ describe('accepted Project setup detail boundary', () => {
 
   it('preserves a refused transport cause and propagates cancellation', async () => {
     expect(await readAcceptedProjectSetupV1({ setupContent: pointer,
-      readArtifact: async () => { throw Object.assign(new Error('Artifact refused'), { code: 'artifact_access_forbidden' }); } }))
+      readArtifact: async () => { throw createActionExecuteFailureError({ ok: false,
+        errorCode: 'artifact_access_forbidden', error: 'Artifact refused', effectAttempted: false }); } }))
       .toMatchObject({ kind: 'unavailable', code: 'artifact_access_forbidden', failureCause: { errorCode: 'artifact_access_forbidden' } });
     const controller = new AbortController();
     const reason = new Error('Cancelled selected detail');

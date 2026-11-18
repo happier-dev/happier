@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { loadManagedSessionDefaultsContextV1, type ManagedSessionDefaultsContextLoaderV1 } from './loadManagedSessionDefaultsContextV1.js';
+import { loadManagedSessionDefaultsContextV1, ProjectSessionDefaultsGetOutputV1Schema, type ManagedSessionDefaultsContextLoaderV1 } from './loadManagedSessionDefaultsContextV1.js';
+import { ManagedSessionDefaultsV1Schema } from '../teams/managedSessionDefaultsV1.js';
 
 describe('demanded project Session defaults context', () => {
   it('omits an unavailable Home reader while retaining captured Machine defaults', async () => {
@@ -40,14 +41,18 @@ describe('demanded project Session defaults context', () => {
   });
 
   it('retains member and captured Machine defaults when Home is unreadable', async () => {
-    const loaded = await loadManagedSessionDefaultsContextV1({ memberDefaults: { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+    const memberDefaults = ManagedSessionDefaultsV1Schema.parse({ permissionModeByAgentTargetKey: {
+      'agent:happier.agent.codex/codex': 'read-only',
+    } });
+    const loaded = await loadManagedSessionDefaultsContextV1({ memberDefaults,
       creationMachineApprovalProfileId: 'captured-machine' }, {
       readSource: async () => { throw new Error('no Source selected'); },
       readHome: async () => { throw new Error('Home unreachable'); },
     });
     expect(loaded.context.homeDefaults).toBeNull();
-    expect(loaded.context.memberDefaults).toMatchObject({ defaultAgentTarget: { identity: { localId: 'codex' } }, approvalProfileId: 'captured-machine' });
+    expect(loaded.context.memberDefaults).toEqual({ ...memberDefaults, approvalProfileId: 'captured-machine' });
     expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'defaults_unavailable', effectAttempted: false }]);
+    expect(ProjectSessionDefaultsGetOutputV1Schema.parse(loaded)).toEqual(loaded);
   });
 
   it('skips unavailable requester-private rows while retaining admitted Project and Team defaults', async () => {
