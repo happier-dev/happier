@@ -17,7 +17,7 @@ import { EmbeddedTerminalPaneFrame } from '@/components/terminal/embedded/Embedd
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { resolveSessionTerminalIdentity } from '@/components/sessions/terminal/sessionTerminalMode';
 import { initializeSessionTerminalWorkspaceForScope, readSessionTerminalWorkspaceForScope } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
@@ -190,18 +190,26 @@ describe('Project terminal admission through canonical Machine Actions', () => {
             focusedTerminalId: member.id, root: { kind: 'leaf', terminalId: member.id } }], activeTabId: member.id, showList: false });
         storage.getState().applyMachines([createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
         storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId })]);
+        // The phone's focused Terminal surface claims the workspace as the cockpit does, then the revealed
+        // Session scene replays the URL's desktop dock (`bottom=terminal`) under it, as observed live.
+        function PhoneTerminalPage() {
+            const dispatch = useAppPaneContext(value => value.dispatch);
+            const pane = useAppPaneScope(scopeId);
+            React.useLayoutEffect(() => {
+                dispatch({ type: 'setTerminalPageActive', scopeId, active: true });
+                return () => dispatch({ type: 'setTerminalPageActive', scopeId, active: false });
+            }, []);
+            React.useEffect(() => { pane.openBottom({ tabId: 'terminal' }); }, []);
+            return <SessionTerminalPage sessionId={sessionId} scopeId={scopeId} presentation="page" testIdPrefix="responsive-phone" />;
+        }
         function ResponsiveTerminal() {
             const pane = useAppPaneScope(scopeId);
             React.useEffect(() => {
                 initializeSessionTerminalWorkspaceForScope(scopeId, workspace);
                 pane.openBottom({ tabId: 'terminal' });
             }, []);
-            if (phoneFirst) return <>
-                <SessionTerminalPage sessionId={sessionId} scopeId={scopeId} testIdPrefix="responsive-phone" />
-                <SessionBottomPanel sessionId={sessionId} scopeId={scopeId} />
-            </>;
             return viewport.width === 390
-                ? <SessionTerminalPage sessionId={sessionId} scopeId={scopeId} testIdPrefix="responsive-phone" />
+                ? <PhoneTerminalPage />
                 : <SessionBottomPanel sessionId={sessionId} scopeId={scopeId} />;
         }
         rpc.mockReset(); rpc.mockResolvedValue({ ok: true, terminals: [] });
@@ -231,16 +239,18 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                     })))).toBeGreaterThan(0);
             });
             await measure();
-            expect(screen.findAllByType(EmbeddedTerminalPaneFrame)).toHaveLength(phoneFirst ? 2 : 1);
+            expect(screen.findAllByType(EmbeddedTerminalPaneFrame)).toHaveLength(1);
             await home.decline();
             const expectNotOpen = async () => vi.waitFor(() => {
                 const frames = screen.findAllByType(EmbeddedTerminalPaneFrame);
-                expect(frames).toHaveLength(phoneFirst ? 2 : 1);
+                // One renderer per member in either layout: the declined state and its Open, never the bare list.
+                expect(frames).toHaveLength(1);
                 for (const frame of frames) expect(frame.props.controller.status).toBe('not-open');
+                expect(screen.findAllByType(SurfaceStateCard).some(card => card.props.action?.label === t('common.open'))).toBe(true);
             });
             await expectNotOpen();
             expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs[0]?.terminals[0]?.openCancelled).toBe(true);
-            for (const width of [390, 1440]) {
+            for (const width of phoneFirst ? [1440, 390] : [390, 1440]) {
                 viewport.width = width;
                 await screen.update(body());
                 await measure();

@@ -37,6 +37,17 @@ describe('visible AppPane terminal workspace', () => {
         expect(selectVisibleSessionTerminalTabs(blurred, scopeId)).toEqual([]);
         expect(blurred.scopes[scopeId].bottom.tabState.terminal).toBe(opened.scopes[scopeId].bottom.tabState.terminal);
     });
+    it('keeps the focused Terminal page as host when a desktop dock is replayed under it, and returns the dock on blur', () => {
+        // Phone width after a desktop session: the Session URL still carries `bottom=terminal`,
+        // and a revealed Session scene replays it after the page took the workspace.
+        const page = appPaneReduce(openOutput(), { type: 'setTerminalPageActive', scopeId, active: true });
+        const replayed = appPaneReduce(page, { type: 'openBottom', scopeId, tabId: 'terminal' });
+        expect(replayed.scopes[scopeId].bottom.isOpen).toBe(true);
+        expect(selectSessionTerminalWorkspaceHost(replayed, scopeId)).toBe('page');
+        expect(selectSessionTerminalWorkspaceHost(replayed, scopeId, 'output')).toBe('page');
+        const blurred = appPaneReduce(replayed, { type: 'setTerminalPageActive', scopeId, active: false });
+        expect(selectSessionTerminalWorkspaceHost(blurred, scopeId)).toBe('bottom');
+    });
     it('keeps output visible after moving to the sidebar and releases it when that sidebar closes', () => {
         const opened = openOutput();
         const sidebar = appPaneReduce(opened, { type: 'openRight', scopeId, tabId: 'terminal' });

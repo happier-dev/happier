@@ -51,8 +51,11 @@ export type SessionTerminalWorkspaceHost = 'right' | 'bottom' | 'details' | 'pag
 
 export function selectSessionTerminalWorkspaceHost(state: AppPaneState, scopeId: string, terminalId?: string): SessionTerminalWorkspaceHost | null {
     const scope = state.scopes[scopeId];
-    if (!scope) return state.activeTerminalPageScopeId === scopeId ? 'page' : null;
-    const pane = getVisibleSessionTerminalWorkspacePane(scope);
+    const pageActive = state.activeTerminalPageScopeId === scopeId;
+    if (!scope) return pageActive ? 'page' : null;
+    // The focused Terminal page is the only terminal surface its (phone) layout presents. A dock retained
+    // under it, or replayed from a desktop URL (`bottom=terminal`), hosts again only once the page blurs.
+    const pane = pageActive ? null : getVisibleSessionTerminalWorkspacePane(scope);
     if (pane && terminalId === undefined) return pane;
     const workspace = readSessionTerminalWorkspace(scope.bottom.tabState.terminal);
     const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId);
@@ -69,7 +72,7 @@ export function selectSessionTerminalWorkspaceHost(state: AppPaneState, scopeId:
             }
         }
     }
-    return inActiveTab && state.activeTerminalPageScopeId === scopeId ? 'page' : null;
+    return inActiveTab && pageActive ? 'page' : null;
 }
 
 export function selectVisibleSessionTerminalTabs(state: AppPaneState, scopeId: string): readonly SessionTerminalTabV1[] {
