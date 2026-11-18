@@ -23,11 +23,13 @@ const base = {
     tint: '#fff', agentId: 'codex', agentLabel: 'Codex', profileLabel: null, profileIcon: 'user-circle', dismiss: () => {}, blurInput: () => {},
 } as const;
 const action = (id: string) => ({ id, label: id, icon: null, onPress: () => {} });
+// Attach and Link declare the + menu's add group in the control registry.
+const addControls = buildAgentInputPlacementDescriptors({ coreControls: [{ id: 'attachments' }, { id: 'linkedFiles' }] });
 
 describe('buildAgentInputActionMenuActions', () => {
     it('identifies effective add operations as a first section without restoring Shown or Hidden operations', () => {
         const menu = buildAgentInputActionMenuActions({
-            ...base, resolvedControls: resolved(['permission', 'linkedFiles', 'path', 'attachments']),
+            ...base, resolvedControls: { ...resolved(['permission', 'linkedFiles', 'path', 'attachments']), controls: addControls },
             permissionLabel: 'Ask', onPermissionClick: () => {}, currentPath: '/project', onPathClick: () => {}, onRemoveFolder: () => {},
             extraControlActions: { linkedFiles: action('link'), attachments: action('attach') },
         });
@@ -37,11 +39,25 @@ describe('buildAgentInputActionMenuActions', () => {
             { id: 'path-remove', section: 'controls' },
         ]);
         const moved = buildAgentInputActionMenuActions({
-            ...base, resolvedControls: resolved(['permission']), permissionLabel: 'Ask', onPermissionClick: () => {},
+            ...base, resolvedControls: { ...resolved(['permission']), controls: addControls }, permissionLabel: 'Ask', onPermissionClick: () => {},
             extraControlActions: { linkedFiles: action('link'), attachments: action('attach') },
         });
         expect(moved).toMatchObject([{ id: 'permission', section: 'controls' }]);
         expect(moved).toHaveLength(1);
+    });
+
+    it('sections each row by the group its control declares, so a contributed add control joins Attach and Link', () => {
+        const upload: AgentInputExtraActionChip = { key: 'upload', controlId: 'plugin:fixture/upload',
+            placement: { id: 'plugin:fixture/upload', title: 'Upload', menu: { group: 'add' } }, render: () => null };
+        const controls = buildAgentInputPlacementDescriptors({ coreControls: [{ id: 'attachments' }, { id: 'permission' }], chips: [upload] });
+        const menu = buildAgentInputActionMenuActions({
+            ...base, resolvedControls: { ...resolved(['permission', 'plugin:fixture/upload', 'attachments']), controls },
+            permissionLabel: 'Ask', onPermissionClick: () => {},
+            extraControlActions: { 'plugin:fixture/upload': action('upload'), attachments: action('attach') },
+        });
+        expect(menu.map(({ id, section }) => ({ id, section }))).toEqual([
+            { id: 'upload', section: 'add' }, { id: 'attach', section: 'add' }, { id: 'permission', section: 'controls' },
+        ]);
     });
 
     it('uses the Files glyph rather than a branch glyph in the file viewer action', () => {
@@ -210,7 +226,7 @@ describe('buildAgentInputActionMenuActions', () => {
     it('renders effective overflow in saved order, grouping effective add actions first', () => {
         const actions = buildAgentInputActionMenuActions({
             ...base,
-            resolvedControls: resolved(['delivery:second', 'resume', 'attachments', 'linkedFiles', 'delivery:first']),
+            resolvedControls: { ...resolved(['delivery:second', 'resume', 'attachments', 'linkedFiles', 'delivery:first']), controls: addControls },
             onResumeClick: () => {},
             extraControlActions: {
                 'delivery:first': action('first'), 'delivery:second': action('second'),

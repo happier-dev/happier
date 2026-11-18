@@ -19,9 +19,9 @@ type AgentInputCatalogControlDescriptor = AgentInputControlDescriptor & Readonly
  * the session-list folder (`organization`), and automation.
  */
 export const AGENT_INPUT_CONTROL_REGISTRY = [
-    { id: 'attachments', line: 'primary', titleKey: 'settings.attachments', icon: 'paperclip', defaultPlacement: 'overflow' },
+    { id: 'attachments', line: 'primary', titleKey: 'settings.attachments', icon: 'paperclip', defaultPlacement: 'overflow', menu: { group: 'add' } },
     { id: 'files', line: 'primary', titleKey: 'agentInput.actionMenu.files', icon: 'files', defaultPlacement: 'overflow', allowedPlacements: ['overflow', 'hidden'] },
-    { id: 'linkedFiles', line: 'primary', titleKey: 'navigationPlacement.linkedFiles', icon: 'at', defaultPlacement: 'overflow' },
+    { id: 'linkedFiles', line: 'primary', titleKey: 'navigationPlacement.linkedFiles', icon: 'at', defaultPlacement: 'overflow', menu: { group: 'add' } },
     { id: 'engine', line: 'primary', titleKey: 'newSession.wizardSection.model', icon: 'sparkle', defaultPlacement: 'pinned', menu: { disclosure: true } },
     { id: 'permission', line: 'primary', titleKey: 'newSession.wizardSection.permission', icon: 'shield-check', defaultPlacement: 'pinned', allowedPlacements: ['pinned', 'overflow'], menu: { disclosure: true } },
     { id: 'mode', line: 'primary', titleKey: 'agentInput.mode.sectionTitle', icon: 'rocket-launch', defaultPlacement: 'pinned', menu: { disclosure: true } },

@@ -1,15 +1,15 @@
 import type { AgentInputFolderChipState } from './definitions/AgentInputFolderChip';
 import * as React from 'react';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
-import type { AgentInputResolvedControlLines } from './controls/agentInputControlTypes';
+import type { AgentInputControlMenuGroup, AgentInputResolvedControlLines } from './controls/agentInputControlTypes';
 import { buildCoreCollapsedControlActions } from './controls/buildCoreCollapsedControlActions';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 /** A + menu row; `opensPicker`: activating it opens a picker beside the menu (a submenu) instead of acting. */
 export type AgentInputActionMenuRow = ActionListItem & Readonly<{ opensPicker?: boolean }>;
 
-/** The visual owner separates actual add operations from the remaining overflow controls. */
-export type AgentInputActionMenuAction = AgentInputActionMenuRow & Readonly<{ section: 'add' | 'controls' }>;
+/** Each row carries its control's declared + menu group; the menu draws a hairline between groups. */
+export type AgentInputActionMenuAction = AgentInputActionMenuRow & Readonly<{ section: AgentInputControlMenuGroup }>;
 
 export function buildAgentInputActionMenuActions(opts: {
     resolvedControls: AgentInputResolvedControlLines;
@@ -52,9 +52,9 @@ export function buildAgentInputActionMenuActions(opts: {
     }
 
     const overflow = opts.resolvedControls.collapsed;
-    const isAdd = (id: string) => id === 'attachments' || id === 'linkedFiles';
-    const orderedIds = [...overflow.filter(isAdd), ...overflow.filter((id) => !isAdd(id))];
     const descriptorsById = new Map(opts.resolvedControls.controls.map((control) => [control.id, control]));
+    const groupOf = (id: string): AgentInputControlMenuGroup => descriptorsById.get(id)?.menu?.group ?? 'controls';
+    const orderedIds = [...overflow.filter((id) => groupOf(id) === 'add'), ...overflow.filter((id) => groupOf(id) !== 'add')];
     return orderedIds.flatMap((id) => {
         const [rowAction, ...supplementaryActions] = controlActionsById[id] ?? [];
         // The control's own row opens its picker beside the menu when its handler does (not a removal row).
@@ -63,7 +63,7 @@ export function buildAgentInputActionMenuActions(opts: {
             : rowAction;
         const actions = controlAction ? [controlAction, ...supplementaryActions] : [];
         const descriptor = descriptorsById.get(id);
-        const section: AgentInputActionMenuAction['section'] = isAdd(id) ? 'add' : 'controls';
+        const section = groupOf(id);
         if (!descriptor || !controlAction) return actions.map(action => ({ ...action, section }));
         const subtitle = [valueBesideName(controlAction.label, descriptor.title), controlAction.subtitle]
             .filter((value, index, values) => value && values.indexOf(value) === index)

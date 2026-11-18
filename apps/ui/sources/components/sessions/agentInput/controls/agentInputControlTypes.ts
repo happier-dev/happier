@@ -4,11 +4,16 @@ import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/dom
 
 export type AgentInputPlacementContext = 'session' | 'newSession' | 'workflow' | 'discussion';
 
+/** The + menu section a control's row sits in: `add` (put something into the message) leads, above a hairline. */
+export type AgentInputControlMenuGroup = 'add' | 'controls';
+
 export type AgentInputControlMenuMetadata = Readonly<{
     /** Used only when the action has neither a current value nor an authored subtitle. */
     description?: string;
     /** The admitted owner opens a detail picker/popover, rather than executing an operation. */
     disclosure?: boolean;
+    /** The control's one + menu group; undeclared is `controls`. */
+    group?: AgentInputControlMenuGroup;
 }>;
 
 export type AgentInputControlPlacement = Readonly<{
