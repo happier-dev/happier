@@ -65,7 +65,6 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
       ? { ...context, mcpToolPolicy: policy } : context;
   };
   const readImmediate = (toolCallId: string, toolName: string, input: unknown, context?: ExecutionRunPermissionCallContext): ReturnType<NonNullable<AcpPermissionHandler['getImmediateDecision']>> => {
-    if (isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     const inherited = params.handler.getImmediateDecision?.(toolCallId, toolName, input, mcpContext(toolName, context)) ?? null;
     if (inherited?.decision === 'denied' || inherited?.decision === 'abort') return inherited;
     return toolPolicy?.getImmediateDecision(toolCallId, toolName, input, context) ?? inherited;

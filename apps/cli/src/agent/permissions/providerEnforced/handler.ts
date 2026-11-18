@@ -30,7 +30,7 @@ import {
 } from '../permissionTaxonomy';
 import { shouldDenyAgentSessionTitleToolCall } from '../codingPromptTitlePermission';
 import { normalizePermissionRequestOwner, type PermissionRequestOwner } from '../permissionRequestOwner';
-import { isHostOccurrenceQuestion, resolveAgentRequestKind } from '../requestKind';
+import { isAgentStructuredQuestionRequest, resolveAgentRequestKind } from '../requestKind';
 import { resolveCausalPermissionMode } from '../causalPermissionMode';
 import { isWorkspaceWriteDeniedByRole } from '../workspaceWritePolicy';
 import type { PermissionRequestCoordinatorContext } from '../permissionRequestCoordinator';
@@ -137,6 +137,9 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   protected override resolveCurrentPermissionDecisionForOutstandingRequest(
     context: PermissionRequestCoordinatorContext,
   ): PermissionResult {
+    if (!context.nativeChoices && isAgentStructuredQuestionRequest({
+      toolName: context.toolName, kind: context.kind, source: context.source,
+    })) return { decision: 'approved' };
     const sourceAuthority = context.owner?.sourceAuthority;
     const causalPermissionContext = sourceAuthority
       ? {
@@ -230,9 +233,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     input: unknown,
     context?: AcpPermissionCallContext,
   ): PermissionResult | null {
-    // Publishing a host-bound question asks for human input; it grants no tool
-    // authority. Startup has no admitted turn, and must still reach the person.
-    if (isHostOccurrenceQuestion(toolName, context)) return null;
+    // Structured questions ask for input and grant no tool authority.
+    if (!context?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     if (this.isUnlistedToolDenied(toolName, input)) return { decision: 'denied' };
     const effective = resolveCausalPermissionMode({
       currentPermissionMode: this.currentPermissionMode,
@@ -305,7 +307,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     context?: AcpPermissionCallContext & Readonly<{ source?: string | null }>,
   ): PermissionResult | null {
     // A question always needs an answer, never an automatic tool/session grant.
-    if (isHostOccurrenceQuestion(toolName, context)) return null;
+    if (!context?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     const immediate = this.getImmediateDecision(toolCallId, toolName, input, context);
     if (immediate) return immediate;
 

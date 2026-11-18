@@ -2559,21 +2559,26 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         voiceAgentManager: this.voiceAgentManager,
         onPublicStateUpdated: (runId) => this.emitPublicStateUpdated(runId),
         attachRetainedRunSessionInput: (attachParams) => this.attachRetainedRunSessionInput(attachParams),
-        registerRunOccurrence: (occurrenceParams) => this.registerRunOccurrence(occurrenceParams),
+        registerRunOccurrence: (occurrenceParams) => {
+          const { controller } = occurrenceParams;
+          // Detached input custody must be ready before provisioning can send
+          // the first prompt. Attached Runs use the Session-owned dispatcher.
+          if (preparedParams.sessionId === null && controller.kind === 'backend' && runInteractionStore
+            && preparedParams.localInputId && controller.initialInputPending) {
+            controller.currentInputPermissionRequestStore = {
+              localInputId: preparedParams.localInputId,
+              store: runInteractionStore,
+              releaseResponseTarget: runInteractionStore.registerResponseTargetHandler('execution_run_host_bridge',
+                dispatch => this.handleExecutionRunPermissionResponseTargetDispatch(dispatch), { application: 'beforeCompletion' }),
+            };
+          }
+          return this.registerRunOccurrence(occurrenceParams);
+        },
       });
       const startedController = this.controllers.get(started.runId);
       if (startedController) {
         startedController.readNativeOfferedModel = resolution.readNativeOfferedModel;
         startedController.nativeModelRegistry = resolution.nativeModelRegistry;
-        if (startedController.kind === 'backend' && runInteractionStore && preparedParams.localInputId
-          && startedController.initialInputPending && !startedController.currentInputPermissionRequestStore) {
-          startedController.currentInputPermissionRequestStore = {
-            localInputId: preparedParams.localInputId,
-            store: runInteractionStore,
-            releaseResponseTarget: runInteractionStore.registerResponseTargetHandler('execution_run_host_bridge',
-              dispatch => this.handleExecutionRunPermissionResponseTargetDispatch(dispatch), { application: 'beforeCompletion' }),
-          };
-        }
       }
       this.emitPublicStateUpdated(started.runId);
       await this.emitLifecycleHookEvent({
@@ -2717,7 +2722,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         error: 'A detached invocation binding requires an exact local input id',
       };
     }
-    const turnInteraction = params.permissionRequestStore
+    const turnInteraction = run.sessionId === null && params.permissionRequestStore
       ? {
           permissionRequestStore: params.permissionRequestStore,
           handlePermissionResponseTarget: (dispatch: AgentStateResponseTargetDispatch) => (
