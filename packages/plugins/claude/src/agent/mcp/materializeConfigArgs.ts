@@ -42,15 +42,26 @@ export function assertClaudeMcpConfigArgsSafeForDirectSpawn(inputArgs: readonly 
     }
 }
 
+/** Claude flags that accept inline JSON or a file path, and the private file prefix for each. */
+const MATERIALIZED_JSON_FLAG_PREFIXES = {
+    '--mcp-config': 'happier-claude-mcp-config',
+    // Merged hook and permission settings exceed Windows' 32,767-character command line.
+    '--settings': 'happier-claude-settings',
+} as const;
+
 /**
- * Replaces inline Claude `--mcp-config` JSON with private temporary files.
+ * Replaces inline Claude `--mcp-config` JSON (and, when asked, `--settings` JSON) with private
+ * temporary files.
  *
- * Claude accepts JSON or a file path for this flag. Existing file paths remain untouched; only
- * inline JSON is materialized so secret-bearing MCP configuration never reaches process argv.
+ * Claude accepts JSON or a file path for both flags. Existing file paths remain untouched; only
+ * inline JSON is materialized, so secret-bearing MCP configuration never reaches process argv.
+ * Terminal launches also materialize `--settings`: their merged settings exceed Windows'
+ * command-line limit.
  */
 export function materializeClaudeMcpConfigArgsForSpawn(
     inputArgs: readonly string[],
     reportCleanupFailure: (message: string) => void = (message) => console.warn(message),
+    flags: readonly (keyof typeof MATERIALIZED_JSON_FLAG_PREFIXES)[] = ['--mcp-config'],
 ): MaterializedClaudeMcpConfigArgs {
     const args = [...inputArgs];
     const createdPaths: string[] = [];
@@ -63,10 +74,10 @@ export function materializeClaudeMcpConfigArgsForSpawn(
         throw new AggregateError(errors, 'Claude MCP private file cleanup incomplete');
     };
 
-    const materializeValue = (value: string): string => {
+    const materializeValue = (value: string, prefix: string): string => {
         if (!isInlineMcpConfig(value)) return value;
         const path = writeSecureTempTextFileSync({
-            prefix: 'happier-claude-mcp-config',
+            prefix,
             suffix: '.json',
             contents: value,
         });
@@ -77,17 +88,20 @@ export function materializeClaudeMcpConfigArgsForSpawn(
     try {
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index] ?? '';
-            if (arg === '--mcp-config') {
+            const flag = flags.find(candidate => candidate === arg);
+            if (flag) {
+                const prefix = MATERIALIZED_JSON_FLAG_PREFIXES[flag];
                 const valueIndex = index + 1;
                 const value = args[valueIndex];
                 if (typeof value === 'string') {
-                    args[valueIndex] = materializeValue(value);
+                    args[valueIndex] = materializeValue(value, prefix);
                     index = valueIndex;
                 }
                 continue;
             }
-            if (arg.startsWith('--mcp-config=')) {
-                args[index] = `--mcp-config=${materializeValue(arg.slice('--mcp-config='.length))}`;
+            const assigned = flags.find(candidate => arg.startsWith(`${candidate}=`));
+            if (assigned) {
+                args[index] = `${assigned}=${materializeValue(arg.slice(assigned.length + 1), MATERIALIZED_JSON_FLAG_PREFIXES[assigned])}`;
             }
         }
     } catch (error) {

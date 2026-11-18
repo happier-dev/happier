@@ -2412,6 +2412,8 @@ export function createClaudeAgentSdkTurnOperations(
     });
     let terminalStartupInstructions: ReturnType<typeof materializeClaudeStartupInstructions> | undefined;
     let terminalMcpConfig: ReturnType<typeof materializeClaudeMcpConfigArgsForSpawn> | undefined;
+    // The terminal launch's merged settings, as a private file (one per launch plan).
+    let terminalLaunchArgs: ReturnType<typeof materializeClaudeMcpConfigArgsForSpawn> | undefined;
     /**
      * A new Session the host starts under remote control (`agentRuntime.startsRemote`) gets its
      * first prompt through the host only after the host's remaining startup (runtime publication,
@@ -2491,9 +2493,8 @@ export function createClaudeAgentSdkTurnOperations(
                 terminalStartupInstructions ??= params.startupInstructions
                     ? materializeClaudeStartupInstructions(params.startupInstructions) : undefined;
                 terminalMcpConfig ??= materializeClaudeMcpConfigArgsForSpawn(buildClaudeMcpConfigArgs(mcpServers), message => params.ctx.logger.warn(message));
-                const plan: LocalTerminalHookBinding['plan'] = {
-                    requiredFiles: [...terminalMcpConfig.requiredFiles, ...(terminalStartupInstructions?.requiredFiles ?? [])],
-                    argv: resolveClaudeLaunchSettingsOverlayArgs({
+                await terminalLaunchArgs?.cleanup();
+                terminalLaunchArgs = materializeClaudeMcpConfigArgsForSpawn(resolveClaudeLaunchSettingsOverlayArgs({
                         args: [
                             ...(resumeId ? ['--resume', resumeId] : []),
                             ...(terminalStartupInstructions?.args ?? []),
@@ -2519,7 +2520,10 @@ export function createClaudeAgentSdkTurnOperations(
                         helperModelEnv: params.helperModelEnv,
                         allowedTools: noToolsLaunchOptions?.allowedTools ?? params.allowedTools,
                         unlistedTools: noToolsLaunchOptions?.unlistedTools ?? params.unlistedTools,
-                    }),
+                    }), message => params.ctx.logger.warn(message), ['--settings']);
+                const plan: LocalTerminalHookBinding['plan'] = {
+                    requiredFiles: [...terminalMcpConfig.requiredFiles, ...terminalLaunchArgs.requiredFiles, ...(terminalStartupInstructions?.requiredFiles ?? [])],
+                    argv: terminalLaunchArgs.args,
                     environment: { values: params.launchEnv, unset: [] },
                     process: { stdio: 'inherit', windowsHide: true },
                     presentation: {
@@ -3109,6 +3113,13 @@ export function createClaudeAgentSdkTurnOperations(
                         cleanupErrors.push(error);
                     } finally {
                         terminalMcpConfig = undefined;
+                    }
+                    try {
+                        await terminalLaunchArgs?.cleanup();
+                    } catch (error) {
+                        cleanupErrors.push(error);
+                    } finally {
+                        terminalLaunchArgs = undefined;
                     }
                 }
                 if (cleanupErrors.length === 1) throw cleanupErrors[0];

@@ -1951,6 +1951,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
 
   let startupInstructionsFile: ReturnType<typeof materializeClaudeStartupInstructions> | undefined;
   let mcpConfigForSpawn: ReturnType<typeof materializeClaudeMcpConfigArgsForSpawn> | undefined;
+  // The launch's merged settings, as a private file (one per launch; replaced on relaunch).
+  let launchArgsForSpawn: ReturnType<typeof materializeClaudeMcpConfigArgsForSpawn> | undefined;
 
   async function ensureHost(): Promise<TerminalHostHandle> {
     if (state.disposed) {
@@ -1995,6 +1997,41 @@ export function createClaudeUnifiedTerminalTurnOperations(
       startupInstructionsFile ??= params.startupInstructions
         ? materializeClaudeStartupInstructions(params.startupInstructions) : undefined;
       mcpConfigForSpawn ??= materializeClaudeMcpConfigArgsForSpawn(buildClaudeMcpConfigArgs(params.mcpServers), message => params.ctx.logger.warn(message));
+      await launchArgsForSpawn?.cleanup();
+      launchArgsForSpawn = materializeClaudeMcpConfigArgsForSpawn(applyClaudeUnifiedTerminalLaunchIntent(resolveClaudeLaunchSettingsOverlayArgs({
+        args: [
+          ...buildClaudeSettingSourcesArgs(params.settingSources),
+          ...(params.supportsSystemPromptSnapshotOff === true ? ['--system-prompt-snapshot', 'off'] : []),
+          ...(startupInstructionsFile?.args ?? []),
+          ...mcpConfigForSpawn.args,
+          ...buildClaudePluginDirArgs({ hookPluginDir: resolvedHookPluginDir, skills: params.skills }),
+          ...(launchModelId ? ['--model', launchModelId] : []),
+          ...(launchFallbackModelId ? ['--fallback-model', launchFallbackModelId] : []),
+          ...buildClaudeEffortCliArgs({
+            modelId: launchModelId,
+            effort: launchEffort,
+            ...(currentProviderModel ? { providerModel: currentProviderModel } : {}),
+          }),
+          // Merely enabling bypass in Claude's mode cycle triggers its native warning
+          // and relaxes interactive plan enforcement. Require an explicit bypass choice.
+          ...(mapToClaudePermissionMode(launchPermissionMode) === 'bypassPermissions'
+            ? [CLAUDE_TERMINAL_YOLO_ALLOW_FLAG] : []),
+          ...buildClaudePermissionModeArgs(launchPermissionMode),
+        ],
+        interactionKind: 'interactive_terminal',
+        skillOverrides: Object.fromEntries((params.skills?.nativeDisables ?? []).map(item => [item.name, 'off' as const])),
+        mcpToolPolicy: params.mcpToolPolicy,
+        permissionMode: mapToClaudePermissionMode(launchPermissionMode),
+        launchSettings: settingsOverlay,
+        launchEnv: params.launchEnv,
+        cwd: params.directory,
+        idleCompaction: params.idleCompaction,
+        workspaceWrites: launchWorkspaceWrites,
+        nativeSandbox: params.nativeSandbox,
+        helperModelEnv: params.helperModelEnv,
+        allowedTools: params.allowedTools,
+        unlistedTools: params.unlistedTools,
+      }), params.launchIntent ?? { kind: 'new_session' }), message => params.ctx.logger.warn(message), ['--settings']);
       handle = await params.ctx.agentRuntime.terminalHost.createOrAttachHost({
         preference: params.hostPreference,
         sessionName: resolution.hostKind === 'herdr' ? 'default' : sessionName,
@@ -2004,41 +2041,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
         launch: {
           kind: 'agent-cli',
           agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-          requiredFiles: [...mcpConfigForSpawn.requiredFiles, ...(startupInstructionsFile?.requiredFiles ?? [])],
-          args: applyClaudeUnifiedTerminalLaunchIntent(resolveClaudeLaunchSettingsOverlayArgs({
-            args: [
-              ...buildClaudeSettingSourcesArgs(params.settingSources),
-              ...(params.supportsSystemPromptSnapshotOff === true ? ['--system-prompt-snapshot', 'off'] : []),
-              ...(startupInstructionsFile?.args ?? []),
-              ...mcpConfigForSpawn.args,
-              ...buildClaudePluginDirArgs({ hookPluginDir: resolvedHookPluginDir, skills: params.skills }),
-              ...(launchModelId ? ['--model', launchModelId] : []),
-              ...(launchFallbackModelId ? ['--fallback-model', launchFallbackModelId] : []),
-              ...buildClaudeEffortCliArgs({
-                modelId: launchModelId,
-                effort: launchEffort,
-                ...(currentProviderModel ? { providerModel: currentProviderModel } : {}),
-              }),
-              // Merely enabling bypass in Claude's mode cycle triggers its native warning
-              // and relaxes interactive plan enforcement. Require an explicit bypass choice.
-              ...(mapToClaudePermissionMode(launchPermissionMode) === 'bypassPermissions'
-                ? [CLAUDE_TERMINAL_YOLO_ALLOW_FLAG] : []),
-              ...buildClaudePermissionModeArgs(launchPermissionMode),
-            ],
-            interactionKind: 'interactive_terminal',
-            skillOverrides: Object.fromEntries((params.skills?.nativeDisables ?? []).map(item => [item.name, 'off' as const])),
-            mcpToolPolicy: params.mcpToolPolicy,
-            permissionMode: mapToClaudePermissionMode(launchPermissionMode),
-            launchSettings: settingsOverlay,
-            launchEnv: params.launchEnv,
-            cwd: params.directory,
-            idleCompaction: params.idleCompaction,
-            workspaceWrites: launchWorkspaceWrites,
-            nativeSandbox: params.nativeSandbox,
-            helperModelEnv: params.helperModelEnv,
-            allowedTools: params.allowedTools,
-            unlistedTools: params.unlistedTools,
-          }), params.launchIntent ?? { kind: 'new_session' }),
+          requiredFiles: [...mcpConfigForSpawn.requiredFiles, ...launchArgsForSpawn.requiredFiles, ...(startupInstructionsFile?.requiredFiles ?? [])],
+          args: launchArgsForSpawn.args,
           cwd: params.directory,
           env: params.launchEnv,
         },
@@ -2048,6 +2052,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       startupInstructionsFile = undefined;
       await mcpConfigForSpawn?.cleanup();
       mcpConfigForSpawn = undefined;
+      await launchArgsForSpawn?.cleanup();
+      launchArgsForSpawn = undefined;
       throw recordTerminalHostStartupFailure(error) ?? error;
     }
     state.handle = handle;
@@ -4133,6 +4139,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
           recordCleanupError(error, '[ClaudeUnifiedTerminal] native MCP configuration cleanup failed');
         } finally {
           mcpConfigForSpawn = undefined;
+        }
+        try {
+          await launchArgsForSpawn?.cleanup();
+        } catch (error) {
+          recordCleanupError(error, '[ClaudeUnifiedTerminal] launch settings cleanup failed');
+        } finally {
+          launchArgsForSpawn = undefined;
         }
         try {
           try {

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -543,6 +544,27 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('passes the merged launch settings through a private file, not the command line', async () => {
+    // Windows caps a command line at 32,767 characters; merged hook and permission settings exceed it.
+    const terminalHost = createTerminalHostFixture();
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx: createPluginContextFixture(terminalHost.service, createEventsFixture().service),
+      directory: '/tmp/claude-project', happierSessionId: 'happy-settings-file',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    let settingsPath = '';
+    try {
+      await operations.startProviderSession();
+      const args = readLaunchArgs(terminalHost);
+      settingsPath = args[args.indexOf('--settings') + 1] ?? '';
+      expect(settingsPath.trim().startsWith('{')).toBe(false);
+      expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual(expect.objectContaining({ permissions: expect.any(Object) }));
+      const launch = terminalHost.service.createOrAttachHost.mock.calls[0]?.[0].launch;
+      expect(launch?.requiredFiles).toEqual(expect.arrayContaining([settingsPath]));
+    } finally { await operations.disposeProviderSession(); }
+    await expect(stat(settingsPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -590,6 +612,11 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
   function readLaunchArgs(terminalHost: ReturnType<typeof createTerminalHostFixture>): string[] {
     return (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
       .mock.calls[0]?.[0]?.launch?.args as string[];
+  }
+
+  /** The launch's merged settings: the terminal launch passes them as a private file. */
+  function readLaunchSettings(args: readonly string[]): unknown {
+    return JSON.parse(readFileSync(args[args.indexOf('--settings') + 1]!, 'utf8'));
   }
 
   function countArg(args: readonly string[], flag: string): number {
@@ -1560,7 +1587,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       if (nativeMode === null) expect(launchArgs).not.toContain('--permission-mode');
       else expect(hasSplitFlagValue(launchArgs, '--permission-mode', nativeMode)).toBe(true);
       expect(hasSplitFlagValue(launchArgs, '--permission-mode', 'bypassPermissions')).toBe(false);
-      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('skipDangerousModePermissionPrompt');
+      expect(readLaunchSettings(launchArgs)).not.toHaveProperty('skipDangerousModePermissionPrompt');
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -1586,7 +1613,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       expect(countArg(launchArgs, '--allow-dangerously-skip-permissions')).toBe(1);
       expect(hasSplitFlagValue(launchArgs, '--permission-mode', 'bypassPermissions')).toBe(true);
       expect(countArg(launchArgs, '--settings')).toBe(1);
-      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toMatchObject({
+      expect(readLaunchSettings(launchArgs)).toMatchObject({
         skipDangerousModePermissionPrompt: true,
       });
     } finally {
@@ -1677,7 +1704,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
         .mock.calls[0]?.[0]?.launch?.args as string[];
       expect(launchArgs.filter((arg) => arg === '--settings')).toHaveLength(1);
-      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toMatchObject({
+      expect(readLaunchSettings(launchArgs)).toMatchObject({
         ultracode: true,
       });
     } finally {
@@ -1761,7 +1788,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         const settingsFlags = launchArgs.filter((arg) => arg === '--settings');
         expect(settingsFlags).toHaveLength(1);
 
-        const overlay = JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!) as {
+        const overlay = readLaunchSettings(launchArgs) as {
           ultracode?: boolean;
           statusLine?: { type: string; command: string; padding?: number };
         };
@@ -1807,7 +1834,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
           .mock.calls[0]?.[0]?.launch?.args as string[];
         expect(countArg(launchArgs, '--settings')).toBe(1);
-        expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('statusLine');
+        expect(readLaunchSettings(launchArgs)).not.toHaveProperty('statusLine');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -1835,7 +1862,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
           .mock.calls[0]?.[0]?.launch?.args as string[];
         expect(countArg(launchArgs, '--settings')).toBe(1);
-        expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('statusLine');
+        expect(readLaunchSettings(launchArgs)).not.toHaveProperty('statusLine');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -2277,7 +2304,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
         .mock.calls[0]?.[0]?.launch?.args as string[];
       expect(countArg(launchArgs, '--settings')).toBe(1);
-      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('ultracode');
+      expect(readLaunchSettings(launchArgs)).not.toHaveProperty('ultracode');
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }

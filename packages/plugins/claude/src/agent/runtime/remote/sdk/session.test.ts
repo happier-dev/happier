@@ -268,6 +268,10 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       if (terminal.kind !== 'terminal_launch') throw new Error('Expected native terminal launch');
       expect(terminal.plan.argv[terminal.plan.argv.indexOf('--tools') + 1]).toBe('Read,WebSearch');
       expect(terminal.plan.argv[terminal.plan.argv.indexOf('--permission-mode') + 1]).toBe('dontAsk');
+      // Merged settings go through a private file: Windows caps a command line at 32,767 characters.
+      const settingsPath = terminal.plan.argv[terminal.plan.argv.indexOf('--settings') + 1] ?? '';
+      expect(settingsPath.trim().startsWith('{')).toBe(false);
+      expect(terminal.plan.requiredFiles).toEqual(expect.arrayContaining([settingsPath]));
     } finally { await operations.disposeProviderSession(); }
   });
 
