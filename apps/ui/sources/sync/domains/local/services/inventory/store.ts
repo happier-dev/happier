@@ -1,4 +1,8 @@
-import { projectLocalServiceMachineSummaryV1, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory/v1';
+import {
+    projectLocalServiceMachineSummaryV1,
+    type LocalServiceInventorySnapshotDeltaV1,
+    type LocalServiceMachineSummaryV1,
+} from '@happier-dev/protocol/local/services/inventory/v1';
 
 export type LocalServiceInventoryRow = Readonly<{
     id: string;
@@ -41,17 +45,8 @@ export type LocalServiceInventorySnapshot = Readonly<{
     diagnostics: readonly unknown[];
 }>;
 
-export type LocalServiceInventorySnapshotDelta = Readonly<{
-    v: 1;
-    machineId: string;
-    baseGeneratedAt: number;
-    generatedAt: number;
-    refreshState: LocalServiceInventorySnapshot['refreshState'];
-    upserts: readonly LocalServiceInventoryRow[];
-    removedIds: readonly string[];
-    order?: readonly string[];
-    diagnostics: readonly unknown[];
-}>;
+/** A watch delta exactly as the daemon's watch response schema parses it. */
+export type LocalServiceInventorySnapshotDelta = Readonly<LocalServiceInventorySnapshotDeltaV1>;
 
 /**
  * The snapshot a watch delta describes, rebuilt from the rows this state holds. Null when the
