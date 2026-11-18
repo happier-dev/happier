@@ -65,7 +65,7 @@ export const plugin = definePlugin({
     local: {
       title: 'Local directory', configSchema: LocalDestinationConfigSchema.jsonSchema,
       fieldHints: { fields: [{ path: 'path', title: 'Repository directory', widget: 'text',
-        description: 'A directory on the executing Machine. Same disk, not off-site: repository growth can fill this disk.' }] },
+        description: 'A directory on the executing Machine.' }] },
       credentialRoles: LOCAL_DESTINATION_CREDENTIAL_ROLES, resticTransport: 'local', locality: 'local',
       actions: { test: { kind: 'hostAction', actionId: 'deployments.backups.test' }, open: { pluginId, localId: 'local/open' } },
     },
