@@ -30,6 +30,32 @@ function isWithin(root, path) {
   return suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
 }
 
+export async function waitForMetroFileMap({ graph, watcher, paths, signal }) {
+  const missing = () => paths.find(path => !graph.doesFileExist(path));
+  if (!missing()) return;
+  if (!watcher?.on) throw new Error('Metro watcher is unavailable while admitting generated UI assets');
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      watcher.off?.('change', onChange);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error); else resolve();
+    };
+    const onChange = () => {
+      if (!missing()) finish();
+    };
+    const onAbort = () => finish(signal.reason ?? new Error('Metro asset admission aborted'));
+    watcher.on('change', onChange);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    onChange();
+  });
+}
+
 async function waitForMetroPluginUiInventory({ metroServer, metroConfig, inventoryPath, artifactStoreDir, sourceAssetsRecordPath = resolveSourceUiAssetsRecordPath(inventoryPath), signal }) {
   const pluginPaths = resolveBundledPluginUiArtifactsInputPaths(inventoryPath)?.slice(1);
   if (!pluginPaths) throw new Error(`Invalid source Plugin UI inventory: ${inventoryPath}`);
@@ -70,15 +96,14 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
     if (reason) throw Object.assign(new Error(`Source Plugin UI inventory ${inventoryPath} cannot index ${path}: ${reason}`),
       { code: 'plugin_ui_inventory_unindexable' });
   }
-  const graph = await metroServer.getBundler().getBundler().getDependencyGraph();
+  const bundler = metroServer.getBundler().getBundler();
+  const graph = await bundler.getDependencyGraph();
   signal?.throwIfAborted();
-  // A published file may predate watcher registration or lose its event during
-  // rapid publication. Metro exposes no public per-file recrawl API, so refuse
-  // this admission visibly rather than waiting for an event with no producer.
-  // Preparation keeps last-good; a later request/refresh can admit indexed files.
+  // A generated asset is written before its index, but Metro admits new files
+  // asynchronously. Subscribe to the existing file-map change feed and publish
+  // only after the graph has indexed every referenced path.
   const missing = paths.find(path => !graph.doesFileExist(path));
-  if (missing) throw Object.assign(new Error(`Source Plugin UI inventory ${inventoryPath} cannot index ${missing}: absent from Metro file map`),
-    { code: 'plugin_ui_inventory_unindexable' });
+  if (missing) await waitForMetroFileMap({ graph, watcher: bundler.getWatcher(), paths, signal });
   return paths;
 }
 

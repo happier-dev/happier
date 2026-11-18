@@ -7,6 +7,7 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const uiRoot = path.resolve(import.meta.dirname, '..');
 const { resolveInstalledModuleWatchRoots } = require('./metroInstalledModuleWatchRoots.cjs');
+const { waitForMetroFileMap } = await import('./ensureWorkspacePackagesBuilt.mjs');
 
 test('installed watch roots retain the selected generation without crawling retained generations', async () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-generation-')));
@@ -44,6 +45,36 @@ test('installed watch roots retain the selected generation without crawling reta
     } finally { await graph.end(); }
     // An ordinary, unlinked tree stays with the existing watch policy.
     assert.deepEqual([...resolveInstalledModuleWatchRoots([selected])], []);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+
+test('Metro admits a newly generated locale bundle before its index is published', async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-locale-admission-')));
+  try {
+    const locales = path.join(fixture, 'apps/ui/.expo/hstack/locales');
+    mkdirSync(locales, { recursive: true });
+    const asset = path.join(locales, `${'b'.repeat(64)}.locale.bundle`);
+    const config = await require('metro-config').getDefaultConfig(path.join(fixture, 'apps/ui'));
+    config.projectRoot = path.join(fixture, 'apps/ui');
+    config.watchFolders = [config.projectRoot];
+    config.resolver.assetExts = [...config.resolver.assetExts, 'bundle'];
+    config.resolver.useWatchman = false;
+    config.watcher = { ...(config.watcher ?? {}), useWatchman: false };
+    config.maxWorkers = 1;
+    config.resetCache = true;
+    config.fileMapCacheDirectory = path.join(fixture, 'cache');
+    mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+    config.reporter = { update() {} };
+    const Graph = require('metro/private/node-haste/DependencyGraph').default;
+    const graph = new Graph(config, { watch: true });
+    try {
+      await graph.ready();
+      const admission = waitForMetroFileMap({ graph, watcher: graph.getWatcher(), paths: [asset] });
+      await fsPromises.writeFile(asset, 'module.exports = {};');
+      await admission;
+      assert.equal(graph.doesFileExist(asset), true);
+    } finally { await graph.end(); }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
