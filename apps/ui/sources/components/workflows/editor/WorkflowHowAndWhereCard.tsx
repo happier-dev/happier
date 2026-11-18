@@ -249,7 +249,7 @@ export function WorkflowHowAndWhereCard(
   }, [onChange, props.authoringFacts, readDraft, readOnly]);
 
   return (
-    <WorkflowCardGutterRow icon={props.gutter === false ? null : 'laptop'}>
+    <WorkflowCardGutterRow icon={props.gutter === false ? null : 'laptop'} {...(props.hasSteps === true ? { spineTo: 'steps' as const } : {})}>
       <WorkflowKindCard
         testID={id}
         title={t('workflows.page.sections.howWhereTitle')}

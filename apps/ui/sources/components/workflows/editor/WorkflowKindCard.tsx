@@ -164,6 +164,8 @@ export function WorkflowKindCard(props: Readonly<{
 export function WorkflowCardGutterRow(props: Readonly<{
     /** The card's mark in the document's number column; `null`: a host with no column draws the card alone. */
     icon: IconName | null;
+    /** The spine from this mark down to the next card's mark or to the first step's. */
+    spineTo?: 'card' | 'steps';
     children: React.ReactNode;
     testID?: string;
 }>): React.ReactElement {
@@ -173,6 +175,10 @@ export function WorkflowCardGutterRow(props: Readonly<{
     return (
         <View testID={props.testID} style={grid.blockColumn}>
             <View style={[grid.heading, workflowEditorStyles.cardGutterRow]}>
+                {props.spineTo === undefined ? null : (
+                    <View pointerEvents="none" style={[workflowEditorStyles.cardSpine,
+                        props.spineTo === 'card' ? workflowEditorStyles.cardSpineToCard : workflowEditorStyles.cardSpineToSteps]} />
+                )}
                 <View style={[workflowEditorStyles.ordinalColumn, workflowEditorStyles.cardGutterMark]}
                     accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                     <View style={workflowEditorStyles.ordinalMark}>

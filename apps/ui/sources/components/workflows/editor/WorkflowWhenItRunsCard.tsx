@@ -21,7 +21,8 @@ export function WorkflowWhenItRunsCard(
   }>,
 ): React.ReactElement {
   return (
-    <WorkflowCardGutterRow icon="clock">
+    // How and where it runs always follows, so the spine runs on to its mark.
+    <WorkflowCardGutterRow icon="clock" spineTo="card">
       <WorkflowKindCard
         testID={`${props.testIDPrefix}-when`}
         title={t('workflows.page.sections.whenTitle')}

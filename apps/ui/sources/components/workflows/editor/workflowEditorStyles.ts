@@ -614,6 +614,24 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     /** A page card beside its gutter mark (`WorkflowCardGutterRow`): the card takes the name column's width. */
     cardGutterRow: {
         alignItems: 'flex-start',
+        position: 'relative',
+    },
+    /**
+     * A first card's part of the spine (lab round 1116b): from under its mark, across the 16 px between the page's
+     * rows, to the next mark: the next card's sits 12 px into its row, a step's at its row's top.
+     */
+    cardSpine: {
+        position: 'absolute',
+        left: ORDINAL_SIZE / 2 - SPINE_WIDTH / 2,
+        top: theme.space.s12 + ORDINAL_SIZE,
+        borderLeftWidth: SPINE_WIDTH,
+        borderColor: theme.colors.border.strong,
+    },
+    cardSpineToCard: {
+        bottom: -(theme.space.s16 + theme.space.s12),
+    },
+    cardSpineToSteps: {
+        bottom: -theme.space.s16,
     },
     /** The mark sits level with the card's title line. */
     cardGutterMark: {
