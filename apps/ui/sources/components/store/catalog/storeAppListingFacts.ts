@@ -7,10 +7,12 @@ const CATALOG_PIN = /^(?:sha\d+:)?[0-9a-f]{7,}$/i;
  */
 export function appListingCatalogFacts(input: Readonly<{
   version?: string | null;
+  appVersion?: string | null;
   repository?: string | null;
   catalog?: Readonly<{ title: string; url?: string }> | null;
 }>) {
-  const version = input.version && !CATALOG_PIN.test(input.version) ? input.version : null;
+  const version = input.version && input.version !== '0.0.0' && !CATALOG_PIN.test(input.version)
+    ? input.version : input.appVersion ?? null;
   const repository = input.repository && input.repository !== input.catalog?.url ? input.repository : null;
   return { version, repository, sourceTitle: input.catalog?.title ?? null };
 }

@@ -201,7 +201,8 @@ export function StoreAppListing(
   // A catalog App's summary version pins its template catalog's content, not the App's own release: Versions shows
   // only a real release, never the content digest.
   const catalogSource = useRegistrySourceDescriptor(summary.sourceId, presented);
-  const catalogFacts = appListingCatalogFacts({ version: summary.version, repository: summary.links?.repository, catalog: catalogSource });
+  const catalogFacts = appListingCatalogFacts({ version: summary.version, appVersion: app?.data?.version,
+    repository: summary.links?.repository, catalog: catalogSource });
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
   const glyph = (icon: IconName) => (

@@ -13,6 +13,14 @@ describe('appListingCatalogFacts', () => {
     expect(appListingCatalogFacts({ version: '2.0.2', catalog }).version).toBe('2.0.2');
   });
 
+  it('uses the App data version when the registry pin is a catalog content version', () => {
+    expect(appListingCatalogFacts({ version: '0.0.0', appVersion: '17', catalog }).version).toBe('17');
+  });
+
+  it('keeps a real registry release when App data carries an auxiliary version', () => {
+    expect(appListingCatalogFacts({ version: '2.0.2', appVersion: '17', catalog }).version).toBe('2.0.2');
+  });
+
   it('names the catalog instead of linking its index as if it were the App', () => {
     expect(appListingCatalogFacts({ repository: catalog.url, catalog })).toMatchObject({ repository: null, sourceTitle: 'Dokploy templates' });
   });
