@@ -65,6 +65,27 @@ describe('prompt entry action failure and cancellation', () => {
         expect(modalAlert).toHaveBeenCalled();
     });
 
+    it.each([
+        { actionId: 'artifact.get', operation: 'remove' },
+        { actionId: 'artifact.delete', operation: 'remove' },
+        { actionId: 'artifact.export', operation: 'exportDocument' },
+        { actionId: 'prompt_doc.create', operation: 'duplicate' },
+    ] as const)('explains a refused $actionId without changing the saved prompt', async ({ actionId, operation }) => {
+        const { fixture } = await createFailureFixture('DELETE');
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().setState(state => ({ settings: { ...state.settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { disabledSurfaces: ['ui'] } } }),
+        } }));
+        const hook = await renderHook(() => usePromptLibraryEntryActions());
+        try {
+            await act(async () => { await hook.getCurrent()[operation]('doc-1'); });
+            expect(modalAlert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
+            expect(fixture.boundary.list().map(row => row.id)).toEqual(['doc-1']);
+            expect(fixture.requests.some(request => request.method === 'DELETE')).toBe(false);
+            expect(promptLibrarySettingsRouterPushSpy).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
     it('stays on the editor and retains the original when the Home rejects creation of a copy', async () => {
         const { fixture, catalog } = await createFailureFixture('POST');
         const hook = await renderHook(() => usePromptLibraryEntryActions());

@@ -5,7 +5,8 @@ import { Modal } from '@/modal';
 import { ArtifactActionOutputSchemasV1, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactOrganizationMutationFailureV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -13,6 +14,10 @@ import { duplicatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { t } from '@/text';
 
 import { promptCollectionItemHref } from './promptCollectionModel';
+
+function alertPromptEntryActionFailure(error: unknown): void {
+    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(parseActionExecuteFailure(error) ?? error, t('errors.unknownError')));
+}
 
 /**
  * The rare operations on a saved prompt, offered by its editor's `⋯` menu: duplicate it
@@ -26,7 +31,7 @@ export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope
     const scope = requestedScope === undefined ? activeScope : requestedScope;
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
-    const { execute } = useMountedActionExecution(scope);
+    const { execute, isCurrent } = useMountedActionExecution(scope);
 
     /** Resolves `true` once the item is gone, so its editor can leave. */
     const remove = React.useCallback(async (artifactId: string): Promise<boolean> => {
@@ -47,7 +52,7 @@ export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope
             let expectedRevision = review?.expectedRevision;
             if (!expectedRevision) {
                 const opened = await execute('artifact.get', { artifactId }, actionContext);
-                if (!opened.ok) throw new Error(opened.errorCode);
+                if (!opened.ok) throw createActionExecuteFailureError(opened);
                 const document = ArtifactActionOutputSchemasV1['artifact.get'].parse(opened.result).artifact;
                 if (!document) throw new Error('not_found');
                 expectedRevision = document.revision;
@@ -56,16 +61,16 @@ export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope
             review?.assertCurrent?.();
             const deleted = await execute('artifact.delete', { artifactId, expectedRevision }, actionContext);
             if (!deleted.ok && isActionApprovalDeclinedErrorCode(deleted.errorCode)) return false;
-            if (!deleted.ok) throw new Error(deleted.errorCode);
+            if (!deleted.ok) throw createActionExecuteFailureError(deleted);
             ArtifactActionOutputSchemasV1['artifact.delete'].parse(deleted.result);
             context.assertCurrent();
             review?.assertCurrent?.();
             return true;
-        } catch {
-            Modal.alert(t('common.error'), t('errors.unknownError'));
+        } catch (error) {
+            if (isCurrent() && !controller.signal.aborted) alertPromptEntryActionFailure(error);
             return false;
         } finally { retirement?.dispose(); context?.dispose(); }
-    }, [accountId, serverId, execute, review?.assertCurrent, review?.expectedRevision]);
+    }, [accountId, serverId, execute, isCurrent, review?.assertCurrent, review?.expectedRevision]);
 
     const duplicate = React.useCallback(async (artifactId: string) => {
         let context: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
@@ -90,21 +95,21 @@ export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope
                     router.push(promptCollectionItemHref('doc', error.details.artifactId, { serverId: context.serverId }) as never);
                 } catch { /* A retired captured Home cannot adopt the copied Artifact. */ }
             }
-            Modal.alert(t('common.error'), t('errors.unknownError'));
+            if (isCurrent() && !controller.signal.aborted) alertPromptEntryActionFailure(error);
         } finally { retirement?.dispose(); context?.dispose(); }
-    }, [router, serverId, accountId, execute, review?.assertCurrent]);
+    }, [router, serverId, accountId, execute, isCurrent, review?.assertCurrent]);
 
     const exportDocument = React.useCallback(async (artifactId: string) => {
         try {
             review?.assertCurrent?.();
             const result = await execute('artifact.export', { artifactId, destination: 'client' });
             if (!result.ok && isActionApprovalDeclinedErrorCode(result.errorCode)) return;
-            if (!result.ok) throw new Error(result.errorCode);
+            if (!result.ok) throw createActionExecuteFailureError(result);
             ArtifactActionOutputSchemasV1['artifact.export'].parse(result.result);
-        } catch {
-            Modal.alert(t('common.error'), t('errors.unknownError'));
+        } catch (error) {
+            if (isCurrent()) alertPromptEntryActionFailure(error);
         }
-    }, [execute, review?.assertCurrent]);
+    }, [execute, isCurrent, review?.assertCurrent]);
 
     return { remove, duplicate, exportDocument } as const;
 }

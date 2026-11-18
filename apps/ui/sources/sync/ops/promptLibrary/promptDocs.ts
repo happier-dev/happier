@@ -3,7 +3,7 @@ import { ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFail
 
 import { withUiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ArtifactFolderCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionSchemasV1';
 
 function readPromptDocActionOutput(result: ActionExecuteResult): unknown {
@@ -12,7 +12,7 @@ function readPromptDocActionOutput(result: ActionExecuteResult): unknown {
       const details = ArtifactOrganizationMutationFailureDetailsV1Schema.safeParse(result.details);
       if (details.success) throw new ArtifactOrganizationMutationFailureV1(details.data);
     }
-    throw Object.assign(new Error(result.error), { code: result.errorCode, result });
+    throw createActionExecuteFailureError(result);
   }
   return result.result;
 }
