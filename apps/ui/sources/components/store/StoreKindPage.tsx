@@ -1155,7 +1155,8 @@ export function Directory<Row extends DirectoryRow = DirectoryRow>(
     <View style={styles.body}>
       {/* Said once above the results (lab h:unreachable, as Discover does), so rows arriving later only ever land under it.
           On its page it stands a step clear of the search, as page status rather than the field's caption. */}
-      {failures.length === 0 ? null : <View style={!section && !pageFailure ? styles.pageStatus : null}>
+      {/* Under Discover's chip band (kind `search`) the band's own air leads it, as lab phone-lists-1115 S1 draws. */}
+      {failures.length === 0 ? null : <View style={!section && !pageFailure && props.kind !== 'search' ? styles.pageStatus : null}>
       <RegistrySourcesUnavailable
         testID={`store.kind.${props.kind}.failure`}
         size={pageFailure ? 'page' : 'line'}

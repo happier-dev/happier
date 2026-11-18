@@ -93,4 +93,17 @@ describe('RegistrySourcesUnavailable', () => {
     expect(texts(screen)).toContain('skills.sh');
     expect(texts(screen)).toContain('QA Skills updates');
   });
+  it('keeps Retry the line\'s one trailing recovery; Details reads as the sentence\'s last words (S1)', async () => {
+    const screen = await render([{ key: 'curated', message: 'Curated · Unreachable.', details: ['getaddrinfo ENOTFOUND'], onRetry: () => {} }]);
+    const flat = (node: { children: readonly unknown[] }): string => node.children
+      .map((child) => typeof child === 'string' ? child : flat(child as { children: readonly unknown[] })).join('');
+    // One text run holds the cause and its Details; Retry stays outside it, on the line's trailing edge.
+    const run = screen.findAll((node) => node.type === 'Text' && flat(node).includes('Curated')
+      && node.findAll((child) => child.props?.testID === 'outage.details').length > 0);
+    expect(run.length).toBeGreaterThan(0);
+    expect(run.every((node) => node.findAll((child) => child.props?.testID === 'outage.retry').length === 0)).toBe(true);
+    expect(screen.findAllByTestId('outage.retry').length).toBeGreaterThan(0);
+    await screen.pressByTestIdAsync('outage.details');
+    expect(texts(screen)).toContain('getaddrinfo ENOTFOUND');
+  });
 });

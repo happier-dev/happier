@@ -2,11 +2,12 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   HappierRegistrySourcesUnavailable, type RegistrySourceFailure,
-  type RegistrySourcesUnavailableProps,
+  type RegistrySourcesUnavailableProps, type RegistrySourcesUnavailableStateProps,
 } from '@happier-dev/plugin-ui/presentation';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -18,7 +19,24 @@ function DetailText(props: Readonly<{ children: React.ReactNode }>) {
   const { theme } = useUnistyles();
   return <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{props.children}</Text>;
 }
-const host = { State: SurfaceStateCard, DetailText, retry };
+/**
+ * The outage as a line keeps one recovery on its trailing edge, Retry, beside the sentence on a phone too (lab
+ * phone-lists-1115 S1, design owner 2026-11-18). Details is a disclosure of the same sentence, so it reads as its
+ * last words rather than a second recovery that would push Retry beneath. A page-sized outage keeps both actions.
+ */
+function OutageState(props: RegistrySourcesUnavailableStateProps) {
+  const { theme } = useUnistyles();
+  const details = props.size === 'line' ? props.secondaryAction : undefined;
+  if (!details) return <SurfaceStateCard {...props} />;
+  const { secondaryAction: _disclosure, ...line } = props;
+  const disclosure = (
+    <Text testID={details.testID} accessibilityRole="button" onPress={details.onPress}
+      style={{ ...Typography.default('semiBold'), color: theme.colors.text.primary }}>{details.label}</Text>
+  );
+  return <SurfaceStateCard {...line} reason={props.reason ?? details.label}
+    reasonContent={<>{props.reason ? `${props.reason} ` : null}{disclosure}</>} />;
+}
+const host = { State: OutageState, DetailText, retry };
 
 /**
  * Core's binding of the public outage line. The pages that show it (Store Discover and kind pages, Plugins, a

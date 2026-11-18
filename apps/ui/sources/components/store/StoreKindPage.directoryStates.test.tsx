@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -83,7 +83,7 @@ describe('Store directory states', () => {
             { key: 'first', message: 'Curated catalog unavailable', details: ['Technical code: unreachable'], onRetry: () => {} },
             { key: 'second', message: 'Chrome Web Store needs a Machine', details: ['Technical code: needs_machine'], onRetry: () => {} },
         ]} />);
-        await act(async () => { screen.findAllByType(SurfaceStateCard)[0]!.props.secondaryAction.onPress(); });
+        await screen.pressByTestIdAsync('catalog.failures.details');
         const details = screen.findByTestId('catalog.failures.sources')!;
         expect(details.findAllByType(Text).map(node => node.props.children)).toEqual([
             'Curated catalog unavailable', 'Technical code: unreachable',
