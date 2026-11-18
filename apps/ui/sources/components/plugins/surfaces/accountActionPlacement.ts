@@ -53,14 +53,15 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const input = { action: params.action,
                 ...(params.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: params.expectedContributorOccurrenceId }),
                 ...(params.input === undefined ? {} : { input: params.input }) };
-            const fallbackMachineId = params.context.externalActionTarget ? null
-                : params.sourceMachineId ?? await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
-                    context: params.context, signal: params.signal });
-            if (typeof fallbackMachineId === 'object' && fallbackMachineId !== null) {
-                throw new PluginError({ code: fallbackMachineId.errorCode, message: fallbackMachineId.error, data: fallbackMachineId.details });
+            const pinnedTarget = params.context.externalActionTarget
+                ?? (params.sourceMachineId ? { kind: 'machine' as const, machineId: params.sourceMachineId } : undefined);
+            const receiver = pinnedTarget && pinnedTarget.kind !== 'machine' ? null
+                : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
+                    context: { ...params.context, externalActionTarget: pinnedTarget }, signal: params.signal });
+            if (receiver && typeof receiver === 'object') {
+                throw new PluginError({ code: receiver.errorCode, message: receiver.error, data: receiver.details });
             }
-            const target = params.context.externalActionTarget
-                ?? (fallbackMachineId ? { kind: 'machine' as const, machineId: fallbackMachineId } : undefined);
+            const target = pinnedTarget ?? (receiver ? { kind: 'machine' as const, machineId: receiver } : undefined);
             if (!target) {
                 const failure = actionTargetUnavailable('own_reachable_machine_absent');
                 throw new PluginError({ code: failure.errorCode, message: failure.error, data: failure.details });

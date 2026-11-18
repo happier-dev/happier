@@ -24,6 +24,12 @@ const NO_RECOVERY_CHOICES: readonly AccountNoticeRecoveryChoiceV1[] = Object.fre
 type PresentationResult = Readonly<{ kind: 'presentation'; outcome: FailureActionOutcome | null }>;
 type ActionsResult = Readonly<{ kind: 'actions'; actions: readonly FailureAgentAction[] | null }>;
 type LinkedResult = Readonly<{ kind: 'linkedSession'; session: ActionSessionAddressV1 | null }>;
+type FailureInvestigationUnavailable = Extract<FailureActionOutcome, { kind: 'unavailable' }>;
+export type FailureAgentActionsReadResult = ActionsResult['actions'] | FailureInvestigationUnavailable;
+
+function presentActionRefusal(result: Extract<ActionExecuteResult, { ok: false }>): FailureInvestigationUnavailable {
+    return { kind: 'unavailable', code: result.errorCode ?? 'unknown_error' };
+}
 
 /** The host owns Account/notice admission; the declared plugin Action owns investigation behavior. */
 export function createAccountNoticeInvestigation(input: Readonly<{
@@ -63,8 +69,8 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.externalActionTarget ? { externalActionTarget: options.externalActionTarget } : {}) };
     };
-    const unavailable = (): ActionExecuteResult => ({ ok: false,
-        errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
+    const unavailable = () => ({ ok: false,
+        errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' } as const);
     const binding = () => input.binding === undefined ? readFailureActionsBinding(input.scope) : input.binding;
     async function invoke(command: Readonly<Record<string, unknown>>, options?: FailureInvestigationExecutionOptions) {
         const contribution = binding();
@@ -88,21 +94,25 @@ export function createAccountNoticeInvestigation(input: Readonly<{
     };
     return {
         dispose: () => {},
-        async readAgentActions(entry: FailureInvestigationSubject, includeDefault: boolean, options?: FailureInvestigationExecutionOptions) {
+        async readAgentActions(entry: FailureInvestigationSubject, includeDefault: boolean,
+            options?: FailureInvestigationExecutionOptions): Promise<FailureAgentActionsReadResult> {
             const subject = read(entry);
-            if (!subject) return null;
+            if (!subject) return presentActionRefusal(unavailable());
             const result = await invoke({ kind: 'readAgentActions', context: subject, includeDefault }, options);
-            // The admitted Action executor validates its producer-declared output schema.
-            return result.ok ? (result.result as ActionsResult).actions : null;
+            if (!result.ok) return presentActionRefusal(result);
+            // The Action executor validates the contribution's declared output union.
+            const answer = result.result as ActionsResult | PresentationResult;
+            if (answer.kind === 'actions') return answer.actions;
+            return answer.kind === 'presentation' && answer.outcome?.kind === 'unavailable'
+                ? answer.outcome : { kind: 'unavailable', code: 'invalid_result' };
         },
         async launch(entry: FailureInvestigationSubject, intent: Readonly<{ actionId?: string; delivery?: 'send' | 'compose' }>,
             options?: FailureInvestigationExecutionOptions): Promise<FailureActionOutcome | null> {
             const subject = read(entry);
-            if (!subject) return { kind: 'unavailable', code: 'action_account_scope_changed' };
+            if (!subject) return presentActionRefusal(unavailable());
             const result = await invoke({ kind: 'launch', context: subject, ...intent,
                 ...(options?.placement ? { placement: options.placement } : {}) }, options);
-            return result.ok ? (result.result as PresentationResult).outcome
-                : { kind: 'unavailable', code: result.errorCode ?? 'unknown_error' };
+            return result.ok ? (result.result as PresentationResult).outcome : presentActionRefusal(result);
         },
         async openEditor(actionId?: string) {
             await invoke({ kind: 'edit', ...(actionId === undefined ? {} : { actionId }) });

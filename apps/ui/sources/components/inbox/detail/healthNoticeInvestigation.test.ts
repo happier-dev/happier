@@ -457,7 +457,7 @@ describe('agent actions on a native subject page', () => {
 });
 
 describe('agent actions before the catalog answers', () => {
-  it('reads as pending until the catalog settles, then as settled without records when it has none to offer', async () => {
+  it('reads as pending until the catalog settles to its named refusal', async () => {
     let answer: (value: unknown) => void = () => {};
     // The contributed plugin invocation is the realm boundary; the front door and the Account owner stay real.
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
@@ -466,13 +466,14 @@ describe('agent actions before the catalog answers', () => {
     const owner = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
     const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'receipt' } as const;
     const bound = bindFailureOwner(owner, subject);
-    const hook = await renderHook(() => useInvestigationAgentActions(bound, { includeDefault: true }));
+    const hook = await renderHook(() => useBoundFailureInvestigation(bound, { agentActions: 'withDefault' }));
     try {
       await act(async () => {});
       // A page reserves the control's place while this is pending, rather than drawing a stand-in it then replaces.
-      expect(hook.getCurrent()).toBeUndefined();
+      expect(hook.getCurrent().actions).toBeUndefined();
       await act(async () => { answer({ ok: false, errorCode: 'triage_catalog_unavailable', error: 'triage_catalog_unavailable' }); });
-      expect(hook.getCurrent()).toBeNull();
+      expect(hook.getCurrent()).toMatchObject({ actions: null, showOutcome: true,
+        outcome: { kind: 'unavailable', code: 'triage_catalog_unavailable' } });
     } finally { await hook.unmount(); }
   });
 });

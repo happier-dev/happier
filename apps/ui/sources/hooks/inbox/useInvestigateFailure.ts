@@ -29,8 +29,12 @@ export function useInvestigateFailure(subject: FailureInvestigationSubject | nul
 /** Native failures and Inbox's already-bound notice share the same launch and recovery flow. */
 export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInvestigation | null, options?: InvestigateFailureOptions) {
     const intent = useHealthNoticeInvestigate(investigation, investigation);
-    const actions = useInvestigationAgentActions(options?.agentActions ? investigation : null,
+    const catalog = useInvestigationAgentActions(options?.agentActions ? investigation : null,
         { includeDefault: options?.agentActions === 'withDefault' });
+    const catalogRefused = catalog != null && 'kind' in catalog;
+    const actions = catalogRefused ? null : catalog;
+    const catalogOutcome = catalogRefused ? catalog : null;
+    const outcome = intent.outcome ?? catalogOutcome;
     const placementUnresolved = intent.outcome?.kind === 'placement_choice_required';
     const { launch } = intent;
     // Once only: if the composer itself still asks for a placement, its own chooser stays as the way forward.
@@ -41,7 +45,7 @@ export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInv
         openedComposerForPlacement.current = true;
         void launch('review');
     }, [placementUnresolved, launch]);
-    const showOutcome = intent.outcome !== null
+    const showOutcome = outcome !== null
         && (!placementUnresolved || openedComposerForPlacement.current && !intent.pending);
-    return { ...intent, actions, showOutcome };
+    return { ...intent, actions, catalogOutcome, outcome, showOutcome };
 }

@@ -110,3 +110,18 @@ describe('private notice investigation through the Action front door', () => {
         }, placement }]);
     });
 });
+
+it('settles a receipt catalog acquisition when the client lifetime refuses it as a presentation', async () => {
+    const scope = { serverId: 'server-a', accountId: 'account-a' };
+    const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'receipt' } as const;
+    // A retired native-failure execution scope returns this declared presentation result.
+    const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
+        invokeContributedAction: async () => ({ ok: true, result: {
+            kind: 'presentation', outcome: { kind: 'unavailable', code: 'action_account_scope_changed' },
+        } }),
+    })));
+    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true, execute,
+        binding: { pluginId: 'happier.triage', action: 'native-failure/handle-v1' } });
+    expect(await owner.readAgentActions(subject, true)).toEqual({ kind: 'unavailable', code: 'action_account_scope_changed' });
+    expect(await owner.launch(subject, {})).toEqual({ kind: 'unavailable', code: 'action_account_scope_changed' });
+});

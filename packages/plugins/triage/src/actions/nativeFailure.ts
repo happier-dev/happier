@@ -74,10 +74,10 @@ export function createTriageNativeFailureOwner() {
     const actionSubject = subject.kind === 'failure' ? triageFailureSubjectActionSubjectV1(subject.subject) : undefined;
     const result = await execute(context, 'actions/read-v1', { v: 1, projection: 'sessionHandoff', task: 'investigate',
       ...(actionSubject === undefined ? {} : { subject: actionSubject }) });
-    // A refused read keeps its own reason; only the catalog itself says catalogUnavailable (BL2-HEALTH).
-    if (!result.ok) return { v: 1, kind: 'unavailable', reason: result.errorCode ?? 'unknown_error' } as const;
+    if (!result.ok) return unavailable(result.errorCode ?? 'unknown_error');
     const parsed = TriageSessionHandoffChoicesV1Schema.safeParse(result.result);
-    return parsed.success ? parsed.data : { v: 1, kind: 'unavailable', reason: 'invalid_result' } as const;
+    if (!parsed.success) return unavailable('invalid_result');
+    return parsed.data.kind === 'unavailable' ? unavailable(parsed.data.reason) : parsed.data;
   }
   function resume(subject: Context, placement: Placement, context: PluginClientActionContext): Promise<ActionExecuteResult> | null {
     const key = subjectKey(subject);
@@ -117,8 +117,9 @@ export function createTriageNativeFailureOwner() {
       }
       if (input.kind === 'readAgentActions') {
         const choices = await readChoices(input.context, context);
-        const isDefault = (id: string) => input.includeDefault && choices.kind === 'choices' && id === choices.defaultActionId;
-        const actions: readonly FailureAgentAction[] | null = choices.kind !== 'choices' ? null : [
+        if (choices.kind === 'unavailable') return { kind: 'presentation', outcome: choices } as const;
+        const isDefault = (id: string) => input.includeDefault && id === choices.defaultActionId;
+        const actions: readonly FailureAgentAction[] = [
           ...choices.actions.filter(item => isDefault(item.selection.configuredActionId)),
           ...choices.actions.filter(item => item.forSubject === true && !isDefault(item.selection.configuredActionId)),
         ].map(item => ({ actionId: item.selection.configuredActionId, label: item.label,
@@ -133,12 +134,10 @@ export function createTriageNativeFailureOwner() {
       const retained = resume(subject, input.placement, context);
       if (retained) return { kind: 'presentation', outcome: present(await retained) } as const;
       const choices = await readChoices(input.context, context);
-      const wanted = input.actionId ?? (choices.kind === 'choices' ? choices.defaultActionId : null);
-      const selection = choices.kind === 'choices' ? choices.actions.find(action => action.selection.configuredActionId === wanted)?.selection : undefined;
-      if (!selection) {
-        const code = choices.kind === 'choices' ? 'configuredActionUnavailable' : choices.reason;
-        return { kind: 'presentation', outcome: unavailable(code) } as const;
-      }
+      if (choices.kind === 'unavailable') return { kind: 'presentation', outcome: choices } as const;
+      const wanted = input.actionId ?? choices.defaultActionId;
+      const selection = choices.actions.find(action => action.selection.configuredActionId === wanted)?.selection;
+      if (!selection) return { kind: 'presentation', outcome: unavailable('configuredActionUnavailable') } as const;
       const { agentTargetKey, ...placement } = input.placement ?? {};
       const handoff = TriageSessionHandoffInputV1Schema.parse({ task: 'investigate', ...selection,
         ...(input.delivery ? { delivery: input.delivery } : {}),
@@ -156,7 +155,7 @@ export function createTriageNativeFailureOwner() {
   };
 }
 
-const unavailable = (code: string): FailureActionOutcome => ({ kind: 'unavailable', code,
+const unavailable = (code: string): Extract<FailureActionOutcome, { kind: 'unavailable' }> => ({ kind: 'unavailable', code,
   ...(code === 'configuredActionUnavailable' ? { recovery: 'configure' } : {}) });
 
 /** Domain outcomes are normalized at Triage, not reinterpreted by native failure presenters. */

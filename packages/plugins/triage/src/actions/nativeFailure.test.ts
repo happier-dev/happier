@@ -44,5 +44,10 @@ describe('native failure presentation at its Triage owner', () => {
       target: { kind: 'machine', machine: { serverId: 'home', machineId: 'affected' } } } });
     expect(await createTriageNativeFailureOwner().invoke(launch, context))
       .toEqual({ kind: 'presentation', outcome: { kind: 'unavailable', code } });
+    const read = TriageNativeFailureInputV1Schema.parse({
+      kind: 'readAgentActions', context: launch.context, includeDefault: true,
+    });
+    expect(await createTriageNativeFailureOwner().invoke(read, context))
+      .toEqual({ kind: 'presentation', outcome: { kind: 'unavailable', code } });
   });
 });

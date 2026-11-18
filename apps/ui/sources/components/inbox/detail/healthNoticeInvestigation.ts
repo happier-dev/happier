@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { FailureActionOutcome, FailureActionPlacement, FailureAgentAction } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
 import type { AccountNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { FailureAgentActionsReadResult } from '@/hooks/inbox/accountNoticeInvestigation';
 
 type EnvironmentNoticePage = Extract<NonNullable<AccountNoticeArtifactHeaderV1['page']>, { page: 'environment' }>;
 
@@ -40,7 +41,7 @@ export function readNoticeInvestigationSubject(
 /** The contribution owns selection, retry custody, and domain outcomes. */
 export type HealthNoticeInvestigationPlacement = FailureActionPlacement;
 export type BoundHealthNoticeInvestigation = Readonly<{
-  readAgentActions(includeDefault: boolean, options: Readonly<{ signal: AbortSignal }>): Promise<readonly FailureAgentAction[] | null>;
+  readAgentActions(includeDefault: boolean, options: Readonly<{ signal: AbortSignal }>): Promise<FailureAgentActionsReadResult>;
   launch(intent: Readonly<{ actionId?: string; delivery?: 'compose' | 'send' }>, options: Readonly<{
     signal: AbortSignal; placement?: HealthNoticeInvestigationPlacement;
   }>): Promise<FailureActionOutcome | null>;
@@ -109,26 +110,28 @@ export type InvestigationAgentAction = FailureAgentAction;
 /**
  * The page's records, read once per subject so the buttons carry the person's names and launch modes. `undefined`
  * until the catalog first answers, so a page can hold the control's place instead of drawing a stand-in it then
- * replaces; `null` once it answered with none (or could not answer). The last answer stays while another subject loads.
+ * replaces. Keep the producer's typed refusal and accept the legacy empty answer.
  */
 export function useInvestigationAgentActions(
   investigation: BoundHealthNoticeInvestigation | null,
   options: Readonly<{ includeDefault: boolean }>,
-): readonly InvestigationAgentAction[] | null | undefined {
-  const [actions, setActions] = React.useState<readonly InvestigationAgentAction[] | null | undefined>(undefined);
+): FailureAgentActionsReadResult | undefined {
+  const [answer, setAnswer] = React.useState<FailureAgentActionsReadResult | undefined>(undefined);
   const includeDefault = options.includeDefault;
   React.useEffect(() => {
     if (!investigation) {
-      setActions(undefined);
+      setAnswer(undefined);
       return;
     }
     const own = new AbortController();
-    void investigation.readAgentActions(includeDefault, { signal: own.signal }).then((actions) => {
-      if (!own.signal.aborted) setActions(actions);
+    // Keep the previous records during a new read, but clear a refusal belonging to the previous subject.
+    setAnswer(current => current && 'kind' in current ? undefined : current);
+    void investigation.readAgentActions(includeDefault, { signal: own.signal }).then((result) => {
+      if (!own.signal.aborted) setAnswer(result);
     }, () => {
-      if (!own.signal.aborted) setActions((current) => current ?? null);
+      if (!own.signal.aborted) setAnswer({ kind: 'unavailable', code: 'unknown_error' });
     });
     return () => own.abort();
   }, [investigation, includeDefault]);
-  return actions;
+  return answer;
 }

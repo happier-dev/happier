@@ -1,10 +1,10 @@
 import { actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
-import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
+import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import type { ActionAccountContext, LazyActionAccountContext } from './actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
-import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
+import { isMachineReachable, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getActionSpec, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseInputTypeOptionsSourceId } from '@happier-dev/protocol/inputs';
@@ -86,7 +86,17 @@ export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAcco
 
 /** Shared placement for whole Account Actions and declaration-backed options. */
 export async function resolveUiAccountActionReceiverMachineId(account: LazyActionAccountContext,
-    args: Parameters<UiAccountActionExecute>[0]): Promise<string | ReturnType<typeof actionTargetUnavailable>> {
+    args: Parameters<UiAccountActionExecute>[0]) {
+    const target = args.context.externalActionTarget;
+    if (target?.kind === 'machine' && target.machineId.trim()) {
+        const machineId = target.machineId.trim();
+        const machine = resolveMachineForActiveServerFromState(storage.getState(), machineId, account);
+        if (machine && resolveMachineReachability(account, machine) === 'unreachable') {
+            return { ok: false, errorCode: 'machine_unreachable', error: 'machine_unreachable', details: undefined } as const;
+        }
+        // A cold inventory leaves reachability to the addressed transport.
+        return machineId;
+    }
     const action = args.actionId === 'action.invoke'
         ? (getActionSpec('action.invoke').inputSchema.parse(args.input) as PublicActionInputById['action.invoke']).action : undefined;
     const request = args.actionId === 'action.options.resolve'

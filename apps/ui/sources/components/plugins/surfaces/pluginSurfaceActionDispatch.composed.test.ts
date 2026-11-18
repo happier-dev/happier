@@ -2752,10 +2752,11 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { controller.abort(); release(); accountBrowserRelay.enabled = false; }
     });
 
-    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit'] as const)('places automatic Account Actions using receiver runtime availability (%s)', async state => {
+    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit', 'explicit-offline'] as const)('places Account Actions using receiver runtime availability (%s)', async state => {
         const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineActivityForTest } = await import('@/dev/testkit/harness/machinePresence');
         const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { buildDeferredDaemonProjectionSections } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
@@ -2771,8 +2772,10 @@ describe('Account Action placement through the executable dispatcher', () => {
         const fixtureBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'fixture',
             actionId: 'action.invoke', tokenEpoch: 0, execute: () => ({ selected: 'fixture' }) });
+        const offline = state === 'offline' || state === 'explicit-offline';
         const machines = ['fixture', 'usable'].map(id => createMachineFixture({ id, createdAt: id === 'fixture' ? 2 : 1,
-            active: state !== 'offline' || id !== 'fixture', activeAt: id === 'fixture' && state === 'offline' ? 0 : Date.now(), access: boundary.machine.access }));
+            active: !offline || id !== 'fixture', activeAt: id === 'fixture' && offline ? 0 : Date.now(), access: boundary.machine.access }));
+        publishMachineActivityForTest(machines);
         getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
             machineListByServerId: { [lifetime.scope.serverId]: machines }, machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
         daemonRpc.mockImplementation(async (request: { method: string; machineId: string; payload?: { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } } }) => {
@@ -2798,7 +2801,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         accountBrowserRelay.enabled = true;
         try {
             for (const machine of machines) {
-                if (!machine.active || state === 'cold' || state === 'explicit') continue;
+                if (!machine.active || state === 'cold' || state === 'explicit' || state === 'explicit-offline') continue;
                 const answer = await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
                     accountLifetime: account.accountLifetime, sections: ['actionsById'], reuseFreshReady: true });
                 expect(answer, JSON.stringify(answer)).toMatchObject({ kind: 'ready' });
@@ -2807,11 +2810,13 @@ describe('Account Action placement through the executable dispatcher', () => {
             const result = executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope, action: identity,
                 execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'activate' } }, input: {},
                 context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                    ...(state === 'explicit' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'usable' } } : {}) },
+                    ...(state === 'explicit' || state === 'explicit-offline'
+                        ? { externalActionTarget: { kind: 'machine' as const, machineId: state === 'explicit-offline' ? 'fixture' : 'usable' } } : {}) },
                 signal: new AbortController().signal, executeLocal: () => { throw new Error('No local fallback on browser'); } });
             if (state === 'none') await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });
+            else if (state === 'explicit-offline') await expect(result).rejects.toMatchObject({ code: 'machine_unreachable' });
             else await expect(result).resolves.toEqual({ selected: 'usable' });
-            expect(effects).toBe(state === 'none' ? 0 : 1);
+            expect(effects).toBe(state === 'none' || state === 'explicit-offline' ? 0 : 1);
             if (state === 'cold') {
                 expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                     && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(2);
