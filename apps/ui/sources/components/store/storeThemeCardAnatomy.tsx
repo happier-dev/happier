@@ -45,7 +45,7 @@ export function useStoreThemeCardAnatomy(): CollectionAnatomy<StoreThemeCardView
             sourceId={card.listing?.sourceId} itemId={card.listing?.itemId} version={card.listing?.version} />,
         // The preview is a window: it keeps its proportions at every card width (lab C1 1.6:1, phones 1.1:1).
         previewAspectRatio: phone ? STORE_THEME_PREVIEW_ASPECT_PHONE : STORE_THEME_PREVIEW_ASPECT,
-        accessibilityLabel: (card) => `${card.name}, ${card.byline}, ${card.summary}`,
+        accessibilityLabel: (card) => [card.name, card.byline, card.summary].filter(Boolean).join(', '),
         testID: (card) => `store.theme.card:${card.key}`,
         columnTitles: { title: t('themeStore.columnName'), where: t('themeStore.columnSource'), reason: t('themeStore.columnModes') },
     }), [phone]);

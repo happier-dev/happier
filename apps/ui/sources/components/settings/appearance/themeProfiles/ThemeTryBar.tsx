@@ -23,7 +23,12 @@ import type { ThemeTryPresentationProps } from '@/components/store/storeThemeVie
  * faster; reduced motion cross-fades. It is the only control host while the listing that started the try is
  * closed, so it never doubles the listing's own Revert and Install.
  */
-export function ThemeTryBar(props: ThemeTryPresentationProps) {
+export function ThemeTryBar(current: ThemeTryPresentationProps) {
+  // A settled try clears its host's preview at once, while the bar is still leaving; it keeps the words it
+  // had (the tried face, Install or Keep) until it is gone, rather than naming the theme it restored.
+  const [shown, setShown] = React.useState(current);
+  if (current.visible && shown !== current) setShown(current);
+  const props = current.visible ? current : { ...shown, visible: false };
   const phone = useDeviceType() === 'phone';
   // The app's floating bottom bar (a phone's tab bar) reports its height; the try bar stands above it.
   const bottomChrome = useSessionCockpitBottomChromeHeight();

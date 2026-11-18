@@ -214,3 +214,13 @@ it('keeps three Store theme cards across the wide column and two beside the open
     expect(columns(544)).toBe(2);
     expect(columns(576)).toBe(2);
 });
+
+it('names a card without a trailing separator when its modes are not known until the card has looked', async () => {
+    // Live 1440 (ACCEPT-THEMES-1118): an Open VSX card read "Ayu, teabyii · Open VSX, ".
+    const anatomy = await renderHook(() => useStoreThemeCardAnatomy());
+    const label = anatomy.getCurrent().accessibilityLabel!;
+    expect(label({ key: 'ayu', name: 'Ayu', byline: 'teabyii · Open VSX', summary: '', faces: [] })).toBe('Ayu, teabyii · Open VSX');
+    expect(label({ key: 'atlas', name: 'Atlas', byline: 'mira.sato · Happier catalog', summary: 'Light and dark', faces: [] }))
+        .toBe('Atlas, mira.sato · Happier catalog, Light and dark');
+    await anatomy.unmount();
+});

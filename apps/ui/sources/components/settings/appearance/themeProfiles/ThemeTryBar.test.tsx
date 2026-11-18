@@ -70,3 +70,33 @@ it('stands the try bar above the floating bottom bar, so Revert and Install stay
   expect(lift).toBeGreaterThan(80);
   expect(screen.getTextContent()).toContain('Apply');
 });
+
+it('keeps naming the tried theme while it leaves, so Revert never flashes the restored theme', async () => {
+  // Live 1440 (ACCEPT-THEMES-1118): on Revert the leaving bar read "Trying Default theme" with Keep in place of Install.
+  let settle: (next: { faceName: string; origin: 'store' | 'editor' } | null) => void = () => {};
+  function Host() {
+    const [preview, setPreview] = React.useState<{ faceName: string; origin: 'store' | 'editor' } | null>({ faceName: 'Ayu Light', origin: 'store' });
+    settle = setPreview;
+    return (
+      <ThemeTryBar
+        visible={preview !== null}
+        faceName={preview?.faceName ?? 'Default theme'}
+        origin={preview?.origin ?? 'editor'}
+        miniature={null}
+        here="this device"
+        busy={null}
+        onRevert={() => {}}
+        onInstall={() => {}}
+        testID="try"
+      />
+    );
+  }
+  const screen = await renderSettingsView(<Host />);
+  await act(async () => {});
+  const before = screen.getTextContent();
+  expect(before).toContain('Ayu Light');
+  await act(async () => { settle(null); });
+  // Still on screen for its exit, with the words it had.
+  expect(screen.findByTestId('try')).not.toBeNull();
+  expect(screen.getTextContent()).toBe(before);
+});
