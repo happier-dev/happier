@@ -3,7 +3,6 @@ import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   EmptyState,
   ErrorState,
-  Icon,
   Item,
   ItemGroup,
   LoadingState,
@@ -144,9 +143,6 @@ function DatabaseRows(
         <Item
           key={target.targetKey}
           title={target.name}
-          // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
-          icon={<Icon name="database" tone="secondary" />}
-          showChevron
           subtitle={targetSubtitle(target, translate)}
           {...(target.relationCount
             ? {

@@ -219,45 +219,42 @@ function RailTab(
         };
       })()
     : null;
-  const pickerHeader = (
-    <DatabasePicker
-      current={current}
-      targets={picker.targets}
-      onSelect={(key) => {
-        setOpenedKey(null);
-        picker.select(key);
-      }}
-    />
-  );
-  return railTabOf(props.context) === 'insights' ? (
+  return (
     <ScrollArea>
       <Stack gap="medium">
-        {pickerHeader}
-        <InsightsRailList
-          key={current.targetKey}
-          context={props.context}
-          launch={props.launch}
-          targetKey={current.targetKey}
-          detailsView={detailsViewId(props.context)}
+        <DatabasePicker
+          current={current}
+          targets={picker.targets}
+          onSelect={(key) => {
+            setOpenedKey(null);
+            picker.select(key);
+          }}
         />
+        {railTabOf(props.context) === 'insights' ? (
+          <InsightsRailList
+            key={current.targetKey}
+            context={props.context}
+            launch={props.launch}
+            targetKey={current.targetKey}
+            detailsView={detailsViewId(props.context)}
+          />
+        ) : (
+          <WorkbenchRailList
+            key={current.targetKey}
+            targetKey={current.targetKey}
+            selected={selected}
+            onOpen={open}
+            showOverview={false}
+          />
+        )}
       </Stack>
     </ScrollArea>
-  ) : (
-    // The tables column is the shell's navigation column, the picker in its title's place.
-    <WorkbenchRailList
-      key={current.targetKey}
-      targetKey={current.targetKey}
-      header={pickerHeader}
-      selected={selected}
-      onOpen={open}
-      showOverview={false}
-    />
   );
 }
 
 /** The details tab: the same relation view the page shows, at the location the rail opened. */
-function DetailsTab(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
-  return <WorkbenchMain targetKey={props.targetKey} scope={props.scope} />;
+function DetailsTab(props: Readonly<{ targetKey: string }>) {
+  return <WorkbenchMain targetKey={props.targetKey} />;
 }
 
 /**
@@ -300,7 +297,7 @@ function DatabaseRailSurface(context: RenderContext) {
       {inDetails && railTabOf(context) === 'insights' ? (
         <InsightsDetailsTab context={context} targetKey={targetKey} />
       ) : inDetails ? (
-        <DetailsTab targetKey={targetKey} scope={launch.scope} />
+        <DetailsTab targetKey={targetKey} />
       ) : (
         <RailTab context={context} launch={launch} />
       )}
