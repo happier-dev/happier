@@ -2508,9 +2508,6 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@happier-dev/triage-protocol':
-        specifier: 0.0.0
-        version: link:../triage-protocol
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
