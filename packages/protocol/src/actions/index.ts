@@ -645,7 +645,8 @@ export {
   parseSessionListQueryActionResultV1,
   type SessionListQueryActionResultV1,
 } from '../sessions/awareness/action.js';
-export { ReviewStartTerminalValueV1Schema } from './specs/executionRunCompletion.js';
+export { ReviewStartTerminalValueV1Schema, readReviewStartActionResultV1,
+  type ReviewStartActionResultV1 } from './specs/executionRunCompletion.js';
 export * from './specs/machineConnection.js';
 export * from './sessionTerminalActionFamily.js';
 export * from '../todos/todoSessionLinkV1.js';

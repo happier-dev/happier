@@ -3,7 +3,9 @@ import { getActionSpec } from './actionSpecs.js';
 import { ExecutionRunGetRequestSchema } from '../execution/runs/responseSchemas.js';
 import { ScmDiffSummaryGenerateOutputSchema } from '../scm/diffSummary.js';
 
-import { planStartCompletion, reviewStartCompletion } from './specs/executionRunCompletion.js';
+import { planStartCompletion, reviewStartCompletion, readReviewStartActionResultV1 } from './specs/executionRunCompletion.js';
+import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import { withExecutionRunStartFailureDetails } from '../execution/runs/responseSchemas.js';
 import {
   freezeActionCompletionContractV1,
   prepareActionCompletionV1,
@@ -13,6 +15,37 @@ import {
 } from './actionCompletion.js';
 
 describe('Action completion owner', () => {
+  const selection = ReviewStartInputSchema.parse({ reviewers: [
+    { kind: 'engine', engineId: 'codex', modelId: 'first' },
+    { kind: 'engine', engineId: 'codex', modelId: 'second' },
+  ], instructions: 'Review independently.' });
+  const nativeStart = { intent: 'review', sessionId: 'origin', reviewedFingerprint: 'fingerprint',
+    reviewRound: { reviewId: 'review', roundOrdinal: 1 }, results: [
+      { key: 'step-1-reviewer-1', ok: true, result: { runId: 'run-1' } },
+      { key: 'step-1-reviewer-2', ok: false, errorCode: 'review_engine_unavailable',
+        details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') },
+    ] };
+  it.each([false, true])('reads native reviewer identities and definite launch refusals (enveloped: %s)', enveloped => {
+    expect(readReviewStartActionResultV1(enveloped ? { ok: true, result: nativeStart } : nativeStart, selection)).toEqual({
+      kind: 'native', runs: [{ key: 'step-1-reviewer-1', runId: 'run-1' }],
+      failed: [{ key: 'step-1-reviewer-2', errorCode: 'review_engine_unavailable', runCreation: 'noRunCreated' }],
+      reviewRound: nativeStart.reviewRound, reviewedFingerprint: 'fingerprint',
+    });
+  });
+  it.each([
+    { name: 'legacy engine key against current selection', output: { ...nativeStart, results: nativeStart.results.map(item => ({ ...item, key: 'codex' })) } },
+    { name: 'duplicate reviewer identity', output: { ...nativeStart, results: [nativeStart.results[0], nativeStart.results[0]] } },
+    { name: 'missing selected reviewer', output: { ...nativeStart, results: [nativeStart.results[0]] } },
+    { name: 'missing accepted Run identity', output: { ...nativeStart, results: [{ key: 'step-1-reviewer-1', ok: true, result: {} }, nativeStart.results[1]] } },
+    { name: 'unknown refused launch effect', output: { ...nativeStart, results: [nativeStart.results[0], { key: 'step-1-reviewer-2', ok: false, errorCode: 'transport_failed' }] } },
+    { name: 'explicitly uncertain launch effect', output: { ...nativeStart, results: [nativeStart.results[0], { key: 'step-1-reviewer-2', ok: false,
+      details: withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown') }] } },
+    { name: 'another Action intent', output: { ...nativeStart, intent: 'plan' } },
+    { name: 'outer failed acknowledgement', output: { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' } },
+    { name: 'incomplete Workflow receipt', output: { run: { id: 'workflow' }, admission: 'created' } },
+  ])('preserves unknown effects for $name', ({ output }) => {
+    expect(readReviewStartActionResultV1(output, selection)).toEqual({ kind: 'outcome_unknown' });
+  });
   it('awaits the exact composed Review Workflow receipt and returns its terminal aggregate', async () => {
     const run = { id: 'review-workflow', sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
       attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
@@ -20,6 +53,10 @@ describe('Action completion owner', () => {
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+    for (const value of [{ run, admission: 'created' }, { ok: true, result: { run, admission: 'created' } }]) {
+      expect(readReviewStartActionResultV1(value, selection)).toEqual({ kind: 'workflow',
+        workflow: { runId: run.id, origin: run.origin } });
+    }
     const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: { run, admission: 'created' } });
     expect(prepared).toMatchObject({ kind: 'awaiting', state: { awaitedWorkflows: [{ key: 'review', runId: run.id }] } });
     if (prepared.kind !== 'awaiting') throw new Error('Expected retained Review Workflow');

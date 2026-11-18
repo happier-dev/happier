@@ -8,8 +8,10 @@ import { ScmDiffSummaryGenerateOutputSchema } from '../../scm/diffSummary.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
 import { ReviewPublicationEvidenceSchema, ReviewReviewerOutcomeV1Schema } from '../../reviews/reviewPublicationEvidence.js';
-import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
-import { parseWorkflowRunStartActionResultReferenceV1 } from '../../workflows/actionsV1.js';
+import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1 } from '../../reviews/reviewArtifactV1.js';
+import { reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
+import { parseWorkflowRunStartActionResultReferenceV1, type WorkflowRunActionResultReferenceV1 } from '../../workflows/actionsV1.js';
+import { ActionExecuteResultSchema } from '../actionExecutionResult.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
@@ -34,7 +36,10 @@ function readFanoutOutput(output: unknown, intent: 'review' | 'plan') {
 }
 
 function readLaunches(output: unknown, intent: 'review' | 'plan') {
-  const parsed = readFanoutOutput(output, intent);
+  return projectFanoutLaunches(readFanoutOutput(output, intent));
+}
+
+function projectFanoutLaunches(parsed: z.infer<typeof FanoutOutputSchema>) {
   return {
     runs: parsed.results.flatMap((item) => item.ok ? [{ key: item.key, runId: item.result.runId }] : []),
     failed: parsed.results.flatMap((item) => item.ok ? [] : [{
@@ -42,6 +47,44 @@ function readLaunches(output: unknown, intent: 'review' | 'plan') {
       runCreation: readExecutionRunStartRunCreation(item.details),
     }]),
   };
+}
+
+export type ReviewStartActionResultV1 =
+  | Readonly<{ kind: 'native'; runs: readonly Readonly<{ key: string; runId: string }>[];
+    failed: readonly Readonly<{ key: string; errorCode: string; runCreation: 'noRunCreated' }>[];
+    reviewRound?: ReviewRoundBindingV1; reviewedFingerprint?: string | null }>
+  | Readonly<{ kind: 'workflow'; workflow: WorkflowRunActionResultReferenceV1 }>
+  | Readonly<{ kind: 'outcome_unknown' }>;
+
+/** Reads current authoring receipts against their exact selected reviewer identities.
+ * Unknown effects are never proof that a start can be retried. Workflow admission
+ * identifies only the accepted Workflow, not launches of its executable leaves.
+ */
+export function readReviewStartActionResultV1(value: unknown,
+  selection: Pick<ReviewStartInput, 'reviewers' | 'steps'>): ReviewStartActionResultV1 {
+  try {
+    const workflow = parseWorkflowRunStartActionResultReferenceV1(value);
+    if (workflow) return { kind: 'workflow', workflow };
+    const envelope = ActionExecuteResultSchema.safeParse(value);
+    const output = envelope.success ? envelope.data.ok ? envelope.data.result : undefined : value;
+    const retained = readFanoutOutput(output, 'review');
+    const launches = projectFanoutLaunches(retained);
+    const remaining = new Set(reviewReviewerIdsForStartV1(selection));
+    for (const launch of [...launches.runs, ...launches.failed]) {
+      if (!remaining.delete(launch.key)) return { kind: 'outcome_unknown' };
+    }
+    if (remaining.size > 0) return { kind: 'outcome_unknown' };
+    const failed: { key: string; errorCode: string; runCreation: 'noRunCreated' }[] = [];
+    for (const failure of launches.failed) {
+      if (failure.runCreation !== 'noRunCreated') return { kind: 'outcome_unknown' };
+      failed.push({ ...failure, runCreation: failure.runCreation });
+    }
+    return { kind: 'native', runs: launches.runs, failed,
+      ...(retained.reviewRound ? { reviewRound: retained.reviewRound } : {}),
+      ...(retained.reviewedFingerprint === undefined ? {} : { reviewedFingerprint: retained.reviewedFingerprint }) };
+  } catch {
+    return { kind: 'outcome_unknown' };
+  }
 }
 
 type ObservedRun = Readonly<ActionCompletionRun & { outcome: ExecutionRunTerminalObservation }>;
