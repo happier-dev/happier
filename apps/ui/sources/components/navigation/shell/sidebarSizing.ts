@@ -1,5 +1,5 @@
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import {
     SESSION_LIST_ROW_IDENTITY_METRICS,
     SESSION_LIST_ROW_WIDTH_METRICS,
@@ -8,7 +8,7 @@ import {
 import { BUILTIN_COLUMN_MINIMUM_WIDTH_PX } from './appRail/appShellColumnSizing';
 import type { WindowFoldMetrics } from '@/utils/platform/windowFoldMetrics';
 
-export const SIDEBAR_DEFAULT_WIDTH_PX = HAPPIER_COLLECTION_RAIL_WIDTH_PX.standard;
+export const SIDEBAR_DEFAULT_WIDTH_PX = HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX;
 
 const sessionRowDemands = (['default', 'compact', 'minimal'] as const).map(density => {
     const metrics = SESSION_LIST_ROW_WIDTH_METRICS;

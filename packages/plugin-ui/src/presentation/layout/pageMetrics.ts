@@ -254,6 +254,12 @@ export const HAPPIER_COLLECTION_RAIL_WIDTH_PX = Object.freeze({
 
 export type HappierCollectionRailWidth = keyof typeof HAPPIER_COLLECTION_RAIL_WIDTH_PX;
 
+/**
+ * The shell column's width until the person drags it (calm-shell lab: the column beside the rail is 320). Its own value,
+ * not a settings rail's: the column holds every destination's list, not one collection beside its detail.
+ */
+export const HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX = 320;
+
 export type HappierPageBackPlacement = 'gutter' | 'above-title';
 
 /**

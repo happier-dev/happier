@@ -1,3 +1,4 @@
+import { HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import React from 'react';
 import 'fake-indexeddb/auto';
 import { JSDOM } from 'jsdom';
@@ -259,8 +260,8 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     // Shared-handle DOM tests own dblclick delivery; exercise this consumer's real reset binding.
     const handle = getResizableSidebarPane(screen.tree).find(node => typeof node.props.interactionProps?.onDoubleClick === 'function');
     await act(async () => { handle.props.interactionProps.onDoubleClick(); });
-    expect(mockLocalSettingsStore.sidebarWidthPx).toBe(272);
-    expect(widthOf(getSidebar(screen.tree))).toBe(272);
+    expect(mockLocalSettingsStore.sidebarWidthPx).toBe(HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX);
+    expect(widthOf(getSidebar(screen.tree))).toBe(HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX);
   });
 
   it('keeps literal pixel preferences across window changes and clamps only the rendered width', async () => {

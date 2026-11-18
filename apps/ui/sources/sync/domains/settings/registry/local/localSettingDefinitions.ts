@@ -8,7 +8,7 @@ import {
     HAPPIER_SPINNER_SPEED_IDS,
     HAPPIER_SPINNER_STYLE_IDS,
 } from '@happier-dev/plugin-ui/presentation';
-import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { z } from 'zod/mini';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.activitySurfaces';
 import { LAYOUT_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.layout';
@@ -249,7 +249,7 @@ const localSettingInputs = {
     },
     sidebarWidthPx: {
         schema: z.number(),
-        default: HAPPIER_COLLECTION_RAIL_WIDTH_PX.standard,
+        default: HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX,
         description: 'Preferred sidebar width in px',
         storageScope: 'local',
         analytics: {

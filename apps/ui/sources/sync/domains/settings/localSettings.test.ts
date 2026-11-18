@@ -138,8 +138,15 @@ describe('localSettingsParse', () => {
     });
 
     it('preserves the 0.2 sidebar width the person saw at a larger basis', () => {
-        expect(localSettingsParse({ sidebarWidthPx: 320, sidebarWidthBasisPx: 1200 }).sidebarWidthPx).toBe(272);
+        expect(localSettingsParse({ sidebarWidthPx: 320, sidebarWidthBasisPx: 1200 }).sidebarWidthPx).toBe(localSettingsDefaults.sidebarWidthPx);
         expect(localSettingsParse({ sidebarWidthPx: 512, sidebarWidthBasisPx: 1920 }).sidebarWidthPx).toBe(512);
+    });
+    // Lab calm-shell draws the shell column at 320 (PRIMITIVES-DESIGN measured 272 live; UI refinements 12:50Z). Saving any
+    // local setting writes the whole record, so a stored 272 is the former default, not a width the person chose.
+    it('opens the shell column at the lab\'s 320 and keeps any width a person set', () => {
+        expect(localSettingsParse({}).sidebarWidthPx).toBe(320);
+        expect(localSettingsParse({ sidebarWidthPx: 272, sidebarCollapsed: true })).toMatchObject({ sidebarWidthPx: 320, sidebarCollapsed: true });
+        for (const chosen of [240, 300, 333, 480]) expect(localSettingsParse({ sidebarWidthPx: chosen }).sidebarWidthPx).toBe(chosen);
     });
     it('defaults haptics on and keeps its opt-out device-local without coupling visual preferences', () => {
         expect(localSettingsParse({})).toMatchObject({ hapticsEnabled: true });

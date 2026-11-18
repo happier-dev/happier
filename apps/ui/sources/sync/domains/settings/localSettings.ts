@@ -109,6 +109,12 @@ const LEGACY_SCALED_PANE_SETTINGS = [
     { pxKey: 'settingsNavSidebarWidthPx', basisKey: 'settingsNavSidebarWidthBasisPx', defaults: [230, 280], basis: 1200 },
 ] as const;
 
+// 0.3 saves the whole local record, so a stored former default was written for the person, not chosen by them: it
+// means "use the current default". The shell column opened at 272 until it took the lab's 320 (2026-11-18).
+const FORMER_PANE_DEFAULTS = [
+    { pxKey: 'sidebarWidthPx', defaults: [272] },
+] as const;
+
 function stripDeprecatedLocalSettingsKeys(settings: Readonly<Record<string, unknown>>): Record<string, unknown> {
     const next: Record<string, unknown> = { ...settings };
     for (const key of deprecatedLocalSettingKeys) {
@@ -216,6 +222,9 @@ function normalizeLocalSettingsParseInput(settings: unknown): unknown {
     });
     for (const { pxKey, basisKey, defaults, basis } of LEGACY_SCALED_PANE_SETTINGS) {
         if (migrated[basisKey] === basis && defaults.some(value => value === migrated[pxKey])) delete migrated[pxKey];
+    }
+    for (const { pxKey, defaults } of FORMER_PANE_DEFAULTS) {
+        if (defaults.some(value => value === migrated[pxKey])) delete migrated[pxKey];
     }
     const next = stripDeprecatedLocalSettingsKeys(migrated);
     if (next.attentionDeviceOverridesV1 === undefined && hasLegacyAttentionDeviceOverrideFields(next)) {
