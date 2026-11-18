@@ -35,9 +35,12 @@ import { createNativeDatabaseContainerFixture, nativeMysqlImage, nativePostgresq
 
 afterEach(() => vi.restoreAllMocks());
 
-for (const shape of ['postgresql', 'postgresql-private', 'mysql'] as const) {
+for (const shape of ['acquisition-refusals', 'postgresql', 'postgresql-private', 'mysql'] as const) {
 const engine = shape === 'mysql' ? 'mysql' : 'postgresql';
-it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : !nativePostgresqlImage)(`opens the exact native ${shape} deployment through installed custody and retains exclusion until close`, async () => {
+const acquisitionRefusals = shape === 'acquisition-refusals';
+it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : shape === 'postgresql-private' && !nativePostgresqlImage)(
+    acquisitionRefusals ? 'retains native database acquisition refusals before opening a connection'
+        : `opens the exact native ${shape} deployment through installed custody and retains exclusion until close`, async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-native-database-', env: {
         HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test',
     } }, async ({ homeDir }) => {
@@ -48,7 +51,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                 canonicalServerUrl: 'https://home.test', endpoints: [{ kind: 'https', url: 'https://home.test' }] },
         } } });
         const pg = shape === 'postgresql' ? await createNativePostgresqlFixture(join(homeDir, 'postgres')) : null;
-        const container = shape === 'postgresql' ? null : await createNativeDatabaseContainerFixture(engine,
+        const container = shape === 'postgresql' || acquisitionRefusals ? null : await createNativeDatabaseContainerFixture(engine,
             engine === 'mysql' ? nativeMysqlImage! : nativePostgresqlImage!);
         const database = pg ? 'postgres' : 'native_fixture';
         try {
@@ -94,6 +97,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                 const release = await materializer.materialize({ environmentId: detail.environment.id, deploymentId: target.deploymentId });
                 await release.commit();
                 const keys = [{ kind: 'composeProject' as const, dockerEndpoint: 'fixture-pg-engine', projectName: 'native-database' }];
+                let observedComposeProject = 'native-database';
                 await fixture.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId: identity.homeServerIdentityId,
                     machineId: 'machine-a', environmentId: detail.environment.id, environmentInstanceId: identity.environmentInstanceId,
                     deploymentId: target.deploymentId, release, composeService: 'database', serviceId: `${identity.environmentInstanceId}/database`,
@@ -101,7 +105,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                     processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
                         async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
                         async stop() { return { status: 'stopped' }; },
-                        nativeContainers: () => [{ id: container?.name ?? 'native-pg', service: 'database', composeProject: 'native-database' }],
+                        nativeContainers: () => [{ id: container?.name ?? 'native-pg', service: 'database', composeProject: observedComposeProject }],
                         runtimeFacts: () => ({ freshness: 'current', observedAt: 1, configuration: { name: 'database', replicas: 1,
                             resources: { cpus: null, memory: null }, restartPolicy: null, healthcheck: 'absent', mounts: [],
                             ports: pg ? [{ target: 5432, published: pg.port, bindAddress: '127.0.0.1', protocol: 'tcp' }] : [] } }),
@@ -176,18 +180,20 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                 const signal = actionCancellation.signal;
                 // D26: finite deployment reads use the shared engine without loading
                 // the optional workbench. The admitted runtime above has no plugins.
-                const internalSize = await createDeploymentDataSizeActionForHost({ serverId: 'home', machineId: 'machine-a',
-                    credentials, serverHttpBaseUrl: 'https://home.test', async assertCurrent() {},
-                    async readEnvironment() { return detail; }, async readReceipt() { return receipt; } })(sizeInput,
-                    { authority: 'present_user', runtimeAccountId: accountId, signal, actionRequestId: sizeEnvelope.requestId,
-                        externalActionExecutionAuthorization: sizeAuthorization, externalActionTarget: machineTarget,
-                        originalActionEnvelope: sizeEnvelope });
-                expect(internalSize).toMatchObject({ ok: true, size: { service: 'database', size: {
-                    status: 'available', measurement: engine === 'postgresql' ? 'database_bytes' : 'table_bytes_estimate' },
-                    growth: { status: 'unavailable', reason: 'previous_sample_required' },
-                } });
+                if (!acquisitionRefusals) {
+                    const internalSize = await createDeploymentDataSizeActionForHost({ serverId: 'home', machineId: 'machine-a',
+                        credentials, serverHttpBaseUrl: 'https://home.test', async assertCurrent() {},
+                        async readEnvironment() { return detail; }, async readReceipt() { return receipt; } })(sizeInput,
+                        { authority: 'present_user', runtimeAccountId: accountId, signal, actionRequestId: sizeEnvelope.requestId,
+                            externalActionExecutionAuthorization: sizeAuthorization, externalActionTarget: machineTarget,
+                            originalActionEnvelope: sizeEnvelope });
+                    expect(internalSize).toMatchObject({ ok: true, size: { service: 'database', size: {
+                        status: 'available', measurement: engine === 'postgresql' ? 'database_bytes' : 'table_bytes_estimate' },
+                        growth: { status: 'unavailable', reason: 'previous_sample_required' },
+                    } });
+                    expect(await machineNativeEffectAdmission.run({ operation: { operationId: 'after-internal-size', kind: 'deploy' }, keys }, async () => true)).toBe(true);
+                }
                 activeRoot = root;
-                expect(await machineNativeEffectAdmission.run({ operation: { operationId: 'after-internal-size', kind: 'deploy' }, keys }, async () => true)).toBe(true);
                 secretReads = 0;
                 const service = createDeploymentDatabasesServiceForHost({ seed: { plugin: { id: action.pluginId, version: '0.0.0' },
                     contribution: { id: action.localId, qualifiedId: DATABASE_STATEMENT_RUN_ACTION_ID_V1 }, occurrenceId: 'native',
@@ -199,7 +205,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                         installationId: installation.installationId, credentialOwnerAccountId: accountId, credentials, serverHttpBaseUrl: 'https://home.test',
                         async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } }) });
                 const executeAdmin = pg ? (sql: string) => pg.execute(sql) : (sql: string) => container!.execute(sql);
-                if (shape === 'postgresql-private') {
+                if (engine === 'postgresql') {
                     const member = link.members[0]!;
                     link.members = [{ ...member, installationId: 'neighbor-installation' }];
                     await expect(service.resolve({ operation: 'describe', target }, 'read'))
@@ -213,9 +219,22 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                     const fingerprint = basis.manifestFingerprint;
                     basis.manifestFingerprint = 'neighbor-runtime-release';
                     await expect(service.resolve({ operation: 'describe', target }, 'read'))
-                        .rejects.toMatchObject({ code: 'service_unavailable' });
+                        .rejects.toMatchObject({ code: 'service_unavailable', data: {
+                            details: { reason: 'mounted_service_unconfirmed', remedy: expect.any(String) },
+                            failureCause: { phase: 'deployment.data.service', errorCode: 'service_unavailable', httpStatus: null },
+                        } });
                     basis.manifestFingerprint = fingerprint;
                     expect(secretReads).toBe(0);
+                }
+                if (acquisitionRefusals) {
+                    observedComposeProject = 'neighbor-runtime-project';
+                    await expect(service.resolve({ operation: 'describe', target }, 'read'))
+                        .rejects.toMatchObject({ code: 'service_unavailable', data: {
+                            details: { reason: 'native_container_unconfirmed', remedy: expect.any(String) },
+                            failureCause: { phase: 'deployment.data.container', errorCode: 'service_unavailable', httpStatus: null },
+                        } });
+                    expect(secretReads).toBe(0);
+                    return;
                 }
                 if (engine === 'postgresql') {
                     await executeAdmin('ALTER ROLE happier_ro SUPERUSER');

@@ -1,4 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { configuration } from '@/configuration';
@@ -8,6 +10,16 @@ import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTa
 import { assertOwnServerDataQuerySupportedEngine } from './dataRoleGuard';
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
+
+function refuseUnconfirmedNativeDataService(observation: 'service' | 'container'): never {
+    const code = 'service_unavailable';
+    const reason = observation === 'service' ? 'mounted_service_unconfirmed' : 'native_container_unconfirmed';
+    throw new PluginError({
+        code,
+        details: projectDeploymentFailureRecoveryV1({ reason }, code),
+        failureCause: { phase: `deployment.data.${observation}`, errorClass: 'Error', errorCode: code, httpStatus: null },
+    });
+}
 
 /** Template provenance supplies the logical data identity; the runtime owner below
  * proves that this exact declaration is the current admitted native service. */
@@ -94,13 +106,13 @@ export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServ
         if (!handle || !handle.isCurrent() || handle.retirementSignal.aborted || handle.deploymentId !== selector.deploymentId
             || handle.release.deploymentId !== selector.deploymentId || handle.release.environmentId !== selector.environmentId
             || handle.release.manifestFingerprint !== projection.manifestFingerprint
-            || handle.readNativeRuntimeFacts?.().freshness !== 'current') return refuse('service_unavailable');
+            || handle.readNativeRuntimeFacts?.().freshness !== 'current') return refuseUnconfirmedNativeDataService('service');
         await handle.release.assertCurrent();
         const containers = handle.readNativeContainers?.();
         // The current mounted owner proves native identity after cold restore too.
         // Its optional activation comparison is not a data-operation prerequisite.
         if (containers?.length !== 1 || containers[0]!.service !== selector.service
-            || containers[0]!.composeProject !== projection.physicalProjectName) return refuse('service_unavailable');
+            || containers[0]!.composeProject !== projection.physicalProjectName) return refuseUnconfirmedNativeDataService('container');
         context.signal?.throwIfAborted();
         return { environment, definition, use, handle, containerId: containers[0]!.id, dispose: () => lease!.release() };
     } catch (error) { await lease?.release(); throw error; }
