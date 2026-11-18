@@ -4,7 +4,8 @@ import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js'
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../../providers/ids.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
-import type { ProviderBoundModelRef, SessionModelSelectionV1 } from '../../providers/selection/v1.js';
+import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import type { WorkflowStepExecutionSelection } from '../../workflows/workflowV1.js';
 import { projectSessionModelSelectionV2ToV1, readSessionModelSelectionProviderConnectionId, type SessionModelRefV2, type SessionModelSelection } from '../../providers/selection/v2.js';
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '../../providers/catalog/reasoningEffort.js';
@@ -57,10 +58,9 @@ export function readRoleEngineSessionModelSelectionV1(
 }
 
 /** The engine fields of a Session-authoring selection: what the shared engine picker reads and writes. */
-export type RoleEngineSessionSelectionV1 = Readonly<{
+export type RoleEngineSessionSelectionV1 = Readonly<Pick<WorkflowStepExecutionSelection,
+  'modelSelection' | 'sessionConfigOptionOverrides' | 'teamCredentialBindings'> & {
   agentTarget?: AgentExecutionTargetV1;
-  modelSelection?: SessionModelSelectionV1 | null;
-  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 }>;
 
 /** A role's `effort` as the Agent's `reasoning_effort` option override, and back. */

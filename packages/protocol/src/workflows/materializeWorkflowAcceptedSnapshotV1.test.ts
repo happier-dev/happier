@@ -19,6 +19,7 @@ import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import { actionStartTargetUnavailableV1 } from '../actions/executor/actionStartDiagnostics.js';
+import { sessionModelSelectionV2TeamBindingIntent } from '../providers/selection/v2.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -460,6 +461,32 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     } });
     if (!replay.ok) throw new Error(replay.error.code);
     expect(replay.agentStartLeaves[0]?.workspaceWrites).toBe('deny');
+  });
+
+  it.each(['native', 'team_resource'] as const)('replays a %s picker model and its credential application', async source => {
+    const modelSelection = { v: 2 as const, updatedAt: 1, ref: source === 'native'
+      ? { source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a' }
+      : { source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a',
+        teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 2, deliveryMode: 'brokered' as const } };
+    const original = await materialize({ definition: { ...definition, defaults: { agentTarget,
+      modelSelection: { v: 2, updatedAt: 1, ref: { source: 'native',
+        agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a' } },
+    } } });
+    if (!original.ok) throw new Error(original.error.code);
+    const binding = sessionModelSelectionV2TeamBindingIntent(modelSelection, {
+      executionMachineId: 'machine', application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+    });
+    const teamCredentialBindings = source === 'team_resource' ? [binding] : undefined;
+    const replay = await materialize({ replay: { snapshot: original.snapshot, agentOverride: {
+      sourceKey: '$root', blockId: 'work', agentTarget, modelSelection: source === 'native' ? modelSelection : null,
+      ...(teamCredentialBindings ? { teamCredentialBindings } : {}),
+    } } });
+    expect(replay).toMatchObject({ ok: true });
+    if (!replay.ok) throw new Error(replay.error.code);
+    expect(replay.snapshot.materializedLeaves[0]?.selection.modelSelection).toEqual(source === 'native' ? modelSelection : null);
+    expect(replay.snapshot.materializedLeaves[0]?.selection.teamCredentialBindings).toEqual(teamCredentialBindings);
   });
 
   it('rebinds edited inputs and only one explicit Agent override while rechecking current policy', async () => {

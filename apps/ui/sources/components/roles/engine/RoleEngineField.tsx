@@ -2,40 +2,46 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
-import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import type { RoleEngineSessionSelectionV1, RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { resolveRoleEngineTargetKey, useRoleEngineCatalog } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
-import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
-import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
+import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
+import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { useActiveServerAccountScope, useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { resolveDefaultDirectoryForMachine } from '@/utils/sessions/machineDefaultDirectory';
 import { t } from '@/text';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
+import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
+import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '../rail/buildRolesRailPickerOption';
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
-/** The Agent config option a role's `engine.effort` is (the same id `admitAgentStartV1` stamps). */
 const ROLE_EFFORT_CONFIG_OPTION_ID = PROVIDER_REASONING_EFFORT_OPTION_ID;
+
+/** Stored Roles edit their legacy engine; Workflow overrides retain the canonical Session selection. */
+export type RoleEngineFieldValueProps =
+    | Readonly<{ engine: RoleEngineV1 | undefined; onChange: (engine: RoleEngineV1) => void; selection?: never; onChangeSelection?: never }>
+    | Readonly<{ selection: RoleEngineSessionSelectionV1; onChangeSelection: (selection: RoleEngineSessionSelectionV1) => void; engine?: never; onChange?: never }>;
 
 /**
  * A role's engine as a page field: the value ("Claude · opus-5.5") in the field box, opening the same
  * engine popover the composer uses (Agents in the rail, the chosen Agent's models beside it).
  * Nothing is asked of a machine until the popover opens on an Agent.
  */
-export const RoleEngineField = React.memo(function RoleEngineField(props: Readonly<{
+export const RoleEngineField = React.memo(function RoleEngineField(props: RoleEngineFieldValueProps & Readonly<{
     serverId?: string | null;
     /** A launch edits its own Machine's native options; neutral Account settings use the incumbent preferences. */
     machineId?: string | null;
     directory?: string | null;
-    engine: RoleEngineV1 | undefined;
     label: string | null;
     /** Assistive tech's full name for the engine, when `label` leaves out what the leading mark says (the agent). */
     accessibleLabel?: string | null;
@@ -45,7 +51,6 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
     /** `chip`: a soft borderless pill among a row's quiet facts (a Work row); `field` (default): a configuration page's bordered field. */
     presentation?: 'field' | 'chip';
     disabled?: boolean;
-    onChange: (engine: RoleEngineV1) => void;
     /** Engine-group consumers may also choose a Role through the incumbent rail. */
     roleSelection?: RolesRailPickerOptionParams;
     testID?: string;
@@ -81,12 +86,12 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
             </HappierPressable>
             {open ? (
                 <RoleEnginePicker
+                    {...(props.selection ? { selection: props.selection, onChangeSelection: props.onChangeSelection }
+                        : { engine: props.engine, onChange: props.onChange })}
                     serverId={props.serverId}
                     machineId={props.machineId}
                     directory={props.directory}
                     anchorRef={anchorRef}
-                    engine={props.engine}
-                    onChange={props.onChange}
                     roleSelection={props.roleSelection}
                     onRequestClose={() => setOpen(false)}
                 />
@@ -100,23 +105,89 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
  * row opens it, lab csinfo I2). Mount it only while open; it draws nothing when the role's Home has
  * no Account scope on this device.
  */
-export function RoleEnginePicker(props: Readonly<{
+export function RoleEnginePicker(props: RoleEngineFieldValueProps & Readonly<{
     serverId?: string | null;
     machineId?: string | null;
     directory?: string | null;
     anchorRef: React.RefObject<View | null>;
-    engine: RoleEngineV1 | undefined;
-    onChange: (engine: RoleEngineV1) => void;
     roleSelection?: RolesRailPickerOptionParams;
     onRequestClose: () => void;
 }>) {
     const scope = useActiveServerAccountScope(props.serverId);
     if (props.serverId !== undefined && scope === null) return null;
-    return <RoleEnginePopover {...props} capabilityServerId={scope?.serverId ?? ''} />;
+    // Stored Roles retain their native/Account engine contract; Session selections keep their source sidecar.
+    if (props.selection === undefined) return <LegacyRoleEnginePopover
+        capabilityServerId={scope?.serverId ?? ''} machineId={props.machineId} directory={props.directory}
+        anchorRef={props.anchorRef} engine={props.engine} onChange={props.onChange}
+        roleSelection={props.roleSelection} onRequestClose={props.onRequestClose} />;
+    return <RoleEnginePopover capabilityServerId={scope?.serverId ?? ''} machineId={props.machineId} directory={props.directory}
+        anchorRef={props.anchorRef} value={props.selection} onChange={props.onChangeSelection} roleSelection={props.roleSelection}
+        onRequestClose={props.onRequestClose} />;
+}
+
+/** Mounted only while open: the Agent catalog, readiness and model probes belong to the open popover. */
+function RoleEnginePopover(props: Readonly<{
+    capabilityServerId: string;
+    machineId?: string | null;
+    directory?: string | null;
+    anchorRef: React.RefObject<View | null>;
+    value: RoleEngineSessionSelectionV1;
+    onChange: (value: RoleEngineSessionSelectionV1) => void;
+    roleSelection?: RolesRailPickerOptionParams;
+    onRequestClose: () => void;
+}>) {
+    const { ready, scope, snapshot } = useRoleEngineCatalog(props.capabilityServerId || undefined);
+    const machines = useActiveMachineFacts();
+    const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
+    const reachabilityRevision = useMachineReachabilityRevision();
+    const selectedMachineId = React.useMemo(() => props.machineId !== undefined ? props.machineId : resolvePreferredMachineId({
+        machines, scope, recentMachinePaths, onlineOnly: true,
+    }), [props.machineId, machines, scope, recentMachinePaths, reachabilityRevision]);
+    const cwd = React.useMemo(() => props.directory !== undefined ? props.directory : resolveDefaultDirectoryForMachine({
+        machineId: selectedMachineId, machines,
+        recentPaths: recentMachinePaths.filter(entry => entry.machineId === selectedMachineId).map(entry => entry.path),
+    }) || null, [props.directory, selectedMachineId, machines, recentMachinePaths]);
+    // The same facts and the same engine picker the composer uses: Agents with
+    // their readiness on this Machine, models, effort, connected services.
+    const facts = useSessionAuthoringControlFacts({ machineId: selectedMachineId ?? null,
+        serverId: props.capabilityServerId || null, directory: cwd });
+    const { onChange, value } = props;
+    const onChangeFields = React.useCallback((fields: Partial<WorkflowSessionAuthoringSelection>) => {
+        // The shared picker clears the Agent with `null`; a role selection has no Agent key then.
+        const { agentTarget: changedTarget, ...changed } = fields;
+        const { agentTarget: currentTarget, ...current } = value;
+        const agentTarget = changedTarget === undefined ? currentTarget : changedTarget ?? undefined;
+        onChange({ ...current, ...changed, ...(agentTarget ? { agentTarget } : {}) });
+    }, [onChange, value]);
+    const picker = useSessionAuthoringEnginePicker({ values: value, facts, onChangeFields,
+        ...(props.roleSelection ? { roleSelection: props.roleSelection } : {}) });
+
+    if (!ready) {
+        const unavailable = scope === null || snapshot?.catalog.status === 'unavailable' || snapshot?.catalog.status === 'partial';
+        return <AgentInputSelectionPopover open anchorRef={props.anchorRef} onRequestClose={props.onRequestClose}>
+            {() => <SurfaceStateCard testID="role-engine-catalog-state" size="line" kind={unavailable ? 'error' : 'loading'}
+                title={t(unavailable ? 'common.unavailable' : 'common.loading')} />}
+        </AgentInputSelectionPopover>;
+    }
+    return (
+        <>
+            <AgentInputChipPickerPopover
+                open
+                anchorRef={props.anchorRef}
+                title=""
+                options={picker.options}
+                selectedOptionId={picker.selectedOptionId}
+                onSelect={picker.onSelect}
+                onRequestClose={props.onRequestClose}
+                detailContentOwnsScroll
+                maxHeightCap={460}
+            />
+        </>
+    );
 }
 
 /** Mounted only while open: the Agent catalog and model probes belong to the open popover. */
-function RoleEnginePopover(props: Readonly<{
+function LegacyRoleEnginePopover(props: Readonly<{
     capabilityServerId: string;
     machineId?: string | null;
     directory?: string | null;

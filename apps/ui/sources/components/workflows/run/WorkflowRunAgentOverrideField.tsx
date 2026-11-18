@@ -33,6 +33,7 @@ export function WorkflowRunAgentOverrideField(props: Readonly<{
         agentTarget: literal.agentTarget ?? undefined,
         modelSelection: literal.modelSelection ?? null,
         sessionConfigOptionOverrides: literal.sessionConfigOptionOverrides ?? null,
+        teamCredentialBindings: literal.teamCredentialBindings,
     } : {}, [literal]);
     const presentation = presentEngine(literal ? sessionSelectionToRoleEngineV1(selection) : undefined);
     const roleId = props.value?.roleId ?? null;
@@ -50,7 +51,8 @@ export function WorkflowRunAgentOverrideField(props: Readonly<{
                 if (props.disabled || !next.agentTarget) return;
                 const effort = readRoleEffortFromSessionConfigOptionOverridesV1(next.sessionConfigOptionOverrides);
                 props.onChange({ agentTarget: next.agentTarget,
-                    ...(next.modelSelection ? { modelSelection: next.modelSelection } : {}),
+                    ...(next.modelSelection !== undefined ? { modelSelection: next.modelSelection } : {}),
+                    ...(next.teamCredentialBindings !== undefined ? { teamCredentialBindings: next.teamCredentialBindings } : {}),
                     ...(effort ? { sessionConfigOptionOverrides: roleEffortToSessionConfigOptionOverridesV1(effort)! } : {}),
                 });
             }} />

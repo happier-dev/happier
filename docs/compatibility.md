@@ -9573,6 +9573,16 @@ declaration and host readers load together under the unpublished direct cut;
 earlier strict development readers reject the field. This changes no persisted
 format and adds no migration, wire epoch or mixed-development adapter.
 
+Unreleased 0.3 Workflow replay Agent overrides retain the canonical
+`teamCredentialBindings` alongside the model and effort. The shared engine
+picker projects Team selections with the composer's binding projector; the Run
+override preserves that result and explicit `modelSelection: null` through
+replay admission. The override and nested credential envelopes remain closed.
+Matching development UI and admission readers reload together under the
+unpublished direct cut; earlier strict development readers reject the binding.
+Existing overrides without bindings remain readable; no migration or adapter
+is introduced.
+
 Unreleased 0.3 command approval failures preserve the existing closed command result
 inside the existing execution `details` field. Matching approval readers retain exit
 code, stdout, stderr and optional truncation flags for `command_failed` and

@@ -54,16 +54,17 @@ export { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1, readWorkflowLeaf
  * effort. Replay retains every other accepted leaf fact.
  */
 export const WorkflowReplayAgentOverrideV1Schema = lazyZodSchema(() => {
-  const { roleId, agentTarget, modelSelection, sessionConfigOptionOverrides } = WorkflowStepSelectionV1Schema.shape;
+  const { roleId, agentTarget, modelSelection, sessionConfigOptionOverrides, teamCredentialBindings } = WorkflowStepSelectionV1Schema.shape;
   return z.strictObject({
     sourceKey: z.union([z.literal('$root'), WorkflowDefinitionRefV1StringSchema]),
     blockId: WorkflowBlockIdSchema,
-    roleId, agentTarget, modelSelection, sessionConfigOptionOverrides,
+    roleId, agentTarget, modelSelection, sessionConfigOptionOverrides, teamCredentialBindings,
   }).check(z.superRefine((override, context) => {
     if ((override.roleId === undefined) === (override.agentTarget === undefined)) {
       context.addIssue({ code: 'custom', path: ['roleId'], message: 'Choose a Role or an Agent' });
     }
-    if (override.roleId !== undefined && (override.modelSelection !== undefined || override.sessionConfigOptionOverrides !== undefined)) {
+    if (override.roleId !== undefined && (override.modelSelection !== undefined || override.sessionConfigOptionOverrides !== undefined
+      || override.teamCredentialBindings !== undefined)) {
       context.addIssue({ code: 'custom', path: ['roleId'], message: 'A Role chooses its own model and effort' });
     }
   }));
