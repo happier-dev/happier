@@ -20108,6 +20108,7 @@ settingsSession: {
             groupShared: "Mit dir geteilt",
             noAddress: "Keine Adresse",
             ownedByTeam: "Gehört dem Team",
+            addedAt: ({ time }: { time: string }) => `Hinzugefügt ${time}`,
             dashboardsTitle: "Dashboards",
             dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Dashboards, die ${team} unter den Dashboards von ${project} sieht, wenn sie es öffnet. Jedes wird einzeln geteilt; wenn du eines löst, bleiben die anderen und ihre Freigaben, wie sie sind.`,
             dashboardsDescriptionPersonal: "Jedes Dashboard wird einzeln geteilt; wenn du eines löst, bleiben die anderen und ihre Freigaben, wie sie sind.",

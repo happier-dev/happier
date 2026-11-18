@@ -20101,6 +20101,7 @@ settingsSession: {
         groupShared: "Compartilhadas com você",
         noAddress: "Sem endereço",
         ownedByTeam: "Pertence à equipe",
+        addedAt: ({ time }: { time: string }) => `Adicionada ${time}`,
         dashboardsTitle: "Painéis",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Painéis que ${team} vê entre os painéis de ${project} ao abri-lo. Cada um é compartilhado separadamente; desanexar um mantém os outros e o compartilhamento como estão.`,
         dashboardsDescriptionPersonal: "Cada painel é compartilhado separadamente; desanexar um mantém os outros e o compartilhamento como estão.",

@@ -19820,6 +19820,7 @@ settingsSession: {
         groupShared: "Udostępnione Tobie",
         noAddress: "Brak adresu",
         ownedByTeam: "Należy do zespołu",
+        addedAt: ({ time }: { time: string }) => `Dodano ${time}`,
         dashboardsTitle: "Pulpity",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Pulpity, które ${team} widzi wśród pulpitów ${project} po otwarciu. Każdy jest udostępniany osobno; odłączenie jednego nie zmienia pozostałych ani ich udostępniania.`,
         dashboardsDescriptionPersonal: "Każdy pulpit jest udostępniany osobno; odłączenie jednego nie zmienia pozostałych ani ich udostępniania.",

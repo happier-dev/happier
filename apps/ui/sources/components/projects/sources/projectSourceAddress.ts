@@ -4,6 +4,7 @@ import {
   type ProjectSourceV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /**
  * The repository address a person reads and types on a Source ("github.com/happier-dev/happier").
@@ -63,14 +64,21 @@ export function formatRepositoryIdentityAddress(
  * "happier-dev/happier · v0.3 · apps/ios": the facts a list row needs to tell Sources apart. The whole
  * repository is the quiet default and stays unsaid; a folder is named only when one is chosen.
  *
- * The row's title is already the name. A Source without a repository says it has no address (a ref or folder
- * means nothing without one) and names a Team owner, the identity it has left: "No address · Owned by the Team".
+ * The row's title is already the name. A Source without a repository has no address to show (a ref or folder
+ * means nothing without one), so the line says when it was added, the fact that tells same-named Sources apart,
+ * and names a Team owner: "Added 3 Nov · Owned by the Team". An older server sends no creation time; the line
+ * then says the Source has no address.
  */
 export function describeProjectSourceRow(
-  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'owner'>>,
+  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'owner' | 'createdAt'>>,
 ): string {
   if (!source.repository) {
-    return [t('projects.sources.noAddress'), source.owner?.kind === 'team' ? t('projects.sources.ownedByTeam') : null]
+    return [
+      source.createdAt === undefined
+        ? t('projects.sources.noAddress')
+        : t('projects.sources.addedAt', { time: formatMoment(source.createdAt, Date.now()) }),
+      source.owner?.kind === 'team' ? t('projects.sources.ownedByTeam') : null,
+    ]
       .filter(Boolean)
       .join(' · ');
   }

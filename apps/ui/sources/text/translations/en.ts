@@ -23398,6 +23398,7 @@ const enProjects = {
     groupShared: 'Shared with you',
     noAddress: 'No address',
     ownedByTeam: 'Owned by the Team',
+    addedAt: ({ time }: { time: string }) => `Added ${time}`,
     dashboardsTitle: 'Dashboards',
     dashboardsDescription: ({
       team,

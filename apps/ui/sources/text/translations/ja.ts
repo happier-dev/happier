@@ -19909,6 +19909,7 @@ settingsSession: {
         groupShared: "共有されたもの",
         noAddress: "アドレスなし",
         ownedByTeam: "チームが所有",
+        addedAt: ({ time }: { time: string }) => `${time}に追加`,
         dashboardsTitle: "ダッシュボード",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `${team} が ${project} を開いたときにダッシュボードに表示されるもの。それぞれ個別に共有され、1つを外しても他のものや共有設定はそのままです。`,
         dashboardsDescriptionPersonal: "ダッシュボードはそれぞれ個別に共有されます。1つを外しても、他のものや共有設定はそのままです。",

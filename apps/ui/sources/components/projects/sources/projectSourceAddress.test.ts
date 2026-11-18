@@ -15,6 +15,14 @@ describe('Source address presentation', () => {
         expect(team).toBe('No address · Owned by the Team');
         expect(personal).not.toBe(team);
     });
+    // Same name, same owner, no repository: when the server says when each was added, the line says it.
+    it('tells same-owner repository-less Sources apart by when they were added', () => {
+        const owner = { kind: 'team', teamId: 't' } as const;
+        const earlier = describeProjectSourceRow({ owner, createdAt: Date.UTC(2025, 2, 3, 12) });
+        const later = describeProjectSourceRow({ owner, createdAt: Date.UTC(2025, 8, 21, 12) });
+        expect(earlier).not.toBe(later);
+        expect(earlier).toContain('Owned by the Team');
+    });
     // A list row speaks only what tells Sources apart: the whole repository is the quiet default (lab p-sources LIST,
     // "happier-dev/happier · v0.3"); a folder is named only when one is chosen.
     it.each([undefined, '.', './', ''])('leaves a whole-repository selection unsaid in a row (%j)', subdir => {

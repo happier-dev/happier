@@ -19948,6 +19948,7 @@ settingsSession: {
         groupShared: "Доступные вам",
         noAddress: "Нет адреса",
         ownedByTeam: "Принадлежит команде",
+        addedAt: ({ time }: { time: string }) => `Добавлен ${time}`,
         dashboardsTitle: "Дашборды",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Дашборды, которые ${team} видит среди дашбордов ${project}, открыв его. Каждый открыт отдельно; если отсоединить один, остальные и их доступ не изменятся.`,
         dashboardsDescriptionPersonal: "Каждый дашборд открыт отдельно; если отсоединить один, остальные и их доступ не изменятся.",
