@@ -1676,10 +1676,18 @@ function ItemRow(props: ItemProps & Readonly<{
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,
     });
+    // Where the row's text starts: its own leading padding, then its glyph column.
+    const rowTextStartPx = (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
+        + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0);
     const listRuleStartPx = !listRuleShown ? 0
         : isPageRow && flatDividerInset !== null ? flatDividerInset.marginStart
-        : (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
-            + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0);
+        : rowTextStartPx;
+    // In a split row the press target and the end facts are the siblings that share the line, so the title floor
+    // holds there: the press target keeps the text start plus the floor before the passive end gives way.
+    const splitPressFloorStyle = React.useMemo(
+        () => (passiveFactsFloor && titleFloorPx !== null ? { minWidth: rowTextStartPx + titleFloorPx } : null),
+        [passiveFactsFloor, rowTextStartPx, titleFloorPx],
+    );
     // A row whose control stands outside its press target draws its rule outside the press target's fill too (beside it,
     // not inside it): the rule then steps in by that fill's own margins, so every row's line starts and ends alike.
     const ruleOutsideFill = listRuleShown && isInteractive && (
@@ -2318,7 +2326,7 @@ function ItemRow(props: ItemProps & Readonly<{
                         aria-disabled={disabled || loading ? true : undefined}
                         tabIndex={interactiveTabIndex as 0 | -1 | undefined}
                         disabled={disabled || loading}
-                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null, splitPressFloorStyle, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
                             isWeb && pressTargetEndFadePx !== undefined ? resolveHappierRowEndFadeStyle(pressTargetEndFadePx) as ViewStyle : null]}
                         android_ripple={(isAndroid || isWeb) ? {
                             color: theme.colors.surface.ripple,
