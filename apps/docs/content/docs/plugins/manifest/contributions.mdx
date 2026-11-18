@@ -287,20 +287,23 @@ deploymentTargets: {
     targetSchema: { type: 'object', properties: {}, additionalProperties: false },
     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
     dataV1: {
-      database: { engineId: 'postgresql' },
+      database: { engineId: 'postgresql', runtime: managedDatabaseRuntime },
       projects: { list: 'projects/list', listAction: 'projects/list-action' },
-      query: { readOnly: 'query/read-only' },
     },
   },
 },
 ```
 
-The development SDK preserves `dataV1.database.engineId` as engine association
-metadata. It grants no execution or credential access and is not an Action reference.
+In 0.3 development, `managedDatabaseRuntime` implements the SDK
+`DeploymentTargetDatabaseRuntimeV1` contract. Its `listTargets` and `open` callbacks
+consume the host's admitted selection; the returned connection executes typed
+`database.*` operations through the shared engine owner. The callbacks stay in
+process. `engineId` supplies association metadata, with no execution or credential
+authority of its own.
 
 This example requires a declared dynamic `projects/list` Resource and declared
-safe, explicitly read-only `projects/list-action` and `query/read-only` Actions
-from the same plugin. The Resource forwards its surface launch input through the
+safe, explicitly read-only `projects/list-action` Action from the same plugin.
+The Resource forwards its surface launch input through the
 existing `readAction` bridge; its backing Action receives the same qualified
 `projects.list` role as a direct invocation.
 `dataV1` and each group/leaf are optional: missing means unsupported.
@@ -309,9 +312,8 @@ Resources; `projects.provision`, `branches.create`, `branches.delete`, and
 `connectionSecret.save` reference mutation Actions. `projects.link` references a
 safe read-only Action that inspects exact native identity before the host's link
 Action writes the association. `projects.provisionOptionsAction` and
-`branches.listAction` supply the other Resource-backed reads. `query.readOnly`
-references a safe read-only Action. Data roles have no runtime `actions` arm. These declarations
-grant no secret custody or authority to execute a mutation.
+`branches.listAction` supply the other Resource-backed reads. Data roles have no
+runtime `actions` arm. These declarations grant no secret custody or authority to execute a mutation.
 
 In unreleased 0.3 development source, installed target Actions run through the
 host's deployment-target role admission and invocation path. For an admitted

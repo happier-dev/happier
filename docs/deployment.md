@@ -771,45 +771,42 @@ and reuses the Workflow identified by its qualified Action, Home and template.
 Disabling new previews leaves both sources enabled for retained-preview cleanup
 and status publication; removing the template configuration does not disarm them.
 
-## Database SQL reads (0.3 development)
+## Database operations (0.3 development)
 
-The Database page and agent-facing `deployments.data.query` Action use the same
-own-server query owner. The request names one service in the admitted serving
-Deployment. Its database name comes from that Deployment's retained input basis,
-not a newer Environment draft or a neighbouring database. SQL and parameter
-values stay in the protected Action input; the public admission carries only the
+UI and agent SQL use the semantic `database.statement.run` Action. A selected
+`deployment_service` target names the Environment, serving Deployment, target
+Link, service and database. Its database name comes from that Deployment's
+retained input basis, not a newer Environment draft or a neighbouring database.
+SQL and parameter values stay in the protected Action input; the public admission carries only the
 exact Environment, Deployment, target, Machine and installation references and
 the Action's canonical read/write access class.
 
-Own-server execution uses the database container's native client through the
-existing service Exec owner. PostgreSQL uses `psql -X`, named `:'name'` parameters
-bound with `-v name=value`, and `BEGIN READ ONLY` in the same session. Query text
-travels on protected stdin because `psql -c` does not expand those parameters.
-The native boundary rejects client commands and additional statements before
-psql can interpret them. PostgreSQL's `COPY (query) TO STDOUT` CSV serialization
-preserves duplicate column names, NULL, empty text and literal marker strings.
-MySQL uses bound session variables (`@name`), a server-prepared statement and
-`START TRANSACTION READ ONLY`; its native XML result preserves NULL separately
-from text. Parameter values are JSON strings. Neither path substitutes values
-into SQL text or acquires an administrator login for a query.
+The existing service Exec owner supplies native container reachability to the
+shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,
+parameter binding and typed ordered result decoding. Reads use the dedicated
+read-role credential and a read-only transaction; read operations never acquire an
+administrator login. Results preserve duplicate labels, NULL versus empty text,
+exact integers and binary values. Parameters are ordered typed values, with no
+native-client named-variable translation. Cancellation reaches the driver and
+the native service connection. Deployment size and restore checks call the same
+shared operation functions in process and do not load the optional workbench
+runtime.
 
-Native parameter names start with an ASCII lowercase letter and contain only
-lowercase letters, digits or underscores. The `happier_` prefix is reserved.
-The native Action input reports `invalid_query_parameter` for other names;
-managed providers retain their own parameter syntax, including Supabase's
-numeric keys.
+Neon uses its selected branch/database read-only HTTP transport with native
+PostgreSQL field metadata. Supabase's restricted management transport exposes
+read statements with unknown native field types and explicitly unproven
+completeness. Unsupported operations return typed unavailable results.
 
-Managed writes bind an existing PostgreSQL connection Saved Secret through the
-same `deployments.bindings.set` path, with `purpose: 'dataRole'`, the selected
-`targetLinkId`, and `role: 'write'`. A missing binding returns
+Managed writes bind an existing PostgreSQL connection Saved Secret through
+`deployments.bindings.set`, with `purpose: 'dataRole'`, the selected
+`targetLinkId`, and `role: 'write'`. The existing credential owner opens only
+that binding under the signed Action's write access class and checks its engine
+and database against the admitted selection. A missing binding returns
 `write_connection_setup_required`; setup does not acquire an administrator login
-or create a new secret. The host captures the admitted Action access class, opens
-only that exact binding, and refuses a URL for a different engine or database.
-Read-class work cannot acquire this write credential and keeps the restricted
-provider read transport. The daemon's existing database engine service opens the
-shared PostgreSQL driver for managed edits and ordered write lists, preserving
-native fields and the shared transaction commit and rollback behavior.
-
+or create a new secret. Read-class work cannot acquire this write credential and
+keeps the restricted provider read transport. The daemon's existing database
+engine service opens the shared PostgreSQL driver for managed edits and ordered
+write lists, preserving native fields and transaction commit and rollback.
 
 The canonical psql input admission API has explicit query and dump modes.
 Dump mode accepts multiple SQL statements and PostgreSQL plain-text COPY data
@@ -822,20 +819,10 @@ with alphanumeric keys are admitted only in dump mode, as emitted by
 Query mode continues to refuse client commands and additional statements.
 
 Results use the existing public Action response envelope limit from
-`actions/externalActionLimits.ts`, including UTF-8 JSON framing, column metadata
-and the incompleteness diagnostic. The native decoder retains the whole-row
-prefix that fits and reports `complete: false` with
-`action_result_size_limit`; it does not add a row count or alter SQL with LIMIT.
-If column metadata alone cannot fit, the result has empty columns and rows with
-the same explicit reason. The shared presenter also preserves native capture
-incompleteness and provider completeness uncertainty.
-
-The existing native Exec capture buffer also bounds what reaches the decoder.
-Query execution retains its captured prefix and reports
-`native_output_truncated` when that boundary fires; incomplete final rows are
-omitted. Other native callers keep their existing strict truncation failure.
-A nonzero process exit or cancellation remains a failure even when usable rows
-were captured.
+`actions/externalActionLimits.ts`. The shared result owner preserves the rows
+that fit together with typed completeness and continuation information. It does
+not claim that a restricted provider response is complete, introduce a separate
+row-count cap or alter the person's SQL with LIMIT.
 
 The dedicated `happier_ro` login is a database security boundary. Its Saved
 Secret password is configured through the ordinary reviewed
@@ -3811,12 +3798,14 @@ for the ordinary restore failure and recovery path.
 The development-source `restore-drill` Workflow starter selects an existing
 isolated Environment and keeps its volumes and sealed grants between runs. It
 starts that Environment's current services, verifies the selected source
-snapshot, prepares and confirms restore, and invokes `deployments.data.query`
-with the person's read-only check. Existing Workflow cleanup reads current
+snapshot, prepares and confirms restore, and checks the restored data through the
+restore owner's shared engine read operation. The selected target and statement
+use ordered typed parameters. Existing Workflow cleanup reads current
 service generations again and stops them after a definite success or failure.
-The starter creates no Environment or agent Session. Query rows, `complete` and
+The starter creates no Environment or agent Session. Typed result rows,
+completeness and
 any diagnostic remain in the existing child result; incomplete output does not
-claim a complete data comparison. The composed native drill and query host
+claim a complete data comparison. The composed native drill and semantic host
 integration remain under verification.
 Exact-capture verification retains the original operation's repository and
 configuration through the same restore/P42 credential owner. The current source
@@ -5522,10 +5511,15 @@ repository-only behavior.
 ## Database size observations (0.3 development)
 
 `acquireDataServicePage` exposes `items[].databaseSizes`, keyed by the declared
-service. `readDeploymentDatabaseSizesV1` owns the fixed read-only statements and
-result projection. It reuses `deployments.data.query` and its existing dedicated
-read-role admission and native client: PostgreSQL uses `pg_database_size` for the
-connected database; MySQL sums the engine-reported table data and index lengths.
+service. The size-only `deployments.data.size` host read replaces the former
+generic SQL path for this deployment feature; its input contains no SQL.
+`readDeploymentDatabaseSizesV1` owns the projection and calls this semantic
+read. The native deployment host uses its existing admission and calls the shared
+engine operation in process. This deployment feature remains available with the
+optional workbench disabled. The shared engine statistics compiler owns size SQL and decoding;
+the projection retains growth and unavailable outcomes. PostgreSQL uses
+`pg_database_size` for the connected database; MySQL sums the engine-reported
+table data and index lengths.
 The available size carries `measurement: database_bytes | table_bytes_estimate`.
 MySQL table statistics are [approximate for InnoDB](https://dev.mysql.com/doc/refman/8.0/en/information-schema-tables-table.html).
 These are engine measurements, not backup archive sizes. Unsupported engines,
@@ -5540,4 +5534,4 @@ Growth reports signed bytes between two observations of the same service and
 active deployment, with both timestamps; the first sample or a replaced deployment
 reports `previous_sample_required`. This is not daily growth or durable history.
 Database and Services composition consume these facts; UI composition remains
-separate from this data contract. No existing Action wire format changes.
+separate from this data contract.
