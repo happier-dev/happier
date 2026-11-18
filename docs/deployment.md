@@ -2796,8 +2796,10 @@ its existing Workflow's armed state rather than another stored telemetry flag.
 
 The Environment Telemetry tab is the deployment host's reader for this retained
 data. Its Endpoints, Traces, Logs and Queries tabs use the selected time window
-and the Environment's collector assignment. Trace selection opens the shared
-request view, which follows the trace into query and correlated log details.
+and the Environment's collector assignment. The tab retains results for the
+selected collector, Environment and Account read lifetime. Trace selection opens
+the shared request view, which follows the trace into query and correlated log
+details.
 Settings uses the Environment binding owner. The capture owner supports Clear
 for the caller's Machine worktree and refuses it for an Environment source.
 The Environment tab shows an unreachable collector as unavailable.

@@ -137,6 +137,7 @@ type ListItems =
   | Readonly<{ list: Exclude<TelemetryCaptureList, 'endpoints'>; items: readonly DatabaseCaptureSummaryV1[]; nextCursor: DatabaseCaptureCursorV1 | null }>;
 
 type ListState = Readonly<{
+  reads: TelemetryCaptureReads | null;
   key: string;
   data: ListItems | null;
   /** When the shown data was read; the freshness line says it while a later read fails. */
@@ -152,9 +153,9 @@ type ListState = Readonly<{
  */
 function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: TelemetryCaptureList, windowMs: number, attempt: number) {
   const key = `${list}\u0000${windowMs}`;
-  const [state, setState] = React.useState<ListState>({ key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
-  // The last settled answer of each list and window this visit, shown again while that list re-reads.
-  const retained = React.useRef(new Map<string, Readonly<{ data: ListItems; readAt: number }>>());
+  const [state, setState] = React.useState<ListState>({ reads, key, data: null, readAt: null, reading: true, failure: null, loadingMore: false });
+  // Last settled answers belong to the current collector, Environment and captured Account lifetime.
+  const retained = React.useMemo(() => new Map<string, Readonly<{ data: ListItems; readAt: number }>>(), [reads]);
   const windowRef = React.useRef<Readonly<{ since: number; until: number }>>({ since: 0, until: 0 });
   React.useEffect(() => {
     if (!reads) return;
@@ -162,30 +163,32 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
     const until = Date.now();
     const since = Math.max(0, until - windowMs);
     windowRef.current = { since, until };
-    const kept = retained.current.get(key);
-    setState(current => current.key === key
+    const kept = retained.get(key);
+    setState(current => current.reads === reads && current.key === key
       ? { ...current, reading: true }
-      : { key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false });
+      : { reads, key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false });
     const read: Promise<ListItems> = list === 'endpoints'
       ? reads.endpoints(since, until, null, controller.signal).then(page => ({ list, ...page }))
       : reads.summaries(list, since, until, null, controller.signal).then(page => ({ list, ...page }));
     read.then(
       data => {
         if (controller.signal.aborted) return;
-        retained.current.set(key, { data, readAt: until });
-        setState({ key, data, readAt: until, reading: false, failure: null, loadingMore: false });
+        retained.set(key, { data, readAt: until });
+        setState({ reads, key, data, readAt: until, reading: false, failure: null, loadingMore: false });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
         const failure = error instanceof TelemetryCaptureFailure ? error.code : 'telemetry_unavailable';
-        setState(current => ({ ...(current.key === key ? current : { key, data: null, readAt: null, loadingMore: false }), reading: false, failure }));
+        setState(current => current.reads === reads && current.key === key
+          ? { ...current, reading: false, failure }
+          : current);
       },
     );
     return () => controller.abort();
-  }, [reads, list, key, windowMs, attempt]);
-  const kept = retained.current.get(key);
-  const shown = state.key === key ? state
-    : { key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false };
+  }, [reads, list, key, windowMs, attempt, retained]);
+  const kept = retained.get(key);
+  const shown = state.reads === reads && state.key === key ? state
+    : { reads, key, data: kept?.data ?? null, readAt: kept?.readAt ?? null, reading: true, failure: null, loadingMore: false };
   const more = React.useCallback(() => {
     const data = shown.data;
     if (!reads || !data?.nextCursor || shown.loadingMore) return;
@@ -197,8 +200,8 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
       : reads.summaries(data.list, since, until, data.nextCursor, undefined).then(page => ({ list: data.list,
         items: [...data.items, ...page.items], nextCursor: page.nextCursor }));
     next.then(
-      merged => setState(current => current.key === key ? { ...current, data: merged, loadingMore: false } : current),
-      () => setState(current => current.key === key ? { ...current, loadingMore: false } : current),
+      merged => setState(current => current.reads === reads && current.key === key ? { ...current, data: merged, loadingMore: false } : current),
+      () => setState(current => current.reads === reads && current.key === key ? { ...current, loadingMore: false } : current),
     );
   }, [reads, shown.data, shown.loadingMore, key]);
   return { state: shown, more };
@@ -225,7 +228,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const [tab, setTab] = React.useState<TelemetryCaptureList>('endpoints');
   const [windowId, setWindowId] = React.useState<WindowId>('day');
   const [attempt, setAttempt] = React.useState(0);
-  const [openTrace, setOpenTrace] = React.useState<DatabaseCaptureSummaryV1 | null>(null);
+  const [openTrace, setOpenTrace] = React.useState<Readonly<{
+    reads: TelemetryCaptureReads;
+    request: DatabaseCaptureSummaryV1;
+  }> | null>(null);
+  const openRequest = React.useCallback((request: DatabaseCaptureSummaryV1) => {
+    if (reads) setOpenTrace({ reads, request });
+  }, [reads]);
   const [addingCheck, setAddingCheck] = React.useState<DatabaseCaptureEndpointV1 | null>(null);
   const barRef = React.useRef<View>(null);
   const { state, more } = useTelemetryCaptureList(reads, tab, WINDOW_MS[windowId], attempt);
@@ -250,14 +259,14 @@ function DeploymentTelemetryTabs(props: Readonly<{
       diagnosticCode={offline ? null : state.failure}
       action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
     />
-  ) : tab === 'traces' && openTrace && reads ? (
-    <TelemetryRequestDetail reads={reads} request={openTrace} locale={locale} onBack={() => setOpenTrace(null)} />
+  ) : tab === 'traces' && openTrace && openTrace.reads === reads ? (
+    <TelemetryRequestDetail reads={openTrace.reads} request={openTrace.request} locale={locale} onBack={() => setOpenTrace(null)} />
   ) : data?.list === 'endpoints' ? (
     <CaptureEndpoints items={data.items} loading={state.reading} locale={locale}
       {...(endpointActions ? { actions: endpointActions } : {})}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'traces' ? (
-    <CaptureTraces items={data.items} loading={state.reading} locale={locale} onOpen={setOpenTrace}
+    <CaptureTraces items={data.items} loading={state.reading} locale={locale} onOpen={openRequest}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'logs' ? (
     <CaptureLogs items={data.items} loading={state.reading} locale={locale} readBody={readLogBody}

@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/deployment-protocol/testing/v1';
 import {
   act,
+  createDeferred,
   createMachineFixture,
   renderScreen,
   standardCleanup,
@@ -47,7 +48,7 @@ const lifetime = {
   onRetire: () => ({ dispose() {} }),
 };
 
-function setUpDetail(role: 'manager' | 'viewer' = 'manager') {
+function setUpDetail(role: 'manager' | 'reader' = 'manager', collectorId = 'collector') {
   const base = createDeploymentEnvironmentDetailV1({
     environment: createDeploymentEnvironmentHeaderV1({ id: 'production' }),
   });
@@ -55,7 +56,7 @@ function setUpDetail(role: 'manager' | 'viewer' = 'manager') {
     ...base,
     environment: {
       ...base.environment,
-      telemetryMachineId: 'collector',
+      telemetryMachineId: collectorId,
       capabilities: { ...base.environment.capabilities, role },
     },
     content: {
@@ -123,22 +124,29 @@ async function settle() {
   }
 }
 
-async function mount(
+function panel(
   invoke: ReturnType<typeof collector>['invoke'],
-  role: 'manager' | 'viewer' = 'manager',
+  detail: ReturnType<typeof setUpDetail>,
 ) {
-  const screen = await renderScreen(
+  return (
     <AppPresentationPlatformProvider><ModalProvider>
-      <TelemetryCaptureInvokeContext.Provider value={invoke as never}>
+      <TelemetryCaptureInvokeContext.Provider value={invoke}>
         <DeploymentTelemetryPanel
-          detail={setUpDetail(role) as never}
+          detail={detail}
           lifetime={lifetime}
           environmentName="Production"
           onChanged={() => {}}
         />
       </TelemetryCaptureInvokeContext.Provider>
-    </ModalProvider></AppPresentationPlatformProvider>,
+    </ModalProvider></AppPresentationPlatformProvider>
   );
+}
+
+async function mount(
+  invoke: ReturnType<typeof collector>['invoke'],
+  role: 'manager' | 'reader' = 'manager',
+) {
+  const screen = await renderScreen(panel(invoke, setUpDetail(role)));
   await settle();
   return screen;
 }
@@ -224,6 +232,51 @@ describe('Environment Telemetry tabs', () => {
         screen.findByTestId('telemetry.capture.trace.req-1'),
       ).not.toBeNull();
     } finally {
+      await screen.unmount();
+    }
+  });
+
+  it.each([{ openRequest: false }, { openRequest: true }])('drops retained capture when the collector changes (openRequest=$openRequest)', async ({ openRequest }) => {
+    const refused = createDeferred<{ ok: false; code: string }>();
+    const { invoke, calls } = collector(call => call.collectorMachineId === 'other-collector' ? refused.promise : answers(call));
+    const screen = await mount(invoke);
+    const traceRow = 'telemetry.capture.trace.req-1';
+    try {
+      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      expect(screen.findByTestId(traceRow)).not.toBeNull();
+      if (openRequest) {
+        await screen.pressByTestIdAsync(traceRow);
+        await settle();
+        expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
+      }
+
+      const beforeSwitch = calls.length;
+      await screen.update(panel(invoke, setUpDetail('manager', 'other-collector')));
+      expect(calls.slice(beforeSwitch)).toEqual([expect.objectContaining({
+        collectorMachineId: 'other-collector',
+        actionId: 'happier.telemetry/actions/capture/traces/list',
+      })]);
+      expect(screen.findByTestId(traceRow)).toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.request')).toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.reading')).not.toBeNull();
+
+      refused.resolve({ ok: false, code: 'capture_source_unavailable' });
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.unavailable')).not.toBeNull();
+      expect(screen.findByTestId(traceRow)).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:endpoints');
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).toBeNull();
+      expect(calls.slice(beforeSwitch).map(call => [call.collectorMachineId, call.actionId])).toEqual([
+        ['other-collector', 'happier.telemetry/actions/capture/traces/list'],
+        ['other-collector', 'happier.telemetry/actions/capture/endpoints/list'],
+      ]);
+    } finally {
+      refused.resolve({ ok: false, code: 'capture_source_unavailable' });
       await screen.unmount();
     }
   });
@@ -330,7 +383,7 @@ describe('Environment Telemetry tabs', () => {
     } finally {
       await screen.unmount();
     }
-    const viewer = await mount(collector(answers).invoke, 'viewer');
+    const viewer = await mount(collector(answers).invoke, 'reader');
     try {
       expect(
         viewer.findAll((node) => Array.isArray(node.props?.secondaryActions)),
