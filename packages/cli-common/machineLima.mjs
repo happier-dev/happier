@@ -218,11 +218,22 @@ export async function deleteLimaInstance({ executor, instance: rawInstance, stor
   const instance = validateLimaInstanceName(rawInstance);
   const options = { executor, instance, store };
   if (!await inspectLimaInstance(options)) return { kind: 'absent' };
-  // The provisioner owns failure projection and retained cleanup custody.
-  // Preserve native failures so that owner can report why Delete did not settle.
-  const result = await runLimaCommand({ executor, store, instance, interactive: true, args: ['delete', '--force', instance] });
-  if (result.exitCode !== 0) return { kind: 'unknown' };
-  return await inspectLimaInstance(options) ? { kind: 'unknown' } : { kind: 'absent' };
+  let deleteFailure;
+  try {
+    const result = await runLimaCommand({ executor, store, instance, interactive: true, args: ['delete', '--force', instance] });
+    if (result.exitCode !== 0) return { kind: 'unknown' };
+  } catch (error) {
+    deleteFailure = { error };
+  }
+  // A missing command reply can follow removal of the disk. Verify the same
+  // native identity, and keep the original failure when absence is unproven.
+  try {
+    if (await inspectLimaInstance(options) === null) return { kind: 'absent' };
+  } catch (error) {
+    throw deleteFailure ? deleteFailure.error : error;
+  }
+  if (deleteFailure) throw deleteFailure.error;
+  return { kind: 'unknown' };
 }
 
 function limaGuestShellArgs({ instance: rawInstance, argv, workdir }) {

@@ -4611,6 +4611,10 @@ Delete. A positive native pending result keeps observation active; absence,
 typed native failure or cancellation settles it. An ambiguous fresh destroy is
 never replayed to enter this loop.
 
+If Lima's Delete invocation throws, the native adapter checks the exact instance
+and store for absence. Confirmed absence settles teardown. If the disk remains
+or the inventory is unavailable, the original native failure is retained.
+
 In 0.3 development source, Hetzner, DigitalOcean and Fly retain the exact resource
 as that Delete handle when accepted primary deletion is still pending. Their
 continuation rechecks primary absence before deleting recorded owned attachments,
