@@ -176,6 +176,25 @@ describe('Project Account row sync owner', () => {
         await failedWait;
     });
 
+    it.each(['plain', 'e2ee'] as const)('settles an acknowledged Workspace when its row was committed before the push hint in %s', async mode => {
+        const h = harness(mode);
+        await h.owner.refresh();
+        const address = { serverId: 'home', machineId: 'machine', workspaceId: 'committed-before-hint', rootPath: '/committed' };
+        const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };
+        const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
+        const ref = { id: address.workspaceId, serverId: address.serverId, machineId: address.machineId, rootPath: address.rootPath, createdAtMs: 2 };
+        h.rows.set(physicalKey, { key, revision: 0, content: h.cipher.seal({ key, value: ref }) });
+        const cancelled = new AbortController();
+        const waiting = h.owner.waitForWorkspaceRef(address, cancelled.signal);
+        const outcome = await Promise.race([
+            waiting.then(() => 'settled' as const),
+            new Promise<'timed_out'>(resolve => setTimeout(() => resolve('timed_out'), 50)),
+        ]);
+        cancelled.abort();
+        expect(outcome).toBe('settled');
+        await waiting.catch(() => undefined);
+    });
+
     it.each(['plain', 'e2ee'] as const)('opens only changed row content across refresh and one-row commits in %s', async mode => {
         const h = harness(mode);
         for (let i = 0; i < 32; i += 1) {
