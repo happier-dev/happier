@@ -6128,7 +6128,10 @@ export function useSessionComposerController({
                         ? t(externalSessionOperationShell.composerPlaceholderKey)
                         : walkthroughRecipient
                             ? t('agentStart.pane.replyTo', { agent: t('walkthrough.eyebrow') })
-                            : embedded?.composerPlaceholder ?? t('session.inputPlaceholder')}
+                            // An open Session invites a reply to its agent (calm-shell C2); without a known agent it keeps the open question.
+                            : embedded?.composerPlaceholder ?? (agentInputAgentType
+                                ? t('agentStart.pane.replyTo', { agent: currentAgentLabel })
+                                : t('session.inputPlaceholder'))}
                 onChangeText={setVisibleComposerDraftValue}
                 onComposerFocusChange={onComposerFocusChange}
                 onComposerFocusRequestChange={onComposerFocusRequestChange}
