@@ -137,7 +137,7 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
             : role === 'acquire' || role === 'bootstrap' || role === 'inspect' || role === 'reconcile'
                 || role === 'exec' || role === 'putFile')
         .map(({ action, role }) => ({ action: { pluginId: machine.launch.provider.pluginId, localId: action }, role })),
-        ...(actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity)
+        ...(actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity, machine.resource?.origin)
             ? [{ action: 'machines.roles.set' as const, role: 'machines.roles.set' }] : []),
     ] };
 }

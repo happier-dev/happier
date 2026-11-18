@@ -8,6 +8,7 @@ import {
   type MachineMetadataFieldPortV1,
 } from '../machineMetadataFieldV1.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../managed/enrollmentIdentityV1.js';
+import type { ManagedResourceV1 } from '../managed/providerFactsV1.js';
 import { MachineIsolationV1Schema } from '../machineIsolationV1.js';
 
 /**
@@ -157,20 +158,25 @@ export function isMachineRoleActiveV1(openedMetadata: unknown, roleId: string,
   return resolveActiveMachineRolesV1(openedMetadata, catalog).has(roleId);
 }
 
-/** Owner-approved creation defaults; personal/adopted installs keep the missing field. */
-export function resolveManagedMachineEnrollmentRolesV1(identity: ManagedMachineEnrollmentIdentityV1 | undefined): MachineRolesPolicyV1 | null {
+/** Initial roles for the reviewed enrollment identity and provider-proven creation. */
+export function resolveManagedMachineEnrollmentRolesV1(
+  identity: ManagedMachineEnrollmentIdentityV1 | undefined, resourceOrigin?: ManagedResourceV1['origin'],
+): MachineRolesPolicyV1 | null {
   if (identity?.kind === 'guestProcess') return { active: ['sessions'] };
-  if (identity?.kind !== 'dedicatedDaemonUser') return null;
-  return identity.role === 'deployTarget'
-    ? { active: ['deployments', 'sessions'] }
-    : { active: ['sessions', 'broker', 'workspaces', 'relay'] };
+  if (identity?.kind === 'dedicatedDaemonUser' && identity.role === 'deployTarget') {
+    return { active: ['deployments', 'sessions'] };
+  }
+  const active = identity?.kind === 'dedicatedDaemonUser' ? ['sessions', 'broker', 'workspaces', 'relay'] : CORE_MACHINE_ROLE_IDS_V1;
+  if (resourceOrigin === 'created') return { active: active.filter(id => id !== 'broker') };
+  return identity?.kind === 'dedicatedDaemonUser' ? { active: [...active] } : null;
 }
 
 /** A creation child may only seed its reviewed default over the missing field. */
 export function matchesManagedMachineEnrollmentRolesV1(target: Readonly<{
   homeId: string; machineId: string; enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
+  resource?: Pick<ManagedResourceV1, 'origin'>;
 }>, request: MachineRolesMutationV1 & Readonly<{ serverId?: string; machineId: string }>): boolean {
-  const policy = resolveManagedMachineEnrollmentRolesV1(target.enrollmentIdentity);
+  const policy = resolveManagedMachineEnrollmentRolesV1(target.enrollmentIdentity, target.resource?.origin);
   return policy !== null && request.machineId === target.machineId
     && (request.serverId === undefined || request.serverId === target.homeId)
     && sameRoleSet(request.expectedPolicy, machineRolesMetadataFieldV1.defaultValue())

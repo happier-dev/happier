@@ -15,8 +15,7 @@ export async function applyManagedMachineEnrollmentRoles(params: Readonly<{
     const isolation = machine.resource?.origin === 'created'
         ? { environment: 'managed-guest' as const, provisionerId: buildQualifiedPluginContributionKey(machine.resource.contributionRef) }
         : undefined;
-    const policy = resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity)
-        ?? (isolation ? machineRolesMetadataFieldV1.defaultValue() : null);
+    const policy = resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity, machine.resource?.origin);
     if (!policy) return;
     try {
         if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');

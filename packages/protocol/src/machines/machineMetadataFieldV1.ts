@@ -59,7 +59,10 @@ export async function mutateMachineMetadataFieldV1<T>(
       status: definition.equal(current.policy, mutation.expectedPolicy) ? 'unchanged' as const : 'satisfied' as const,
       policy: current.policy, metadataVersion: snapshot.metadataVersion,
     };
-    if ((!definition.equal(current.policy, mutation.expectedPolicy) && !definition.equal(current.policy, mutation.policy)) || snapshot.metadataVersion < mutation.expectedMetadataVersion) {
+    // An enrollment seed can fill defaults and provenance, but a saved field is an explicit choice.
+    if (!definition.equal(current.policy, mutation.policy)
+      && (seed && current.source === 'stored' || !definition.equal(current.policy, mutation.expectedPolicy))
+      || snapshot.metadataVersion < mutation.expectedMetadataVersion) {
       return { status: 'conflict' as const, policy: current.policy, metadataVersion: snapshot.metadataVersion };
     }
     if (options?.signal?.aborted) return { status: 'cancelled' as const };

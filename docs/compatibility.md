@@ -505,8 +505,11 @@ through the existing retained resource, including opaque preset content. Creatio
 enrollment seeds Machine metadata `isolationV1: { environment: 'managed-guest',
 provisionerId }` only while the field is absent, in the same metadata CAS as default
 roles. `provisionerId` is the qualified plugin contribution identity. Created Lume
-VMs receive the fact even with personal/existing-user enrollment; adopted hosts and
+VMs receive the fact even with personal/existing-user enrollment. Adopted hosts and
 Account-native or SSH enrollment of existing hosts carry no origin and gain no fact.
+The shared enrollment roles resolver excludes Credential broker from the initial
+role set for provider-created isolation guests and preserves saved role choices.
+The broker default follows creation provenance through the sealed preset path.
 
 `readMachineIsolationV1` in Protocol `machines/metadataUpdate` reads opened Machine
 metadata and returns the fact or `null` for missing/unreadable provenance. Missing

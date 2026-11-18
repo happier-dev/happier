@@ -126,9 +126,11 @@ the Machine page, or with `happier machines roles list|get|set`:
 | Local tools | Browser, computer use, simulators and process tools |
 
 - A Machine with no saved roles runs all of them. Existing Machines need no change.
-- New managed Machines start with a set that fits them: a server runs Sessions,
-  Credential broker, Workspaces and Relay; a deploy target runs Deployments and
-  Sessions; a sandbox runs Sessions. You can turn any role on later.
+- Initial roles depend on the enrollment type. A server runs Sessions,
+  Credential broker, Workspaces and Relay. A deploy target runs Deployments
+  and Sessions. A sandbox that enrolls as a guest process runs Sessions.
+  Happier-created isolation guests start with Credential broker off. You can
+  enable it for a guest under **Security → Roles**.
 - Work for a role that is off is refused by that Machine with
   `machine_role_inactive`, and Happier does not pick that Machine for it. A Machine
   with Sessions off is never the default for a new session.
