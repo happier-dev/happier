@@ -260,7 +260,7 @@ describe('runGitlabScan', () => {
 
   it('spends the budget on raw response cardinality, not on rows that decoded cleanly', async () => {
     const frontier = createGitlabScanFrontier({
-      scanLimit: 2,
+      scanLimit: 4,
       origin: GITLAB_COM,
       lanes: [{
         laneId: 'authored',
@@ -274,7 +274,8 @@ describe('runGitlabScan', () => {
     if (!authored) throw new Error('expected one lane');
 
     const fetcher = scriptedFetcher({
-      [authored]: { rows: [mergeRequestRow(1), { id: 9, project_id: 3 }] },
+      [authored]: { rows: [mergeRequestRow(1), { id: 9, project_id: 3 },
+        mergeRequestRow(2), { ...mergeRequestRow(3), iid: null }] },
     });
     const result = await runGitlabScan({
       invocation: AUTHORIZED,
@@ -286,11 +287,11 @@ describe('runGitlabScan', () => {
     });
     if (result.kind !== 'settled') throw new Error('expected a settled scan');
 
-    expect(result.entries).toHaveLength(1);
-    expect(result.undecodableCount).toBe(1);
-    // Two raw rows were consumed even though one was skipped: counting decoded rows
+    expect(result.entries.map(row => row.identity.entryId)).toEqual(['1', '2']);
+    expect(result.undecodableCount).toBe(2);
+    // Four raw rows were consumed even though two were skipped: counting decoded rows
     // would let a page of malformed items walk past the submitted limit.
-    expect(result.consumedItemCount).toBe(2);
+    expect(result.consumedItemCount).toBe(4);
     expect(result.health).toEqual({ kind: 'partial', reason: 'undecodable-items' });
   });
 

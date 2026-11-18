@@ -893,7 +893,8 @@ describe('PostHog Triage source operations', () => {
     it('never finishes a walk clean when an earlier page skipped a row', async () => {
         const malformed = { id: 'not-a-uuid', status: 'active' };
         const host = context([
-            { ...queryIssuesPage1, results: [...queryIssuesPage1.results, malformed] },
+            { ...queryIssuesPage1, results: [...queryIssuesPage1.results, malformed,
+                { ...queryIssuesPage1.results[0], id: '00000000-0000-4000-8000-000000000099', status: 42 }] },
             { ...queryIssuesPage2, hasMore: false, nextOffset: null },
         ]);
         const instance = configuredInstance();
@@ -901,15 +902,17 @@ describe('PostHog Triage source operations', () => {
         const first = await scanPosthogSource({
             v: 1,
             instance,
-            page: { kind: 'initial', limit: 4 },
+            page: { kind: 'initial', limit: 5 },
         }, host.value);
         expect(() => TriageScanResultV1Schema.parse(first)).not.toThrow();
         expect(first.kind).toBe('page');
         if (first.kind !== 'page') return;
+        expect(first.observations.map(row => row.localRef.entryId))
+            .toEqual(queryIssuesPage1.results.map(row => row.id));
         expect(first.evidence).toEqual({
             kind: 'partial',
             reason: POSTHOG_FAILURE_CODES.malformedRows,
-            omittedItemCount: 1,
+            omittedItemCount: 2,
         });
 
         const second = await scanPosthogSource({

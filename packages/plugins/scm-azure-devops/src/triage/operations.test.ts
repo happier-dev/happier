@@ -1222,6 +1222,28 @@ describe('Azure DevOps Triage scan', () => {
     expect(result.observations.length + omitted).toBeLessThanOrEqual(limit);
   });
 
+  it('keeps every valid sibling when a provider page contains independently malformed pull requests', async () => {
+    const recorder = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/projects')) return page([project()]);
+      if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
+      if (request.url.includes('searchCriteria.creatorId')) return page([
+        pullRequest(701), { pullRequestId: null, repository: { id: REPOSITORY_ID } },
+        pullRequest(702), pullRequest(703, { repository: { id: null } }),
+      ]);
+      if (request.url.includes('searchCriteria.reviewerId')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+    const result = TriageScanResultV1Schema.parse(await runAzureTriageScan({
+      services: recorder.services,
+      request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 4 } },
+      signal: new AbortController().signal,
+    }));
+    if (result.kind === 'failed') throw new Error(`unexpected failure: ${result.failure.code}`);
+    expect(result.observations.map(row => row.localRef.entryId)).toEqual(['701', '702']);
+    expect(result.evidence).toMatchObject({ kind: 'partial', omittedItemCount: 2 });
+  });
+
   it('attributes an undecodable repository row as partial health without charging the entry omission count', async () => {
     // A repository is a scope the walk could not enter, not an entry it omitted: the number of
     // pull requests lost is unknown, and counting it as an omitted entry would break the
