@@ -138,7 +138,11 @@ it.each([
     return request.method === 'GET' ? jsonResponse(200, nativeDeployment('production')) : { status, headers: {}, body: new Uint8Array() };
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
-  try { await expect(kit.invokeAction('promote', input)).rejects.toMatchObject({ code }); }
+  try {
+    await expect(kit.invokeAction('promote', input)).rejects.toMatchObject({
+      code, data: { failureCause: { errorCode: null, httpStatus: status } },
+    });
+  }
   finally { await kit.dispose(); }
 });
 

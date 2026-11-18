@@ -99,7 +99,7 @@ export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1
   if ('code' in response) return response;
   if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
     : response.status === 404 ? 'deployment_unavailable' : response.status === 409 ? 'deployment_conflict'
-      : 'provider_request_failed', 'send');
+      : 'provider_request_failed', 'send', { error: { name: 'Error', status: response.status } });
   // The write was acknowledged. A failed following read must retain the exact native id for recovery.
   try { return await observeVercelTraffic({ ...input, providerDeploymentId }, operation, context); }
   catch (error) {
