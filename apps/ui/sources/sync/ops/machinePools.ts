@@ -1,10 +1,5 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import {
-    MachinePoolDescriptionV1Schema,
-    MachinePoolErrorV1Schema,
-    MachinePoolNameV1Schema,
-} from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import type {
     MachinePoolActionIdV1,
     MachinePoolActionInputV1,
@@ -13,7 +8,6 @@ import type {
 import type {
     MachinePoolCreateInputV1,
     MachinePoolDeleteInputV1,
-    MachinePoolAudienceV1,
     MachinePoolMemberEligibilityV1,
     MachinePoolResolveInputV1,
     MachinePoolResolveResultV1,
@@ -23,10 +17,7 @@ import type {
 import { randomUUID } from '@/platform/randomUUID';
 import { MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { isActionAccountScopeChangedError, withDefaultActionExecuteContext } from '@/sync/ops/actions/defaultActionExecutor';
-import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
-import type { LazyActionAccountContext } from './actions/actionAccountContext';
 import {
     createMachinePoolPrivateLabelClientForAccount,
     openMachinePoolPrivateViewV1,
@@ -73,11 +64,6 @@ function machinePoolActionRequestId<TActionId extends MachinePoolActionIdV1>(
     return `${actionId}:${accountId}`;
 }
 
-type MachinePoolActionPreparation<TActionId extends MachinePoolActionIdV1> = (context: Readonly<{
-    account: LazyActionAccountContext;
-    settings: Settings;
-}>) => Promise<MachinePoolActionInputV1<TActionId>>;
-
 type MachinePoolActionConsumeContext = Readonly<{
     sourceServerId: string;
     sourceAccountId: string;
@@ -88,7 +74,7 @@ type MachinePoolActionConsumeContext = Readonly<{
 async function executeMachinePoolAction<TActionId extends MachinePoolActionIdV1, TResult>(
     serverId: string,
     actionId: TActionId,
-    input: MachinePoolActionInputV1<TActionId> | MachinePoolActionPreparation<TActionId>,
+    input: MachinePoolActionInputV1<TActionId>,
     consume: (result: MachinePoolActionOutputV1<TActionId>, context: MachinePoolActionConsumeContext) => TResult | Promise<TResult>,
     onStart?: (sourceServerId: string, sourceAccountId: string) => void,
     expectedAccountId?: string,
@@ -100,20 +86,16 @@ async function executeMachinePoolAction<TActionId extends MachinePoolActionIdV1,
         serverId: normalizedServerId,
         ...(expectedAccountId !== undefined ? { expectedAccountId } : {}),
         ...(onCurrentError !== undefined ? { onCurrentError } : {}),
-    }, async (executor, account, settings) => {
+    }, async (executor, account) => {
         account.assertCurrent();
         storage.getState().beginMachinePoolAccountScope(account.serverId, account.accountId);
         onStart?.(account.serverId, account.accountId);
-        const preparedInput = typeof input === 'function'
-            ? await input({ account, settings })
-            : input;
-        account.assertCurrent();
         const labels = createMachinePoolPrivateLabelClientForAccount(account);
-        const outcome = await executor.execute(actionId, preparedInput, {
+        const outcome = await executor.execute(actionId, input, {
             surface: 'ui',
             serverId: account.serverId,
             runtimeAccountId: account.accountId,
-            actionRequestId: machinePoolActionRequestId(actionId, preparedInput, account.accountId),
+            actionRequestId: machinePoolActionRequestId(actionId, input, account.accountId),
         });
         account.assertCurrent();
         if (!outcome.ok) {
@@ -150,58 +132,6 @@ export type MachinePoolUpdateDraftV1 = Omit<MachinePoolUpdateInputV1, 'name' | '
     name: string;
     description?: string | null;
 }>;
-
-function normalizedMachinePoolName(value: string): string {
-    return MachinePoolNameV1Schema.parse(value.trim());
-}
-
-function normalizedMachinePoolDescription(value: string | null | undefined): string | null | undefined {
-    if (value === null || value === undefined) return value;
-    const normalized = MachinePoolDescriptionV1Schema.parse(value.trim());
-    return normalized || null;
-}
-
-async function prepareMachinePoolPrivateLabels(params: Readonly<{
-    actionId: 'machines.pools.create' | 'machines.pools.update';
-    account: LazyActionAccountContext;
-    settings: Settings;
-    input: Readonly<{
-        name: string;
-        description?: string | null;
-        audience?: MachinePoolCreateInputV1['audience'];
-    }>;
-    poolId: string;
-}>) {
-    // This is only an early, non-material-preparation check. The shared executor repeats the
-    // canonical policy check after labels are sealed, so a live settings change still wins.
-    const actionSettings = resolveActionsSettingsV1FromState({
-        settings: params.account.readLiveSettings() ?? params.settings,
-    });
-    if (!isActionEnabledByActionsSettings(params.actionId, actionSettings, { surface: 'ui' })) {
-        throw new MachinePoolActionRefusedError('action_disabled');
-    }
-    const name = normalizedMachinePoolName(params.input.name);
-    const description = normalizedMachinePoolDescription(params.input.description);
-    const owner = params.input.audience?.kind === 'team'
-        ? { kind: 'team' as const, teamId: params.input.audience.teamId }
-        : { kind: 'account' as const, accountId: params.account.accountId };
-    const labels = createMachinePoolPrivateLabelClientForAccount(params.account);
-    const sealedName = await labels.seal({
-        owner,
-        binding: { entity: 'machine_pool', field: 'name', id: params.poolId },
-        value: name,
-    });
-    if (!sealedName) throw new MachinePoolActionRefusedError('machine_pool_private_label_unavailable');
-    if (description === undefined) return { name: sealedName };
-    if (description === null) return { name: sealedName, description: null };
-    const sealedDescription = await labels.seal({
-        owner,
-        binding: { entity: 'machine_pool', field: 'description', id: params.poolId },
-        value: description,
-    });
-    if (!sealedDescription) throw new MachinePoolActionRefusedError('machine_pool_private_label_unavailable');
-    return { name: sealedName, description: sealedDescription };
-}
 
 export async function refreshMachinePools(serverId: string): Promise<readonly MachinePoolViewV1[]> {
     const normalizedServerId = serverId.trim();
@@ -240,18 +170,8 @@ export async function getMachinePoolMemberEligibility(serverId: string, machineI
 }
 
 export async function createMachinePool(serverId: string, input: MachinePoolCreateDraftV1): Promise<MachinePoolViewV1> {
-    const poolId = input.poolId ?? randomUUID();
-    return await executeMachinePoolAction(serverId, 'machines.pools.create', async ({ account, settings }) => {
-        const { name: _name, description: _description, poolId: _poolId, ...definition } = input;
-        const labels = await prepareMachinePoolPrivateLabels({
-            actionId: 'machines.pools.create',
-            account,
-            settings,
-            input,
-            poolId,
-        });
-        return { ...definition, poolId, ...labels };
-    }, async (result, context) => {
+    // The shared executor seals the authored labels for this Account's mode and the Pool audience.
+    return await executeMachinePoolAction(serverId, 'machines.pools.create', { ...input, poolId: input.poolId ?? randomUUID() }, async (result, context) => {
         const view = result;
         context.assertCurrent();
         storage.getState().patchMachinePool(view, {
@@ -259,45 +179,12 @@ export async function createMachinePool(serverId: string, input: MachinePoolCrea
             sourceAccountId: context.sourceAccountId,
         });
         return view;
-    });
-}
-
-/**
- * An omitted update audience retains the saved Pool audience server-side. Read that structural
- * fact through the same Action front door before sealing, so a Team Pool's label envelopes name
- * its Team readers rather than only the editor. The mutation below pins this observed Account.
- */
-async function readMachinePoolUpdateAudience(serverId: string, poolId: string): Promise<Readonly<{
-    audience: MachinePoolAudienceV1;
-    accountId: string;
-}>> {
-    return await executeMachinePoolAction(serverId, 'machines.pools.get', { poolId }, (result, context) => {
-        context.assertCurrent();
-        return {
-            audience: result.pool.audience ?? { kind: 'private' },
-            accountId: context.sourceAccountId,
-        };
     });
 }
 
 export async function updateMachinePool(serverId: string, input: MachinePoolUpdateDraftV1): Promise<MachinePoolViewV1> {
-    const retainedAudience = input.audience === undefined
-        ? await readMachinePoolUpdateAudience(serverId, input.poolId)
-        : undefined;
-    const effectiveInput = retainedAudience === undefined
-        ? input
-        : { ...input, audience: retainedAudience.audience };
-    return await executeMachinePoolAction(serverId, 'machines.pools.update', async ({ account, settings }) => {
-        const { name: _name, description: _description, ...definition } = effectiveInput;
-        const labels = await prepareMachinePoolPrivateLabels({
-            actionId: 'machines.pools.update',
-            account,
-            settings,
-            input: effectiveInput,
-            poolId: effectiveInput.poolId,
-        });
-        return { ...definition, ...labels };
-    }, async (result, context) => {
+    // An omitted audience is read and pinned by the shared executor before it seals the labels.
+    return await executeMachinePoolAction(serverId, 'machines.pools.update', input, async (result, context) => {
         const view = result;
         context.assertCurrent();
         storage.getState().patchMachinePool(view, {
@@ -305,7 +192,7 @@ export async function updateMachinePool(serverId: string, input: MachinePoolUpda
             sourceAccountId: context.sourceAccountId,
         });
         return view;
-    }, undefined, retainedAudience?.accountId);
+    });
 }
 
 export async function deleteMachinePool(serverId: string, input: MachinePoolDeleteInputV1): Promise<void> {

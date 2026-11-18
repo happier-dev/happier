@@ -34,7 +34,7 @@ import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/acti
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
 import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { MachinePoolActionInputSchemasV1, MachinePoolWireOutputSchemasV1, openMachinePoolActionOutputV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolWireInputSchemasV1, MachinePoolWireOutputSchemasV1, openMachinePoolActionOutputV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { ManagedAdmissionOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -1135,7 +1135,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const mismatch = await accountServerTargetMismatch(actionContext);
       if (mismatch) return mismatch;
       const path = machinePoolActionEndpointPathV1(actionId);
-      const body = MachinePoolActionInputSchemasV1[actionId].parse(actionInput);
+      const body = MachinePoolWireInputSchemasV1[actionId].parse(actionInput);
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,
         effectActionId: actionId,

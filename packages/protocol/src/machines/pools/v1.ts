@@ -313,6 +313,24 @@ export const MachinePoolUpdateInputV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type MachinePoolUpdateInputV1 = z.infer<typeof MachinePoolUpdateInputV1Schema>;
 
+/**
+ * Authored Action intent. A name or description may be plain text, which the captured Account host
+ * seals for the Account mode and Pool audience before the strict HTTP write, or an already sealed label.
+ */
+const MachinePoolAuthoredLabelV1Schema = lazyZodSchema(() => z.union([MachinePoolPrivateLabelStoredV1Schema, MachinePoolDescriptionV1Schema]));
+export const MachinePoolCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...MachinePoolCreateInputV1Schema.shape,
+  name: z.union([MachinePoolPrivateLabelStoredV1Schema, MachinePoolNameV1Schema]),
+  description: z.optional(z.nullable(MachinePoolAuthoredLabelV1Schema)),
+}));
+export type MachinePoolCreateActionInputV1 = z.infer<typeof MachinePoolCreateActionInputV1Schema>;
+export const MachinePoolUpdateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...MachinePoolUpdateInputV1Schema.shape,
+  name: z.union([MachinePoolPrivateLabelStoredV1Schema, MachinePoolNameV1Schema]),
+  description: z.optional(z.nullable(MachinePoolAuthoredLabelV1Schema)),
+}));
+export type MachinePoolUpdateActionInputV1 = z.infer<typeof MachinePoolUpdateActionInputV1Schema>;
+
 export const MachinePoolDeleteInputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
   expectedRevision: z.number().check(z.int(), z.nonnegative()),

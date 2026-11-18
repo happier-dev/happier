@@ -19,9 +19,10 @@ import { MachineGuardActionIdSchema, MACHINE_GUARD_ACTION_INPUT_SCHEMAS } from '
 import { MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
 import { MachineAccessHttpActionIdSchema } from '../../specs/machine/access.js';
-import { MachinePoolRoutingViewV1Schema } from '../../../machines/pools/v1.js';
 import { resolveMachinePoolWorkerCandidateV1 } from '../../../machines/pools/machinePoolWorkerPlacement.js';
-import { MachinePoolActionIdV1Schema, MachinePoolActionInputSchemasV1 } from '../../../machines/pools/actionsV1.js';
+import { MachinePoolActionIdV1Schema, MachinePoolActionInputSchemasV1, prepareMachinePoolWriteActionInputV1, type MachinePoolWireInputV1 } from '../../../machines/pools/actionsV1.js';
+import { createActionExecuteFailureError } from '../../actionExecutionResult.js';
+import { MachinePoolRoutingViewV1Schema, MachinePoolViewV1Schema, type MachinePoolCreateActionInputV1, type MachinePoolUpdateActionInputV1 } from '../../../machines/pools/v1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS, LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, type LocalDaemonServiceActionId } from '../../specs/localDaemonService.js';
 import { completeActionResult } from '../resultProjection.js';
 import { HomeConnectInputSchema, MachineAddCommandInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, MACHINE_PAGE_ACTION_IDS, MACHINE_PAGE_ACTION_INPUT_SCHEMAS, type MachineAddSshActionId, type MachinePageActionId } from '../../specs/machineConnection.js';
@@ -233,9 +234,19 @@ export async function dispatchMachineControls2(inv: Pick<CoreInvocation, 'deps' 
             return { ok: true, result };
           }
         }
+        const input = parsed.data as z.infer<(typeof MachinePoolActionInputSchemasV1)[typeof machinePoolActionId]>;
         const result = await deps.machinePoolAction({
           actionId: machinePoolActionId,
-          input: parsed.data as z.infer<(typeof MachinePoolActionInputSchemasV1)[typeof machinePoolActionId]>,
+          input: machinePoolActionId === 'machines.pools.create' || machinePoolActionId === 'machines.pools.update'
+            ? await prepareMachinePoolWriteActionInputV1({ actionId: machinePoolActionId,
+              input: input as MachinePoolCreateActionInputV1 | MachinePoolUpdateActionInputV1,
+              prepare: deps.privateLabelPrepare, context: ctx,
+              readRetainedAudience: async poolId => {
+                const current = await executeHostChild('machines.pools.get', { poolId }, ctx);
+                if (!current.ok) throw createActionExecuteFailureError(current);
+                return MachinePoolViewV1Schema.parse(current.result).pool.audience ?? { kind: 'private' };
+              } })
+            : input as MachinePoolWireInputV1,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });

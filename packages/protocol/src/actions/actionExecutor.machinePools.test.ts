@@ -194,4 +194,63 @@ describe('createActionExecutor (Machine Pools family)', () => {
     await expect(executor.execute('machines.pools.resolve', input, { surface: 'ui', serverId: 'other-home' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
   });
+
+  describe('authored Pool labels', () => {
+    // An agent or CLI caller authors plain text; the captured Account host seals it for the
+    // Account mode and audience. Only the Home transport and the keyholding host are substituted.
+    // The host's sealed carrier; a Plain Account's arm keeps the fixture independent of key material.
+    const sealed = (value: string) => ({ content: { t: 'plain' as const, v: `host-sealed:${value}` }, recipients: [] });
+    const harness = (current = poolView) => {
+      const prepared: unknown[] = [];
+      const effects: Array<Readonly<{ actionId: string; input: unknown }>> = [];
+      const executor = createActionExecutor({
+        privateLabelPrepare: async (request) => {
+          prepared.push({ owner: request.owner, labels: request.labels });
+          return request.labels.map(label => sealed(label.value));
+        },
+        machinePoolAction: async ({ actionId, input }) => {
+          effects.push({ actionId, input });
+          return actionId === 'machines.pools.get' ? current : poolView;
+        },
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
+      } as unknown as ActionExecutorDeps);
+      return { executor, prepared, effects };
+    };
+    const agent = { surface: 'agent' as const, serverId: 'home', runtimeAccountId: 'alice' };
+
+    it('seals a personal Pool name and description for the captured Account before the Home write', async () => {
+      const { executor, prepared, effects } = harness();
+      const created = await executor.execute('machines.pools.create', { poolId, name: ' Fast ', description: 'Builds', members: [] }, agent);
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+      expect(prepared).toEqual([{ owner: { kind: 'account', accountId: 'alice' }, labels: [
+        { binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Fast' },
+        { binding: { entity: 'machine_pool', field: 'description', id: poolId }, value: 'Builds' },
+      ] }]);
+      expect(effects).toEqual([{ actionId: 'machines.pools.create',
+        input: { poolId, name: sealed('Fast'), description: sealed('Builds'), members: [] } }]);
+    });
+
+    it('seals an update for the retained Team audience and pins that audience on the write', async () => {
+      const team = { ...poolView, pool: { ...poolView.pool, audience: { kind: 'team' as const, teamId: 'team-1' } } };
+      const { executor, prepared, effects } = harness(team);
+      await expect(executor.execute('machines.pools.update', { poolId, expectedRevision: 0, name: 'Shared', description: null, members: [] }, agent))
+        .resolves.toMatchObject({ ok: true });
+      expect(prepared).toEqual([{ owner: { kind: 'team', teamId: 'team-1' }, labels: [
+        { binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Shared' },
+      ] }]);
+      expect(effects.at(-1)).toEqual({ actionId: 'machines.pools.update', input: { poolId, expectedRevision: 0,
+        name: sealed('Shared'), description: null, audience: { kind: 'team', teamId: 'team-1' }, members: [] } });
+    });
+
+    it('refuses authored text without a keyholding Account host instead of writing it', async () => {
+      const effects: unknown[] = [];
+      const executor = createActionExecutor({
+        machinePoolAction: async (request) => { effects.push(request); return poolView; },
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
+      } as unknown as ActionExecutorDeps);
+      await expect(executor.execute('machines.pools.create', { poolId, name: 'Fast', members: [] }, agent))
+        .resolves.toMatchObject({ ok: false, errorCode: 'client_required' });
+      expect(effects).toEqual([]);
+    });
+  });
 });

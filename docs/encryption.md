@@ -1650,6 +1650,15 @@ the captured persisted Account mode; Team resource reads retain the resource's
 privacy arm rather than comparing it with the viewing Account's mode. Plain
 Accounts do not fabricate Account encryption material.
 
+Action callers author these labels as plain text. The shared Action executor seals
+Team Group, Team credential and Pool labels through the captured Account host
+(`privateLabelPrepare`) before the strict Home write, so an agent or CLI caller
+never needs to know the Account mode. A Pool label's owner is its audience: the
+runtime Account for a personal Pool, the Team for a Team Pool; an update that omits
+its audience reads and pins the retained one first. Without that host the Action
+fails `client_required` rather than writing text.
+
+
 Raw pre-envelope label rows remain readable until an ordinary save. Their read
 projection carries explicit `legacyPlaintext: true` provenance, including when
 the Account now uses E2EE. Current Plain envelopes still fail E2EE Account-mode

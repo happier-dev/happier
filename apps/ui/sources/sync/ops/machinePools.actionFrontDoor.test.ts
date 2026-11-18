@@ -125,7 +125,8 @@ describe('machine pool Action front door', () => {
         await expect(createMachinePool(boundary.serverId, { name: 'Development', description: null, members: [] }))
             .resolves.toMatchObject({ pool: { id: created.pool.id } });
 
-        expect(boundary.requests).toEqual([
+        // The Action-automation index read belongs to completion-trigger matching, not to Pools.
+        expect(boundary.requests.filter(path => path !== '/v1/automations/actions/index')).toEqual([
             '/v1/account/private-labels/recipient-census',
             '/v1/machines/pools/create',
         ]);
@@ -205,7 +206,8 @@ describe('machine pool Action front door', () => {
         await expect(createMachinePool(boundary.serverId, { name: 'Development', description: null, members: [] }))
             .rejects.toBeInstanceOf(MachinePoolActionRefusedError);
 
-        expect(boundary.requests).toEqual(['/v1/account/private-labels/recipient-census']);
+        // Labels are sealed at the effect, after confirmation: a cancelled create prepares nothing.
+        expect(boundary.requests).toEqual([]);
         expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toBeUndefined();
     });
 

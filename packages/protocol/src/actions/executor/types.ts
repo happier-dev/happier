@@ -351,7 +351,7 @@ import type { PluginMachineMaterializationRefV1 } from '../../plugins/availabili
 import type { PluginSettingsAdministrationActionIdV1 } from '../../plugins/settingsAdministration.js';
 import type { PluginExecutionOriginActionId } from '../pluginExecutionOriginActionFamily.js';
 import type { AutomationRunCause } from '../../automations/automationRunCause.js';
-import type { MachinePoolActionIdV1, MachinePoolActionInputV1 } from '../../machines/pools/actionsV1.js';
+import type { MachinePoolActionIdV1, MachinePoolWireInputV1 } from '../../machines/pools/actionsV1.js';
 import type { ProjectWorkerActionIdV1, ProjectWorkerActionInputV1, ProjectWorkerActionOutputV1 } from '../specs/projectWorkers.js';
 import type { ActionOperationActionIdV1, ActionOperationActionInputV1 } from '../specs/actionOperations.js';
 import type { ActionOperationDeclarationV1, ActionOperationDomainRefV1, ActionOperationObservationV1, ActionOperationProgressStepV1 } from '../operations/v1.js';
@@ -3559,12 +3559,12 @@ export type ActionExecutorDeps = Readonly<{
   /**
    * One Account-server-owned transport for all personal Machine Pool intents.
    * The executor parses the caller input through `MachinePoolActionInputSchemasV1`
-   * before dispatching, so the port receives a parsed pool input and never an
-   * `unknown` its host has to re-narrow at the transport call.
+   * and seals authored labels before dispatching, so the port receives a strict
+   * wire input and never plaintext or an `unknown` its host has to re-narrow.
    */
   machinePoolAction?: (args: Readonly<{
     actionId: MachinePoolActionIdV1;
-    input: MachinePoolActionInputV1;
+    input: MachinePoolWireInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
