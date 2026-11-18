@@ -15,7 +15,7 @@ import type { VerifiedEphemeralSessionRunnerPrincipal } from '@happier-dev/proto
 
 import { auth } from '@/app/auth/auth';
 import { readActiveBrokerJobRowsInTx } from './activeBrokerJobRead';
-import { logger } from '@/utils/logging/log';
+import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
 import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import { readAvailableMachineIrohEndpointAuthority } from '@/app/machines/machineStateGuards';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -209,20 +209,6 @@ function bindingFailure(
         reasonCode,
         refusalReason: refusalReason === 'broker_unavailable' ? 'binding_broker_unavailable' : refusalReason,
     };
-}
-
-/** Emit only the settled refusal, outside replayable transactions, and keep diagnostics off the wire. */
-function reportBrokerAdmissionFailure(operation: 'open' | 'catalog' | 'request', result: Failure): PublicFailure {
-    const { refusalReason, ...response } = result;
-    try {
-        logger.warn({
-            module: 'provider-broker-admission', operation,
-            reasonCode: result.reasonCode, refusalReason: refusalReason ?? result.reasonCode,
-        });
-    } catch {
-        // A diagnostic sink failure cannot replace the admission decision.
-    }
-    return response;
 }
 
 /**

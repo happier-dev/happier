@@ -19,6 +19,7 @@ import {
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { inTx } from '@/storage/inTx';
 import { db } from '@/storage/db';
+import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
@@ -66,22 +67,33 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
         select: { id: true, teamId: true, revision: true, sourceBindingJson: true, custodianAccountId: true, brokerMachineId: true, brokerPoolId: true } });
     if (!hint) return { ok: false, reasonCode: 'resource_forbidden' };
     const brokerMachineIds = await readTeamCredentialBrokerPresenceDemand({ resource: hint });
-    const presence = await input.readCurrentPresence({ initiatorAccountId: input.actorAccountId,
-        initiatorMachineId: request.initiatorMachineId, brokerAccountId: hint.custodianAccountId, brokerMachineIds });
+    let presence: Awaited<ReturnType<TeamCredentialActionBrokerOpenInput['readCurrentPresence']>>;
+    try {
+        presence = await input.readCurrentPresence({ initiatorAccountId: input.actorAccountId,
+            initiatorMachineId: request.initiatorMachineId, brokerAccountId: hint.custodianAccountId, brokerMachineIds });
+    } catch {
+        input.signal?.throwIfAborted();
+        return reportBrokerAdmissionFailure('action_open', { ok: false, reasonCode: 'broker_unavailable',
+            refusalReason: 'presence_read_unavailable' });
+    }
     let poolEligibility: (Awaited<ReturnType<TeamCredentialPoolSourceEligibilityReader>>
         & Readonly<{ source: TeamCredentialSourceBindingV1 }>) | null = null;
     const hintedPlacement = readTeamCredentialBrokerPlacement(hint);
-    if (!hintedPlacement.ok) return { ok: false, reasonCode: 'resource_unavailable' };
+    if (!hintedPlacement.ok) return reportBrokerAdmissionFailure('action_open', { ok: false, reasonCode: 'resource_unavailable',
+        refusalReason: 'placement_invalid' });
     if (hintedPlacement.placement?.kind === 'machine_pool') {
         const source = readTeamCredentialSourceBinding(hint.sourceBindingJson);
-        if (!source.success) return { ok: false, reasonCode: 'resource_unavailable' };
-        if (!input.readPoolSourceEligibility) return { ok: false, reasonCode: 'broker_unavailable' };
+        if (!source.success) return reportBrokerAdmissionFailure('action_open', { ok: false, reasonCode: 'resource_unavailable',
+            refusalReason: 'source_binding_invalid' });
+        if (!input.readPoolSourceEligibility) return reportBrokerAdmissionFailure('action_open', { ok: false, reasonCode: 'broker_unavailable',
+            refusalReason: 'pool_source_reader_unavailable' });
         const signal = input.signal ?? new AbortController().signal;
         const eligibility = await input.readPoolSourceEligibility({ custodianAccountId: hint.custodianAccountId,
             machineIds: brokerMachineIds, teamId: hint.teamId, resourceId: hint.id, resourceRevision: hint.revision,
             source: source.data, scope: 'action_purpose', purpose: request.consumer.purpose, signal }).catch(() => null);
         signal.throwIfAborted();
-        if (!eligibility) return { ok: false, reasonCode: 'broker_unavailable' };
+        if (!eligibility) return reportBrokerAdmissionFailure('action_open', { ok: false, reasonCode: 'broker_unavailable',
+            refusalReason: 'pool_source_read_unavailable' });
         poolEligibility = { ...eligibility, source: source.data };
         if (poolEligibility.eligibleMachineIds.size === 0 && [...poolEligibility.reasons.values()]
             .includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired)) {
@@ -91,7 +103,7 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
     const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: input.actorAccountId,
         machineId: request.initiatorMachineId, consumer: request.consumer });
     input.signal?.throwIfAborted();
-    return await inTx(async tx => {
+    const result = await inTx(async tx => {
         await acquireAccountChangePublicationLocksInTx(tx, [input.actorAccountId, hint.custodianAccountId],
             { includeSingleAccount: true, intent: 'serializing' });
         input.signal?.throwIfAborted();
@@ -100,7 +112,8 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             slot: { kind: 'connected_service_purpose', purpose: request.consumer.purpose },
             deliveryMode: 'brokered', authentication: input.authentication,
         });
-        if (!admitted.ok) return { ok: false as const, reasonCode: brokerFailureForBindingRejection(admitted.reason) };
+        if (!admitted.ok) return { ok: false as const, reasonCode: brokerFailureForBindingRejection(admitted.reason),
+            refusalReason: admitted.reason };
         const resource = await tx.teamCredentialResource.findUnique({ where: { id: request.resourceId },
             select: { id: true, teamId: true, custodianAccountId: true, brokerMachineId: true, brokerPoolId: true } });
         if (!resource || resource.custodianAccountId !== hint.custodianAccountId
@@ -120,19 +133,22 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
         if (!declaration.ok) return { ok: false as const, reasonCode: 'resource_forbidden' as const };
         const initiator = await readProviderBrokerInitiatorEndpointInTx(tx, {
             accountId: input.actorAccountId, machineId: request.initiatorMachineId, sessionId: null });
-        if (!initiator || classifyMachineDaemonPresence(presence.initiatorPresence, request.initiatorMachineId) !== 'connected') {
-            return { ok: false as const, reasonCode: 'broker_unavailable' as const };
-        }
+        if (!initiator) return { ok: false as const, reasonCode: 'broker_unavailable' as const, refusalReason: 'initiator_endpoint_unavailable' };
+        const initiatorPresence = classifyMachineDaemonPresence(presence.initiatorPresence, request.initiatorMachineId);
+        if (initiatorPresence !== 'connected') return { ok: false as const, reasonCode: 'broker_unavailable' as const,
+            refusalReason: initiatorPresence === 'unknown' ? 'initiator_presence_unavailable' : 'initiator_offline' };
         const placement = await resolveTeamCredentialBrokerPlacementInTx(tx, { resource,
             presence: presence.brokerPresence, requestKey: request.consumer.operationId,
             poolInitiator: { machineId: request.initiatorMachineId, endpointId: initiator.endpointId },
             requiredProtocolVersion: 3,
             ...(poolEligibility ? { poolEligibleMachineIds: poolEligibility.eligibleMachineIds } : {}),
         });
-        if (!placement.ok) return { ok: false as const, reasonCode: placement.error };
+        if (!placement.ok) return { ok: false as const, reasonCode: placement.error,
+            ...('refusalReason' in placement ? { refusalReason: placement.refusalReason } : {}) };
         const broker = placement.broker;
         const endpoint = broker?.endpointAuthority;
-        if (!broker || !endpoint) return { ok: false as const, reasonCode: 'broker_unavailable' as const };
+        if (!broker || !endpoint) return { ok: false as const, reasonCode: 'broker_unavailable' as const,
+            refusalReason: broker ? 'target_endpoint_unavailable' : 'broker_selection_missing' };
         const topology = admitProviderBrokerTopology({ machineId: request.initiatorMachineId, endpointId: initiator.endpointId },
             { machineId: broker.machineId, endpointId: endpoint.endpointId });
         if (!topology.ok) return topology;
@@ -157,6 +173,7 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             endpoint: { endpointId: endpoint.endpointId, ...(endpoint.relayUrls ? { relayUrls: [...endpoint.relayUrls] } : {}),
                 ...(endpoint.directAddresses ? { directAddresses: [...endpoint.directAddresses] } : {}) } } };
     });
+    return result.ok ? result : reportBrokerAdmissionFailure('action_open', result);
 }
 
 /** Consume the admitted job once across carriers. Team entitlement was

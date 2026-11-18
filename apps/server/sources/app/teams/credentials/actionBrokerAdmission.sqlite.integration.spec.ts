@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { db } from '@/storage/db';
+import { logger } from '@/utils/logging/log';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { getMachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
@@ -40,6 +41,15 @@ describe('finite Team Action single-use Home admission', () => {
             request: { v: 3 as const, resourceId: shared.resource.id, initiatorMachineId: shared.machine.id,
                 consumer: shared.consumer, inputDigest: computeActionInputApprovalDigestV1(shared.consumer.actionId, {}) },
             readCurrentPresence, nowMs: Date.now(), grantId: crypto.randomUUID(), signingKey };
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            const unavailable = await openTeamCredentialActionBroker({ ...openInput, readCurrentPresence: async () => ({
+                ...await readCurrentPresence(), initiatorPresence: { state: 'partial', machineIds: new Set<string>() },
+            }) });
+            expect(unavailable).toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+            expect(warn).toHaveBeenCalledWith({ module: 'provider-broker-admission', operation: 'action_open',
+                reasonCode: 'broker_unavailable', refusalReason: 'initiator_presence_unavailable' });
+        } finally { warn.mockRestore(); }
         const opened = await openTeamCredentialActionBroker(openInput);
         expect(opened).toMatchObject({ ok: true });
         if (!opened.ok) throw new Error('Positive admission failed');

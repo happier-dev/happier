@@ -1123,7 +1123,20 @@ describe('Team credential Provider broker admission', () => {
             await grant();
             // A grant is sufficient for the initiator only; it cannot turn a
             // foreign Machine into this Account's private catalog hub.
-            expect((await open({ targetMachineId: fixture.broker.id })).json()).toMatchObject({ ok: false });
+            const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+            try {
+                expect((await open({ targetMachineId: fixture.broker.id })).json())
+                    .toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+                expect(warn).toHaveBeenCalledWith({ module: 'provider-broker-admission', operation: 'account_open',
+                    reasonCode: 'broker_unavailable', refusalReason: 'target_endpoint_unavailable' });
+                vi.stubEnv('HAPPIER_FEATURE_PROVIDERS__ENABLED', '0');
+                expect((await open()).json()).toEqual({ ok: false, reasonCode: 'resource_unavailable' });
+                expect(warn).toHaveBeenCalledWith({ module: 'provider-broker-admission', operation: 'account_open',
+                    reasonCode: 'resource_unavailable', refusalReason: 'providers_disabled' });
+            } finally {
+                vi.unstubAllEnvs();
+                warn.mockRestore();
+            }
             expect(presenceRooms).toHaveLength(reads + 6);
             revokeDuringPresence = true;
             expect((await open()).json()).toMatchObject({ ok: false, reasonCode: 'resource_forbidden' });

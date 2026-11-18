@@ -39,6 +39,7 @@ import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBrok
 import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { readProvidersFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
+import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
 
 export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, personalApp: Fastify = app): void {
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
@@ -70,12 +71,15 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         const parsed = ProviderBrokerAccountOpenRequestV2Schema.safeParse(request.body);
         if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         const env = await readRequestHomeEnv(request);
-        if (!readProvidersFeatureEnv(env).enabled) return reply.send({ ok: false, reasonCode: 'resource_unavailable' });
+        if (!readProvidersFeatureEnv(env).enabled) return reply.send(reportBrokerAdmissionFailure('account_open',
+            { ok: false, reasonCode: 'resource_unavailable', refusalReason: 'providers_disabled' }));
         const signing = resolvePeerMediationGrantSigningConfig(env);
-        if (!signing.ok) return reply.send({ ok: false, reasonCode: 'update_required' });
+        if (!signing.ok) return reply.send(reportBrokerAdmissionFailure('account_open',
+            { ok: false, reasonCode: 'update_required', refusalReason: signing.reasonCode }));
         // Restricted Runner credentials have a different activation/selection
         // authority. They cannot impersonate an ordinary Account connection.
-        if (request.sessionRuntimePrincipal) return reply.send({ ok: false, reasonCode: 'update_required' });
+        if (request.sessionRuntimePrincipal) return reply.send(reportBrokerAdmissionFailure('account_open',
+            { ok: false, reasonCode: 'update_required', refusalReason: 'restricted_runner_principal' }));
         const result = await openAccountConnectionProviderBroker({
             actorAccountId: request.userId, homeId: await getOrCreateServerIdentityId(process.env),
             readCurrentPresence: readAccountConnectionPresence,
@@ -97,9 +101,11 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         const parsed = ProviderBrokerAccountAdmissionV2Schema.safeParse(request.body);
         if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         const env = await readRequestHomeEnv(request);
-        if (!readProvidersFeatureEnv(env).enabled) return reply.send({ ok: false, reasonCode: 'resource_unavailable' });
+        if (!readProvidersFeatureEnv(env).enabled) return reply.send(reportBrokerAdmissionFailure('account_admit',
+            { ok: false, reasonCode: 'resource_unavailable', refusalReason: 'providers_disabled' }));
         const signing = resolvePeerMediationGrantSigningConfig(env);
-        if (!signing.ok) return reply.send({ ok: false, reasonCode: 'update_required' });
+        if (!signing.ok) return reply.send(reportBrokerAdmissionFailure('account_admit',
+            { ok: false, reasonCode: 'update_required', refusalReason: signing.reasonCode }));
         const result = await admitAccountConnectionProviderBroker({
             actorAccountId: request.userId, homeId: await getOrCreateServerIdentityId(process.env),
             readCurrentPresence: readAccountConnectionPresence,
@@ -137,7 +143,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         }
         const broker = ProviderBrokerModelCatalogAuthorizationV1Schema.parse(parsed.data);
         const signing = resolvePeerMediationGrantSigningConfig(requestHomeEnv);
-        if (!signing.ok) return reply.send({ ok: false, reasonCode: 'update_required' });
+        if (!signing.ok) return reply.send(reportBrokerAdmissionFailure('catalog',
+            { ok: false, reasonCode: 'update_required', refusalReason: signing.reasonCode }));
         const result = await authorizeTeamCredentialProviderModelCatalog({
             authenticatedBrokerAccountId: request.userId,
             authority: broker.authority,
@@ -163,7 +170,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         const parsed = TeamCredentialResourceTestAdmissionV1Schema.safeParse(request.body);
         if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         const relaySigning = resolvePeerMediationGrantSigningConfig(requestHomeEnv);
-        if (!relaySigning.ok) return reply.send({ ok: false, reasonCode: 'invalid_request' });
+        if (!relaySigning.ok) return reply.send(reportBrokerAdmissionFailure('resource_test',
+            { ok: false, reasonCode: 'invalid_request', refusalReason: relaySigning.reasonCode }));
         const result = await inTx(tx => admitTeamCredentialResourceTestRequestInTx(tx, {
             authenticatedBrokerAccountId: request.userId,
             request: parsed.data,
@@ -237,9 +245,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         }
         const signing = resolvePeerMediationGrantSigningConfig(requestHomeEnv);
-        if (!signing.ok) {
-            return reply.send({ ok: false, reasonCode: 'update_required' });
-        }
+        if (!signing.ok) return reply.send(reportBrokerAdmissionFailure('open',
+            { ok: false, reasonCode: 'update_required', refusalReason: signing.reasonCode }));
         const sessionRuntimePrincipal = request.sessionRuntimePrincipal;
         const openRequest = parsed.data;
         if (sessionRuntimePrincipal && openRequest.v !== 3) {
@@ -354,9 +361,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
         }
         const signing = resolvePeerMediationGrantSigningConfig(requestHomeEnv);
-        if (!signing.ok) {
-            return reply.send({ ok: false, reasonCode: 'update_required' });
-        }
+        if (!signing.ok) return reply.send(reportBrokerAdmissionFailure('request',
+            { ok: false, reasonCode: 'update_required', refusalReason: signing.reasonCode }));
         const observedAt = new Date();
         if (parsed.data.v === 3) {
             const result = await admitTeamCredentialActionBrokerRequest({ authenticatedBrokerAccountId: request.userId,

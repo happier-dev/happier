@@ -9,6 +9,7 @@ import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/m
 import { readMachineIrohEndpointAuthorityV1, MachineOperationProtocolCapabilitiesV1StoredReadSchema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { auth } from '@/app/auth/auth';
+import { reportBrokerAdmissionFailure } from './brokerRefusalDiagnostic';
 import { readEligibleBrokerMachineInTx } from '@/app/teams/credentials/brokerMachineEligibility';
 import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import { inTx, type Tx } from '@/storage/inTx';
@@ -34,7 +35,8 @@ async function readOwnedTargetInTx(tx: Tx, accountId: string, machineId: string)
     const { machine } = eligible;
     const endpoint = readMachineIrohEndpointAuthorityV1({ capabilities: machine.operationProtocolCapabilities,
         revision: machine.operationProtocolCapabilitiesRevision });
-    return endpoint ? { ok: true, machine, endpoint } as const : { ok: false, error: 'broker_unavailable' } as const;
+    return endpoint ? { ok: true, machine, endpoint } as const
+        : { ok: false, error: 'broker_unavailable', refusalReason: 'target_endpoint_unavailable' } as const;
 }
 
 function supportsAccountConnectionIngress(capabilities: unknown): boolean {
@@ -63,8 +65,10 @@ async function authorizeMachinesInTx(tx: Tx, input: MachineAdmissionInput, execu
             machineId: input.initiatorMachineId, sessionId }),
         readOwnedTargetInTx(tx, input.actorAccountId, input.targetMachineId),
     ]);
-    if (!initiator) return { ok: false, reasonCode: 'broker_unavailable' } as const;
-    if (!target.ok) return { ok: false, reasonCode: target.error } as const;
+    if (!initiator) return brokerUnavailable('initiator_endpoint_unavailable');
+    if (!target.ok) return 'refusalReason' in target
+        ? brokerUnavailable(target.refusalReason)
+        : { ok: false, reasonCode: target.error } as const;
     const topology = admitProviderBrokerTopology(
         { machineId: input.initiatorMachineId, endpointId: initiator.endpointId },
         { machineId: input.targetMachineId, endpointId: target.endpoint.endpointId },
@@ -76,13 +80,20 @@ async function authorizeMachinesInTx(tx: Tx, input: MachineAdmissionInput, execu
     return { ok: true, initiator, target, executionRunOccurrenceId: admitted.executionRunOccurrenceId } as const;
 }
 
+function brokerUnavailable(refusalReason: string) {
+    return { ok: false, reasonCode: 'broker_unavailable', refusalReason } as const;
+}
+
+type AccountBrokerFailure = Extract<ProviderBrokerAccountAdmissionResponseV2, { ok: false }>
+    & Readonly<{ refusalReason?: string }>;
+
 /** Prepare transport identities without admitting work. Presence belongs to the
  * actual Machine custodian; the signed requester and private catalog hub remain
  * the requesting Account. Admit once after discovery, and produce the terminal
  * result while that transaction still holds its admission fence. */
-async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
+async function withCurrentMachines<T extends Readonly<{ ok: true }>>(
     input: MachineAdmissionInput,
-    finalize: (current: Extract<Awaited<ReturnType<typeof authorizeMachinesInTx>>, { ok: true }>) => T,
+    finalize: (current: Extract<Awaited<ReturnType<typeof authorizeMachinesInTx>>, { ok: true }>) => T | AccountBrokerFailure,
 ) {
     const resolveRun = async (expectedOccurrenceId: string | null) => input.consumer.kind === 'execution_run'
         ? await input.resolveExecutionRunCurrentness({ executionRunId: input.consumer.executionRunId,
@@ -102,9 +113,8 @@ async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
     const targetEndpoint = target && readMachineIrohEndpointAuthorityV1({
         capabilities: target.operationProtocolCapabilities, revision: target.operationProtocolCapabilitiesRevision,
     });
-    if (!initiator || !initiatorEndpoint || !targetEndpoint) {
-        return { ok: false, reasonCode: 'broker_unavailable' } as const;
-    }
+    if (!initiator || !initiatorEndpoint) return brokerUnavailable('initiator_endpoint_unavailable');
+    if (!targetEndpoint) return brokerUnavailable('target_endpoint_unavailable');
     let presence: Awaited<ReturnType<Common['readCurrentPresence']>>;
     try {
         presence = await input.readCurrentPresence({
@@ -112,7 +122,7 @@ async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
             targetAccountId: input.actorAccountId, targetMachineId: input.targetMachineId,
         });
     } catch {
-        return { ok: false, reasonCode: 'broker_unavailable' } as const;
+        return brokerUnavailable('presence_read_unavailable');
     }
     const currentRun = await resolveRun(input.expectedOccurrenceId);
     if (currentRun && !currentRun.ok) return currentRun;
@@ -126,13 +136,15 @@ async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
         });
         const current = await authorizeMachinesInTx(tx, input, currentRun);
         if (!current.ok) return current;
-        if (current.initiator.custodianAccountId !== initiator.accountId
-            || current.initiator.endpointId !== initiatorEndpoint.endpointId
-            || current.target.endpoint.endpointId !== targetEndpoint.endpointId
-            || classifyMachineDaemonPresence(presence.initiatorPresence, input.initiatorMachineId) !== 'connected'
-            || classifyMachineDaemonPresence(presence.targetPresence, input.targetMachineId) !== 'connected') {
-            return { ok: false, reasonCode: 'broker_unavailable' } as const;
-        }
+        if (current.initiator.custodianAccountId !== initiator.accountId) return brokerUnavailable('initiator_custody_changed');
+        if (current.initiator.endpointId !== initiatorEndpoint.endpointId) return brokerUnavailable('initiator_endpoint_changed');
+        if (current.target.endpoint.endpointId !== targetEndpoint.endpointId) return brokerUnavailable('target_endpoint_changed');
+        const initiatorPresence = classifyMachineDaemonPresence(presence.initiatorPresence, input.initiatorMachineId);
+        if (initiatorPresence !== 'connected') return brokerUnavailable(initiatorPresence === 'unknown'
+            ? 'initiator_presence_unavailable' : 'initiator_offline');
+        const targetPresence = classifyMachineDaemonPresence(presence.targetPresence, input.targetMachineId);
+        if (targetPresence !== 'connected') return brokerUnavailable(targetPresence === 'unknown'
+            ? 'target_presence_unavailable' : 'target_offline');
         return finalize(current);
     }, { isolationLevel: 'ReadCommitted' });
 }
@@ -157,12 +169,11 @@ export async function openAccountConnectionProviderBroker(input: Common & Readon
         || refresh.initiatorTokenEpoch !== input.tokenEpoch
         || !pluginJsonValuesEqual(refresh.consumer, request.consumer) || !pluginJsonValuesEqual(refresh.source, request.source)
         || !pluginJsonValuesEqual(refresh.application, request.application))) return { ok: false, reasonCode: 'invalid_request' };
-    return await withCurrentMachines<ProviderBrokerAccountOpenResponseV2>({ ...input, initiatorMachineId: request.initiatorMachineId,
+    const result = await withCurrentMachines<Extract<ProviderBrokerAccountOpenResponseV2, { ok: true }>>({ ...input, initiatorMachineId: request.initiatorMachineId,
         targetMachineId: request.targetMachineId, consumer: request.consumer, expectedOccurrenceId: refresh?.executionRunOccurrenceId ?? null }, admitted => {
         const { initiator, target } = admitted;
-        if (refresh && (refresh.initiator.endpointId !== initiator.endpointId || refresh.target.endpointId !== target.endpoint.endpointId)) {
-            return { ok: false, reasonCode: 'broker_unavailable' };
-        }
+        if (refresh && refresh.initiator.endpointId !== initiator.endpointId) return brokerUnavailable('initiator_endpoint_changed');
+        if (refresh && refresh.target.endpointId !== target.endpoint.endpointId) return brokerUnavailable('target_endpoint_changed');
         const payload = {
             v: 2 as const, grantId: input.grantId, aud: PROVIDER_BROKER_ROUTE_AUDIENCE_V2,
             issuedAt: input.nowMs, expiresAt: input.nowMs + DIRECT_ROUTE_GRANT_TTL_MS.directTcpTunnel,
@@ -185,6 +196,7 @@ export async function openAccountConnectionProviderBroker(input: Common & Readon
             },
         } };
     });
+    return result.ok ? result : reportBrokerAdmissionFailure('account_open', result);
 }
 
 export async function admitAccountConnectionProviderBroker(input: Common & Readonly<{
@@ -203,12 +215,12 @@ export async function admitAccountConnectionProviderBroker(input: Common & Reado
         return await inTx(async tx => await auth.isSignedCredentialCurrent(tx, input.actorAccountId, payload.initiatorTokenEpoch)
             ? { ok: true } as const : { ok: false, reasonCode: 'operation_not_current' } as const);
     }
-    return await withCurrentMachines<ProviderBrokerAccountAdmissionResponseV2>({ ...input, tokenEpoch: payload.initiatorTokenEpoch,
+    const result = await withCurrentMachines<Extract<ProviderBrokerAccountAdmissionResponseV2, { ok: true }>>({ ...input, tokenEpoch: payload.initiatorTokenEpoch,
         initiatorMachineId: payload.initiator.machineId, targetMachineId: payload.target.machineId,
         consumer: payload.consumer, expectedOccurrenceId: payload.executionRunOccurrenceId ?? null }, admitted => {
-        if (admitted.initiator.endpointId !== payload.initiator.endpointId || admitted.target.endpoint.endpointId !== payload.target.endpointId) {
-            return { ok: false, reasonCode: 'broker_unavailable' };
-        }
+        if (admitted.initiator.endpointId !== payload.initiator.endpointId) return brokerUnavailable('initiator_endpoint_changed');
+        if (admitted.target.endpoint.endpointId !== payload.target.endpointId) return brokerUnavailable('target_endpoint_changed');
         return { ok: true };
     });
+    return result.ok ? result : reportBrokerAdmissionFailure('account_admit', result);
 }
