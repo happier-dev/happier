@@ -319,20 +319,11 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
   await writeFile(uiInput, 'export const changed = true;');
   assert.equal((await exportShared(options)).uiDir, first.uiDir, 'source edits adopt the completed shared export');
   assert.equal((await exports()).length, 1, 'QA adoption launches no compiler');
-  await t.test('a QA Stack with no sentinel verdict for the shared export uses live Expo', async () => {
-    assert.equal(await exportShared({ ...options, requireLastGreen: true, loadSentinelPasses: [] }), null);
-  });
   await t.test('last-green web adoption bypasses busy producer and fingerprint leases', async () => {
     const bundleRoot = fixture.path('stacks/source-bundles');
     const record = JSON.parse(await readFile(join(first.uiDir, '../source-bundle.json'), 'utf8'));
-    const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-    await mkdir(dirname(history), { recursive: true });
-    const passedAt = new Date().toISOString();
-    await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
-    const { readLoadSentinelPasses } = await import('../perf/load-sentinel.mjs');
-    const loadSentinelPasses = await readLoadSentinelPasses(repoDir);
     await withWorkspaceBundleLock(() => withWorkspaceBundleLock(async () => {
-      const adopted = await exportShared({ ...options, requireLastGreen: true, loadSentinelPasses,
+      const adopted = await exportShared({ ...options, requireLastGreen: true,
         env: { ...options.env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' } });
       assert.equal(adopted.uiDir, first.uiDir);
       assert.equal((await exports()).length, 1, 'adoption must not launch another Expo producer');
@@ -791,10 +782,6 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     repoDir, args: ['--no-daemon', '--ui=export', ...(sourceCapturedAfter ? [`--source-after=${sourceCapturedAfter}`] : [])], onHost: true,
     env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_DB_PROVIDER: 'sqlite' } });
   const firstReload = await reload(new Date().toISOString());
-  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-  await mkdir(dirname(history), { recursive: true });
-  const passedAt = new Date().toISOString();
-  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   const selectedServerPath = join(otherStackBaseDir, 'source-runtime/selected-server.json');
   const firstServer = await readFile(selectedServerPath, 'utf8');
   const firstReloadExports = await exports();

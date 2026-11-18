@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
-import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
 import { EventEmitter, on } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -81,7 +80,7 @@ async function uploadSourceRevisionArchive({ target, repoDir, request, transferF
  * still serving. The existing executor/control pipe owns each preparation
  * worker; only the existing restart owner may subsequently retire services.
  */
-export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId, loadSentinelPasses,
+export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId,
   sourceRevisionDescriptorPath },
   { runProcess = runDevTargetControlProcess, executorDependencies = {}, transferFile = transferRuntimeFile } = {}) {
   env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra',
@@ -140,7 +139,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
         stackBaseDir: placement.authority.producerStackBaseDir, sourceDir: repoDir,
         commandArgs: ['node', '--conditions=happier-source', '--import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs',
           './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker',
-          JSON.stringify({ stackName, stackBaseDir: paths.stackBaseDir, repoDir: plan.target.repoDir, args: hostArgs, sourceStartRequestId, loadSentinelPasses })],
+          JSON.stringify({ stackName, stackBaseDir: paths.stackBaseDir, repoDir: plan.target.repoDir, args: hostArgs, sourceStartRequestId })],
         environment: { ...serverConfig.environment, HAPPIER_DB_PROVIDER: serverConfig.dbProvider,
           ...(plan.services.server ? sourceWebExportDiagnosticEnv(env) : {}),
           ...(plan.services.daemon ? projectRemoteGuestCliPayloadEnvironment(env) : {}),
@@ -530,7 +529,6 @@ export async function startStackDevTargets(
   if (sourceSnapshot && servicePlans.some(plan => plan.services.expo)) {
     throw new Error('[dev-targets] source snapshot services cannot own a watching Expo process');
   }
-  const loadSentinelPasses = sourceSnapshot ? await readLoadSentinelPasses(sourceDir) : undefined;
   const retainedRuntime = controlled || sourceSnapshot;
   const runtimeMode = sourceSnapshot ? 'source-snapshot' : controlled ? 'controlled' : 'source';
   const canonicalLoopbackForward = resolveCanonicalLoopbackForward(canonicalServerUrl, localServerPort);
@@ -1244,7 +1242,6 @@ export async function startStackDevTargets(
           runtimeMode,
           sourceStartRequestId,
           sourceCapturedAfter,
-          loadSentinelPasses,
           refreshSourceRuntime,
           excludedOwnerStartedAt: refreshSourceRuntime ? retainedSourceRuntime?.startedAt : undefined,
           reuseSourceRuntime: !refreshSourceRuntime && (transportRecovery || Boolean(retainedSourceRuntime) || env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1'),

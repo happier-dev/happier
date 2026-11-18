@@ -893,7 +893,7 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
 
 async function readCompletedProducerComponents({ repoDir, stackBaseDir, components, env, signal,
   sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints,
-  requireLastGreen = false, loadSentinelPasses, revision, sharedSourceInputs, select = true }) {
+  requireLastGreen = false, revision, sharedSourceInputs, select = true }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   // A revision selects the exact revision build, or (by default) the latest
   // built revision; content-equal captures go through captureFingerprints.
@@ -904,7 +904,7 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
       : sourceRuntimeCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component }));
   const candidateSets = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-read' }, async () => {
     if (requireLastGreen && !revision) {
-      const groups = await readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses });
+      const groups = await readGreenSourceRuntimeCandidateGroups({ bundleRoot });
       return groups.filter(group => keys.every(key => group.candidates.has(key)))
         .map(group => keys.map(key => group.candidates.get(key)));
     }
@@ -976,7 +976,7 @@ async function withSourceRuntimeWorkerResult(run) {
 /** QA adopts completed products. Only this repository producer request enters
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
-  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, sourceRevision,
+  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, sourceRevision,
   requestBaseArchive, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
@@ -992,7 +992,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   // builds for QA consumers is published to the store, never selected into that Stack.
   const select = () => !(requireCurrentSource && revision);
   const adopt = () => readCompletedProducerComponents({ repoDir, stackBaseDir, components, env: context.env,
-    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses, revision, select: select() });
+    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, revision, select: select() });
   const report = prepared => {
     for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} rev=${built.sourceCapture?.revision ?? 'checkout'}${built.sourceCapture?.overlayDigest ? `+overlay:${built.sourceCapture.overlayDigest}` : ''} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return prepared;

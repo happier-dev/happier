@@ -28,7 +28,6 @@ import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrat
 import { recordSourceSelectionRollback } from '../shared/source_selection_rollback.mjs';
 import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '../shared/source_bundle_record.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
-import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
 
 /** Normalize once at the reload boundary, before dispatch to execution hosts. */
 export function resolveSourceRuntimeReloadArguments({ args }) {
@@ -38,14 +37,12 @@ export function resolveSourceRuntimeReloadArguments({ args }) {
   // boundary requests newer source, unchanged across execution hosts.
   const sourceCapturedAfter = requestedBoundary;
   if (sourceCapturedAfter != null) args = [...(args ?? []), `--source-after=${new Date(sourceCapturedAfter).toISOString()}`];
-  const forwardedPasses = kv.get('--source-load-sentinel-passes');
-  const loadSentinelPasses = forwardedPasses == null ? undefined : JSON.parse(forwardedPasses);
   // QA runs one committed revision plus this Stack's declared overlay (owner 2026-11-14).
   // An execution host receives the controller's description instead (`--source-revision`).
   const revisionDescriptorPath = kv.get('--source-revision') || undefined;
   const rev = kv.get('--rev') || undefined;
   const overlayValue = kv.get('--overlay');
-  return { args, flags, kv, sourceCapturedAfter, loadSentinelPasses, revisionDescriptorPath, rev,
+  return { args, flags, kv, sourceCapturedAfter, revisionDescriptorPath, rev,
     overlay: overlayValue == null ? undefined : parseSourceOverlayPaths(overlayValue) };
 }
 
@@ -80,13 +77,11 @@ async function readReloadGreen({ request, repoDir, env }) {
 
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
-  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId, loadSentinelPasses,
+  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId,
   requestBaseArchive }) {
   const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
   let revisionDir;
-  // Last-green gating remains only for a host that received no revision (checkout capture).
-  if (sourceCapturedAfter == null && !request.revisionDescriptorPath) loadSentinelPasses ??= request.loadSentinelPasses ?? await readLoadSentinelPasses(repoDir);
   args = request.args;
   const uiMode = resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: stackName, producerStackName: env.HAPPIER_STACK_EXPO_SOURCE_STACK });
@@ -200,7 +195,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
             env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
               HAPPIER_SERVER_URL: connection.startServer
                 ? (await resolveStackServerEndpoint({ env, stackName })).internalServerUrl : connection.internalServerUrl },
-            sourceStartRequestId: pending.requestId, loadSentinelPasses,
+            sourceStartRequestId: pending.requestId,
             signal: pending.signal, onPhase: (target, phase) => pending.setPhase(phase, target),
             onLog: message => { retainLog(`${message}\n`); } });
         }
@@ -211,7 +206,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
           descriptorPath: treeRevision?.descriptorPath ?? request.revisionDescriptorPath, env: serverEnv, signal: pending.signal, logger })
         : prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
         components: localComponents, pending, env: serverEnv, signal: pending.signal,
-        sourceCapturedAfter, sourceRevision, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
+        sourceCapturedAfter, sourceRevision, requireLastGreen: sourceCapturedAfter == null,
         requestBaseArchive, logger, stderrStream });
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
@@ -228,7 +223,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const ui = components.server ? (await prepareSourceQaWebUi({ mode: uiMode, repoDir, baseDir: sourceRoot,
         stackBaseDir, pending, retainsSelection: true, env, signal: pending.signal, sourceCapturedAfter,
         sourceRevision: serverTree ? { ...sourceRevision, treeDir: serverTree.sourceTree.dir } : sourceRevision,
-        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
+        requireLastGreen: sourceCapturedAfter == null,
         revision: serverTree ? { revision: serverTree.sourceCapture.revision, overlayDigest: serverTree.sourceCapture.overlayDigest ?? null }
           : request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
           : revision })).built : null;

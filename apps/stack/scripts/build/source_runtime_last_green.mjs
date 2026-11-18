@@ -1,18 +1,17 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readLoadSentinelPasses } from '../perf/load-sentinel.mjs';
 
 async function optionalJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-/** Existing completed capture locators carry producer success; the sentinel's
- * recorded PASS remains the only load verdict. Old current locators also prove
- * publication, while old capture-only locators do not prove a whole run passed. */
-export async function readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses }) {
-  const passes = loadSentinelPasses ?? await readLoadSentinelPasses(repoDir);
-  if (!passes.length) return [];
+/** The last green is the newest completed producer run: completed capture
+ * locators carry producer success, and each reload's own readiness checks prove
+ * the load before activation (the load sentinel that once gated this was retired
+ * by the 11-17 owner ruling). Old current locators also prove publication, while
+ * old capture-only locators do not prove a whole run passed. */
+export async function readGreenSourceRuntimeCandidateGroups({ bundleRoot }) {
   let names;
   try { names = await readdir(bundleRoot); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
@@ -43,15 +42,14 @@ export async function readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoo
     group.candidates.set(key, candidate);
     groups.set(groupKey, group);
   }
-  return [...groups.values()].filter(group => passes.some(pass =>
-    Date.parse(pass.startedAt) >= group.completedAt && Date.parse(pass.endedAt) >= Date.parse(pass.startedAt)))
+  return [...groups.values()]
     .sort((left, right) => right.capturedAt - left.capturedAt || right.completedAt - left.completedAt);
 }
 
 
 export function sourceRuntimeCaptureUnavailable({
-  message = 'No retained producer capture has a completed post-capture sentinel PASS',
-  nextAction = 'Restore the post-capture load sentinel verdict or request a fresh capture with --source-after',
+  message = 'No retained producer capture has completed',
+  nextAction = 'Request a fresh capture with --source-after or a committed revision with --rev',
 } = {}) {
   return Object.assign(new Error(message), {
     code: 'source_runtime_producer_capture_unavailable', retryable: false, nextAction,

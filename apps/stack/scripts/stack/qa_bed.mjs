@@ -214,7 +214,7 @@ async function seedAndSignIn({ rootDir, stackName, profile }) {
 export async function startQaBedStack({ rootDir, stackName, step }, { runStackImpl = runStack } = {}) {
   // Always the reload route: it selects the producer's latest built revision
   // (`--rev` default) and adopts it. A plain first start captures the checkout
-  // instead and is gated on the producer's load sentinel. The default UI adopts
+  // instead and adopts the producer's newest completed capture. The default UI adopts
   // the revision's shared export when one exists; `--ui=export` is not forced:
   // a revision export captured from the moving checkout refuses on drift, which
   // would refuse the whole start (2026-11-16 19:20Z).

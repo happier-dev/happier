@@ -57,12 +57,12 @@ export async function prepareSourceQaWebUi({ mode, retainsSelection = false, ...
 /** Stack starts reuse completed account-free exports through source publication.
  * Explicit outputDir callers keep their private finite producer boundary. */
 export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBaseDir, pending,
-  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, loadSentinelPasses, reuseOnly = false,
+  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, reuseOnly = false,
   sourceRevision, revision }) {
   if (stackBaseDir && !pending?.requestId) throw new Error('[source-ui] shared export requires its pending Stack start');
   if (stackBaseDir) {
     let built = await exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId: pending.requestId,
-      env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly, sourceRevision, revision });
+      env, signal, sourceCapturedAfter, requireLastGreen, reuseOnly, sourceRevision, revision });
     if (!built) return null;
     if (replaceUiDir) built = await pending.publishPreparation(() =>
       replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal }));
@@ -231,7 +231,7 @@ async function pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal }) {
 }
 
 async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, inputIdentity, buildOptions, env, signal,
-  sourceCapturedAfter, requireCurrentSource = false, requireLastGreen = false, loadSentinelPasses, revision, uiInputDigest, aliasRevision }) {
+  sourceCapturedAfter, requireCurrentSource = false, requireLastGreen = false, revision, uiInputDigest, aliasRevision }) {
   const adopt = publishedCandidate => adoptReusableSourceBundle({ bundleRoot, component: 'web', env, signal, publishedCandidate,
     candidateKey: uiInputDigest ? sourceWebUiInputCandidateKey({ repoDir, uiInputDigest })
       : revision ? sourceWebRevisionCandidateKey({ repoDir, revisionKey: sourceRevisionKey(revision) })
@@ -255,7 +255,7 @@ async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, req
   });
   if (!requireLastGreen || revision || uiInputDigest) return await adopt();
   const key = sourceWebCandidateKey({ repoDir, buildOptions });
-  const groups = await readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses });
+  const groups = await readGreenSourceRuntimeCandidateGroups({ bundleRoot });
   for (const group of groups) {
     const candidate = group.candidates.get(key);
     if (!candidate) continue;
@@ -265,7 +265,7 @@ async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, req
   return null;
 }
 
-async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly,
+async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, reuseOnly,
   sourceRevision, revision }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
@@ -276,7 +276,7 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   const requireCurrentSource = reuseOnly || context.consumerStackName === context.producerStackName;
   const adopt = async () => {
     const built = await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
-      env: context.env, signal, sourceCapturedAfter, requireCurrentSource, requireLastGreen, loadSentinelPasses, revision });
+      env: context.env, signal, sourceCapturedAfter, requireCurrentSource, requireLastGreen, revision });
     if (built) console.error(`[source-ui] adopted producer=${context.producerStackName} rev=${built.sourceCapture?.revision ?? 'checkout'}${revision && built.sourceCapture?.revision !== revision.revision ? ` for requested rev ${revision.revision} (identical UI inputs)` : ''} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}${built.buildOptions && built.buildOptions !== buildOptions ? ' (built with the producer\'s UI options; this Stack\'s differ)' : ''}`);
     return built;
   };
@@ -293,7 +293,7 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
     // A revision request may adopt the shared export of another revision; the
     // capture boundary and last-green requirements still apply.
     const shared = revision ? await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
-      env: context.env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses }) : null;
+      env: context.env, signal, sourceCapturedAfter, requireLastGreen }) : null;
     if (shared) console.error(`[source-ui] adopted the shared export producer=${context.producerStackName} rev=${shared.sourceCapture?.revision ?? 'checkout'} capturedAt=${shared.sourceCapture?.capturedAt}${revision ? ` (requested rev ${sourceRevisionKey(revision)}; no export for it yet)` : ''}`);
     return shared;
   }

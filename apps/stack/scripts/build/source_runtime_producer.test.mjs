@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat, rm, utimes } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat, utimes } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -177,18 +177,12 @@ test('completed adoption bypasses busy producer and fingerprint leases', { skip:
   const bundleRoot = join(dirname(stacks[0]), 'source-bundles');
   // Prior development producers wrote these exact three locator fields.
   // The current context locator still proves the successful whole producer.
-  let publishedAt = 0;
   for (const name of await readdir(bundleRoot)) {
     if (!name.startsWith('candidate-') || !name.endsWith('.json')) continue;
     const path = join(bundleRoot, name);
     const { outputName, inputIdentity, reuseFingerprint } = JSON.parse(await readFile(path, 'utf8'));
     await writeFile(path, JSON.stringify({ outputName, inputIdentity, reuseFingerprint }));
-    publishedAt = Math.max(publishedAt, (await lstat(path)).mtimeMs);
   }
-  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-  await mkdir(dirname(history), { recursive: true });
-  const passedAt = new Date(Math.ceil(publishedAt)).toISOString();
-  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   const { sourceBundleBuildLockPath, sourceRuntimeProducerBuildLockPath } = await import(pathToFileURL(native.runtimePath));
   await withWorkspaceBundleLock(() => withWorkspaceBundleLock(async () => {
     const adopted = await native.build({ ...options, requireLastGreen: true, env: { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' } });
@@ -199,54 +193,34 @@ test('completed adoption bypasses busy producer and fingerprint leases', { skip:
   { lockPath: sourceRuntimeProducerBuildLockPath(stacks[0]), env, signal: t.signal });
 });
 
-test('last-green reload selection uses the post-producer sentinel verdict and retains the incumbent when none passed', { skip: process.platform !== 'linux' }, async t => {
+// Owner ruling 11-17 retired the load sentinel; nothing writes its PASSes any more, so
+// gating on them refused every plain checkout reload (P03-SPLIT-AUDIT-A P1-2). The reload's
+// own readiness checks prove the load; the last green is the newest completed producer run.
+test('last-green reload selection adopts the newest completed producer capture without a sentinel verdict', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
   const { prepareSourceRuntimeProducer } = await import(pathToFileURL(native.runtimePath));
   const options = { repoDir, stackBaseDir: stacks[0], components: [{ component: 'daemon' }], env, signal: t.signal };
   const first = (await prepareSourceRuntimeProducer(options)).daemon;
-  await assert.rejects(prepareSourceRuntimeProducer({ ...options, requireLastGreen: true }),
-    { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' });
-  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-  await mkdir(dirname(history), { recursive: true });
-  const startedAt = new Date().toISOString();
-  await writeFile(history, `${startedAt} PASS failed=0 passStartedAt~${startedAt} passEndedAt~${startedAt} graphs=5\n`);
-  await assert.rejects(prepareSourceRuntimeProducer({ ...options, requireLastGreen: true, loadSentinelPasses: [] }),
-    { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' },
-    'an explicitly forwarded empty verdict must not be replaced by a worker-local history');
+  assert.equal((await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true })).daemon.entrypoint, first.entrypoint,
+    'a completed producer capture is adoptable with no sentinel history');
   await writeFile(entry, 'export const value = 2;');
   const second = (await prepareSourceRuntimeProducer({ ...options, sourceCapturedAfter: Date.now() })).daemon;
   assert.notEqual(second.entrypoint, first.entrypoint);
-  const adopted = (await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true })).daemon;
-  assert.equal(adopted.entrypoint, first.entrypoint, 'a newer producer completion without its post-capture sentinel PASS cannot replace the last green');
+  assert.equal((await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true })).daemon.entrypoint, second.entrypoint,
+    'the newest completed producer capture is the last green');
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
-  const passedAt = new Date().toISOString();
-  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`, { flag: 'a' });
-  const { readLoadSentinelPasses } = await import('../perf/load-sentinel.mjs');
-  const loadSentinelPasses = await readLoadSentinelPasses(repoDir);
-  await rm(history);
-  // Ordinary remote starts invoke --restart, rather than the reload worker.
+  // Ordinary remote starts carry no sentinel facts to the worker.
   const { buildRemoteStackCommand } = await import('../utils/dev_targets/remote_commands.mjs');
-  const { resolveSourceRuntimeReloadArguments } = await import('../runtime/launch/prepareSourceRuntimeReload.mjs');
   const command = buildRemoteStackCommand({ name: 'worker', platform: 'posix', ssh: 'worker',
     repoDir: '/remote/repo', cliHomeDir: '/remote/home' }, {
-    services: { daemon: true }, serverUrl: 'http://127.0.0.1:43005', stackName: 'qa',
-    runtimeMode: 'source-snapshot', env: {}, loadSentinelPasses,
+    services: { daemon: true }, serverUrl: 'http://127.0.0.1:43005', stackName: 'qa', runtimeMode: 'source-snapshot', env: {},
   });
-  const transportedValue = /--source-load-sentinel-passes='([^']+)'/.exec(command.replaceAll("'\"'\"'", "'"))?.[1];
-  const transported = transportedValue == null ? undefined : `--source-load-sentinel-passes=${transportedValue}`;
-  const workerRequest = resolveSourceRuntimeReloadArguments({ args: ['--restart', ...(transported ? [transported] : [])] });
-  assert.equal((await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true,
-    loadSentinelPasses: workerRequest.loadSentinelPasses })).daemon.entrypoint, second.entrypoint,
-    'the worker adopts the newest producer from the forwarded sentinel verdict without a local HISTORY file');
+  assert.equal(command.includes('sentinel'), false);
 });
 
 test('an explicit daemon-only reload boundary adopts an unchanged capture without compiling', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, compilers, env, stacks } = await createProducerFixture(t);
   const first = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env });
-  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-  await mkdir(dirname(history), { recursive: true });
-  const passedAt = new Date().toISOString();
-  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   const sourceCapturedAfter = Date.now();
   let capture;
   await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], onHost: true,
@@ -319,10 +293,6 @@ test('real source reload adopts a coherent producer pair and waits for activatio
     const pointerTime = new Date(legacyCompletedAt + locatorIndex++);
     await utimes(locatorPath, pointerTime, pointerTime);
   }
-  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
-  await mkdir(dirname(history), { recursive: true });
-  const passedAt = new Date().toISOString();
-  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   let activate;
   const activation = new Promise(resolve => { activate = resolve; });
   let capture;

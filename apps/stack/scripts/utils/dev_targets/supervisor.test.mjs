@@ -1884,20 +1884,17 @@ test(`remote source preparation carries ${reportsTimes ? 'separate source times'
   const diagnostics = [];
   const requestStartedAt = Date.parse('2026-10-29T12:00:00.000Z');
   const request = resolveSourceRuntimeReloadArguments({ args: ['--ui=export', `--source-after=${new Date(requestStartedAt).toISOString()}`], requestStartedAt });
-  const loadSentinelPasses = [{ startedAt: '2026-10-29T12:04:00.000Z', endedAt: '2026-10-29T12:05:00.000Z' }];
   const uploads = [];
   const prepared = await prepareStackDevTargetSourceReload({ stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), repoDir,
     placement: { authority: { producerStackBaseDir }, config: { targets }, targetPlans: targets.map(target =>
       ({ target, services: { server: target.name === 'server', daemon: target.name === 'daemon', expo: false } })) },
-    args: request.args, env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'source-times', loadSentinelPasses,
+    args: request.args, env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'source-times',
     sourceRevisionDescriptorPath: join(root, 'revision.json.gz'),
     onLog: line => diagnostics.push(line),
   }, { runProcess: async () => syncReady, transferFile: async upload => { uploads.push(upload); }, executorDependencies: {
     runCaptureResult: async () => ({ ok: true, out: syncReady.out, err: '', exitCode: 0 }),
     spawnProcess: input => {
       const component = input.args.includes('server-ssh') ? 'server' : 'daemon';
-      assert.ok(input.args.at(-1).includes('loadSentinelPasses'), 'remote worker receives the controller sentinel facts');
-      assert.ok(input.args.at(-1).includes(loadSentinelPasses[0].endedAt), 'remote worker receives the completed pass unchanged');
       const shipped = uploads.find(upload => upload.target.name === component);
       assert.ok(shipped && input.args.at(-1).includes(`--source-revision=${shipped.remotePath}`),
         `${component} host receives the controller's revision description (mirrors have no Git metadata)`);
@@ -2074,8 +2071,6 @@ test('source snapshot supervisor builds on each mirror without native transfer o
       const child = { ...input, pid: process.pid, exitCode: null }; spawned.push(child);
       if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
         if (admission === 'ready') assert.match(input.args.at(-1), /--source-after=.*2026-11-13T09:50:03Z/);
-        assert.ok(input.args.at(-1).includes('--source-load-sentinel-passes='),
-          'ordinary source starts must carry controller sentinel facts to worker reload preparation');
         const target = targets.find(target => input.args.includes(target.ssh));
         if (admission === 'refused') {
           input.onLine?.({ stream: 'stderr', line: 'HSTACK_SOURCE_RELOAD_REFUSAL=' + JSON.stringify(readSourceReloadRefusal(producerRefusal)) });

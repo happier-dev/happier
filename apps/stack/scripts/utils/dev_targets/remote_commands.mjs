@@ -2639,7 +2639,6 @@ function resolveRemoteStackStartInvocation(target, {
   sourceSelectionRollback = false,
   sourceStartRequestId,
   sourceCapturedAfter,
-  loadSentinelPasses,
 }) {
   const normalizedServices = {
     server: services?.server === true,
@@ -2749,11 +2748,6 @@ function resolveRemoteStackStartInvocation(target, {
     publicServerUrl: stablePublicServerUrl,
     startMobile,
   });
-  // Per-invocation sentinel facts travel with ordinary remote starts too: these
-  // invoke --restart and prepare on the worker, whose HISTORY is not synced.
-  if (runtimeMode === 'source-snapshot' && loadSentinelPasses != null) {
-    devArgs.push(`--source-load-sentinel-passes=${JSON.stringify(loadSentinelPasses)}`);
-  }
   // Per-start diagnostics travel as arguments, never retained Stack environment.
   if (normalizedServices.server && env.HAPPIER_STACK_SERVER_CPU_PROF === '1') devArgs.push('--server-cpu-prof');
   return {
