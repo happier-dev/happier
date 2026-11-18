@@ -5037,7 +5037,7 @@ export const en = {
             installTitle: 'Install Agy ACP server?',
             updateTitle: 'Update Agy ACP server?',
             reinstallTitle: 'Reinstall Agy ACP server?',
-            description: 'This installs the official pinned Agy ACP server used for Agy sessions. The interactive agy CLI stays separately installed.',
+            description: 'This installs the official pinned Agy ACP server used for Agy sessions with a connected account. Sessions with your own agy login run on the separately installed agy CLI.',
         },
         githubCliBanner: {
             title: 'GitHub CLI',

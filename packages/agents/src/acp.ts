@@ -76,9 +76,9 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
   },
   agy: {
     agentId: 'agy',
-    // The interactive CLI remains `agy`; the CLI catalog replaces this launch
-    // command with the ensured managed registry artifact for ACP sessions.
-    launcher: { command: providerLauncherCommand('agy'), args: [] },
+    // Native-login sessions run the CLI's own ACP server. The CLI catalog launches the
+    // ensured pinned `agy_acp_server` instead for connected accounts and its own sessions.
+    launcher: { command: providerLauncherCommand('agy'), args: ['acp'] },
     transportProfile: 'generic',
     supportsLoadSession: true,
     supportsModes: 'auto',

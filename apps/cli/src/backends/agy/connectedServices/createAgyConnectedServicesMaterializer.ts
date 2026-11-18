@@ -11,9 +11,9 @@ import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedS
 import { readConnectedServiceStateSharingManifest, writeConnectedServiceStateSharingManifest } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { logger } from '@/ui/logger';
-import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { resolveConnectedServiceHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
+import { resolvePinnedAgyAcpServerHome } from '../acp/pinnedAgyAcpServer';
 import { parseAgyNativeCredential } from '../cloud/nativeCredentials';
 import { agyConnectedServiceStateSharingDescriptor } from './agyConnectedServiceStateSharingDescriptor';
 import { resolveConnectedAccountOauthConfig } from '@/daemon/connectedServices/descriptors/connectedAccountDescriptors';
@@ -36,9 +36,7 @@ export function createAgyConnectedServicesMaterializer(): ConnectedServicesProvi
     const policy = resolveConnectedServicesProviderStateSharingPolicyV1(settings?.connectedServicesProviderStateSharingSettingsV1, 'agy');
     const sourceEnv = params.processEnv ?? process.env;
     const oauthConfig = resolveConnectedAccountOauthConfig('antigravity', sourceEnv);
-    const nativeHome = sourceEnv.GEMINI_HOME?.trim()
-      ? expandHomeDirPath(sourceEnv.GEMINI_HOME.trim(), sourceEnv)
-      : join(resolveHomeDirFromEnvironment(sourceEnv), '.gemini');
+    const nativeHome = resolvePinnedAgyAcpServerHome(sourceEnv);
     const write = async () => {
       const existingManifest = await readConnectedServiceStateSharingManifest(home);
       const tokenPath = join(home, 'antigravity-acp', 'acp_token.json');

@@ -5330,7 +5330,7 @@ export const ru: TranslationStructure = {
         installTitle: "Установить сервер Agy ACP?",
         updateTitle: "Обновить сервер Agy ACP?",
         reinstallTitle: "Переустановить сервер Agy ACP?",
-        description: "Это установит официальный закреплённый сервер Agy ACP, который используется для сессий Agy. Интерактивный CLI agy устанавливается отдельно.",
+        description: "Это установит официальный закреплённый сервер Agy ACP, который используется для сессий Agy с подключенным аккаунтом. Сессии с вашим собственным входом в agy работают через отдельно установленный CLI agy.",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

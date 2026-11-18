@@ -54,6 +54,13 @@ describe('AGENTS_CORE cloudConnect status', () => {
         supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
       },
     });
+    expect(AGENTS_CORE.agy.connectedServices?.sessionAuthSwitch).toEqual({
+      continuityMode: 'restart_shared_state_required',
+      supportedTransitions: ['same_connected_group'],
+      providerStateSharingRequired: {
+        supportedTransitions: ['connected_to_connected'],
+      },
+    });
   });
 
   it('advertises Codex provider state sharing capabilities from the shared catalog', () => {

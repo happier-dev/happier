@@ -751,8 +751,11 @@ export interface AcpBackendOptions {
   /** Environment variables to pass to the agent */
   env?: NodeJS.ProcessEnv;
 
-  /** Provider-owned, process-scoped launch materialization performed immediately before spawn. */
-  prepareProcessLaunch?: () => Promise<Readonly<{
+  /**
+   * Provider-owned, process-scoped launch materialization performed immediately before spawn.
+   * `loadSessionId` names the provider session the process is spawned to load, if any.
+   */
+  prepareProcessLaunch?: (context: Readonly<{ loadSessionId: string | null }>) => Promise<Readonly<{
     command?: string;
     args?: readonly string[];
     env?: NodeJS.ProcessEnv;
@@ -1454,7 +1457,7 @@ export class AcpBackend implements AgentBackend {
     };
   }
 
-  private async createConnectionAndInitialize(params: { operationId: string }): Promise<{
+  private async createConnectionAndInitialize(params: { operationId: string; loadSessionId?: string }): Promise<{
     initTimeout: number;
     negotiatedSessionLoadSupport: boolean;
     negotiatedSessionCapabilities: NegotiatedAcpSessionCapabilities;
@@ -1467,7 +1470,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   /** Finalize the launch environment before ACP setup so the process and its journal observer share one configuration. */
-  private async createUnlockedConnectionAndInitialize(params: { operationId: string }): Promise<{
+  private async createUnlockedConnectionAndInitialize(params: { operationId: string; loadSessionId?: string }): Promise<{
     initTimeout: number;
     negotiatedSessionLoadSupport: boolean;
     negotiatedSessionCapabilities: NegotiatedAcpSessionCapabilities;
@@ -1489,7 +1492,7 @@ export class AcpBackend implements AgentBackend {
       if (this.disposed) {
         throw new Error('Backend has been disposed');
       }
-      const preparedLaunch = await this.options.prepareProcessLaunch?.();
+      const preparedLaunch = await this.options.prepareProcessLaunch?.({ loadSessionId: params.loadSessionId ?? null });
       this.processLaunchCleanup = preparedLaunch?.cleanup ?? null;
       // dispose() may have finished during the awaits above; it found no child to stop.
       if (this.disposed) {
@@ -2280,7 +2283,10 @@ export class AcpBackend implements AgentBackend {
     this.toolCalls.reset();
 
     try {
-      const { initTimeout, negotiatedSessionLoadSupport } = await this.createConnectionAndInitialize({ operationId: randomUUID() });
+      const { initTimeout, negotiatedSessionLoadSupport } = await this.createConnectionAndInitialize({
+        operationId: randomUUID(),
+        loadSessionId: normalized,
+      });
       if (this.options.declaredSessionLoadSupport === true && !negotiatedSessionLoadSupport) {
         throw new Error(
           `Configured ACP backend '${this.options.agentName}' advertises session/load in its catalog but did not negotiate loadSession during ACP initialize.`,

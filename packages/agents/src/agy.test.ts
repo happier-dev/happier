@@ -35,7 +35,7 @@ describe('agy shared agent facts (EU-3)', () => {
     });
   });
 
-  it('authenticates the managed ACP server from the local login terminal', () => {
+  it('signs in through the Happier login command from the local login terminal', () => {
     const localCli = AGENT_LOCAL_CLI_CONFIG['agy' as keyof typeof AGENT_LOCAL_CLI_CONFIG] as unknown as Record<string, unknown> | undefined;
     expect(localCli).toMatchObject({
       agentId: 'agy',

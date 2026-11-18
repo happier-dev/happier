@@ -27,6 +27,17 @@ describe('AGY restart continuity through the provider catalog', () => {
       mode: 'restart_shared_state_required', reason: 'agy_shared_state_required',
     });
   });
+  it.each(['native_to_connected', 'connected_to_native'] as const)('refuses %s because native login and connected accounts keep separate conversations', async (transition) => {
+    const native = {
+      binding: { source: 'native', selection: 'native', serviceId: 'antigravity', profileId: null, groupId: null },
+      bindings: { v: 1, bindingsByServiceId: { antigravity: { source: 'native' } } },
+    } as const;
+    const connected = { binding: params().nextBinding, bindings: params().toBindings };
+    const [from, to] = transition === 'native_to_connected' ? [native, connected] : [connected, native];
+    await expect(resolveConnectedServiceSwitchContinuity('agy', {
+      ...params(), previousBinding: from.binding, nextBinding: to.binding, fromBindings: from.bindings, toBindings: to.bindings,
+    })).resolves.toMatchObject({ mode: 'unsupported', reason: 'agy_native_connected_switch_unsupported' });
+  });
 
   it('proves only the selected target DB, sidecar and brain; native history and candidate hints cannot substitute', async () => {
     await withTempDir('agy-resume-', async (cwd) => {

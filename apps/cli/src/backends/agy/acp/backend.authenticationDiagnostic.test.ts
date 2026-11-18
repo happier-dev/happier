@@ -1,3 +1,4 @@
+import { chmod } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
@@ -12,7 +13,7 @@ describe('Antigravity ACP authentication setup diagnostics', () => {
   ])('retains only the fixed setup category for $code/$reason', async scenario => {
     await withTempDir('agy-auth-diagnostic-', async dir => {
       // A synthetic ACP subprocess is the genuine provider/SDK boundary; no credentials are read.
-      const script = writeAcpTestAgentScript({ dir, fileName: 'auth-failure.cjs', source: `
+      const script = writeAcpTestAgentScript({ dir, fileName: 'agy', source: `#!${process.execPath}
         const readline = require('node:readline');
         readline.createInterface({ input: process.stdin }).on('line', line => {
           const request = JSON.parse(line);
@@ -25,7 +26,8 @@ describe('Antigravity ACP authentication setup diagnostics', () => {
           process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...response }) + '\\n');
         });
       ` });
-      const backend = createAgyAcpBackend({ cwd: dir, launch: { command: process.execPath, args: [script] } });
+      await chmod(script, 0o755);
+      const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: script } });
       try {
         const failure = await backend.startSession().catch((error: unknown) => error);
         expect(failure).toBeInstanceOf(Error);

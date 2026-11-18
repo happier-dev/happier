@@ -113,15 +113,16 @@ Sign in to Happier first. From the CLI on the machine holding the native login,
 choose a destination profile:
 
 ```bash
-happier connect agy --import --source acp --profile work
+happier connect agy --import --source cli --profile work
 happier connect claude --import --source native --profile work
 happier connect codex --import --source native --profile work
 ```
 
 The app's import action selects the machine that holds the login. Each agent
 declares the sources it can read; unavailable native storage is reported rather
-than substituted silently. Antigravity's managed ACP login and native `agy`
-login are separate sources.
+than substituted silently. Antigravity's native `agy` login (`cli`, which
+`happier agy auth login` signs in) and the pinned ACP server login from earlier
+builds (`acp`) are separate sources.
 
 Import copies the credential into Happier's encrypted account storage. It does
 not switch the native agent's login. The copied login can share a refresh grant

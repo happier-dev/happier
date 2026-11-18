@@ -78,7 +78,8 @@ describe('selected AGY discovery process and temporary-state custody', () => {
       await writeFile(join(install, 'install-state.json'), JSON.stringify({ installedVersion: AGY_ACP_SERVER_VERSION,
         executableSha256: createHash('sha256').update(fixture).digest('hex'), executableSize: metadata.size, executableMtimeMs: metadata.mtimeMs }));
       await expect(verifyExistingAgyAcpManagedBinPath()).resolves.toBe(executable);
-      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: process.env, cwd });
+      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: { ...process.env,
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'a' }]) }, cwd });
       expect(validation, JSON.stringify(validation)).toMatchObject({ ok: true });
       const controller = new AbortController();
       const { manager } = createEncryptedRpcTestClient({ scopePrefix: 'agy-auth-discovery', registerHandlers: registerCapabilitiesHandlers });
