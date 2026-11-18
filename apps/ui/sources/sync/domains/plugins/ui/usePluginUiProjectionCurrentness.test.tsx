@@ -321,6 +321,40 @@ describe('usePluginUiProjectionCurrentness', () => {
         delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
     });
 
+    it('does not reacquire a Services column declaration while its pane is hidden', async () => {
+        const { ServiceColumnResources, useServiceColumnValue } = await import('@/components/projects/deployments/ServiceColumnResources');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { admitPluginListFilterFieldV1 } = await import('@happier-dev/plugin-sdk/ui');
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const pluginId = 'acme.preview';
+        const admitted = admitPluginListFilterFieldV1({ pluginId, factKeys: new Set(), field: {
+            id: 'requests', title: 'Requests', source: { resource: 'status' }, value: { kind: 'number', unit: '{request}' },
+        } });
+        if (admitted.kind !== 'admitted') throw new Error('Expected a contributed Services column');
+        const field = admitted.field;
+        function Cell() {
+            useServiceColumnValue({ environmentId: 'environment-1', collectorMachineId: 'machine-1', pluginId, field });
+            return null;
+        }
+        projectionRuntime.describe.mockResolvedValue(supportedProjection('Catalog'));
+        const view = (presented: boolean) => (
+            <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <ServiceColumnResources projection={null} lifetime={lifetime}><Cell /></ServiceColumnResources>
+            </PluginSurfaceFocusEligibilityProvider>
+        );
+        const screen = await renderWithAppProviders(view(true));
+        try {
+            const describe = projectionRuntime.describe;
+            await waitForHomeGovernance(() => expect(describe).toHaveBeenCalledTimes(1));
+            await screen.update(view(false));
+            await act(async () => { invalidateProjection(); });
+            await flushHookEffects();
+            expect(describe).toHaveBeenCalledTimes(1);
+            await screen.update(view(true));
+            await waitForHomeGovernance(() => expect(describe).toHaveBeenCalledTimes(2));
+        } finally { await screen.unmount(); }
+    });
+
     it.each([false, true])('settles scoped Search independently of slow full demand (concurrent full: %s)', async concurrentFull => {
         const { buildPluginSearchProviderSections } = await import('@/components/appShell/search/pluginSearchProviderSections');
         const { PLUGIN_SEARCH_SECTIONS, useScopedPluginUiProjection } = await import('@/components/plugins/projection/useScopedPluginUiProjection');

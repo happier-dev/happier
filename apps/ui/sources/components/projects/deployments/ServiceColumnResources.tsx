@@ -11,6 +11,7 @@ import { readPluginUiResourceProjection, type PluginUiProjectionModel } from '@/
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { slicePluginSections } from '@/sync/domains/plugins/ui/projectionSections';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
 import { isTelemetryServiceColumnResource, projectServiceColumnResourceValues, type ServiceColumnValue } from './serviceColumnResourceValues';
@@ -63,13 +64,15 @@ export function ServiceColumnResources(props: Readonly<{ projection: PluginUiPro
 function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly ServiceColumnDemand[];
   projection: PluginUiProjectionModel | null; lifetime: ActiveServerAccountScopeLifetime }>) {
   const first = props.demands[0]!;
+  const presented = useLayoutPresentationActive();
   const declared = readPluginUiResourceProjection(props.projection?.resourcesById, first.resource);
   const account = declared?.execution?.target === 'account';
   const [reloadRevision, reload] = React.useReducer((revision: number) => revision + 1, 0);
   const sections = React.useMemo(() => slicePluginSections(['resourcesById'], first.resource.pluginId), [first.resource.pluginId]);
   // Global declarations name the column. The existing per-Machine owner admits the actual collector's executable Resource.
   const current = usePluginUiProjectionCurrentness({ serverId: props.lifetime.scope.serverId,
-    machineId: first.collectorMachineId, enabled: !account && first.collectorMachineId !== null, sections, reloadRevision });
+    machineId: first.collectorMachineId, enabled: !account && first.collectorMachineId !== null,
+    load: presented, sections, reloadRevision });
   const projection = account ? props.projection : current.pluginUiProjection;
   const declaration = readPluginUiResourceProjection(projection?.resourcesById, first.resource);
   const environmentIds = [...new Set(props.demands.map(demand => demand.environmentId))].sort();
