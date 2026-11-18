@@ -22,7 +22,7 @@ import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, De
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { databaseActionMetadata, readAutomationDatabaseSubjectV1, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { databaseActionMetadata, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -106,6 +106,9 @@ describe('deployment scoped read transport', () => {
         const disabled = kind === 'deployment_service_disabled';
         const nativeKind = kind !== 'managed_deployment';
         const exactEnvironment = kind === 'selected_environment';
+        // QA-B E14: the native PostgreSQL template names its service database and its database happier.
+        const service = exactEnvironment ? 'database' : 'postgres';
+        const databaseName = exactEnvironment ? 'happier' : 'receipt-database';
         const serverIdentityId = 'srv_database_size';
         const serverId = await homes.addHome({ name: 'Database size', serverUrl: 'https://database-size.test',
             serverIdentityId, accountId: 'account-owner', currentAccount: true, active: false });
@@ -115,19 +118,19 @@ describe('deployment scoped read transport', () => {
             controllerMachineId: 'controller', runtimeTargetLinkId: 'runtime-link' }) });
         const content = { ...detail.content, template: {
             templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version' as const, version: '1' } },
-            definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres'],
-            data: kind === 'managed_deployment' ? [] : [{ service: 'postgres', engine: 'postgres' as const }] } };
+            definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: [service],
+            data: kind === 'managed_deployment' ? [] : [{ service, engine: 'postgres' as const }] } };
         const environmentRef = { serverId, projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id };
         const runtimeLink = createDeploymentTargetLinkHeaderV1({ id: 'runtime-link', environmentId: detail.environment.id,
             activeDeploymentId: 'serving-receipt', machines: ['member'],
             members: [{ machineId: 'member', installationId: 'member-installation', state: 'active' }] });
         const runtimeMember = runtimeLink.members[0]!;
         const native: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: environmentRef,
-            targetLinkId: 'runtime-link', deploymentId: 'serving-receipt', serviceId: 'postgres', database: 'receipt-database' },
+            targetLinkId: 'runtime-link', deploymentId: 'serving-receipt', serviceId: service, database: databaseName },
             engine: 'postgresql', label: 'Postgres', origin: { label: 'Active deployment' }, capabilities: [],
             placement: { serverId, accountId: 'account-owner', machineId: runtimeMember.machineId, installationId: runtimeMember.installationId },
             automationSubject: { ok: true, subject: { kind: 'database', serverId,
-                target: { kind: 'environment', environmentId: detail.environment.id, service: 'postgres', database: 'receipt-database' } } } };
+                target: { kind: 'environment', environmentId: detail.environment.id, service, database: databaseName } } } };
         const nativeWithoutSubject: DatabaseDescriptorV1 = (({ automationSubject: _automationSubject, ...descriptor }) => descriptor)(native);
         const managed = (database: string): DatabaseDescriptorV1 => ({ ...native,
             target: { kind: 'managed_deployment', environment: environmentRef, targetLinkId: 'managed-link',
@@ -189,7 +192,7 @@ describe('deployment scoped read transport', () => {
             execute: (value, context) => {
                 invocations.push(context.envelope);
                 sizeInputs.push(value);
-                return { ok: true, size: { service: 'postgres', deploymentId: 'serving-receipt',
+                return { ok: true, size: { service, deploymentId: 'serving-receipt',
                     size: { status: 'available', bytes: 4096, measurement: 'database_bytes', observedAtMs: 1 },
                     growth: { status: 'unavailable', reason: 'previous_sample_required' } } };
             } });
@@ -213,20 +216,21 @@ describe('deployment scoped read transport', () => {
                 expect(homes.requests.filter(request => new URL(request.path, 'https://home.invalid').pathname === '/v1/deployments/data-services')).toHaveLength(1);
             }
             if (nativeKind) {
-                expect(page, JSON.stringify({ page, sizeInputs })).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
+                expect(page, JSON.stringify({ page, sizeInputs })).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service,
                     deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
                 expect(sizeInputs).toMatchObject([{ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
-                    service: 'postgres', targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
+                    service, targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
                     machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }]);
                 if (exactEnvironment) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
-                    postgres: readAutomationDatabaseSubjectV1(serverId, native.target),
+                    [service]: { ok: true, subject: { kind: 'database', serverId,
+                        target: { kind: 'environment', environmentId: detail.environment.id, service, database: databaseName } } },
                 } }] } });
                 expect(invocations).toMatchObject(exactEnvironment ? [
                     { target: { kind: 'machine', machineId: 'controller' }, input: {
                         action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId } } },
-                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
+                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service } },
                 ] : [
-                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
+                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service } },
                 ]);
             } else {
                 expect(page).toMatchObject({ ok: true, value: { items: inventory.map(({ environment }) => ({
