@@ -1877,7 +1877,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     workflowAction: workflowActionPort,
     automationOccurrenceAction: createCliOccurrenceAction(params, {
       serverId: projectHomeId, serverHttpBaseUrl: todoHomeBaseUrl, accountId: homeAccountId,
-    }),
+    }, resolveServerRequestHeaders),
 
     automationConversationAction: async (args) => automationConversationAction
       ? await automationConversationAction(args)

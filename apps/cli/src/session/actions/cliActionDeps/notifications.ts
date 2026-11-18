@@ -2,7 +2,8 @@ import { SAVED_HEALTH_ALERT_TEST_ACTION_ID, WEBHOOK_NOTIFICATION_TEST_ACTION_ID 
 import type { CliActionDepsParams } from './types';
 import type { postWebhookJsonAsync, WebhookDestinationAdmissionError } from '@/notifications/activity/sendWebhookActivityNotification';
 import { randomUUID } from 'node:crypto';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -101,6 +102,31 @@ export function createCliNotificationCatalogForHost(params: CliNotificationCatal
 }
 
 export function createCliNotificationActionDeps(
+  params: CliNotificationCatalogHost,
+  workflowAction: ActionExecutorDeps['workflowAction'] | null,
+): Pick<ActionExecutorDeps, 'notificationChannelsList' | 'webhookCall' | 'notificationsNotifyMe' | 'notificationConfigurationAction' | 'prepareNotificationTestApproval'> {
+  const forCaller = (context: ActionExecutorContext) => {
+    const credentials = params.savedSecretOperationContext?.credentials ?? params.credentials;
+    if (!credentials) return createCliNotificationActionDepsForHost(params, workflowAction);
+    const custody = resolveRequesterSavedSecretActionCustody({ credentials,
+      authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
+    return createCliNotificationActionDepsForHost({ ...params, credentials: custody.credentials,
+      savedSecretOperationContext: custody.operation,
+      serverHttpBaseUrl: custody.operation?.serverHttpBaseUrl ?? params.serverHttpBaseUrl,
+      // The admitted requester operation owns its lifetime, independently of the daemon Account.
+      isCredentialCurrent: context.externalActionExecutionAuthorization ? undefined : params.isCredentialCurrent,
+    }, workflowAction);
+  };
+  const host = createCliNotificationActionDepsForHost(params, workflowAction);
+  return { ...host,
+    notificationChannelsList: async context => forCaller(context).notificationChannelsList!(context),
+    notificationsNotifyMe: async (input, context) => forCaller(context).notificationsNotifyMe!(input, context),
+    notificationConfigurationAction: async args => forCaller(args.context).notificationConfigurationAction!(args),
+    prepareNotificationTestApproval: async args => forCaller(args.context).prepareNotificationTestApproval!(args),
+  };
+}
+
+function createCliNotificationActionDepsForHost(
   params: CliNotificationCatalogHost,
   workflowAction: ActionExecutorDeps['workflowAction'] | null,
 ): Pick<ActionExecutorDeps, 'notificationChannelsList' | 'webhookCall' | 'notificationsNotifyMe' | 'notificationConfigurationAction' | 'prepareNotificationTestApproval'> {

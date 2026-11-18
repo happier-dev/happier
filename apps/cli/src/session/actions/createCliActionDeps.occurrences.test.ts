@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '@happier-dev/protocol/actions';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -80,6 +81,15 @@ describe('CLI occurrence Action composition', () => {
             }
             expect(writes).toEqual([{ operation: 'retry-reply-handoff', body: undefined },
                 { operation: 'deliver-result-again', body: { expectedRevision: 7 } }]);
+            if (surface === 'cli') {
+                const writesBeforePat = writes.length;
+                await expect(executor.execute('automation.run.result.redeliver', { runId: 'run-1', expectedRevision: 7 }, {
+                    ...context, externalActionCredential: { accountId: 'account-a', principalId: 'pat-principal',
+                        credentialId: 'pat-credential', grant: API_TOKEN_FULL_GRANT_V1 },
+                })).resolves.toMatchObject({ ok: false, errorCode: 'action_failed',
+                    details: { authorizationRefusalReason: 'external_credential_without_authorization' } });
+                expect(writes).toHaveLength(writesBeforePat);
+            }
             current = false;
             await expect(invoke('automation.run.result.redeliver', { runId: 'run-1', expectedRevision: 7 }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });

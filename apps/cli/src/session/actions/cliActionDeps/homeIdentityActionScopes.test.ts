@@ -17,7 +17,6 @@ import { createCliProfileActionExecuteV1 } from './createCliProfileActionDeps';
 import { createCliProviderActionExecuteV1 } from './createCliProviderActionDeps';
 import { createCliMcpServerActionExecuteV1 } from './createCliMcpServerActionDeps';
 import { createCliRemoteHostActionExecuteV1 } from './createCliRemoteHostActionDeps';
-import { createCliOccurrenceAction } from './occurrences';
 import { createCliSettingsDeclarationAction } from '../settingsDeclarationAction';
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -222,7 +221,8 @@ describe('Account Action Home identity admission', () => {
   });
   it('sends an occurrence mutation on its portable Home and rejects another Home', async () => {
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 409, data: { error: 'automation_run_revision_conflict' } });
-    const execute = createCliOccurrenceAction({ credentials }, { serverId: profileId, serverHttpBaseUrl: base, accountId: null });
+    const execute = createCliActionDeps({ credentials, token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
+      serverId: profileId, serverHttpBaseUrl: base }).automationOccurrenceAction!;
     const request = { actionId: 'automation.run.result.redeliver' as const, input: { runId: 'run', expectedRevision: 1 } };
     expect(await execute({ ...request, context: context() })).toMatchObject({ ok: false, errorCode: 'automation_run_revision_conflict' });
     expect(post).toHaveBeenCalledTimes(1);

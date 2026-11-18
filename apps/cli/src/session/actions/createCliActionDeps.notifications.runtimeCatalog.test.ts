@@ -50,6 +50,8 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import type { ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 function confirmedAccountInvocation(actionId: ActionId, input: unknown, accountId = 'account', machineId = 'notification-machine', directory?: string): ActionExecutorContext {
   const requestId = crypto.randomUUID();
@@ -110,7 +112,62 @@ describe('CLI Notify me host composition', () => {
     expect(JSON.stringify(result)).not.toContain('PRIVATE_');
   });
 
+  it('requires private requester custody before a signed notification can use daemon destinations', async () => {
+    const params = hostParams();
+    const operations = createHostActionOperationRuntime({ machineId: 'notification-machine', resolveAccountId: async () => 'account' });
+    const executor = createCliActionExecutorHarness(params, { runActionOperation: operations.runActionOperation }).executor;
+    const input = { message: 'Ready', channels: ['builtin:expo_push'] };
+    await expect(executor.execute('notifications.notify_me', input, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'notifications.notify_me' } }))
+      .resolves.toMatchObject({ ok: true, result: { deliveredChannels: 1 } });
+    boundary.get.mockClear();
+    boundary.send.mockClear();
+    await expect(executor.execute('notifications.notify_me', { ...input, open: { kind: 'session', sessionId: 'session-1' } },
+      confirmedAccountInvocation('notifications.notify_me', { ...input, open: { kind: 'session', sessionId: 'session-1' } })))
+      .resolves.toMatchObject({ ok: false, errorCode: 'client_required' });
+    expect(boundary.get).not.toHaveBeenCalled();
+    expect(boundary.send).not.toHaveBeenCalled();
+  });
+
+  it('uses admitted requester custody for channel discovery, Session links and push delivery', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const params = hostParams();
+    const home = 'https://notification-requester.test';
+    const credentials = { token: 'requester-notification-token', encryption: null };
+    const originalGet = boundary.get.getMockImplementation()!;
+    boundary.get.mockImplementation(async (url: string, options: unknown) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'requester' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      return originalGet(url, options);
+    });
+    const input = { message: 'Ready', channels: ['builtin:expo_push'], open: { kind: 'session' as const, sessionId: 'session-1' } };
+    const context = confirmedAccountInvocation('notifications.notify_me', input, 'requester');
+    const custody = await admitRequesterAccountActionContext({ authorization: context.externalActionExecutionAuthorization!,
+      credentials, serverId: 'notification-home', serverIdentityId: 'notification-home', serverHttpBaseUrl: home,
+      isCurrent: async () => true });
+    try {
+      expect(custody).not.toBeNull();
+      const operation = custody!.savedSecretOperationContext;
+      expect(await operation.commitNotificationChannelCatalog({ expectedSettingsVersion: 1,
+        catalog: notificationCatalogFixture(accountSettingsParse({})).notificationChannelCatalog })).toBe(true);
+      boundary.get.mockClear();
+      const deps = createCliActionDeps(params);
+      const requesterContext = { ...context, externalActionExecutionAuthorization: custody!.authorization };
+      await expect(deps.notificationChannelsList?.(requesterContext)).resolves.toMatchObject({ items: [{ value: 'builtin:expo_push' }] });
+      await expect(deps.notificationsNotifyMe?.(input, requesterContext))
+        .resolves.toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+      const reads = boundary.get.mock.calls.filter(([url]) => String(url).startsWith(home));
+      expect(reads.some(([url]) => String(url).includes('/v2/sessions/'))).toBe(true);
+      expect(reads.some(([url]) => String(url).endsWith('/v1/push-tokens'))).toBe(true);
+      expect(reads.every(([, options]) => options.headers.Authorization === `Bearer ${credentials.token}`)).toBe(true);
+      expect(boundary.get.mock.calls.every(([url]) => String(url).startsWith(home))).toBe(true);
+      expect(boundary.send).toHaveBeenCalled();
+    } finally { await custody?.dispose(); await channel.close(); }
+  });
+
   it.each(['ordinary', 'native-confirmed'] as const)('tests one configured webhook with its real signature, reports refusal, and retries only when invoked again (%s)', async admission => {
+    const channel = admission === 'native-confirmed' ? await createRequesterCurrentnessSocketHarness() : null;
+    let custody: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
     const observed: { body: Buffer; signature: string | undefined }[] = [];
     const receiver = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
@@ -149,6 +206,9 @@ describe('CLI Notify me host composition', () => {
           content: { v: 1, name: 'Signing', kind: 'other', value: secret } }) }] });
       // Account material hydration is a real HTTP boundary; the sender still uses the actual loopback socket.
       boundary.get.mockImplementation(async (url: string) => {
+        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account' } };
+        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
         expect(url).toBe(`${home}/v1/account/saved-secrets/resources/materials`);
         return { status: 200, data: { resources: signingAvailable ? materials.resources : [] } };
       });
@@ -164,8 +224,18 @@ describe('CLI Notify me host composition', () => {
       const actionId = 'notifications.webhooks.test';
       const context = { surface: 'cli' as const, actionsSettings: normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: { [actionId]: ['cli'] } }) };
-      const send = (channelId: string) => executor.execute(actionId, { channelId }, admission === 'native-confirmed'
-        ? confirmedAccountInvocation(actionId, { channelId }) : context);
+      const send = async (channelId: string) => {
+        if (admission !== 'native-confirmed') return executor.execute(actionId, { channelId }, context);
+        await custody?.dispose();
+        const confirmed = confirmedAccountInvocation(actionId, { channelId });
+        custody = await admitRequesterAccountActionContext({ authorization: confirmed.externalActionExecutionAuthorization!,
+          credentials: operation.credentials, serverId: 'notification-home', serverIdentityId: 'notification-home',
+          serverHttpBaseUrl: home, isCurrent: async () => true });
+        expect(custody).not.toBeNull();
+        expect(await custody!.savedSecretOperationContext.commitNotificationChannelCatalog({ expectedSettingsVersion: 1,
+          catalog: admittedSnapshot!.notificationChannelCatalog! })).toBe(true);
+        return executor.execute(actionId, { channelId }, { ...confirmed, externalActionExecutionAuthorization: custody!.authorization });
+      };
       await expect(send('test-channel'))
         .resolves.toEqual({ ok: true, result: { status: 'refused', reason: 'http_rejected', httpStatus: 503 } });
       expect(observed).toHaveLength(1);
@@ -193,6 +263,8 @@ describe('CLI Notify me host composition', () => {
         .resolves.toEqual({ ok: true, result: { status: 'unreachable', reason: 'ECONNREFUSED' } });
       expect(observed).toHaveLength(2);
     } finally {
+      await custody?.dispose();
+      await channel?.close();
       if (receiver.listening) { receiver.close(); await once(receiver, 'close'); }
     }
   });
