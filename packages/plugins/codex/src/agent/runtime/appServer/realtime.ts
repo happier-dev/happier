@@ -27,6 +27,7 @@ import {
   waitForCodexOperationOrAbort,
   type CodexRealtimeFeatureInspection,
 } from './realtimeFeatureInspection.js';
+import { readCodexAppServerErrorPayload } from './turns/errorPayload.js';
 
 const NATIVE_APPROVAL_GUIDANCE =
   'When a pending request needs a decision, read it aloud within the current sharing policy. '
@@ -105,10 +106,14 @@ function authenticationRequiredDiagnostic(
   ) {
     return null;
   }
+  const failureCause = realtimeUpstreamFailureCause(error, phase);
+  const reason = realtimeUpstreamReason(failureCause);
   return diagnostic(
     'codex_realtime_authentication_required',
-    'The selected Codex session must be connected again.',
-    projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
+    reason.length > 0
+      ? `The selected Codex session must be connected again (${reason}).`
+      : 'The selected Codex session must be connected again.',
+    failureCause,
   );
 }
 
@@ -160,6 +165,54 @@ function isGeneratedRealtimeErrorNotification(
   record: Readonly<Record<string, unknown>>,
 ): boolean {
   return typeof record.message === 'string';
+}
+
+function realtimeUpstreamFailureCause(
+  record: unknown,
+  phase: string,
+): ReturnType<typeof projectActionFailureCauseV1> {
+  const projected = projectActionFailureCauseV1(record, phase, { allowUnknownErrorCode: false });
+  const payload = readCodexAppServerErrorPayload(record);
+  if (!payload) return projected;
+  return {
+    ...projected,
+    ...(payload.httpStatus === undefined ? {} : { httpStatus: payload.httpStatus }),
+    ...(payload.upstreamErrorCode === undefined ? {} : { nativeErrorCode: payload.upstreamErrorCode }),
+    ...(payload.upstreamErrorType === undefined ? {} : { nativeErrorReason: payload.upstreamErrorType }),
+  };
+}
+
+function realtimeUpstreamReason(failureCause: ReturnType<typeof projectActionFailureCauseV1>): string {
+  const nativeErrorCode = 'nativeErrorCode' in failureCause ? failureCause.nativeErrorCode : undefined;
+  const nativeErrorReason = 'nativeErrorReason' in failureCause ? failureCause.nativeErrorReason : undefined;
+  return [
+    failureCause.httpStatus === null ? null : `HTTP ${failureCause.httpStatus}`,
+    nativeErrorCode === undefined ? null : `provider code ${nativeErrorCode}`,
+    nativeErrorReason === undefined ? null : `provider type ${nativeErrorReason}`,
+  ].filter((part): part is string => part !== null).join('; ');
+}
+
+function withRealtimeUpstreamReason(message: string, failureCause: ReturnType<typeof projectActionFailureCauseV1>): string {
+  const reason = realtimeUpstreamReason(failureCause);
+  return reason.length > 0 ? `${message} (${reason}).` : message;
+}
+
+function realtimeUpstreamDiagnostic(
+  record: Readonly<Record<string, unknown>>,
+  phase: string,
+  startup: boolean,
+): PluginDiagnosticData {
+  const failureCause = realtimeUpstreamFailureCause(record, phase);
+  const reason = realtimeUpstreamReason(failureCause);
+  return diagnostic(
+    'codex_realtime_upstream_error',
+    reason.length > 0
+      ? `Codex Realtime Voice reported an upstream error (${reason}).`
+      : startup
+        ? 'Codex Realtime Voice reported an upstream error during startup.'
+        : 'Codex Realtime Voice reported an upstream error.',
+    failureCause,
+  );
 }
 
 function isGeneratedRealtimeClosedNotification(
@@ -779,13 +832,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           return;
         }
         const eventDiagnostic = authenticationRequiredDiagnostic(record, 'codex.realtime.upstream')
-          ?? diagnostic(
-            'codex_realtime_upstream_error',
-            target.phase === 'active'
-              ? 'Codex Realtime Voice reported an upstream error.'
-              : 'Codex Realtime Voice reported an upstream error during startup.',
-            projectActionFailureCauseV1(record, 'codex.realtime.upstream', { allowUnknownErrorCode: false }),
-        );
+          ?? realtimeUpstreamDiagnostic(record, 'codex.realtime.upstream', target.phase !== 'active');
         if (target.phase === 'active') {
           target.phase = 'terminal';
           const cleanup = requestStop(target);
@@ -933,8 +980,11 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           ) {
             const rejectionDiagnostic = authDiagnostic ?? diagnostic(
               'codex_realtime_start_rejected',
-              'The selected Codex runtime rejected Realtime Voice before admission.',
-              projectActionFailureCauseV1(error, 'codex.realtime.start', { allowUnknownErrorCode: false }),
+              withRealtimeUpstreamReason(
+                'The selected Codex runtime rejected Realtime Voice before admission.',
+                realtimeUpstreamFailureCause(error, 'codex.realtime.start'),
+              ),
+              realtimeUpstreamFailureCause(error, 'codex.realtime.start'),
             );
             settleStart(target, {
               status: authDiagnostic ? 'unavailable' : 'failed',
@@ -946,8 +996,11 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
               target,
               authDiagnostic ?? diagnostic(
                 'codex_realtime_start_failed',
-                'Codex Realtime Voice failed after upstream admission became ambiguous.',
-                projectActionFailureCauseV1(error, 'codex.realtime.start', { allowUnknownErrorCode: false }),
+                withRealtimeUpstreamReason(
+                  'Codex Realtime Voice failed after upstream admission became ambiguous.',
+                  realtimeUpstreamFailureCause(error, 'codex.realtime.start'),
+                ),
+                realtimeUpstreamFailureCause(error, 'codex.realtime.start'),
               ),
             );
           }

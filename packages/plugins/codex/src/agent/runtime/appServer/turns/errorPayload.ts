@@ -4,11 +4,21 @@ export type CodexAppServerErrorPayload = Readonly<{
   message: string | null;
   additionalDetails: string | null;
   codexErrorInfo: string | null;
+  upstreamErrorCode?: string;
+  upstreamErrorType?: string;
   transportFailureWithoutResponse: boolean;
   httpStatus?: number;
   providerErrorCode?: 'model_not_found';
   requestId?: string;
 }>;
+
+const CODEX_UPSTREAM_IDENTIFIER = /^-?[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+
+function readCodexUpstreamIdentifier(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+  if (typeof value === 'string' && CODEX_UPSTREAM_IDENTIFIER.test(value)) return value;
+  return undefined;
+}
 
 export function readCodexAppServerErrorPayload(
   value: unknown,
@@ -27,6 +37,7 @@ export function readCodexAppServerErrorPayload(
     readRecord(data?.error) ??
     readRecord(dataTurn?.error) ??
     data ??
+    (typeof record.message === 'string' ? record : null) ??
     (value instanceof Error ? record : null);
   if (!error) return null;
 
@@ -81,6 +92,13 @@ export function readCodexAppServerErrorPayload(
   }
 
   const requestId = trimStringValue(error.requestId ?? error.request_id);
+  const upstreamErrorCode = readCodexUpstreamIdentifier(
+    upstreamError.code ?? upstreamError.errorCode ?? upstreamError.providerErrorCode,
+  );
+  const upstreamErrorType = readCodexUpstreamIdentifier(
+    upstreamError.type ?? upstreamError.errorType ??
+      (typeof errorInfo === 'string' ? errorInfo : undefined),
+  );
   return {
     ...(requestId ? { requestId } : {}),
     message:
@@ -92,6 +110,8 @@ export function readCodexAppServerErrorPayload(
     codexErrorInfo: transportError
       ? trimStringValue(transportError[0])
       : trimStringValue(errorInfo),
+    ...(upstreamErrorCode === undefined ? {} : { upstreamErrorCode }),
+    ...(upstreamErrorType === undefined ? {} : { upstreamErrorType }),
     // Retry exhaustion alone does not identify the cause. These native
     // transport variants without an HTTP response do identify endpoint loss.
     transportFailureWithoutResponse: httpFailure !== null &&

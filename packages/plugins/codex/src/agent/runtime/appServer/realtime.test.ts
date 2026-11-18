@@ -859,6 +859,47 @@ describe('Codex app-server realtime V3 adapter', () => {
     }));
   });
 
+  it('carries secret-free upstream status, vendor code, and type into the realtime diagnostic', async () => {
+    const fixture = createClientFixture();
+    const startPromise = createConversation(fixture).start({
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+
+    fixture.publish('thread/realtime/error', {
+      threadId: 'thread-1',
+      message: `HTTP 429: ${JSON.stringify({
+        error: {
+          code: 'usage_limit_exceeded',
+          type: 'rate_limit',
+          message: 'Bearer sk-private-upstream-body',
+        },
+      })}`,
+      status: 429,
+    });
+
+    await expect(startPromise).resolves.toMatchObject({
+      status: 'failed',
+      diagnostic: {
+        code: 'codex_realtime_upstream_error',
+        message: 'Codex Realtime Voice reported an upstream error (HTTP 429; provider code usage_limit_exceeded; provider type rate_limit).',
+        details: {
+          failureCause: {
+            phase: 'codex.realtime.upstream',
+            httpStatus: 429,
+            nativeErrorCode: 'usage_limit_exceeded',
+            nativeErrorReason: 'rate_limit',
+          },
+        },
+      },
+    });
+    const result = await startPromise;
+    expect(JSON.stringify(result)).not.toContain('sk-private-upstream-body');
+  });
+
   it.each([
     {
       label: 'started without its required realtime session id',
