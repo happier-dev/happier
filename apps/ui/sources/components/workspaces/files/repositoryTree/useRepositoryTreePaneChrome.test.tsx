@@ -34,6 +34,7 @@ function snapshot(isRepo: boolean): ScmWorkingSnapshot {
 
 function readLine(
   scmSnapshot: ScmWorkingSnapshot | null,
+  changesReadable = true,
 ): Promise<PaneHeaderLine | null> {
   let line: PaneHeaderLine | null = null;
   function Probe() {
@@ -41,6 +42,7 @@ function readLine(
       rootPath: '/repo',
       machineName: 'Mac',
       scmSnapshot,
+      changesReadable,
     }).paneHeaderLine;
     return null;
   }
@@ -59,6 +61,12 @@ describe('useRepositoryTreePaneChrome', () => {
     const known = await readLine(snapshot(true));
     expect(known?.segments).toHaveLength(2);
     expect(known?.segments[1]).not.toMatchObject({ pending: true });
+  });
+
+  it('reserves no room for a change fact that cannot arrive while the Machine is out of reach', async () => {
+    // A pending fact keeps its room unseen; with nothing to fill it, the place line would float off its edge.
+    const line = await readLine(null, false);
+    expect(line?.segments).toEqual(['sessionGitPane.header.folderOnMachine']);
   });
 
   it('names no change fact for a folder that is not a repository', async () => {

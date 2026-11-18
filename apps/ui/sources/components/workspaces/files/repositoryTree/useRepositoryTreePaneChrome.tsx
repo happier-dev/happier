@@ -25,12 +25,14 @@ export function useRepositoryTreePaneChrome(
     machineName: string | null;
     /** The checkout's working snapshot; null until it has been read. */
     scmSnapshot: ScmWorkingSnapshot | null | undefined;
+    /** Whether an unread snapshot can still arrive (its Machine answers). Out of reach, nothing will fill a reserved room. */
+    changesReadable: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const { rootPath, machineName, scmSnapshot } = input;
-  // Unknown until read; a folder that is not a repository has no change fact at all.
-  const changedCount = scmSnapshot == null ? 'pending' as const
+  const { rootPath, machineName, scmSnapshot, changesReadable } = input;
+  // Unknown until read; a folder that is not a repository, or one out of reach and never read, has no change fact.
+  const changedCount = scmSnapshot == null ? (changesReadable ? 'pending' as const : null)
     : scmSnapshot.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null;
   const paneHeaderLine = React.useMemo((): PaneHeaderLine | null => {
     const folder = leafFolderName(rootPath);

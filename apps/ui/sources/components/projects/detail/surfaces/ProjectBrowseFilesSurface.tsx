@@ -7,6 +7,7 @@ import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/deta
 import { WorkspaceCodeBrowserView, type WorkspaceCodeLocation } from '@/components/projects/files/code/WorkspaceCodeBrowserView';
 import { WorkspaceRepositoryTreeBrowserView } from '@/components/projects/files/WorkspaceRepositoryTreeBrowserView';
 import { useRepositoryTreePaneChrome } from '@/components/workspaces/files/repositoryTree/useRepositoryTreePaneChrome';
+import { useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useRepositoryTreeBrowserState } from '@/hooks/workspaces/files/repositoryTreeBrowserState';
@@ -33,7 +34,9 @@ export const ProjectFilesPaneSurface = React.memo((props: Readonly<{
     }));
     const machine = useMachinePresenceSummary(props.scope.serverId, props.scope.machineId);
     const scm = useWorkspaceScmSnapshotController(machine.reachability === 'reachable' ? props.scope : null);
-    const chrome = useRepositoryTreePaneChrome({ rootPath: props.scope.rootPath, machineName: machine.sentenceName ?? null, scmSnapshot: scm.snapshot });
+    const checkoutReachability = useCheckoutReachability(props.scope);
+    const chrome = useRepositoryTreePaneChrome({ rootPath: props.scope.rootPath, machineName: machine.sentenceName ?? null,
+        scmSnapshot: scm.snapshot, changesReadable: !checkoutReachability.unreachable });
     const fileLinkTarget = useProjectFileLinkTarget(props.workspaceRef, props.scope);
     const fileHref = React.useCallback((path: string) => buildWorkspaceFileLink({ target: fileLinkTarget, path }), [fileLinkTarget]);
     const files = pane.scopeState.files as { revealRequest?: Readonly<{ path: string }> } | undefined;
