@@ -240,17 +240,14 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 agentId: capturedAgentRegistration.agentId,
               })
             : null;
-          const isCapturedAgentRegistrationPreOpen = (): boolean => {
+          const isCapturedAgentRegistrationCurrent = (): boolean => {
             if (
               !capturedAgentRegistration ||
               !capturedAgentProviderBinding ||
               capturedAgentRegistration.providerBinding !==
                 capturedAgentProviderBinding.adapter ||
               capturedAgentRegistration.pluginId !==
-                capturedAgentProviderBinding.pluginId ||
-              tracked.agentRuntimeDaemonServiceSessionOpenAttestation !==
-                undefined ||
-              tracked.agentRuntimeDaemonServiceAdmittedTurnId !== undefined
+                capturedAgentProviderBinding.pluginId
             ) {
               return false;
             }
@@ -437,7 +434,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             openBroker: params.openAccountConnectionProviderBrokerAccess,
             installConsumerCleanup: cleanup => { managedProviderCleanup.current = cleanup; },
             cleanup: cleanupManagedProvider, readSupervisionLaunchAuthority,
-            capturedAgentProviderBinding, isCapturedAgentRegistrationCurrent: isCapturedAgentRegistrationPreOpen,
+            capturedAgentProviderBinding, isCapturedAgentRegistrationCurrent,
           });
           let managedProvider = await (async () => {
             // Snapshot-backed Runs prepare their own Provider binding through
@@ -703,7 +700,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   return await materializeRunnerManagedProviderAgentBinding({
                     capturedAgentBinding: capturedAgentProviderBinding,
                     isCapturedAgentRegistrationCurrent:
-                      isCapturedAgentRegistrationPreOpen,
+                      isCapturedAgentRegistrationCurrent,
                     isManagedProviderCurrent: isRetainedProviderCurrent,
                     cleanup: cleanupManagedProvider,
                     runtimeBindingBasis: basis,
@@ -1102,7 +1099,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 return await materializeRunnerManagedProviderAgentBinding({
                   capturedAgentBinding: capturedAgentProviderBinding,
                   isCapturedAgentRegistrationCurrent:
-                    isCapturedAgentRegistrationPreOpen,
+                    isCapturedAgentRegistrationCurrent,
                   isManagedProviderCurrent,
                   cleanup: cleanupManagedProvider,
                   runtimeBindingBasis,
@@ -1647,7 +1644,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             ...(managedProvider ? { managedProvider } : {}),
             authorizeOperation,
             authorizeManagedProviderMaterialization:
-              isCapturedAgentRegistrationPreOpen,
+              isCapturedAgentRegistrationCurrent,
             executeCurrentGlobalAction,
             currentGlobalMcp,
             currentGlobalExternalSessions,

@@ -38,7 +38,7 @@ import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Sche
 import { ManagedControllerIntentReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import type { AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentProviderBindingAdapter, AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { defineMachineProvisionerSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type {
@@ -10596,8 +10596,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
         const releaseRetainedPluginServicesLease =
             vi.fn(async () => {});
-        acquireAuthoritativePluginRuntimeRegistryLeaseMock
-            .mockResolvedValue({
+        const retainedProviderLease = {
                 registry: {
                     contributes: {
                         resources: [],
@@ -10644,7 +10643,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
                 source: 'active',
                 release: releaseRetainedPluginServicesLease,
-            });
+            };
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockResolvedValue(retainedProviderLease);
         vi.mocked(callSessionRpc).mockResolvedValue({
             v: 1,
             kind: 'adoptedPublicOutcome',
@@ -10728,6 +10729,26 @@ describe('startDaemonSessionControlRuntime', () => {
             }),
             revisionId:
                 `retained-provider-state-${process.pid}-${Date.now()}`,
+            runtimeCatalog: {
+                t: 'happier_plugin_state_v1' as const,
+                schemaVersion: 1 as const,
+                plugins: {
+                    ...(priorInstallationState?.runtimeCatalog?.plugins ?? {}),
+                    [retainedScope.pluginId]: {
+                        source: {
+                            kind: 'path' as const,
+                            locator: retainedProviderSourceRoot,
+                            trustPolicy: 'untrusted' as const,
+                            installPolicy: 'link' as const,
+                            resolvedPath: retainedProviderSourceRoot,
+                            manifestPath: join(retainedProviderSourceRoot, '.happier-plugin/plugin.json'),
+                        },
+                        compatibility: { status: 'compatible' as const, diagnostics: [] },
+                        install: { mode: 'link' as const, manifestVersion: '1.0.0' },
+                        state: { enabled: true },
+                    },
+                },
+            },
             plugins: {
                 ...(priorInstallationState?.plugins ?? {}),
                 [retainedScope.pluginId]: {
@@ -11130,6 +11151,84 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(releaseRetainedPluginServicesLease)
             .toHaveBeenCalledTimes(4);
         expect(retainedProviderCleanup).toHaveBeenCalledOnce();
+
+        // A replacement native runtime keeps its exact G registration after
+        // Session open and an admitted turn; H above must still be refused.
+        const materializeCurrentAgentBinding = vi.fn<AgentProviderBindingAdapter['materialize']>(
+            async () => ({ v: 1, kind: 'spawnEnv', env: [] }),
+        );
+        let currentAgentAvailable = true;
+        const currentAgentProviderBinding = {
+            v: 1,
+            adapterVersion: 1,
+            prepare: () => retainedRuntimeBindingBasis.prepared,
+            materialize: materializeCurrentAgentBinding,
+        } satisfies AgentProviderBindingAdapter;
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+            ...retainedProviderLease,
+            registry: {
+                ...retainedProviderLease.registry,
+                contributes: {
+                    ...retainedProviderLease.registry.contributes,
+                    agentDefinitionsById: new Map([['claude', {
+                        definition: { providerRequirements: retainedRuntimeBindingBasis.agentSupport },
+                    }]]),
+                },
+                agentRuntimesByAgentId: new Map([['claude', {
+                    ...retainedProviderLease.registry.agentRuntimesByAgentId.get('claude'),
+                    generation: 'runtime-generation-g',
+                    immutableGenerationId: 'generation-g',
+                    sourceCustody: binding.sourceCustody,
+                    sessionRunnerFactoryBinding: binding,
+                    providerBinding: currentAgentProviderBinding,
+                    isCurrent: () => currentAgentAvailable,
+                }]]),
+            },
+        });
+        const dispatchReplacement = (operation: unknown) => controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1, context: { token: 'd'.repeat(43), sessionId: tracked.happySessionId }, operation,
+                }),
+                daemonServiceContext,
+            );
+        tracked.agentRuntimeDaemonServiceAuthorityFilePath = '/private/current-authority.json';
+        await expect(dispatchReplacement({
+            kind: 'session.open.attest', requestId: 'replacement-initial-open', phase: 'commit',
+            request: { kind: 'create', sessionId: tracked.happySessionId, cwd: '/workspace' },
+            providerSessionId: null,
+        })).resolves.toMatchObject({ ok: true, result: { status: 'recorded' } });
+        expect(tracked.agentRuntimeDaemonServiceSessionOpenAttestation).toBeDefined();
+        expect(tracked.agentRuntimeDaemonServiceAdmittedTurnId).toBe(admission.turnId);
+        await expect(dispatchReplacement({
+            kind: 'plugin_services.prepare_v1', requestId: 'replacement-prepare',
+            invocationId: 'invocation-replacement', managedProviderRetention: retainedAuthority,
+        })).resolves.toMatchObject({ ok: true });
+        await expect(dispatchReplacement({
+            kind: 'plugin_services.managed_provider.start_v1', requestId: 'replacement-start',
+            invocationId: 'invocation-replacement', retained: retainedAuthority,
+        })).resolves.toMatchObject({ ok: true });
+        const replacementMaterialization = {
+            kind: 'plugin_services.managed_provider.materialize_agent_binding_v1',
+            requestId: 'replacement-materialize', invocationId: 'invocation-replacement',
+            retained: retainedAuthority, endpointUrl: 'http://127.0.0.1:4312/v1', credentialPlaceholder: null,
+        };
+        await expect(dispatchReplacement(replacementMaterialization)).resolves.toMatchObject({ ok: true });
+        expect(materializeCurrentAgentBinding).toHaveBeenCalledWith(expect.objectContaining({
+            binding: expect.objectContaining({
+                selection: { connectionId: retainedConnectionId, model: retainedModel },
+                endpoint: expect.objectContaining({ normalizedUrl: replacementMaterialization.endpointUrl }),
+            }),
+            credential: { kind: 'none' },
+        }));
+        currentAgentAvailable = false;
+        await expect(dispatchReplacement({ ...replacementMaterialization, requestId: 'replacement-retired-agent' }))
+            .resolves.toMatchObject({ ok: false, error: { code: 'plugin_services_turn_authority_unavailable' } });
+        await dispatchReplacement({ kind: 'plugin_services.close_v1', requestId: 'replacement-close',
+            invocationId: 'invocation-replacement' });
+        delete tracked.agentRuntimeDaemonServiceAuthorityFilePath;
+        delete tracked.agentRuntimeDaemonServiceSessionOpenAttestation;
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue(retainedProviderLease);
 
         const listener = [
             ...pluginRunningSessionDispositionListenersMock,
