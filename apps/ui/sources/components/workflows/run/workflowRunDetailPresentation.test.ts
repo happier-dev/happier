@@ -29,6 +29,7 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import {
     canOfferWorkflowInvocationReattach,
     describeWorkflowInvocationCause,
+    describeWorkflowRunFailedStep,
     describeWorkflowSetupOutcome,
     formatWorkflowRunOutcomeLabel,
     formatWorkflowRunOutcomeSentence,
@@ -149,11 +150,13 @@ describe('managed workflow Run presentation', () => {
             recovery: { canReattach: false, canRetrySameConversation: false, canRetryFreshAgent: false,
                 failureCause: { kind: 'reported_failure', message: 'Usage limit reached', runtimeIssue: { usageLimit: { resetAtMs } } } } });
         if (resetAtMs === null) expect(presentation?.recovery.failureCause).toMatchObject({ reset: null });
-        // The page's one cause line: the step's number, the provider's words, and only a reported reset.
+        // The page's one cause line: the provider's words and only a reported reset. The outcome above it
+        // already names the step by its number (WAVE-ACCEPT-1118D c1), so the line does not repeat it.
         const line = formatWorkflowRunFailureCauseLine(presentation!);
         const reset = presentation?.recovery.failureCause?.kind === 'reported_failure' ? presentation.recovery.failureCause.reset : null;
-        expect(line).toBe(resetAtMs === null ? `${t('workflows.run.stepNumber', { ordinal: '7' })} · Usage limit reached`
-            : `${t('workflows.run.stepNumber', { ordinal: '7' })} · Usage limit reached · ${reset}`);
+        expect(line).toBe(resetAtMs === null ? 'Usage limit reached' : `Usage limit reached · ${reset}`);
+        expect(describeWorkflowRunFailedStep(presentation!.step))
+            .toEqual({ reference: t('workflows.run.stepNumber', { ordinal: '7' }), title: 'Publish summary' });
         if (resetAtMs !== null) expect(reset).toBeTruthy();
         expect(projectWorkflowRunFailure({ run: { ...run, id: 'another-run' }, invocation: failed.index, progress: failed.progress,
             structure, projection: projectWorkflowFlow(scene.definition), machineHomeDirectory: null })).toBeNull();
@@ -263,7 +266,7 @@ describe('managed workflow Run presentation', () => {
         const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message, headline: t(key) });
         expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle, step: { name: 'Draft', ordinal: '1' }, recovery }))
-            .toBe(`${t('workflows.run.stepNumber', { ordinal: '1' })} · ${t(key)}`);
+            .toBe(t(key));
         // An unrecognized code keeps the message its producer recorded.
         const other = projectWorkflowInvocationRecovery({ run, invocation, machineHomeDirectory: null,
             progress: { ...progress, reason: { code: 'agent_failed', message: 'Agent exited before producing a result' } } });
@@ -506,6 +509,20 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunConsequenceSentence({ ...params, invocations: failed, definition: failStop })).toBeNull();
         const noLiveWork = stopped.map(row => row.id === 'check' ? { ...row, lifecycle: 'waiting_for_approval' as const } : row);
         expect(formatWorkflowRunConsequenceSentence({ ...params, invocations: noLiveWork })).toBeNull();
+    });
+    it('names a numbered failed step by its number and keeps its title for its own line (WAVE-ACCEPT-1118D c1)', () => {
+        // A long or truncated title never runs into "didn't finish": the sentence carries the number only.
+        const title = 'Reply with QA_INBOX_B_PRIVATE_CHILD_1116 only. Do not call tools, read files or delegate.';
+        expect(describeWorkflowRunFailedStep({ name: title, ordinal: '1' }))
+            .toEqual({ reference: t('workflows.run.stepNumber', { ordinal: '1' }), title });
+        // A step the Map does not number is named by its title alone, with no second line repeating it.
+        expect(describeWorkflowRunFailedStep({ name: 'For each issue', ordinal: null })).toEqual({ reference: 'For each issue', title: null });
+        expect(describeWorkflowRunFailedStep(null)).toBeNull();
+        const run = createWorkflowRunSummaryFixture({ state: 'failed' });
+        const nothingDone = { observedLeafCounts: { completed: 0, failed: 1, attention: 0 }, coverage: 'complete', knownFailure: true } as const;
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: nothingDone, historyComplete: true,
+            failure: { step: describeWorkflowRunFailedStep({ name: title, ordinal: '1' })!.reference, lifecycle: 'failed' } }))
+            .toBe('Step 1 didn’t finish.');
     });
     it('names the failed step and retained work without an attention row or complete history', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed' });

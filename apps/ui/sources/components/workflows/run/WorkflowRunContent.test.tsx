@@ -923,9 +923,11 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain(
       `workflows.run.outcomeLine:${JSON.stringify({
         word: `workflows.runState.${state}`,
-        sentence: 'workflows.run.failedStepSentence:{"step":"Publish summary"}',
+        sentence: `workflows.run.failedStepSentence:${JSON.stringify({ step: 'workflows.run.stepNumber:{"ordinal":"1"}' })}`,
       })}`,
     );
+    // The step's title sits on its own line under the sentence that names it by number (WAVE-ACCEPT-1118D c1).
+    expect(screen.findByTestId('workflow-run-failed-step-title')?.props.children).toBe('Publish summary');
     expect(screen.getTextContent()).toContain(
       'The publishing service refused the request.',
     );
@@ -1008,6 +1010,17 @@ describe('WorkflowRunContent', () => {
     viewport.window = { width: 1440, height: 900 };
     const nothingOpen = await renderContent({ ...offline, selectedInvocationId: null });
     expect(nothingOpen.findByTestId('workflow-run-failure-next')?.props.children).toBe(reconnect);
+    // WAVE-ACCEPT-1118D c1: the outcome names the step by its number, and its title sits on its own line,
+    // so a long title never runs into "didn't finish". With nothing open beside it, the page says the cause.
+    const outcome = String(nothingOpen.findByTestId('workflow-run-outcome')?.props.children);
+    expect(outcome).toContain('workflows.run.stepNumber');
+    expect(outcome).not.toContain('Analyze the repository');
+    expect(nothingOpen.findByTestId('workflow-run-failed-step-title')?.props.children).toBe('Analyze the repository');
+    expect(nothingOpen.findByTestId('workflow-run-failure-reason')).not.toBeNull();
+    // With the failed step open beside the Run, its card says the cause; the page does not say it a second time.
+    const failedOpen = await renderContent({ ...offline, selectedInvocationId: invocation.id, selectedInvocationProgress: progress });
+    expect(failedOpen.findByTestId('workflow-run-failure-reason')).toBeNull();
+    expect(failedOpen.findByTestId('workflow-run-failed-step-title')?.props.children).toBe('Analyze the repository');
     expect(nothingOpen.findByTestId('workflow-run-view-switch')).not.toBeNull();
     // The failed step open beside the Run says it in its own card; the page does not repeat it.
     const open = await renderContent({ ...offline, selectedInvocationId: invocation.id, selectedInvocationProgress: progress });
@@ -3499,10 +3512,8 @@ describe('WorkflowRunContent', () => {
       expect.objectContaining({ key: 'failure-code', value: 'storage_unavailable' }),
       expect.objectContaining({ key: 'failure-cause', value: recordedStorageMessage }),
     ]));
-    // The Run keeps its failure cause visible while the selected step is inspected.
-    expect(failed.findAllByTestId('workflow-run-failure-reason').length).toBeGreaterThan(0);
-    expect(failed.findByTestId('workflow-run-failure-reason')?.props.children)
-      .toContain('workflows.readState.storageTitle');
+    // The failed step's card beside the Run says the cause; the page does not repeat it (WAVE-ACCEPT-1118D c1).
+    expect(failed.findByTestId('workflow-run-failure-reason')).toBeNull();
     await failed.pressByTestIdAsync('workflow-run-invocation-technical.header');
     expect(failed.getTextContent()).toContain('storage_unavailable');
     expect(failed.getTextContent()).toContain(recordedStorageMessage);
@@ -3538,8 +3549,9 @@ describe('WorkflowRunContent', () => {
     expect(
       unselected.findByTestId('workflow-run-failure-reason')?.props.children,
     ).toContain('workflows.readState.storageTitle');
+    // The outcome above names the step by its number; the cause line does not repeat it.
     expect(unselected.findByTestId('workflow-run-failure-reason')?.props.children)
-      .toContain('workflows.run.stepNumber:{"ordinal":"1"}');
+      .not.toContain('workflows.run.stepNumber');
     await unselected.unmount();
 
     // An interrupted Run whose step failed says why under its status, from the same retained cause.
@@ -3555,7 +3567,7 @@ describe('WorkflowRunContent', () => {
       interrupted.findByTestId('workflow-run-failure-reason')?.props.children,
     ).toContain('workflows.readState.storageTitle');
     expect(interrupted.findByTestId('workflow-run-failure-reason')?.props.children)
-      .toContain('workflows.run.stepNumber:{"ordinal":"1"}');
+      .not.toContain('workflows.run.stepNumber');
     await interrupted.unmount();
 
     // Storage can park the root before a Session leaf is admitted. Its retained

@@ -127,7 +127,7 @@ import {
     type WorkflowRunFailurePresentation,
     type WorkflowRecoveryContinuation,
 } from './workflowRunDetailPresentation';
-import { formatWorkflowRunFailureCauseLine, resolveWorkflowRecoveryChoices, workflowRunOutcomeIsAttention } from './workflowRunDetailPresentation';
+import { describeWorkflowRunFailedStep, formatWorkflowRunFailureCauseLine, resolveWorkflowRecoveryChoices, workflowRunOutcomeIsAttention } from './workflowRunDetailPresentation';
 
 /**
  * One managed Run's detail body, shared by the exact Run route, the Automation
@@ -948,22 +948,24 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // One primary per page: the first hold's Review leads only when the header has no primary of its own.
     const primaryReviewId = props.selectedInvocationId === null && primaryAction === null
         ? attentionIndexRows[0]?.invocation.id : undefined;
-    const failedStepLabel = props.run.state === 'failed' || props.run.state === 'interrupted'
-        ? failurePresentation?.step?.name ?? null : null;
-    // The Run keeps its cause visible while the selected step is inspected beside it.
-    // The line names the failed step's number, what the attempt recorded
-    // and a usage limit's reset, so the page says why without opening See failures (FIN-DESIGN-C4 R5).
+    // The outcome names the failed step by its number; its title sits on a line of its own (WAVE-ACCEPT-1118D c1).
+    const failedStep = props.run.state === 'failed' || props.run.state === 'interrupted'
+        ? describeWorkflowRunFailedStep(failurePresentation?.step ?? null) : null;
+    const failedStepLabel = failedStep?.reference ?? null;
+    // The failed step's card says its cause and when its choices appear while that step is open beside the Run; the
+    // page says them when no pane shows that card: on a phone, with nothing open, or with another step open.
+    // Stop stays the page's own next step.
+    const failureStepBeside = !phone && failurePresentation != null && props.selectedInvocationId === failurePresentation.invocationId;
+    // The line says what the attempt recorded and a usage limit's reset, so the page says why without opening
+    // See failures (FIN-DESIGN-C4 R5), once: not again beside the card that says it (WAVE-ACCEPT-1118D c1).
     // An interrupted Run parked on a failed step says the same retained cause under its status.
     const runProblem = failurePresentation == null ? resolveWorkflowRunProblemPresentation(props.run) : null;
-    const failureReason = runProblem?.message ?? ((props.run.state !== 'failed' && props.run.state !== 'interrupted') || failurePresentation == null ? null
-        : formatWorkflowRunFailureCauseLine(failurePresentation));
+    const failureReason = runProblem?.message ?? ((props.run.state !== 'failed' && props.run.state !== 'interrupted')
+        || failurePresentation == null || failureStepBeside ? null : formatWorkflowRunFailureCauseLine(failurePresentation));
     const failureReasonPending = failureReason === null
         && (props.run.state === 'failed' || props.run.state === 'interrupted')
         && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);
     const failureChoices = failurePresentation == null ? null : resolveWorkflowRecoveryChoices(failurePresentation.recovery, props);
-    // When its choices appear is said by the failed step's card when that step is open beside the Run; the page says
-    // it when no pane shows that card: on a phone, or with nothing open beside it. Stop stays the page's own next step.
-    const failureStepBeside = !phone && failurePresentation != null && props.selectedInvocationId === failurePresentation.invocationId;
     const failureRecoveryInstruction = (failureStepBeside ? null : failurePresentation?.recovery.usageLimitWait ?? failureChoices?.waitLine)
         ?? (failureChoices?.noChoices === true && primaryAction === 'stop' ? t('workflows.recovery.nextStop') : null);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
@@ -1363,6 +1365,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         </> : outcomeLine}
                     </Text>
                 </View>
+                {/* The failed step the outcome names by its number, by its title (WAVE-ACCEPT-1118D c1). */}
+                {failedStep?.title ? <Text testID={`${testIDPrefix}-failed-step-title`} numberOfLines={1}
+                    style={[styles.provenance, styles.outcomeDetail]}>{failedStep.title}</Text> : null}
                 {/* The quiet second line: what keeps going and what waits on it (lab run-A). */}
                 {consequence === null ? null : <Text testID={`${testIDPrefix}-consequence`} style={[styles.provenance, styles.outcomeDetail]}>
                     {consequence}

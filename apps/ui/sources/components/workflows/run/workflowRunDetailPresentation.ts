@@ -485,8 +485,21 @@ export type WorkflowRunFailurePresentation = Readonly<{
 }>;
 
 /**
- * Why a Run failed, as the one quiet line under its outcome: the failed step's ordinal (the number
- * its Map row carries), the recorded failure and any reported usage-limit reset.
+ * How a Run's outcome names its failed step: by the number its Map row carries, with the step's title kept for a
+ * line of its own, so a long or truncated title never runs into the sentence ("Step 1 didn't finish."). A step
+ * the Map does not number is named by its title, with no second line repeating it.
+ */
+export function describeWorkflowRunFailedStep(
+    step: WorkflowRunFailurePresentation['step'],
+): Readonly<{ reference: string; title: string | null }> | null {
+    if (step === null) return null;
+    return step.ordinal === null ? { reference: step.name, title: null }
+        : { reference: t('workflows.run.stepNumber', { ordinal: step.ordinal }), title: step.name };
+}
+
+/**
+ * Why a Run failed, as the one quiet line under its outcome: the recorded failure and any reported usage-limit
+ * reset. The outcome above it already names the step, so the line does not.
  * Current connectivity never supplies historical cause, even when its timestamp precedes failure.
  */
 export function formatWorkflowRunFailureCauseLine(
@@ -497,10 +510,7 @@ export function formatWorkflowRunFailureCauseLine(
         : cause?.kind === 'cause_not_recorded' ? t('workflows.recovery.causeNotRecorded') : null;
     if (headline === null || headline === undefined || headline === '') return null;
     const reset = cause?.kind === 'reported_failure' ? cause.reset ?? null : null;
-    const ordinal = failure.step?.ordinal ?? null;
-    const causeLine = [ordinal === null ? null : t('workflows.run.stepNumber', { ordinal }), headline, reset]
-        .filter((part): part is string => part !== null && part !== '')
-        .join(' · ');
+    const causeLine = [headline, reset].filter((part): part is string => part !== null && part !== '').join(' · ');
     return [causeLine, failure.recovery.repairGuidance].filter(Boolean).join(' ');
 }
 
