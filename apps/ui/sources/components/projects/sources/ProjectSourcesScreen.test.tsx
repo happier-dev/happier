@@ -201,7 +201,7 @@ describe('Projects › Sources', () => {
     try {
       shared.listedSources = [];
       shared.sources = [{ id: 'selected-source', revision: 1, name: 'Selected outside the catalog',
-        audience: [], createdByAccountId: 'account-1' }];
+        owner: { kind: 'team', teamId: 'source-team' }, audience: [], createdByAccountId: 'account-1' }];
       const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
       const lifetime = captureActiveServerAccountScopeLifetime();
       if (!lifetime) throw new Error('Served Home Account did not bind');
@@ -220,6 +220,7 @@ describe('Projects › Sources', () => {
       try {
         await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.header')).not.toBeNull());
         expect(screen.getTextContent()).toContain('Selected outside the catalog');
+        expect(screen.getTextContent()).toContain('projects.sources.teamEveryone');
         expect(screen.findByTestId('projects.sources.empty')).toBeNull();
         expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
       } finally { await screen.unmount(); }

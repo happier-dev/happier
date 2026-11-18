@@ -47,3 +47,26 @@ export function presentSharePrincipal(input: Readonly<{
         avatar: { id: ref.accountId, ...(avatarUrl ? { imageUrl: avatarUrl } : {}) },
         accessibilityLabel: secondaryLabel ? `${displayName}, ${secondaryLabel}` : displayName };
 }
+
+/** An explicit grant to the owning Team adds no one to the displayed audience. */
+export function isGrantToOwningTeam(owner: PrincipalRefV1 | undefined, principal: PrincipalRefV1): boolean {
+    return owner?.kind === 'team' && principal.kind === 'team' && principal.teamId === owner.teamId;
+}
+
+/** Compact sharing summary from the displayed resource's admitted audience. */
+export function presentShareAudience(input: Readonly<{
+    owner?: PrincipalRefV1;
+    grants: readonly Readonly<{ principal: PrincipalRefV1 }>[];
+    teamName: (teamId: string) => string | null;
+}>): string {
+    const { owner, grants, teamName } = input;
+    const owningTeam = owner?.kind === 'team' ? owner : null;
+    const count = grants.length + (owningTeam && !grants.some(({ principal }) => isGrantToOwningTeam(owningTeam, principal)) ? 1 : 0);
+    if (count === 0) return t('projects.sources.onlyMe');
+    const only = count === 1 ? owningTeam ?? grants[0]?.principal : null;
+    if (only?.kind === 'team') {
+        const team = teamName(only.teamId) || (owningTeam ? t('shareSheet.team') : null);
+        if (team) return t('projects.sources.teamEveryone', { team });
+    }
+    return t('projects.sources.audienceCount', { count });
+}

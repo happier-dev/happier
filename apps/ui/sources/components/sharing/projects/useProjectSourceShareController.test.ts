@@ -46,6 +46,29 @@ describe('Source audience ShareSheet controller', () => {
         expect(hook.getCurrent().model.grants.map(row => row.principal.accessibilityLabel).join(' ')).not.toContain('unknown-person-id');
         await hook.unmount();
     });
+    it.each([
+        { description: 'no additional grants', audience: [] },
+        { description: 'an explicit grant to that same Team', audience: [{ principal, level: 'view' as const }] },
+    ])('presents the owning Team once with $description', async ({ audience }) => {
+        const source: ProjectSourceV1 = { id: 'team-source', revision: 1, name: 'Repository',
+            createdByAccountId: scope.accountId, repository, owner: principal, audience,
+            audienceTeams: [{ teamId: principal.teamId, name: 'Payments' }] };
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', assertCurrent() {}, workflowArtifacts: { read: async () => null },
+                request: async () => Response.json({ ok: true, canManage: true, source }),
+            }),
+        }));
+        const controller = createProjectSourcesController(scope, (id, input, context) => executor.execute(id, input,
+            { ...context, authority: 'present_user', bypassApprovals: true }));
+        await controller.select(source.id);
+        const hook = await renderHook(() => useProjectSourceShareController({ controller, enabled: false }));
+        try {
+            expect(hook.getCurrent().model.owner?.principal).toMatchObject({ ref: principal, displayName: 'Payments' });
+            expect(hook.getCurrent().model.grants).toEqual([]);
+        } finally {
+            await hook.unmount();
+        }
+    });
     it('offers view-only audience and serializes additions and removals against acknowledged Source revisions', async () => {
         let source: ProjectSourceV1 = { id: 'source-a', revision: 1, name: 'Repository', createdByAccountId: scope.accountId,
             repository,

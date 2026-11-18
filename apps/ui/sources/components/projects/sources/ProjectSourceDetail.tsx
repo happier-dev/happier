@@ -3,7 +3,6 @@ import { presentProjectSourceIssue } from './projectSourceIssue';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
-  ProjectSourceGrantV1,
   ProjectSourceV1,
   SourceAttachmentV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -52,7 +51,7 @@ import { ProjectRefSelect } from '../ProjectRefSelect';
 import { useProjectDashboardDocument } from '@/components/widgets/area/useProjectDashboardDocument';
 import { useProjectDashboardOwner } from '@/components/projects/overview/useProjectDashboardOwner';
 import { documentShareAccessLabel } from '@/components/sharing/documents/documentShareAdapter';
-import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
+import { presentShareAudience, presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 
 import type {
   ProjectSourceDraft,
@@ -70,19 +69,6 @@ import { SourceTeamSetupRow } from './SourceTeamSetupRow';
 
 function lastSegment(nameWithOwner: string): string {
   return nameWithOwner.split('/').filter(Boolean).pop() ?? nameWithOwner;
-}
-
-/** "Only me", "Acme · everyone", or how many people and teams can use it. */
-function describeAudience(
-  grants: readonly ProjectSourceGrantV1[],
-  teamName: (teamId: string) => string | null,
-): string {
-  if (grants.length === 0) return t('projects.sources.onlyMe');
-  const only = grants.length === 1 ? grants[0]!.principal : null;
-  const team = only?.kind === 'team' ? teamName(only.teamId) : null;
-  return team
-    ? t('projects.sources.teamEveryone', { team })
-    : t('projects.sources.audienceCount', { count: grants.length });
 }
 
 function sourceAudienceDescription(creating: boolean): string {
@@ -773,10 +759,11 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
           testID="projects.sources.detail.audience"
           creating={props.creating}
           compact={compact}
-          summary={describeAudience(
-            (props.creating ? newDraft?.audience : view?.audience) ?? [],
-            props.teamName,
-          )}
+          summary={presentShareAudience({
+            owner: current?.owner,
+            grants: (props.creating ? newDraft?.audience : view?.audience) ?? [],
+            teamName: props.teamName,
+          })}
           onShare={
             current && canEdit && !state.conflict
               ? (event) =>

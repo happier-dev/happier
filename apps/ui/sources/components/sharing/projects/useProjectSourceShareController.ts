@@ -6,7 +6,7 @@ import type { ProjectSourcesController } from '@/components/projects/sources/pro
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import type { ShareGrantRowModel, ShareOperationModel, ShareSheetActions, ShareSheetModel, ShareUiReason } from '../shareSheetTypes';
-import { presentSharePrincipal } from '../sharePrincipalPresentation';
+import { isGrantToOwningTeam, presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 
 const NO_TEAMS: readonly [] = [];
@@ -81,23 +81,28 @@ export function useProjectSourceShareController(input: Readonly<{
     const grants = React.useMemo<readonly ShareGrantRowModel[]>(() => {
         const knownPrincipals = new Map(directory.sections.flatMap(section => section.candidates)
             .map(candidate => [candidate.principal.key, candidate.principal] as const));
-        return (source?.audience ?? []).map((grant) => {
-            const known = knownPrincipals.get(sessionAccessSubjectKey(grant.principal));
-            const principal = presentSharePrincipal({ ref: grant.principal, name: known?.displayName,
-                teamName: known?.secondaryLabel, viewerAccountId: scope.accountId,
-                profile: grant.principal.kind === 'account' && grant.principal.accountId === scope.accountId ? viewerProfile : null });
-            return { grant: grant.principal, principal,
-                level: { kind: 'editable', value: 'view', options: ['view'] },
-                removal: principal.key === scopedConfirmingRemoval ? { kind: 'confirming', consequences: [] } : { kind: 'allowed' },
-                operation: scopedOperations[principal.key] ?? IDLE };
-        });
-    }, [source?.audience, scopedOperations, scopedConfirmingRemoval, directory.sections, scope.accountId, viewerProfile]);
-    const ownerRef = source ? { kind: 'account' as const, accountId: source.createdByAccountId } : null;
+        return (source?.audience ?? [])
+            .filter(({ principal }) => !isGrantToOwningTeam(source?.owner, principal))
+            .map((grant) => {
+                const known = knownPrincipals.get(sessionAccessSubjectKey(grant.principal));
+                const principal = presentSharePrincipal({ ref: grant.principal, name: known?.displayName,
+                    teamName: known?.secondaryLabel, viewerAccountId: scope.accountId,
+                    profile: grant.principal.kind === 'account' && grant.principal.accountId === scope.accountId ? viewerProfile : null });
+                return { grant: grant.principal, principal,
+                    level: { kind: 'editable', value: 'view', options: ['view'] },
+                    removal: principal.key === scopedConfirmingRemoval ? { kind: 'confirming', consequences: [] } : { kind: 'allowed' },
+                    operation: scopedOperations[principal.key] ?? IDLE };
+            });
+    }, [source?.audience, source?.owner, scopedOperations, scopedConfirmingRemoval, directory.sections, scope.accountId, viewerProfile]);
+    const ownerRef = source ? source.owner ?? { kind: 'account' as const, accountId: source.createdByAccountId } : null;
+    const ownerTeamName = ownerRef?.kind === 'team'
+        ? source?.audienceTeams?.find(team => team.teamId === ownerRef.teamId)?.name : undefined;
     const model: ShareSheetModel = {
         revision: source?.revision ?? 0, editable: sourceState.canManage && sourceState.detailStatus === 'ready'
             && source !== null && sourceState.conflict === null && sourceState.mutation === 'idle',
         stale: sourceState.detailStatus === 'offline', owner: ownerRef ? { principal: presentSharePrincipal({ ref: ownerRef,
-            viewerAccountId: scope.accountId, profile: ownerRef.accountId === scope.accountId ? viewerProfile : null }) } : null,
+            name: ownerTeamName, viewerAccountId: scope.accountId,
+            profile: ownerRef.kind === 'account' && ownerRef.accountId === scope.accountId ? viewerProfile : null }) } : null,
         grants, directory: { query: isCurrentSource ? query : '', sections: directory.sections },
     };
     const actions: ShareSheetActions = {
