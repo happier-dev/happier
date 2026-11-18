@@ -2,6 +2,7 @@ import {
     LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     readMetadataAliasValue,
+    readSessionModelSelectionV2FromMetadata,
     SESSION_CONFIG_OPTIONS_STATE_KEY,
     SESSION_MODELS_STATE_KEY,
 } from '@happier-dev/agents';
@@ -20,6 +21,15 @@ function readMetadata(metadata: Metadata | ComposerOptionsInputV1 | null | undef
 
 export function readSessionModesState(metadata: Metadata | null | undefined): SessionModesState | null {
     return readSessionModesMetadata(readMetadata(metadata));
+}
+
+export function readSessionModelSelectionForComposer(
+    ownerMetadata: Metadata | null,
+    composerOptionsInput: ComposerOptionsInputV1 | null | undefined,
+) {
+    if (composerOptionsInput !== undefined) return composerOptionsInput?.modelSelectionIntentV2;
+    if (ownerMetadata?.modelSelectionIntentV2 === undefined) return undefined;
+    return readSessionModelSelectionV2FromMetadata(ownerMetadata) ?? undefined;
 }
 
 export function readSessionModelsState(metadata: ComposerOptionsInputV1 | null | undefined): SessionModelsState | null {

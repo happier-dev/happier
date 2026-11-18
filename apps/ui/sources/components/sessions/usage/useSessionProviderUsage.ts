@@ -28,6 +28,7 @@ import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedSe
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionModelSelectionForComposer } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { useProfile, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -413,7 +414,7 @@ export function useSessionProviderUsageGauge(
       ? ownerMetadata
       : session.composerOptionsInput;
   const activeModelId =
-    composerOptionsInput?.modelSelectionIntentV2?.ref.modelId ??
+    readSessionModelSelectionForComposer(ownerMetadata, session.composerOptionsInput)?.ref.modelId ??
     composerOptionsInput?.modelSelectionIntentV1?.selection?.modelId ??
     composerSubject.modelMode;
   return useSessionProviderUsage({

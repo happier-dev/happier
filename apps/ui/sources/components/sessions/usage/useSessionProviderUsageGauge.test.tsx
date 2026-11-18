@@ -91,6 +91,24 @@ describe('useSessionProviderUsageGauge', () => {
     await hook.unmount();
   });
 
+  it('keeps the gauge unavailable when legacy metadata has only an unreadable model selection', async () => {
+    const { useSessionProviderUsageGauge } =
+      await import('./useSessionProviderUsage');
+    const legacySession = {
+      ...connectedCodexSession(),
+      metadata: { host: 'host', homeDir: '/tmp', path: '/tmp', modelSelectionIntentV2: {} },
+    };
+    const serverId = getActiveServerSnapshot().serverId;
+    const hook = await renderHook(
+      () => useSessionProviderUsageGauge({ session: legacySession, serverId }),
+      { wrapper: Wrapper },
+    );
+    await flushHookEffects({ cycles: 12, turns: 12 });
+
+    expect(hook.getCurrent()).toBeNull();
+    await hook.unmount();
+  });
+
   it('returns no gauge when the person hides the Session provider usage gauge', async () => {
     storage
       .getState()

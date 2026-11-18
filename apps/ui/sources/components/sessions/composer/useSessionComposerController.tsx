@@ -309,7 +309,7 @@ import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessi
 import { formatShortRelativeTimeAt } from "@/utils/time/formatShortRelativeTime";
 import { combineSessionViewExtraActionChips } from "@/components/sessions/shell/view/combineSessionViewExtraActionChips";
 import { resolveSessionViewModeOptionIds } from "@/components/sessions/shell/view/resolveSessionViewModeOptionIds";
-import { readSessionModesState } from "@/sync/domains/sessionControl/readSessionControlMetadata";
+import { readSessionModelSelectionForComposer, readSessionModesState } from "@/sync/domains/sessionControl/readSessionControlMetadata";
 import { computeSessionModePickerControl } from "@/sync/domains/sessionControl/sessionModeControl";
 import { useSessionListRuntimeNowMs } from "@/hooks/session/sessionListRuntimeClock";
 import { type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/useServerCredentialAccountScopes";
@@ -872,7 +872,7 @@ export function useSessionComposerController({
         [ownerMetadata],
     );
     const providerModelSelectionIntent = composerOptionsInput?.modelSelectionIntentV1 ?? null;
-    const currentModelSelection = composerOptionsInput?.modelSelectionIntentV2;
+    const currentModelSelection = readSessionModelSelectionForComposer(ownerMetadata, session.composerOptionsInput);
     const providerModelSelection = currentModelSelection
         ? projectSessionModelSelectionV2ToV1(currentModelSelection)
         : providerModelSelectionIntent?.selection
