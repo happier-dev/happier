@@ -68,10 +68,13 @@ function createRuntime(
         const observed = result.termination.observed;
         const folded = output.finish(observed.kind === 'exit' ? observed.exitCode : null);
         emit({ kind: 'output-delta', channel: 'assistant', text: folded.output });
+        // A valid review document carries its own complete/partial/failed outcome.
+        // Let the host normalize and materialize it even when the vendor exited unsuccessfully.
+        if (folded.hasReviewResult) return { status: 'complete' };
         if (observed.kind === 'failed') return { status: 'failed', diagnostic: {
           code: observed.diagnostic.code, severity: 'error', message: 'The CodeRabbit process could not finish.',
         } };
-        return folded.completed ? { status: 'complete' } : {
+        return {
           status: 'failed', diagnostic: { code: folded.code, severity: 'error', message: folded.message },
         };
       } finally {

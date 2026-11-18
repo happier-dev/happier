@@ -138,8 +138,9 @@ export function createCodeRabbitAgentOutput() {
         invalidOutput ? 'CodeRabbit did not provide valid terminal review evidence.' : undefined,
         !completed && errors.length === 0 && !invalidOutput ? `CodeRabbit exited with code ${exitCode ?? 'unavailable'}.` : undefined,
       ].filter(Boolean).join('\n\n');
-      return { completed, code, message: details,
+      return { hasReviewResult: !invalidOutput && errors.length === 0 && terminal !== null, code, message: details,
         output: JSON.stringify({ reviewOutcome, summary, overviewMarkdown: details, findings, questions: [], assumptions: [],
+          ...(reviewOutcome === 'failed' ? { error: { code } } : {}),
           proposedComments: findings.map(finding => ({ findingId: finding.id, body: finding.summary,
             anchor: finding.startLine === undefined ? { kind: 'file', filePath: finding.filePath }
               : finding.endLine !== undefined && finding.endLine > finding.startLine

@@ -103,13 +103,21 @@ describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)'
 
   it('retains findings with partial coverage on exit 1', async () => {
     const result = await runFixture({ records: [finding, { ...complete, findings: 1, outcome: 'failed', unreviewedFileCount: 2, message: 'Two files could not be reviewed.' }], exitCode: 1 });
-    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_review_failed' } });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
     expect(result.output).toMatchObject({ reviewOutcome: 'partial', findings: [{ suggestion: finding.codegenInstructions }] });
     expect(result.output.overviewMarkdown).toContain('2 file(s) were not reviewed');
   });
 
-  it('settles a rate limit once with recovery guidance and no retry', async () => {
-    const result = await runFixture({ records: [{ type: 'error', errorType: 'rate_limit', message: 'Wait 4 minutes before retrying.' }], exitCode: 1 });
+  it('preserves a valid failed review document and its typed cause with no findings', async () => {
+    const result = await runFixture({ records: [{ ...complete, outcome: 'failed' }], exitCode: 1 });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.output).toMatchObject({ reviewOutcome: 'failed', findings: [],
+      error: { code: 'coderabbit_review_failed' } });
+  });
+
+  it.each([false, true])('settles a rate limit once with recovery guidance and no retry (terminal present: %s)', async terminalPresent => {
+    const result = await runFixture({ records: [{ type: 'error', errorType: 'rate_limit', message: 'Wait 4 minutes before retrying.' },
+      ...(terminalPresent ? [complete] : [])], exitCode: 1 });
     expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_rate_limit' } });
     expect(result.output).toMatchObject({ reviewOutcome: 'failed', findings: [] });
     expect(result.output.overviewMarkdown).toContain('quota');
