@@ -24,7 +24,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 
 let frontDoorExecute: ComputerActionExecute | null = null;
-const EMPTY_SNAPSHOT = { selection: null, status: null, grants: null, failure: null, failureCause: undefined };
+const EMPTY_SNAPSHOT = { selection: null, status: null, grants: null, failure: null, details: undefined, failureCause: undefined };
 /** The one Action front door, resolved on first use so mounting a viewer builds nothing. */
 function getFrontDoorExecute(): ComputerActionExecute {
     return frontDoorExecute ??= createFrontDoorActionExecute();
@@ -44,6 +44,7 @@ export type ComputerSessionControl = Readonly<{
     busy: 'handBack' | 'check' | 'stop' | null;
     /** The last refusal code from the owner, for the one line that says what happened. */
     failure: string | null;
+    details?: unknown;
     failureCause?: ActionFailureCauseV1;
     /** `failure` came from the person's Stop sharing: the share is still on and the press can be retried. */
     stopFailed: boolean;
@@ -69,7 +70,7 @@ export type ComputerSessionControl = Readonly<{
     applySelection: (selection: ComputerSelectedTargetResponseV1) => void;
     clipboard: (operation: ComputerClipboardOperationV1) => Promise<ComputerClipboardResultV1>;
 }>;
-const EMPTY_LOCAL_PRESENTATION: Readonly<{ stopRequested: boolean; busy: ComputerSessionControl['busy']; failure: string | null; failureCause?: ActionFailureCauseV1; stopFailed: boolean; openSettings: ComputerSessionControl['openSettings'] }> = {
+const EMPTY_LOCAL_PRESENTATION: Readonly<{ stopRequested: boolean; busy: ComputerSessionControl['busy']; failure: string | null; details?: unknown; failureCause?: ActionFailureCauseV1; stopFailed: boolean; openSettings: ComputerSessionControl['openSettings'] }> = {
     stopRequested: false, busy: null, failure: null, stopFailed: false, openSettings: 'idle',
 };
 
@@ -139,15 +140,15 @@ export function useComputerSessionControl(input: Readonly<{
     [accountLifetime, controlScope, input.execute, mountedExecute, projection]);
     const subscribe = React.useCallback((listener: () => void) => projection?.subscribe(listener, enabled) ?? (() => {}), [enabled, projection]);
     const getSnapshot = React.useCallback(() => projection?.getSnapshot() ?? EMPTY_SNAPSHOT, [projection]);
-    const { selection, status, grants, failure: ownerFailure, failureCause: ownerFailureCause } = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    const { selection, status, grants, failure: ownerFailure, details: ownerDetails, failureCause: ownerFailureCause } = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const [localPresentation, setLocalPresentation] = React.useState(() => ({ owner: client, ...EMPTY_LOCAL_PRESENTATION }));
     // Press feedback belongs to the exact invoking owner, just like its source
     // facts. Withdraw it during retirement/new binding, before any cleanup effect.
-    const { stopRequested, busy, failure, failureCause, stopFailed, openSettings } = localPresentation.owner === client && client?.isCurrent()
+    const { stopRequested, busy, failure, details, failureCause, stopFailed, openSettings } = localPresentation.owner === client && client?.isCurrent()
         ? localPresentation : EMPTY_LOCAL_PRESENTATION;
     const updateLocalPresentation = React.useCallback((next: Partial<typeof EMPTY_LOCAL_PRESENTATION>) => {
         // A new failure (or its clearing) belongs to whichever press wrote it; only Stop sharing marks its own.
-        const owned = 'failure' in next ? { stopFailed: false, failureCause: undefined, ...next } : next;
+        const owned = 'failure' in next ? { stopFailed: false, details: undefined, failureCause: undefined, ...next } : next;
         setLocalPresentation(previous => ({ ...(previous.owner === client ? previous : EMPTY_LOCAL_PRESENTATION), owner: client, ...owned }));
     }, [client]);
     const clientRef = React.useRef(client);
@@ -172,7 +173,7 @@ export function useComputerSessionControl(input: Readonly<{
         updateLocalPresentation({ stopRequested: true, failure: null });
         const result = await owner.interrupt();
         if (clientRef.current !== owner || !owner.isCurrent()) return { status: 'unknown' };
-        if (!result.ok) updateLocalPresentation({ failure: result.code, failureCause: result.failureCause });
+        if (!result.ok) updateLocalPresentation({ failure: result.code, details: result.details, failureCause: result.failureCause });
         else if (result.value.status === 'failed') updateLocalPresentation({ failure: result.value.code });
         await refreshStatus();
         if (clientRef.current !== owner || !owner.isCurrent()) return { status: 'unknown' };
@@ -197,7 +198,7 @@ export function useComputerSessionControl(input: Readonly<{
         void (async () => {
             const result = await owner.handBack();
             if (clientRef.current !== owner || !owner.isCurrent()) return;
-            if (!result.ok) updateLocalPresentation({ failure: result.code, failureCause: result.failureCause });
+            if (!result.ok) updateLocalPresentation({ failure: result.code, details: result.details, failureCause: result.failureCause });
             else if (result.value.status === 'failed') updateLocalPresentation({ failure: result.value.code });
             await refreshStatus();
             if (clientRef.current !== owner || !owner.isCurrent()) return;
@@ -231,7 +232,7 @@ export function useComputerSessionControl(input: Readonly<{
                 if (clientRef.current !== owner || !owner.isCurrent()) return;
                 if (!recovered.ok || !recovered.value.selectedTarget || !recovered.value.sourceId) {
                     updateLocalPresentation({ failure: recovered.ok ? 'invalid_action_output' : recovered.code,
-                        failureCause: recovered.ok ? undefined : recovered.failureCause });
+                        details: recovered.ok ? undefined : recovered.details, failureCause: recovered.ok ? undefined : recovered.failureCause });
                     await refreshStatus();
                     if (clientRef.current !== owner || !owner.isCurrent()) return;
                     updateLocalPresentation({ busy: null });
@@ -243,7 +244,7 @@ export function useComputerSessionControl(input: Readonly<{
             // The person's own look at the window is the fresh observation that confirms the release.
             const result = await owner.observe(identity);
             if (clientRef.current !== owner || !owner.isCurrent()) return;
-            if (!result.ok) updateLocalPresentation({ failure: result.code, failureCause: result.failureCause });
+            if (!result.ok) updateLocalPresentation({ failure: result.code, details: result.details, failureCause: result.failureCause });
             else if (result.value.status === 'failed') updateLocalPresentation({ failure: result.value.code });
             await refreshStatus();
             if (clientRef.current !== owner || !owner.isCurrent()) return;
@@ -259,7 +260,7 @@ export function useComputerSessionControl(input: Readonly<{
             const result = await owner.stopSharing();
             if (clientRef.current !== owner || !owner.isCurrent()) return;
             // The answer ends the press: Retry is offered at once, not after the follow-up read settles.
-            if (!result.ok) updateLocalPresentation({ failure: result.code, failureCause: result.failureCause, stopFailed: true, busy: null });
+            if (!result.ok) updateLocalPresentation({ failure: result.code, details: result.details, failureCause: result.failureCause, stopFailed: true, busy: null });
             else if (result.value.status !== 'dispatched') updateLocalPresentation({ failure: result.value.status === 'failed' ? result.value.code : 'control_not_drained', stopFailed: true, busy: null });
             else {
                 updateLocalPresentation({ failure: null, stopFailed: false, busy: null });
@@ -300,15 +301,16 @@ export function useComputerSessionControl(input: Readonly<{
     const stopFailedNow = stopFailed && failure !== null;
     const currentFailure = stopFailedNow ? failure : ownerFailure ?? failure;
     const currentFailureCause = stopFailedNow || ownerFailure === null ? failureCause : ownerFailureCause;
-    const recoveryAction = currentFailure === null ? null : resolveComputerRecovery({ kind: 'failed', code: currentFailure }, 'use')?.action;
+    const currentDetails = stopFailedNow || ownerFailure === null ? details : ownerDetails;
+    const recoveryAction = currentFailure === null ? null : resolveComputerRecovery({ kind: 'failed', code: currentFailure, details: currentDetails }, 'use')?.action;
     // See/use constrains the Agent, not the person's native stream controls.
     const canInput = canRead && recoveryAction !== 'capture' && recoveryAction !== 'repair_driver'
         && grants?.input === 'granted' && Boolean(status && !status.stopping && !status.uncertain);
     const inputDenied = canRead && grants?.input === 'denied';
 
     return React.useMemo(() => ({
-        selection, presence, agentActing, targetTitle, appName, machineName, busy, failure: currentFailure, failureCause: currentFailureCause, stopFailed: stopFailedNow, canRead, canInput, inputDenied,
+        selection, presence, agentActing, targetTitle, appName, machineName, busy, failure: currentFailure, details: currentDetails, failureCause: currentFailureCause, stopFailed: stopFailedNow, canRead, canInput, inputDenied,
         grants, openSettings, requestSettings,
         takeControl, handBack, checkAgain, stopSharing, refresh, applySelection, clipboard,
-    }), [agentActing, appName, applySelection, busy, canInput, canRead, inputDenied, checkAgain, clipboard, currentFailure, currentFailureCause, grants, handBack, machineName, openSettings, presence, refresh, requestSettings, selection, stopFailedNow, stopSharing, takeControl, targetTitle]);
+    }), [agentActing, appName, applySelection, busy, canInput, canRead, inputDenied, checkAgain, clipboard, currentDetails, currentFailure, currentFailureCause, grants, handBack, machineName, openSettings, presence, refresh, requestSettings, selection, stopFailedNow, stopSharing, takeControl, targetTitle]);
 }

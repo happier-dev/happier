@@ -63,7 +63,8 @@ describe('install and Computer repair share configurable Action approval', () =>
         boundary.rpc.mockResolvedValue({ ok: true, result: { logPath: null } });
         const refresh = vi.fn();
         const hook = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId),
-            repair: useComputerDriverRepair({ serverId, machineId: 'machine', sessionId: 'session' }, lifetime, refresh) }));
+            repair: useComputerDriverRepair({ serverId, machineId: 'machine', sessionId: 'session' }, lifetime, refresh, { cause: 'driver_missing', action: 'repair_driver',
+                installHint: { actionId: 'machines.capabilities.install', capabilityId: COMPUTER_CUA_DRIVER_DEP_ID } }) }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().binding.binding?.isCurrent()).toBe(true));
         const screen = caller === 'installer' ? await renderSettingsView(<InstallableDepInstaller
             machineId="machine" serverId={serverId} enabled groupTitle="Dependencies" depId={COMPUTER_CUA_DRIVER_DEP_ID}
@@ -118,7 +119,8 @@ describe('install and Computer repair share configurable Action approval', () =>
         boundary.rpc.mockResolvedValue({ error: 'daemon failure' });
         const refresh = vi.fn();
         const hook = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId),
-            repair: useComputerDriverRepair({ serverId, machineId: 'machine', sessionId: 'session' }, lifetime, refresh) }));
+            repair: useComputerDriverRepair({ serverId, machineId: 'machine', sessionId: 'session' }, lifetime, refresh, { cause: 'driver_missing', action: 'repair_driver',
+                installHint: { actionId: 'machines.capabilities.install', capabilityId: COMPUTER_CUA_DRIVER_DEP_ID } }) }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().binding.binding?.isCurrent()).toBe(true));
         await act(async () => hook.getCurrent().repair.repair());
         await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalled());

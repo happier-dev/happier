@@ -335,6 +335,7 @@ describe('ComputerScreenViewer', () => {
         <ComputerScreenViewer
           {...props({ shared: false })}
           failure={failure}
+          failureDetails={{ installHint: { actionId: 'machines.capabilities.install', capabilityId: 'dep.computer-agent-desktop' } }}
           onRepairDriver={onRepairDriver}
         />,
       );

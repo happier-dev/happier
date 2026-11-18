@@ -74,7 +74,7 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         void client.listTargets().then(result => {
             if (!current || !client.isCurrent()) return;
             setState(result.ok ? { kind: 'ready', targets: result.value.targets, grants: result.value.grants, displays: result.value.displays }
-                : { kind: 'failed', code: result.code });
+                : { kind: 'failed', code: result.code, details: result.details });
             if (result.ok) {
                 const suggested = resolveSuggestedTargetKey(result.value.targets, requestedTarget);
                 setSuggestedKey(suggested);

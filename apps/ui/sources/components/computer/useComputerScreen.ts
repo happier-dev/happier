@@ -14,6 +14,7 @@ import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/ac
 import { t } from '@/text';
 import { useComputerScreenStream, type ComputerScreenTransport } from './useComputerScreenStream';
 import { useComputerSessionControl } from './useComputerSessionControl';
+import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
 import { useComputerDriverRepair } from './useComputerDriverRepair';
 import { useEscapeTakesControl } from './useEscapeTakesControl';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
@@ -64,7 +65,8 @@ export function useComputerScreen(props: Readonly<{
             return result.text;
         },
     }, writeClipboard), [clipboardOperation, writeClipboard]);
-    const driverRepair = useComputerDriverRepair(scope, accountLifetime, control.refresh);
+    const driverRepair = useComputerDriverRepair(scope, accountLifetime, control.refresh,
+        control.failure ? resolveComputerRecovery({ kind: 'failed', code: control.failure, details: control.details }, 'use') : null);
     const stream = useComputerScreenStream({
         scope,
         machineId: scope.machineId,
@@ -145,6 +147,7 @@ export function useComputerScreen(props: Readonly<{
         stopping: control.busy === 'stop',
         failure: control.failure,
         failureCause: control.failureCause,
+        failureDetails: control.details,
         stopFailed: control.stopFailed,
         onRepairDriver: driverRepair.repair,
         repairingDriver: driverRepair.repairing,

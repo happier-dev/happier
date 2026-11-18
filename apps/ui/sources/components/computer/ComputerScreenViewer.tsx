@@ -140,6 +140,7 @@ export type ComputerScreenViewerProps = Readonly<{
     stopping?: boolean;
     failure?: string | null;
     failureCause?: ActionFailureCauseV1;
+    failureDetails?: unknown;
     /** `failure` came from the person's Stop sharing: the share is still on and the press can be retried. */
     stopFailed?: boolean;
     repairingDriver?: boolean;
@@ -327,7 +328,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
     }, [viewport?.height]);
     const failure = props.failure ?? playerState?.diagnostic?.reasonCode;
     const failureCause = props.failure ? props.failureCause : undefined;
-    const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure }, resolveComputerAccess(props.access)) : null;
+    const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: props.failureDetails }, resolveComputerAccess(props.access)) : null;
     const needsCapture = recovery?.action === 'capture';
     const needsDriverRepair = recovery?.action === 'repair_driver';
     // A failed Stop sharing is told as that press, whatever its code: the share is still on.

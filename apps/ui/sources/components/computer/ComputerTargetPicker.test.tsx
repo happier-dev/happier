@@ -31,7 +31,7 @@ describe('Computer driver recovery', () => {
     it.each(['computer_provider_unavailable', 'driver_unavailable', 'driver_result_invalid', 'driver_version_mismatch', 'driver_protocol_error'] as const)('offers driver repair, not list retry, after %s', async code => {
         const onRepairDriver = vi.fn();
         const onRetry = vi.fn();
-        const screen = await renderPicker({ state: { kind: 'failed', code }, onRepairDriver, onRetry }).screen;
+        const screen = await renderPicker({ state: { kind: 'failed', code, details: { installHint: { actionId: 'machines.capabilities.install', capabilityId: 'dep.computer-agent-desktop' } } }, onRepairDriver, onRetry }).screen;
         // The repair is on the Machine the window lives on, which the sentence names.
         expect(screen.getTextContent()).toContain('driverRepairBody:{"machine":"Studio laptop"}');
         await screen.pressByTestIdAsync('p-recovery-action');

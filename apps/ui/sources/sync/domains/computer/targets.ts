@@ -4,7 +4,7 @@ export type ComputerTargetEntry = ComputerTargetsListResponseV1['targets'][numbe
 export type ComputerTargetPickerState =
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'ready'; targets: readonly ComputerTargetEntry[]; grants: ComputerGrantStatusV1; displays?: ComputerTargetsListResponseV1['displays'] }>
-    | Readonly<{ kind: 'failed'; code: string }>;
+    | Readonly<{ kind: 'failed'; code: string; details?: unknown }>;
 
 /** Hints highlight a listed source; only the producer's key identifies it. */
 export function resolveSuggestedTargetKey(targets: readonly ComputerTargetEntry[], suggestion: string | null | undefined): string | null {
@@ -25,11 +25,23 @@ export function needsComputerPermission(grants: ComputerGrantStatusV1, access?: 
     return grants.capture !== 'granted' || (resolveComputerAccess(access) === 'use' && grants.input !== 'granted');
 }
 
+export type ComputerInstallHint = Readonly<{ actionId: 'machines.capabilities.install'; capabilityId: string }>;
+
+/** Read only the provider-owned install intent; never infer a provider from a refusal. */
+export function readComputerInstallHint(details: unknown): ComputerInstallHint | undefined {
+    if (!details || typeof details !== 'object' || !('installHint' in details)) return undefined;
+    const hint = details.installHint;
+    if (!hint || typeof hint !== 'object' || !('actionId' in hint) || hint.actionId !== 'machines.capabilities.install'
+        || !('capabilityId' in hint) || typeof hint.capabilityId !== 'string' || !hint.capabilityId.trim()) return undefined;
+    return { actionId: hint.actionId, capabilityId: hint.capabilityId };
+}
+
 export type ComputerRecovery = Readonly<{
     cause: 'permission_denied' | 'permission_unknown' | 'headless' | 'unsupported' | 'machine_mismatch' | 'driver_missing' | 'driver_invalid' | 'geometry_changed' | 'input_unknown' | 'offline' | 'access_removed' | 'source_lost' | 'empty' | 'failed';
     action: 'open_settings' | 'refresh' | 'repair_driver' | 'capture' | 'reconnect' | 'choose_source' | null;
     permission?: 'capture' | 'input';
     code?: string;
+    installHint?: ComputerInstallHint;
 }>;
 
 /** Recovery names current producer facts, without waking a Machine or treating Settings as a grant. */
@@ -49,8 +61,9 @@ export function resolveComputerRecovery(state: ComputerTargetPickerState, access
     if (code === 'computer_machine_mismatch') return { cause: 'machine_mismatch', action: null, code };
     if (code === 'computer_display_unavailable') return { cause: 'headless', action: null, code };
     if (code === 'target_unsupported' || code === 'computer_unavailable') return { cause: 'unsupported', action: null, code };
-    if (code === 'computer_provider_unavailable' || code === 'driver_unavailable' || code === 'driver_install_failed') return { cause: 'driver_missing', action: 'repair_driver', code };
-    if (code === 'driver_result_invalid' || code === 'driver_executable_invalid' || code === 'driver_version_mismatch' || code === 'driver_protocol_error') return { cause: 'driver_invalid', action: 'repair_driver', code };
+    const installHint = readComputerInstallHint(state.details);
+    if (code === 'computer_provider_unavailable' || code === 'driver_unavailable' || code === 'driver_install_failed') return { cause: 'driver_missing', action: installHint ? 'repair_driver' : null, code, installHint };
+    if (code === 'driver_result_invalid' || code === 'driver_executable_invalid' || code === 'driver_version_mismatch' || code === 'driver_protocol_error') return { cause: 'driver_invalid', action: installHint ? 'repair_driver' : null, code, installHint };
     if (code === 'stale_capture' || code === 'capture_expired' || code === 'capture_generation_mismatch'
         || code === 'capture_frame_mismatch' || code === 'capture_coordinate_invalid' || code === 'capture_not_found'
         || code === 'capture_id_invalid' || code === 'capture_target_mismatch' || code === 'capture_action_refused'

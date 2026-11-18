@@ -112,7 +112,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
     // The same fact that routes a shared Use person to their personal desktop words the list as theirs.
     const ownDesktop = React.useMemo(() => resolveComputerOwnDesktopOnly({ machineId: props.scope.machineId, serverId: props.scope.serverId }),
         [props.scope.machineId, props.scope.serverId]);
-    const driverRepair = useComputerDriverRepair(props.scope, accountLifetime, picker.retry);
+    const driverRepair = useComputerDriverRepair(props.scope, accountLifetime, picker.retry, picker.recovery);
     // The person's own Ask-first preferences for the agent (the existing Actions approval owner).
     const asksBeforeScreenshots = getStorage()((current) => isActionApprovalRequiredInState(current, 'computer.capture', { surface: 'agent' }));
     const asksBeforeInput = getStorage()((current) => isActionApprovalRequiredInState(current, 'computer.input', { surface: 'agent' }));

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { COMPUTER_CUA_DRIVER_DEP_ID } from '@happier-dev/protocol/installables';
+import type { ComputerRecovery } from '@/sync/domains/computer/targets';
 import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -10,21 +10,22 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 
 /** Explicit repair uses the existing admitted installer and then re-reads native facts. */
-export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: ServerAccountScopeLifetime | null | undefined, refresh: () => void) {
+export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: ServerAccountScopeLifetime | null | undefined, refresh: () => void, recovery: ComputerRecovery | null) {
     const { execute, isCurrent } = useMountedActionExecution(accountLifetime?.scope ?? null);
     const installation = React.useMemo(() => ({ execute, isCurrent, accountLifetime, machineId: scope.machineId, serverId: scope.serverId }),
         [accountLifetime, execute, isCurrent, scope.machineId, scope.serverId]);
     const [flight, setFlight] = React.useState<typeof installation | null>(null);
     const current = React.useRef(installation);
     current.current = installation;
+    const installHint = recovery?.action === 'repair_driver' ? recovery.installHint : undefined;
     const repair = React.useCallback(() => {
-        if (!installation.isCurrent() || !accountLifetime?.isCurrent() || flight === installation) return;
+        if (!installHint || !installation.isCurrent() || !accountLifetime?.isCurrent() || flight === installation) return;
         setFlight(installation);
         void (async () => {
             try {
-                const execution = await installation.execute('machines.capabilities.install', {
+                const execution = await installation.execute(installHint.actionId, {
                     machineId: scope.machineId, serverId: scope.serverId ?? undefined,
-                    capabilityId: COMPUTER_CUA_DRIVER_DEP_ID, method: 'install',
+                    capabilityId: installHint.capabilityId, method: 'install',
                 });
                 if (!installation.isCurrent() || !accountLifetime.isCurrent() || current.current !== installation) return;
                 if (!execution.ok) {
@@ -42,6 +43,6 @@ export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: S
                 if (current.current === installation) setFlight(null);
             }
         })();
-    }, [accountLifetime, flight, installation, refresh, scope.machineId, scope.serverId]);
+    }, [accountLifetime, flight, installation, installHint, refresh, scope.machineId, scope.serverId]);
     return { repair, repairing: flight === installation };
 }

@@ -1,3 +1,5 @@
+import { readComputerInstallHint } from '../targets';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { COMPUTER_PRESENT_USER_ACTION_IDS } from '@happier-dev/protocol/computer/v1';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
@@ -78,6 +80,10 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
             const sourceScope = sessionId ? { sessionId } : { source: { kind: 'machine-person' as const, personId: personId! } };
             publishComputerActionAnswer({ ...sourceScope, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
         }
-        return result;
+        // Action failure projection preserves details, not native top-level metadata.
+        const installHint = readComputerInstallHint(result);
+        return isActionExecuteFailure(result) && installHint
+            ? { ...result, details: { ...(result.details && typeof result.details === 'object' ? result.details : {}), installHint } }
+            : result;
     };
 }
