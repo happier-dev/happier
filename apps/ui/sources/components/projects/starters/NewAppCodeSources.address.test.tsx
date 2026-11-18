@@ -145,7 +145,6 @@ it.each([
       onChooseRepository={onChooseRepository}
       chosenRepository={null}
       columns={2}
-      insetStyle={null}
     />,
   );
   try {
@@ -222,7 +221,6 @@ it('narrows Your code to the repositories a search names, without asking any Mac
       onChooseRepository={vi.fn()}
       chosenRepository={null}
       columns={2}
-      insetStyle={null}
     />,
   );
   try {
@@ -284,7 +282,7 @@ it('reads a pasted link as it lands, without Enter, and never asks a Machine abo
   const onChooseRepository = vi.fn();
   const screen = await renderAccountScreen(
     <SearchHost scope={{ serverId, accountId: 'account-owner' }} value={null} onChange={vi.fn()}
-      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} insetStyle={null} />,
+      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} />,
   );
   try {
     const field = () => screen.root.findAll((node) =>
@@ -313,7 +311,7 @@ it('keeps a pasted repository as a Source through the Sources writer when the ho
   const onChooseRepository = vi.fn();
   const screen = await renderAccountScreen(
     <SearchHost scope={{ serverId, accountId: 'account-owner' }} value={null} onChange={vi.fn()}
-      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} insetStyle={null} />,
+      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} />,
   );
   try {
     const field = () => screen.root.findAll((node) =>

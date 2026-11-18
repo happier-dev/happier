@@ -57,8 +57,6 @@ export function NewAppCodeSources(
     onQueryChange: (query: string) => void;
     /** Two per line in the dialog (owner 11-14); one on a phone (rows rule). */
     columns: 1 | 2;
-    /** Lines the section up with the gallery beneath it inside the dialog card. */
-    insetStyle: React.ComponentProps<typeof View>['style'];
   }>,
 ): React.ReactNode {
   const { state, controller, repositoryFacts } = useProjectSources(props.scope, { repositoryFacts: true });
@@ -132,7 +130,7 @@ export function NewAppCodeSources(
     <>
       {/* The search leads the step (lab f1src), on the same edge as the sections' tiles beneath it. */}
       <ItemGroup testID="newApp.search" header="none" surface="none">
-      <View style={[styles.field, props.insetStyle]}>
+      <View style={styles.field}>
         {/* The app's one search field; a pasted or typed repository link is read as it lands (Enter reads it at once). */}
         <CompactSearchField
           testID="newApp.code.address"
@@ -159,7 +157,7 @@ export function NewAppCodeSources(
       </ItemGroup>
       {tiles.length > 0 || (needle && withCode.length > 0) ? (
     <ItemGroup testID="newApp.code" title={t('newApp.yourCode')} titleRole="label" surface="none">
-      <View style={[styles.column, props.insetStyle]}>
+      <View style={styles.column}>
         {tiles.length > 0 ? (
           <SelectionTiles
             testIdPrefix="newApp.code"

@@ -707,8 +707,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           <View>
             <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
               chosenRepository={pastedRepository?.selector ?? null} onChooseRepository={choosePastedRepository}
-              query={query} onQueryChange={setQuery}
-              insetStyle={dialog ? styles.dialogInset : null} />
+              query={query} onQueryChange={setQuery} />
           </View>
         ) : null}
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
@@ -717,7 +716,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
         <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label">
         {/* Describe your app sits a tile gap above the starters (lab .jd-descopt), not flush against them. */}
-        <View style={[dialog ? styles.dialogInset : null, styles.startNewStack]}>
+        <View style={styles.startNewStack}>
         {/* Describe your app: one full-width choice above the starters (lab src DESCRIBE_ENTRY), chosen like the rest. */}
         <SelectionTiles
           density="compact"
@@ -791,7 +790,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {scope ? (
           <View>
             <ItemGroup testID="newApp.built" surface="none" title={t('newApp.alreadyBuilt')} titleRole="label">
-              <View style={dialog ? styles.dialogInset : null}>
+              <View>
                 <SelectionTiles
                   density="compact"
                   maximumColumns={phone ? 1 : 2}
@@ -811,10 +810,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               action={<TextLinkButton testID="newApp.fromCatalog" size="meta" label={t('newApp.browseCatalog')} onPress={browseCatalog} />}
             >
               {catalogTiles.length > 0 ? (
-                <View style={dialog ? styles.dialogInset : null}>
+                <View>
                   <SelectionTiles
                     density="compact"
-                    maximumColumns={phone ? 1 : 3}
+                    // One rhythm: two columns in every section of the dialog (journey-deploy jdF-src).
+                    maximumColumns={phone ? 1 : 2}
                     // A listing's first clause fits whole (the longest seen, ~95 characters, takes four lines).
                     subtitleLines={4}
                     accessibilityLabel={t('newApp.fromCatalog')}
@@ -1226,9 +1226,8 @@ const styles = StyleSheet.create((theme) => ({
   ways: { gap: theme.space.s8, paddingTop: theme.space.s20, paddingHorizontal: theme.space.s16 },
   waysEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
   // The card has no page gutter, and a bare group bleeds one step past the card body there. The description field
-  // takes that step back so it shares the edge of the sheets beneath it. The start step's titled sections take it
-  // twice: once around the group (its title lines up with the page title), once around tiles that have no sheet, so
-  // they line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
+  // takes that step back so it shares the edge of the sheets beneath it. The start step's search field and tiles take
+  // none: they stand on the dialog title's edge with their section titles (journey-deploy jdF-src, one edge).
   dialogInset: { paddingHorizontal: theme.space.s16 },
   startNewStack: { gap: theme.space.s8 },
   forgeRepair: { alignItems: 'flex-end', paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 },
