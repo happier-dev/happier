@@ -230,9 +230,8 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
   const facts = anatomy.card?.facts ? [...(boardReason ? [boardReason] : []), <Passive key="facts">{anatomy.card.facts(item)}</Passive>] : [
     ...(placeUnderTitle ? [] : [place]).filter(present).map((value) => <Passive key="place"><Slot value={value} tone="muted" /></Passive>),
     ...(boardReason ? [boardReason] : []),
-    ...(previewCard ? [<View key="end" style={factsEndStyle} />] : []),
     ...[anatomy.signal?.(item), anatomy.agent?.(item), anatomy.age?.(item)]
-      .filter(present).map((value, index) => <Passive key={index}><Slot value={value} tone="muted" /></Passive>),
+      .filter(present).map((value, index) => <Passive key={index} alignEnd={previewCard && index === 0}><Slot value={value} tone="muted" /></Passive>),
   ];
   const body = anatomy.card?.body;
   // Like a two-line list row, a card whose facts carry the byline says the designation there, not after the title.
@@ -265,14 +264,13 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
  * are `box-none`, which hands pointer hits back to their children; this is what keeps those children passive.
  * Controls stay in `headerRight` and the card's actions corner, outside these slots (CollectionAnatomy.card).
  */
-function Passive(props: Readonly<{ children: ReactNode }>): ReactElement {
-  return <View pointerEvents="none" style={passiveSlotStyle}>{props.children}</View>;
+function Passive(props: Readonly<{ children: ReactNode; alignEnd?: boolean }>): ReactElement {
+  return <View pointerEvents="none" style={props.alignEnd ? passiveEndSlotStyle : passiveSlotStyle}>{props.children}</View>;
 }
 const passiveSlotStyle: HappierPortableStyle = { minWidth: 0, flexShrink: 1 };
+const passiveEndSlotStyle: HappierPortableStyle = { ...passiveSlotStyle, marginLeft: 'auto' };
 const boardMarkStyle: HappierPortableStyle = { justifyContent: 'center', flexShrink: 0 };
 const passiveBodyStyle: HappierPortableStyle = { flexGrow: 1, minWidth: 0 };
-/** Pushes a preview card's age to the end of its foot line, across from its kind. */
-const factsEndStyle: HappierPortableStyle = { flexGrow: 1 };
 
 function BoardCardRow<Item>(props: Readonly<{
   item: Item;

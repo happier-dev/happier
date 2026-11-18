@@ -5841,9 +5841,8 @@ describe('grid', () => {
     // The band already identifies the item, so its mark needs no row of its own above the title.
     expect(getComputedStyle(header).flexDirection).toBe('row');
     expect(titleBlock.textContent).toContain('payments-api');
-    expect(foot.textContent).toContain('Review requested');
-    expect(foot.textContent).toContain('18m');
-    expect(foot.textContent).not.toContain('payments-api');
+    // Every flex item in the wrapping foot must carry a fact. An empty item can consume a line and its gap.
+    expect(Array.from(foot.children, (fact) => fact.textContent)).toEqual(['Review requested', '18m']);
     expect(header.textContent).not.toContain('Review requested');
     grid.unmount();
     // A card with no band keeps the one card: its reason stays in the right slot, its mark on its own row.
