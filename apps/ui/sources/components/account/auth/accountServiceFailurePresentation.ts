@@ -1,10 +1,12 @@
-import { AccountDirectoryErrorCodeV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { ACCOUNT_DIRECTORY_ERROR_CODES_V1, AccountDirectoryErrorCodeV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { AccountDirectoryRequestError } from '@/sync/api/accountDirectory/accountDirectoryClient';
 import { t } from '@/text';
 import {
     isCompletedAccountPostAuthResult,
     type AccountPostAuthFailureCode,
     type AccountPostAuthResult,
 } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
+import type { AuthenticatedHomeLinkRevocationResult } from '@/sync/ops/accountDirectory/provisionAuthenticatedHomeLink';
 
 /** Failures the OAuth callback route computes before a post-auth continuation exists. */
 export type AccountServiceOAuthCallbackFailureCode =
@@ -140,6 +142,42 @@ export function describeAccountServiceFailure(code: AccountServiceFailureCode): 
         default:
             return unreachable(code);
     }
+}
+
+/** A Directory write can refuse a stale target or leave the outcome unconfirmed. */
+export function describeAccountDirectoryMutationFailure(error: unknown, operation: 'set_preferred' | 'remove'): string {
+    if (!(error instanceof AccountDirectoryRequestError)) return t('errors.operationFailed');
+    if (error.code === ACCOUNT_DIRECTORY_ERROR_CODES_V1.invalidToken) return t('settingsAccount.accountServiceReconnectDescription');
+    if (operation === 'set_preferred' && error.status === 404 && error.code === ACCOUNT_DIRECTORY_ERROR_CODES_V1.directoryUnavailable) {
+        return t('settingsAccount.accountServicePreferredHomeMissing');
+    }
+    if (error.status === 408 || error.status >= 500) return t('errors.scmOutcomeUnknown');
+    return error.code ? describeAccountServiceFailure({ source: 'directory', code: error.code }).body : t('errors.operationFailed');
+}
+
+export function describeAccountHomeUnlinkFailure(
+    result: Exclude<AuthenticatedHomeLinkRevocationResult, { kind: 'unlinked' }>,
+    homeName: string,
+): string {
+    if (result.kind === 'unavailable') {
+        switch (result.reason) {
+            case 'home_credentials_unavailable':
+                return t('server.homes.signInAgainTitle', { name: homeName });
+            case 'home_profile_unavailable':
+                return t('connect.scanExistingHomeQrTitle');
+            case 'home_transport_unavailable':
+                return t('server.homes.unavailableTitle', { name: homeName });
+            default:
+                return unreachable(result.reason);
+        }
+    }
+    if (result.error instanceof AccountDirectoryRequestError) {
+        if (result.error.status === 401) return t('server.homes.signInAgainTitle', { name: homeName });
+        if (result.error.status === 403) return t('errors.permissionDenied');
+        if (result.error.status === 408 || result.error.status >= 500) return t('errors.scmOutcomeUnknown');
+        if (result.error.code) return describeAccountServiceFailure({ source: 'directory', code: result.error.code }).body;
+    }
+    return t('errors.operationFailed');
 }
 
 /**

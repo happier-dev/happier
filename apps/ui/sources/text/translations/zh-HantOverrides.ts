@@ -12354,6 +12354,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: '需要核准',
         accountServiceHomeConnectionFailed: '連線失敗',
         accountServicePreferredHome: '偏好',
+        accountServicePreferredHomeMissing: '此家園已與帳號解除連結。請先重新整理家園清單，再選擇偏好的家園。',
         accountServiceSetPreferredHome: '設為偏好',
         accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `從我的 ${accountService} Home 移除` : '從我的 Home 移除',
         accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `從 ${accountService} 移除 ${label}？` : `從已連結的 Home 移除 ${label}？`,

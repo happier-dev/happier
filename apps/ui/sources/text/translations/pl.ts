@@ -15029,6 +15029,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Wymagane zatwierdzenie',
         accountServiceHomeConnectionFailed: 'Połączenie nie powiodło się',
     accountServicePreferredHome: 'Preferowany',
+    accountServicePreferredHomeMissing: 'Ten Dom nie jest już powiązany z Twoim kontem. Odśwież listę Domów, zanim wybierzesz preferowany Dom.',
     accountServiceSetPreferredHome: 'Ustaw jako preferowany',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Usuń z moich Home w ${accountService}` : 'Usuń z moich Home',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `Usunąć ${label} z ${accountService}?` : `Usunąć ${label} z połączonych Home?`,

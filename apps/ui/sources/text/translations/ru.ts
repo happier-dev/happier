@@ -15038,6 +15038,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Требуется одобрение',
         accountServiceHomeConnectionFailed: 'Не удалось подключиться',
     accountServicePreferredHome: 'Предпочтительный',
+    accountServicePreferredHomeMissing: 'Этот Дом больше не связан с вашей учётной записью. Обновите список Домов, прежде чем выбрать предпочтительный.',
     accountServiceSetPreferredHome: 'Сделать предпочтительным',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Удалить из моих Homes в ${accountService}` : 'Удалить из моих Homes',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `Удалить ${label} из ${accountService}?` : `Удалить ${label} из связанных Homes?`,

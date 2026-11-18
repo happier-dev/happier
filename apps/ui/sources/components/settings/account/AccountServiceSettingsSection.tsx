@@ -5,7 +5,7 @@ import { View } from 'react-native';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { AccountServiceContinuation } from '@/components/account/auth/AccountServiceContinuation';
 import { AccountServiceHomeAuthenticationAdapter } from '@/components/account/auth/AccountServiceHomeAuthenticationAdapter';
-import { describeAccountServiceFailure } from '@/components/account/auth/accountServiceFailurePresentation';
+import { describeAccountDirectoryMutationFailure, describeAccountHomeUnlinkFailure, describeAccountServiceFailure } from '@/components/account/auth/accountServiceFailurePresentation';
 import {
     launchAccountServiceOAuthAuthentication,
     projectAccountServiceMethodStrip,
@@ -256,6 +256,11 @@ export function AccountServiceSettingsSection(): React.ReactElement {
     const connected = connectionKind === 'connected';
     const directoryRefreshing = directorySnapshot?.status === 'loading';
 
+    const isServiceInvalidated = React.useCallback((target: Pick<ServiceAttempt, 'serviceInvalidationRevision' | 'serviceKey'>) => (
+        serviceInvalidationRevisionRef.current !== target.serviceInvalidationRevision
+        || serviceKeyRef.current !== target.serviceKey
+    ), []);
+
     const beginAttempt = React.useCallback((targetServiceKey: string): Readonly<{
         attempt: ServiceAttempt;
         shouldCancel: () => boolean;
@@ -270,12 +275,9 @@ export function AccountServiceSettingsSection(): React.ReactElement {
         return {
             attempt,
             shouldCancel: () => activeAttemptRef.current !== attempt || serviceKeyRef.current !== attempt.serviceKey,
-            shouldInvalidateContinuation: () => (
-                serviceInvalidationRevisionRef.current !== attempt.serviceInvalidationRevision
-                || serviceKeyRef.current !== attempt.serviceKey
-            ),
+            shouldInvalidateContinuation: () => isServiceInvalidated(attempt),
         };
-    }, []);
+    }, [isServiceInvalidated]);
 
     const invalidateAttempts = React.useCallback(() => {
         continuationAbortRef.current?.abort();
@@ -509,8 +511,8 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             if (shouldCancel()) return;
             const snapshot = await directorySession.refresh();
             if (shouldCancel()) return;
-        } catch {
-            if (!shouldCancel()) await Modal.alertAsync(t('common.error'), t('errors.operationFailed'));
+        } catch (error) {
+            if (!shouldCancel()) await Modal.alertAsync(t('common.error'), describeAccountDirectoryMutationFailure(error, 'set_preferred'));
         } finally {
             setPendingRowActions((current) => {
                 const next = { ...current };
@@ -539,8 +541,8 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             if (shouldCancel()) return;
             await directorySession.refresh();
             if (shouldCancel()) return;
-        } catch {
-            if (!shouldCancel()) await Modal.alertAsync(t('common.error'), t('errors.operationFailed'));
+        } catch (error) {
+            if (!shouldCancel()) await Modal.alertAsync(t('common.error'), describeAccountDirectoryMutationFailure(error, 'remove'));
         } finally {
             setPendingRowActions((current) => {
                 const next = { ...current };
@@ -552,6 +554,8 @@ export function AccountServiceSettingsSection(): React.ReactElement {
 
     const unlinkHome = React.useCallback(async (homeServerIdentityId: string, label: string) => {
         if (!verifiedAccountServiceIdentity || pendingRowActions[homeServerIdentityId]) return;
+        const target = { serviceKey, serviceInvalidationRevision: serviceInvalidationRevisionRef.current };
+        const shouldCancel = () => isServiceInvalidated(target);
         const confirmed = await Modal.confirm(
             t('settingsAccount.accountServiceUnlinkHomeConfirmTitle', { label, accountService: verifiedAccountServiceName }),
             t('settingsAccount.accountServiceUnlinkHomeConfirmBody', { label, accountService: verifiedAccountServiceName }),
@@ -561,8 +565,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 destructive: true,
             },
         );
-        if (!confirmed) return;
-        const shouldCancel = () => serviceKeyRef.current !== serviceKey;
+        if (!confirmed || shouldCancel()) return;
         setPendingRowActions((current) => ({ ...current, [homeServerIdentityId]: 'unlink' }));
         try {
             const result = await revokeAuthenticatedHomeLink({
@@ -571,7 +574,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 shouldCancel,
             });
             if (result.kind !== 'unlinked' && !shouldCancel()) {
-                await Modal.alertAsync(t('common.error'), t('errors.operationFailed'));
+                await Modal.alertAsync(t('common.error'), describeAccountHomeUnlinkFailure(result, label));
             }
         } finally {
             setPendingRowActions((current) => {
@@ -580,7 +583,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 return next;
             });
         }
-    }, [pendingRowActions, serviceKey, verifiedAccountServiceIdentity, verifiedAccountServiceName]);
+    }, [isServiceInvalidated, pendingRowActions, serviceKey, verifiedAccountServiceIdentity, verifiedAccountServiceName]);
 
     const continueHome = React.useCallback(async (homeServerIdentityId: string, kind: 'link' | 'enroll') => {
         if (!directorySessionBinding || pendingRowActions[homeServerIdentityId]) return;

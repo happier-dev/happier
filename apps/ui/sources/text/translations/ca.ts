@@ -14251,6 +14251,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Cal aprovació',
         accountServiceHomeConnectionFailed: 'Ha fallat la connexió',
         accountServicePreferredHome: 'Preferit',
+        accountServicePreferredHomeMissing: 'Aquesta Llar ja no està enllaçada al teu compte. Actualitza les Llars abans de triar-ne una de preferida.',
         accountServiceSetPreferredHome: 'Defineix com a preferit',
         accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Elimina de els meus Homes de ${accountService}` : 'Elimina de les meves llars',
         accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `Vols eliminar ${label} de ${accountService}?` : `Vols eliminar ${label} de les llars enllaçades?`,

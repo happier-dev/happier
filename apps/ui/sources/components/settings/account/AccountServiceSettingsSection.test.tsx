@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen as renderBaseScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createDeferred, renderScreen as renderBaseScreen } from '@/dev/testkit';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -36,6 +36,11 @@ import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPolli
 import { router } from 'expo-router';
 import { Linking } from 'react-native';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import {
+    ACCOUNT_DIRECTORY_ERROR_CODES_V1,
+    ACCOUNT_DIRECTORY_PREFERRED_HOME_HTTP_PATH_V1,
+    buildAccountDirectoryHomeHttpPathV1,
+} from '@happier-dev/protocol/auth/accountDirectory';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
@@ -587,6 +592,97 @@ describe('Account Service settings continuation composition', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl, { serverId: fixture.home.homeServerIdentityId })).toEqual({ token: fixture.token });
         expect(fixture.state.calls.filter(({ path }) => path.includes('login-assertion'))).toHaveLength(1);
         expect(fixture.state.calls.find(({ path }) => path.includes('login-assertion'))?.endpoint).toBe(fixture.service.endpointUrl);
+    });
+
+    it.each([
+        { actionId: 'set-preferred', status: 404, code: ACCOUNT_DIRECTORY_ERROR_CODES_V1.directoryUnavailable,
+            message: 'settingsAccount.accountServicePreferredHomeMissing' },
+        { actionId: 'remove', status: 401, code: ACCOUNT_DIRECTORY_ERROR_CODES_V1.invalidToken,
+            message: 'settingsAccount.accountServiceReconnectDescription' },
+        { actionId: 'remove', status: 503, code: ACCOUNT_DIRECTORY_ERROR_CODES_V1.directoryUnavailable,
+            message: 'errors.scmOutcomeUnknown' },
+    ] as const)('shows the Directory refusal for $actionId at status $status', async ({ actionId, status, code, message }) => {
+        onTestFinished(() => {
+            vi.mocked(Modal.confirm).mockClear();
+            vi.mocked(Modal.alertAsync).mockClear();
+        });
+        fixture.state.preferredHomeServerIdentityId = null;
+        fixture.state.homes = fixture.state.homes.map(home => ({ ...home, preferred: false }));
+        boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+            const isMutation = actionId === 'set-preferred'
+                ? path === ACCOUNT_DIRECTORY_PREFERRED_HOME_HTTP_PATH_V1 && init?.method === 'PATCH'
+                : path === buildAccountDirectoryHomeHttpPathV1(fixture.home.homeServerIdentityId) && init?.method === 'DELETE';
+            if (isMutation) return Response.json({ error: code }, { status });
+            return fixture.request(endpoint, path, init);
+        });
+        if (actionId === 'remove') vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        screen = await renderScreen(<AccountServiceSettingsSection />);
+        const rowId = 'settings-account-service-home-srv_home_b';
+        await vi.waitFor(() => expect(screen?.findByTestId(rowId)).not.toBeNull());
+        const rowAction = screen.findAllByType(ItemRowActions)
+            .flatMap((node) => node.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>)
+            .find((action) => action.id === `${rowId}-${actionId}`);
+        if (!rowAction?.onPress) throw new Error('Expected the linked Home row action');
+        await act(async () => { rowAction.onPress?.(); });
+        await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalledWith(t('common.error'), t(message)));
+    });
+
+    it('asks for Home sign-in when the unlink credential is gone at confirmation', async () => {
+        onTestFinished(() => {
+            vi.mocked(Modal.confirm).mockClear();
+            vi.mocked(Modal.alertAsync).mockClear();
+        });
+        const profile = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'account-directory' });
+        const scope = { serverId: fixture.home.homeServerIdentityId };
+        await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, scope, { token: fixture.token });
+        vi.mocked(Modal.confirm).mockImplementationOnce(async () => {
+            await TokenStorage.removeCredentialsForServerUrl(profile.serverUrl, scope);
+            return true;
+        });
+        screen = await renderScreen(<AccountServiceSettingsSection />);
+        await vi.waitFor(() => expect(screen?.findByTestId('settings-account-service-home-srv_home_b-link')).not.toBeNull());
+        const unlink = screen.findAllByType(ItemRowActions)
+            .flatMap(node => node.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>)
+            .find(action => action.id === 'settings-account-service-home-srv_home_b-unlink');
+        if (!unlink?.onPress) throw new Error('Expected the unlink action beside remove');
+        await act(async () => { unlink.onPress?.(); });
+        await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalledWith(
+            t('common.error'), t('server.homes.signInAgainTitle', { name: fixture.home.label }),
+        ));
+        expect(boundary.request.mock.calls.some(([, path, init]) =>
+            path.startsWith('/v1/account/directory-links/') && init?.method === 'DELETE')).toBe(false);
+    });
+
+    it('drops a late Home unlink refusal after Account Service sign-out', async () => {
+        const profile = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'account-directory' });
+        await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, { serverId: fixture.home.homeServerIdentityId }, { token: fixture.token });
+        const started = createDeferred<void>();
+        const refusal = createDeferred<Response>();
+        boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+            if (path.startsWith('/v1/account/directory-links/') && init?.method === 'DELETE') {
+                started.resolve();
+                return refusal.promise;
+            }
+            return fixture.request(endpoint, path, init);
+        });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        vi.mocked(Modal.alertAsync).mockClear();
+        onTestFinished(() => { vi.mocked(Modal.confirm).mockClear(); vi.mocked(Modal.alertAsync).mockClear(); });
+        screen = await renderScreen(<AccountServiceSettingsSection />);
+        const rowAction = (id: string) => screen!.findAllByType(ItemRowActions)
+            .flatMap(node => node.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>)
+            .find(action => action.id === id)?.onPress;
+        const unlink = 'settings-account-service-home-srv_home_b-unlink';
+        const signOut = 'settings-account-service-disconnect';
+        try {
+            await vi.waitFor(() => expect(rowAction(unlink)).toBeDefined());
+            await act(async () => { rowAction(unlink)!(); await started.promise; });
+            await act(async () => { rowAction(signOut)!(); });
+            await vi.waitFor(() => expect(rowAction(signOut)).toBeUndefined());
+        } finally {
+            await act(async () => { refusal.resolve(Response.json({}, { status: 401 })); });
+        }
+        expect(Modal.alertAsync).not.toHaveBeenCalled();
     });
 
     it('stops delegated sign-in on the Home with that Home\'s own credential and no Account Service write', async () => {

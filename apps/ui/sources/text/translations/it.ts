@@ -15414,6 +15414,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Approvazione necessaria',
         accountServiceHomeConnectionFailed: 'Connessione non riuscita',
     accountServicePreferredHome: 'Preferito',
+    accountServicePreferredHomeMissing: 'Questa Casa non è più collegata al tuo account. Aggiorna le tue Case prima di sceglierne una preferita.',
     accountServiceSetPreferredHome: 'Imposta come preferito',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Rimuovi dai miei Home di ${accountService}` : 'Rimuovi dai miei Home',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `Rimuovere ${label} da ${accountService}?` : `Rimuovere ${label} dagli Home collegati?`,

@@ -18160,6 +18160,7 @@ const enSettingsAccount = {
   accountServiceHomeApprovalRequired: 'Approval needed',
   accountServiceHomeConnectionFailed: 'Connection failed',
   accountServicePreferredHome: 'Preferred',
+  accountServicePreferredHomeMissing: 'This Home is no longer linked to your account. Refresh your Homes before choosing a preferred Home.',
   accountServiceSetPreferredHome: 'Set as preferred',
   accountServiceRemoveHome: ({
     accountService,

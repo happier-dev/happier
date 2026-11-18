@@ -14709,6 +14709,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: '需要批准',
         accountServiceHomeConnectionFailed: '连接失败',
     accountServicePreferredHome: '首选',
+    accountServicePreferredHomeMissing: '此家园已与账号解除关联。请先刷新家园列表，再选择首选家园。',
     accountServiceSetPreferredHome: '设为首选',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `从我的 ${accountService} Home 中移除` : '从我的 Home 中移除',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `从 ${accountService} 移除 ${label}？` : `从已关联的 Home 中移除 ${label}？`,

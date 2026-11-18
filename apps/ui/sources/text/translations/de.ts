@@ -15295,6 +15295,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Freigabe erforderlich',
         accountServiceHomeConnectionFailed: 'Verbindung fehlgeschlagen',
         accountServicePreferredHome: 'Bevorzugt',
+        accountServicePreferredHomeMissing: 'Dieses Zuhause ist nicht mehr mit deinem Konto verknüpft. Aktualisiere deine Zuhause-Liste, bevor du ein bevorzugtes Zuhause auswählst.',
         accountServiceSetPreferredHome: 'Als bevorzugt festlegen',
         accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Aus meinen ${accountService}-Homes entfernen` : 'Aus meinen Homes entfernen',
         accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `${label} aus ${accountService} entfernen?` : `${label} aus deinen verknüpften Homes entfernen?`,

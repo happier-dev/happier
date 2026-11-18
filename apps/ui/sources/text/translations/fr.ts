@@ -15064,6 +15064,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: 'Approbation requise',
         accountServiceHomeConnectionFailed: 'Échec de la connexion',
     accountServicePreferredHome: 'Préféré',
+    accountServicePreferredHomeMissing: 'Ce Foyer n’est plus lié à votre compte. Actualisez vos Foyers avant de choisir un Foyer préféré.',
     accountServiceSetPreferredHome: 'Définir comme préféré',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `Retirer de mes Homes ${accountService}` : 'Retirer de mes Homes',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `Retirer ${label} de ${accountService} ?` : `Retirer ${label} de tes Homes associés ?`,

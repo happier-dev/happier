@@ -15478,6 +15478,7 @@ settingsSession: {
         accountServiceHomeApprovalRequired: '承認が必要です',
         accountServiceHomeConnectionFailed: '接続に失敗しました',
     accountServicePreferredHome: '優先',
+    accountServicePreferredHomeMissing: 'このホームはアカウントにリンクされていません。優先するホームを選ぶ前に、ホームの一覧を更新してください。',
     accountServiceSetPreferredHome: '優先に設定',
     accountServiceRemoveHome: ({ accountService }: { accountService?: string }) => accountService ? `自分の ${accountService} の Home から削除` : '自分の Home から削除',
     accountServiceRemoveHomeConfirmTitle: ({ label, accountService }: { label: string; accountService?: string }) => accountService ? `${label} を ${accountService} から削除しますか？` : `${label} をリンク済みの Home から削除しますか？`,
