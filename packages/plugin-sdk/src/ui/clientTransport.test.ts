@@ -1861,7 +1861,7 @@ describe('plugin UI domain client transport adapter', () => {
             hostAction: { action: 'review.start' as const, projection: 'executionRunLaunch' as const },
             sessionId: 'session-1',
             serverId: 'server-1',
-            draft: { engineIds: ['reviewer'], instructions: 'Review this change' },
+            draft: { reviewers: [{ kind: 'engine' as const, engineId: 'reviewer' }], instructions: 'Review this change' },
         };
         let receive: ((message: unknown) => void) | undefined;
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];

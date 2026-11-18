@@ -14,7 +14,7 @@ import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js
 import { ReviewOutputSelectionSchema } from './reviewNarration.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { defineProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
-import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionSessionAddressV1Schema } from '../actions/sessionAddressV1.js';
 import type { SessionTranscriptGetItem } from '../actions/specs/session/transcript.js';
 import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
@@ -93,12 +93,13 @@ export const ReviewEngineReviewerSelectionV1Schema = lazyZodSchema(() => z.stric
 })));
 export type ReviewEngineReviewerSelectionV1 = z.infer<typeof ReviewEngineReviewerSelectionV1Schema>;
 
-export const ReviewReviewerSelectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+// Every reviewer crosses Action JSON transport, including additive native launch metadata.
+export const ReviewReviewerSelectionV1Schema = lazyZodSchema(() => asProtocolZod(projectZodProtocolSchema(z.discriminatedUnion('kind', [
   ReviewEngineReviewerSelectionV1Schema,
   ExecutableSessionParticipantSelectionV1Schema,
   ExecutableModelParticipantSelectionV1Schema,
   z.strictObject({ kind: z.literal('person'), ...ReviewRequestedReviewerInputV1Schema.shape }),
-]));
+]))));
 export type ReviewReviewerSelectionV1 = z.infer<typeof ReviewReviewerSelectionV1Schema>;
 
 export const ReviewStepV1Schema = lazyZodSchema(() => z.strictObject({

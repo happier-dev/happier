@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema } from './reviewStart.js';
 
 describe('ordered Review reviewer admission', () => {
+  it('keeps additive launch metadata as JSON and refuses non-JSON reviewer launch values', () => {
+    const selection = { kind: 'engine', engineId: 'codex', sessionConfigOptionOverrides: {
+      v: 1, updatedAt: 1, overrides: {}, futureMetadata: { values: ['preserved', null] },
+    } };
+    const input = { reviewers: [selection], instructions: 'Review.' };
+    expect(ReviewStartInputSchema.parse(input).reviewers).toEqual([selection]);
+    expect(ReviewStartInputSchema.safeParse({ ...input, reviewers: [{ ...selection,
+      sessionConfigOptionOverrides: { ...selection.sessionConfigOptionOverrides, futureMetadata: { callback: () => undefined } },
+    }] }).success).toBe(false);
+  });
+
   it('preserves JSON engine options and refuses values that cannot cross the Action transport', () => {
     const options = { nested: { focus: ['security', null], enabled: true, threshold: 0.5 } };
     const ordered = { reviewers: [{ kind: 'engine', engineId: 'codex', options }], instructions: 'Review.' };
