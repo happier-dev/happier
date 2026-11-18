@@ -23,8 +23,8 @@ export const CoordinatorKeepRailPreview = React.memo(function CoordinatorKeepRai
         <View style={styles.railScene}>
             <View style={styles.rail}>
                 <View style={styles.railSlot}><Icon name="chat" size={APP_RAIL_ICON_GLYPH_SIZE_PX} /></View>
-                <View style={styles.railSlot}><Icon name="magnifying-glass" size={APP_RAIL_ICON_GLYPH_SIZE_PX} /></View>
                 <View style={styles.railSlot}><Icon name="tray" size={APP_RAIL_ICON_GLYPH_SIZE_PX} /></View>
+                {/* The Bot sits in the tile's visible height: it is what this option is about. */}
                 <View style={styles.railSlot}><AvatarGradient id={COORDINATOR_ID} size={APP_RAIL_AVATAR_SIZE_PX} /></View>
             </View>
             <View style={styles.railPane}>

@@ -114,6 +114,7 @@ function NewCoordinatorsGroup(props: Readonly<{ popoverBoundaryRef: React.RefObj
                             <Text variant="meta" style={styles.keepCaption}>{t('settingsCoordination.keepAlways')}</Text>
                             <SelectionTiles
                                 variant="visual"
+                                tileSizing="fill"
                                 accessibilityLabel={t('settingsCoordination.keepAlways')}
                                 testIdPrefix="settings-coordination-keep"
                                 value={fixedKeep}
@@ -277,6 +278,6 @@ function CheckInGroup() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-    keepControls: { gap: theme.space.s12, alignItems: 'flex-start' },
+    keepControls: { gap: theme.space.s12 },
     keepCaption: { color: theme.colors.text.secondary },
 }));
