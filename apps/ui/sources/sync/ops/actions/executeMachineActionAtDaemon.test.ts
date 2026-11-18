@@ -46,3 +46,16 @@ it('presents a value-free carried review while retaining private operands under 
         preview: { summary: 'Review the prepared effect' } });
     expect(execute).toHaveBeenCalledExactlyOnceWith(input, reviewDigest);
 });
+
+it.each([false, true])('settles a carried review before dispatch when aborted=%s', async aborted => {
+    const controller = new AbortController();
+    const input = { action: { pluginId: 'acme.tasks', localId: 'create' }, input: { title: 'A task' } };
+    const execute = vi.fn();
+    const result = await confirmOwnUiRefusal('action.invoke', input, { ...context, signal: controller.signal },
+        refused(input), async () => {
+            if (aborted) controller.abort();
+            return false;
+        }, execute);
+    expect(result).toMatchObject({ ok: false, errorCode: aborted ? 'cancelled' : 'approval_canceled', effectAttempted: false });
+    expect(execute).not.toHaveBeenCalled();
+});

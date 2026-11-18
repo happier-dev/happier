@@ -65,8 +65,8 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
     const parsed = getActionSpec(actionId).inputSchema.safeParse(actionId === 'projects.open' ? review?.actionArgs : input);
     if (!review || !parsed.success) return result;
     const confirmed = await confirm({ actionId, input: parsed.data, context, preview: review.preview });
-    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-    if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
+    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
+    if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
     const executed = await executeConfirmed(parsed.data, review.reviewDigest);
     // A first confirmation may precede native destination preparation. Present a
     // changed destination through this same surface; an unchanged refusal stays refused.
