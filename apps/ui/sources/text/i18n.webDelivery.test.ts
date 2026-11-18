@@ -85,49 +85,58 @@ it('loads selected web copy before activation and keeps explicit voice demand in
     }
 });
 
-// Translation modules that still keep every locale in one module. Their English copy is read on every
-// load, so each non-English table here is parsed and evaluated for nobody. Move a module's other locales
-// into `translations/features/<locale>.ts` (the module keeps its types and English) and drop it from this
-// list. New copy never adds a module here.
-const PENDING_PER_LOCALE_SPLIT: readonly string[] = [
-    'botStoreTranslations.ts',
-    'botTemplateEditorTranslations.ts',
-    'botTemplatePageTranslations.ts',
-    'botTemplatePresentationTranslations.ts',
-    'botTemplateSetupTranslations.ts',
-    'botTemplateSharingTranslations.ts',
-    'botTemplateUpdateTranslations.ts',
-    'capabilityDetailTranslations.ts',
-    'deploymentEditorsTranslations.ts',
-    'deploymentMonitoringTranslations.ts',
-    'deploymentOperationalTranslations.ts',
-    'deploymentOverviewTranslations.ts',
-    'deploymentPreparationTranslations.ts',
-    'deploymentReceiptTranslations.ts',
-    'deploymentRecommendationTranslations.ts',
-    'discussionControlsTranslations.shared.ts',
-    'discussionQuoteTranslations.shared.ts',
-    'fileAiSuggestionsTranslations.shared.ts',
-    'glassAppearanceTranslations.shared.ts',
-    'machineWidgetBodyTranslations.shared.ts',
-    'mcpAddTranslations.ts',
-    'mcpSignInTranslations.ts',
-    'mediaKeyboardTranslations.ts',
-    'newAppTranslations.shared.ts',
-    'projectReadinessTranslations.ts',
-    'registriesTranslations.ts',
-    'sessionCapabilityTranslations.ts',
-    'sessionReadinessTranslations.shared.ts',
-    'simulatorViewerTranslations.ts',
-    'storeAppPageTranslations.ts',
-    'storeAppTranslations.ts',
-    'storeBrowserExtensionTranslations.ts',
-    'storeSoftwareTranslations.ts',
-    'storeTranslations.ts',
-    'templateChoicesTranslations.ts',
-];
+// The Metro graph evaluates English only: web and native load every other locale from the locale
+// producer's bundles, which read the untransformed sources. The Babel override in babel.config.js
+// turns the other-locale entries of each translation module's locale maps into getters in the
+// Metro graph, so a module written with every locale inline evaluates only its English copy at boot.
+const otherLocales = new Set(['ca', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant', 'zhHans', 'zhHant', 'zh_Hans', 'zh_Hant']);
 
-it('evaluates only English copy at boot: no English-root translation module holds another locale', async () => {
+function holdsOtherLocaleMap(file: string, source: string): boolean {
+    const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let found = false;
+    const visit = (node: ts.Node) => {
+        if (found) return;
+        if (ts.isObjectLiteralExpression(node)) {
+            // Other-locale entries left as getters are not evaluated at boot.
+            const keys = node.properties.map(property => !ts.isGetAccessorDeclaration(property) && property.name
+                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : null);
+            const english = node.properties.find(property => property.name
+                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === 'en');
+            const englishIsText = english && ts.isPropertyAssignment(english)
+                && (ts.isStringLiteral(english.initializer) || ts.isNoSubstitutionTemplateLiteral(english.initializer));
+            if (english && !englishIsText && keys.some(key => key !== null && otherLocales.has(key))) {
+                found = true;
+                return;
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    return found;
+}
+
+// The Metro boot graph's transform for translation modules, read from the Babel config Metro uses.
+async function englishBootCopyTransform(): Promise<(filename: string, source: string) => Promise<string>> {
+    const babel = await import('@babel/core');
+    const loadConfig = (await import(pathToFileURL(resolve('babel.config.js')).href)).default as (api: unknown) => {
+        overrides?: { test: (filename: string) => boolean; plugins: unknown[] }[];
+    };
+    const api = { cache: { using: () => undefined }, caller: () => undefined };
+    const overrides = loadConfig(api).overrides ?? [];
+    return async (filename, source) => {
+        const plugins = overrides.filter(override => override.test(filename)).flatMap(override => override.plugins);
+        if (plugins.length === 0) return source;
+        const result = await babel.transformAsync(source, {
+            filename, babelrc: false, configFile: false, plugins: plugins as never[],
+            parserOpts: { plugins: ['typescript'] }, retainLines: true,
+        });
+        return result?.code ?? source;
+    };
+}
+
+it('the Metro boot graph evaluates English copy only: no translation module keeps an eager locale map', async () => {
+    const transform = await englishBootCopyTransform();
+    const transformed = new Map<string, string>();
     const result = await build({
         entryPoints: [resolve('sources/text/i18n.ts')],
         write: false,
@@ -140,28 +149,36 @@ it('evaluates only English copy at boot: no English-root translation module hold
         loader: { '.bundle': 'empty' },
         metafile: true,
         logLevel: 'silent',
+        plugins: [{
+            name: 'english-boot-copy',
+            setup(pluginBuild) {
+                pluginBuild.onLoad({ filter: /sources[\\/]text[\\/]translations[\\/][^\\/]+\.ts$/ }, async args => {
+                    const contents = await transform(args.path, readFileSync(args.path, 'utf8'));
+                    transformed.set(args.path, contents);
+                    return { contents, loader: 'ts' };
+                });
+            },
+        }],
     });
-    const otherLocales = new Set(['ca', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant', 'zhHans', 'zhHant', 'zh_Hans', 'zh_Hant']);
-    const holdsOtherLocale = (file: string) => {
-        const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-        let found = false;
-        const visit = (node: ts.Node) => {
-            if (found) return;
-            if (ts.isObjectLiteralExpression(node) && node.properties.some(property => property.name
-                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && otherLocales.has(property.name.text))) {
-                found = true;
-                return;
-            }
-            ts.forEachChild(node, visit);
-        };
-        visit(source);
-        return found;
-    };
-    const staticInputs = Object.keys(result.metafile.inputs);
-    const multiLocale = staticInputs
-        .filter(input => /sources\/text\/translations\/[^/]+\.ts$/.test(input) && holdsOtherLocale(input))
-        .map(input => input.replace(/^.*sources\/text\/translations\//, ''))
-        .sort();
-    console.info(JSON.stringify({ entry: 'English locale root', staticModules: staticInputs.length, multiLocaleModules: multiLocale.length }));
-    expect(multiLocale).toEqual([...PENDING_PER_LOCALE_SPLIT].sort());
+    const multiLocale = [...transformed].filter(([file, source]) => holdsOtherLocaleMap(file, source))
+        .map(([file]) => file.replace(/^.*sources\/text\/translations\//, '')).sort();
+    console.info(JSON.stringify({ entry: 'English locale root', staticModules: Object.keys(result.metafile.inputs).length,
+        translationModules: transformed.size, multiLocaleModules: multiLocale.length }));
+    expect(transformed.size).toBeGreaterThan(100);
+    expect(multiLocale).toEqual([]);
+});
+
+it('a new feature module written with every locale inline evaluates only its English copy at boot', async () => {
+    const transform = await englishBootCopyTransform();
+    const filename = resolve('sources/text/translations/newFeatureTranslations.ts');
+    const source = [
+        "const words = { en: { title: 'Title' }, fr: { title: 'Titre' }, 'zh-Hans': { title: '标题' } } as const;",
+        "export const newFeatureTranslations = { en: words.en, de: { title: 'Titel' }, zhHant: { title: '標題' } };",
+        "export const languageNames = { en: 'English', fr: 'French' };",
+    ].join('\n');
+    const output = await transform(filename, source);
+    expect(holdsOtherLocaleMap(filename, output)).toBe(false);
+    expect(output).toContain("title: 'Title'");
+    // A map whose English entry is plain text is English copy (e.g. language names), not a locale map.
+    expect(output).toContain("fr: 'French'");
 });

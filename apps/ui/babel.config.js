@@ -9,6 +9,7 @@ function parseBooleanEnv(name, defaultValue) {
 }
 
 const babelPresetExpo = require('babel-preset-expo');
+const englishBootCopy = require('./scripts/englishBootCopy.cjs');
 const objectRestSpreadPlugin = require(require.resolve('@babel/plugin-transform-object-rest-spread', {
   paths: [path.dirname(require.resolve('babel-preset-expo/package.json'))],
 }));
@@ -72,6 +73,9 @@ module.exports = function (api) {
     // Metro emits scripts on every platform. Dependencies such as zip.js use
     // import.meta even when their worker URL is not needed on native/Hermes.
     presets: [[babelPresetExpoWithNativeWebObjectSpread, { unstable_transformImportMeta: true }]],
+    // Metro evaluates English copy only; the locale producer builds the other locales from the
+    // untransformed sources (scripts/englishBootCopy.cjs).
+    overrides: [{ test: englishBootCopy.appliesTo, plugins: [englishBootCopy] }],
     env: {
       production: {
         plugins: ["transform-remove-console"],
