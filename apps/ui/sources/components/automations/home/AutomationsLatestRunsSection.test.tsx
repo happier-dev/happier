@@ -8,6 +8,7 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { storage } from '@/sync/domains/state/storageStore';
+import { t } from '@/text';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -228,10 +229,12 @@ describe('Automations · Latest runs on Home', () => {
         server.automations = [automation('triage', 'Morning triage', now - 12 * 60_000)];
         server.runsByAutomationId = { triage: [run('recent', 'triage', now - 12 * 60_000, 'succeeded')] };
         const screen = await renderSection();
-        expect(screen.getTextContent()).toContain('12m');
+        // The compact age is localized (5bb16238b9a); the text testkit renders its key.
+        const age = t('time.compactAge.minutes', { count: 12 });
+        expect(screen.getTextContent()).toContain(age);
         const item = screen.tree.root.findAll((node) => node.props.testID === 'home-automations.run.recent' && 'subtitle' in node.props)[0];
-        expect(item?.props.detail).toBe('12m');
-        expect(String(item?.props.subtitle)).not.toContain('12m');
+        expect(item?.props.detail).toBe(age);
+        expect(String(item?.props.subtitle)).not.toContain(age);
     });
     it('shows the newest Runs across Automations, with when they were read and a way to Automations', async () => {
         serveTwoAutomations();
