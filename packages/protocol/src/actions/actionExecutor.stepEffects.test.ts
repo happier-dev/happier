@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { WorkflowBlockSchema, WorkflowIngressBlockSchema, WorkflowInsertBlockV1Schema } from '../workflows/workflowV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 
 describe('workflow effect Actions', () => {
   it('exposes webhook and command effects through the same Action catalog used by MCP and workflow leaves', () => {
@@ -54,5 +56,25 @@ describe('workflow effect Actions', () => {
     expect(calls[0]?.context).toMatchObject(context);
     expect(calls[0]?.context).not.toHaveProperty('externalActionCredential');
     expect(calls[0]?.context).not.toHaveProperty('externalActionExecutionAuthorization');
+  });
+
+  it('fails closed when an externally admitted effect has no automation admission port', async () => {
+    let effects = 0;
+    const actionId = 'machines.command.run' as const;
+    const input = { command: 'printf bypass' };
+    const envelope = { v: 1 as const, requestId: 'external-command', target: { kind: 'machine' as const, machineId: 'machine' }, input };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admission', binding: {
+      serverIdentityId: 'home', accountId: 'owner', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      machineId: 'machine', installationId: 'installation', actionId,
+      requestId: envelope.requestId, target: envelope.target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const executor = createActionExecutor({ machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; } });
+    const result = await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      bypassApprovals: true, actionRequestId: envelope.requestId, runtimeAccountId: 'owner', serverId: 'home',
+      serverIdentityId: 'home', externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization });
+    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', requestId: envelope.requestId });
+    expect(effects).toBe(0);
   });
 });

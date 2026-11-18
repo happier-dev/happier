@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
   ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema, type ExternalActionExecutionAuthorizationBindingV1,
@@ -113,9 +114,14 @@ describe('installed own Machine isolation status admission', () => {
     const expected = actionId === 'machines.command.run'
       ? { exitCode: 0, stdout: expect.stringContaining('public-command-admitted'), stderr: '' }
       : { protection: 'trusted_administrator', status: observedStatus };
-    const expectedResponse = { ok: true, result: expected, ...(actionId === 'machines.command.run' ? {
-      automationNotices: [{ code: 'action_automations_not_checked', reason: 'automation_index_unavailable' }],
-    } : {}) };
+    const expectedResponse = actionId === 'machines.command.run'
+      ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }
+      : { ok: true, result: expected };
+    const beforeAutomation = actionId === 'machines.command.run' ? {
+      automationId: 'automation-before', triggerId: 'before', triggerRevision: 1,
+      workflowId: 'workflow-before', workflowRevision: 1, ownerAccountId: 'requester',
+      actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
+    } as const : null;
     const authEnv = createEnvKeyScope(['HANDY_MASTER_SECRET', 'HAPPIER_SERVER_IDENTITY_ID']);
     authEnv.patch({ HANDY_MASTER_SECRET: 'machine-status-composed-test', HAPPIER_SERVER_IDENTITY_ID: '' });
     onTestFinished(() => authEnv.restore());
@@ -181,6 +187,9 @@ describe('installed own Machine isolation status admission', () => {
     const postHome = vi.mocked(axios.post).getMockImplementation();
     if (!getHome || !postHome) throw new Error('Missing Home HTTP boundary');
     vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      if (beforeAutomation && String(url).endsWith(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [beforeAutomation] }) };
+      }
       if (String(url).endsWith('/v1/machines')) return { status: 200, data: [{ id: f.machineId, kind: 'persistent', active: true,
         revokedAt: null, replacedByMachineId: null, installationId: f.installation.installationId,
         access: { custodian: { accountId: 'requester', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] };
@@ -193,6 +202,9 @@ describe('installed own Machine isolation status admission', () => {
     });
     vi.mocked(axios.post).mockImplementation(async (url, body, options) => {
       const path = new URL(String(url)).pathname;
+      if (beforeAutomation && path.endsWith('/v1/automations/actions/admit')) {
+        return { status: 200, data: { results: [] } };
+      }
       if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
       if (path.endsWith('/execution-authorization')) {
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -224,10 +236,28 @@ describe('installed own Machine isolation status admission', () => {
       }
       return postHome(url, body, options);
     });
+    const automationRequests: string[] = [];
+    if (beforeAutomation) {
+      vi.spyOn(axios, 'request').mockImplementation(async config => {
+        const url = String(config.url);
+        automationRequests.push(url);
+        if (url.endsWith(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)) {
+          return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [beforeAutomation] }) } as never;
+        }
+        if (url.endsWith('/v1/automations/actions/admit')) {
+          return { status: 200, data: { results: [] } } as never;
+        }
+        throw new Error(`Unexpected automation request: ${config.method ?? 'GET'} ${url}`);
+      });
+    }
     const caller = createCliActionExecutorFromCredentials({ credentials, serverId: f.serverId, serverApiUrl: f.serverHttpBaseUrl,
       serverIdentityId: f.homeServerIdentityId, externalActionClient: true, actionsSettingsProvider: { getActionsSettings: () => settings } });
     const publicResult = await caller.execute(actionId, input, { surface: 'cli', externalActionTarget: target });
     expect.soft(publicResult).toEqual(expectedResponse);
+    if (beforeAutomation) {
+      expect(automationRequests.some(url => url.endsWith(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1))).toBe(true);
+      expect(automationRequests.some(url => url.endsWith('/v1/automations/actions/admit'))).toBe(true);
+    }
     const signedCall = signedCalls.at(-1);
     if (!signedCall) throw new Error(`Public ${actionId} did not reach signed Home CALL`);
     // Keep the complete real carrier and alter only its Home authorization.

@@ -3303,6 +3303,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const { approvalScope } = scopeAdmission;
     // One admitted operand snapshot serves both phases, including approval continuation.
     // Contributed invocations consume their declaration's input-sensitive effect fact at its owner.
+    const requiresExternalActionAutomationAdmission = !existingAdmission
+      && !options?.reviewOnly
+      && actionId !== 'action.invoke'
+      && !isApprovalActionId(actionId)
+      && isActionEffectHookableV1(spec.sideEffectClass)
+      && !(sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf)
+      && (ctx.externalActionExecutionAuthorization !== undefined || ctx.externalActionCredential !== undefined);
+    // An externally admitted effect must settle its before-Action checks before
+    // reaching the host. Missing the canonical port is an unavailable target,
+    // never an implicit empty selection that can run the effect.
+    if (requiresExternalActionAutomationAdmission && !deps.actionAutomations) {
+      return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    }
     if (deps.actionAutomations) {
       ctx = { ...ctx, actionAutomationPort: deps.actionAutomations };
       if (actionId !== 'action.invoke' && !isApprovalActionId(actionId)
