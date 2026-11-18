@@ -7,6 +7,7 @@ import { Redirect, Stack, useLocalSearchParams, useRouter } from '@/components/a
 import { managedMachineEnrolledDetailId } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachinesDoor } from './machinesDoor';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useManagedEnrolledMachine, useManagedMachineHeaderIdentity } from '@/components/settings/machines/managed/ManagedMachineSections';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -371,7 +372,7 @@ function useMachineRenameDraft(target: ReturnType<typeof useMachinePageTarget>):
                 serverId, machineId, expectedVersion: machine.metadataVersion,
                 patch: { displayName: saved.value.trim() || null },
             });
-            if (!execution.ok) throw new Error(execution.error);
+            if (!execution.ok) throw new Error(resolveActionExecutionErrorMessage(execution, t('machine.renameFailed')));
             setDraft((value) => value === saved ? null : value);
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('machine.renameFailed'));

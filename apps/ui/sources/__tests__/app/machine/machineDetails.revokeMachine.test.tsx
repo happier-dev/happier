@@ -482,6 +482,22 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         expect(screen.findByTestId('machine-detail-name-input')?.props.editable).toBe(true);
     });
 
+    it('explains a refused rename and retains the draft without writing metadata', async () => {
+        machineState.settings.actionsSettingsV1 = { v: 1, actions: { 'machines.metadata.update': { enabled: false } } };
+        const { MachinePageScreen } = await import('@/components/machines/page/MachinePageScreen');
+        const screen = await renderScreen(React.createElement(MachinePageScreen));
+        try {
+            await act(async () => findHeaderMenuAction(screen, 'machine-detail-menu-rename')!.onSelect());
+            await act(async () => screen.changeTextByTestId('machine-detail-name-input', 'Retry name'));
+            await pressNameSave(screen);
+            await vi.waitFor(() => expect(alertSpy).toHaveBeenCalledWith(
+                'common.error', 'actionConfirmations.turnedOffUnnamedMessage',
+            ));
+            expect(metadataTransportSpy).not.toHaveBeenCalled();
+            expect(screen.findByTestId('machine-detail-name-input')?.props.value).toBe('Retry name');
+        } finally { await screen.unmount(); }
+    });
+
     it('clears a custom machine name by saving an empty inline rename draft', async () => {
         const { MachinePageScreen: MachineDetailScreen } = await import('@/components/machines/page/MachinePageScreen');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
