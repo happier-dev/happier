@@ -255,6 +255,7 @@ import { readExternalActionDeploymentDomainPurpose, type DomainHttpPurpose } fro
 import { isAcceptedDeploymentDomainTransitionInTx, readAcceptedDeploymentDomainInTx, readAcceptedDeploymentTeardownDomainContentInTx } from '@/app/deployments/deploymentDomainService';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1,
     McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 
 export type VerifiedExternalActionPrincipal = VerifiedApiTokenPrincipal
     | (Extract<ExternalActionServerPrincipalV1, { authentication: unknown }>
@@ -4533,7 +4534,8 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
         || binding.custodianAccountId !== input.custodianAccountId
         || binding.machineId !== input.machineId || binding.installationId !== input.installationId
         || input.requestId !== undefined && binding.requestId !== input.requestId) return null;
-    if (!await readAdmittedExternalActionMachineInTx(db, binding, input.machineId, input.installationId)) return null;
+    if (!await readAdmittedExternalActionMachineInTx(db, binding, input.machineId, input.installationId)
+        || !await resolveEffectiveMachineRoleInTx(db, { machineId: input.machineId, actorAccountId: binding.accountId })) return null;
     return binding.accountId;
 }
 
