@@ -12,7 +12,9 @@ import {
 import type { Prisma } from "@prisma/client";
 
 import { materializePluginCollectionContractsFromManifestTx } from "./contracts";
+import { mutatePluginCollection } from "./mutation";
 import { getPluginCollection, queryPluginCollection, queryPluginCollectionUiQuery } from "./uiQuery";
+import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { createDbMaintenanceClient, db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -662,6 +664,54 @@ describe("PluginCollectionIndexEntry binary compound-key DB contract", () => {
                 }),
             });
             expect(descendingResumed.rows.map((row) => row.rowId)).toEqual([firstRowId]);
+
+            // QB-09's negative counterexample: two independent ULID outputs do
+            // not acquire logical uniqueness merely by indexing the natural key.
+            // Keep the maximum-width rows above: shortening them would weaken
+            // this test's binary-key and cursor boundary assertions.
+            // The query fixture seeds only the exercised index. The real writer
+            // requires every declared index ready, including each existing row.
+            const contract = await db.pluginCollectionContract.findFirstOrThrow({
+                where: { ...readerContext }, select: { id: true },
+            });
+            const secondaryIndex = await db.pluginCollectionIndexState.create({ data: {
+                accountId, pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                indexId: "by-terminal-updated-id", contractId: contract.id,
+                contractDigest: readerContext.contractDigest, buildState: "ready", indexedThroughRevision: 3,
+            } });
+            await db.pluginCollectionIndexEntry.createMany({ data: [firstRowId, secondRowId, rangedRowId].map((rowId, index) => ({
+                indexStateId: secondaryIndex.id, rowId, rowRevision: index + 1,
+                encodedSortKey: copyBytes(encodePluginCollectionIndexSortKeyV1({ rowId, fields: [
+                    { kind: "boolean", value: false }, { kind: "finiteNumber", value: 0 }, { kind: "string", value: rowId },
+                ] })),
+            })) });
+            const rowIds = ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"] as const;
+            const naturalKey = "one-provider-entry";
+            const observations = await Promise.all(rowIds.map(rowId => getPluginCollection({ accountId,
+                request: { pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                    readerContext, rowId } })));
+            expect(observations.map(observation => observation.row)).toEqual([null, null]);
+            const authentication = createPresentUserSessionAccessAuthentication();
+            const results = await Promise.all(rowIds.map((rowId, index) => mutatePluginCollection({ accountId,
+                authentication, request: {
+                    pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                    writerContext: { schemaVersion: readerContext.schemaVersion, contractDigest: readerContext.contractDigest },
+                    operations: [{ kind: "put", rowId, expectedRevision: "absent",
+                        expectedAbsenceEpoch: observations[index]!.absenceEpoch,
+                        content: { t: "plain", v: {} },
+                        projection: { id: rowId, first: naturalKey, second: naturalKey, third: naturalKey,
+                            fourth: naturalKey, terminal: false, updatedAt: 0 } }],
+                } })));
+            expect(results.map(result => result.status)).toEqual(["updated", "updated"]);
+            const stored = await db.pluginCollectionRow.findMany({ where: { accountId,
+                pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                rowId: { in: [...rowIds] }, deletedAt: null }, orderBy: { rowId: "asc" },
+                select: { rowId: true } });
+            expect(stored.map(row => row.rowId)).toEqual([...rowIds]);
+            const indexed = await queryPluginCollection({ accountId,
+                request: binaryIndexQueryRequest(readerContext, { indexId: "by-four-strings",
+                    prefix: [naturalKey, naturalKey, naturalKey, naturalKey], order: "asc", limit: 10 }) });
+            expect(indexed.rows.map(row => row.rowId)).toEqual([...rowIds]);
         } finally {
             await db.account.deleteMany({ where: { id: accountId } }).catch(() => undefined);
         }
