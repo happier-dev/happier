@@ -1,5 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialDirectMaterialPreparationResponseV1Schema, TeamCredentialDirectMaterialUpsertRequestV1Schema, TeamCredentialDirectMaterialUpsertResponseV1Schema, TeamCredentialDirectMaterialWithdrawRequestV1Schema, TeamCredentialDirectMaterialWithdrawResponseV1Schema, TeamCredentialDirectMaterialOpenRequestV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialDirectMaterialCensusOutputV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialCensusV1';
@@ -7,6 +8,7 @@ import type { TeamCredentialDirectMaterialWithdrawRequestV1, TeamCredentialDirec
 import { TeamCredentialResourceErrorV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { logger } from '@/ui/logger';
 import { TeamCredentialDirectMaterialHttpContractError } from './teamCredentialDirectMaterialContractError';
 import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema,
   type TeamCredentialNativeBindingReadRequestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -18,6 +20,11 @@ export class TeamCredentialDirectMaterialHttpTransportError extends Error {
     super('team_credential_direct_material_transport_unavailable');
     this.name = 'TeamCredentialDirectMaterialHttpTransportError';
   }
+}
+
+function materialTransportFailure(error: unknown, phase: 'providers.team_credential.direct_material_read' | 'providers.team_credential.native_binding_read') {
+  logger.warnLocalFile('[team-credential-material] Home transport unavailable', projectActionFailureCauseV1(error, phase));
+  return new TeamCredentialDirectMaterialHttpTransportError();
 }
 
 function route(params: Readonly<{ serverUrl?: string; teamId: string; resourceId: string }>): string {
@@ -60,9 +67,9 @@ export async function fetchTeamCredentialDirectMaterial(params: Readonly<{
       ...(platformHeaders ? { headers: platformHeaders } : {}),
       validateStatus: () => true,
     });
-  } catch {
+  } catch (error) {
     params.signal?.throwIfAborted();
-    throw new TeamCredentialDirectMaterialHttpTransportError();
+    throw materialTransportFailure(error, 'providers.team_credential.direct_material_read');
   }
   if (response.status < 200 || response.status >= 300) {
     const error = TeamCredentialResourceErrorV1Schema.safeParse(response.data);
@@ -89,12 +96,17 @@ export async function fetchTeamCredentialNativeBinding(params: Readonly<{
     response = await axios.post(route({ ...params, teamId: request.data.teamId, resourceId: request.data.resourceId }), request.data, {
       ...config(params.token, params.signal), validateStatus: () => true,
     });
-  } catch {
+  } catch (error) {
     params.signal?.throwIfAborted();
-    throw new TeamCredentialDirectMaterialHttpTransportError();
+    throw materialTransportFailure(error, 'providers.team_credential.native_binding_read');
   }
   params.signal?.throwIfAborted();
-  if (response.status < 200 || response.status >= 300) return { status: 'unavailable', reason: 'binding_unavailable' } as const;
+  if (response.status < 200 || response.status >= 300) {
+    logger.warnLocalFile('[team-native-binding] Home refused the installed binding read', {
+      phase: 'providers.team_credential.native_binding_read', httpStatus: response.status,
+    });
+    return { status: 'unavailable', reason: 'binding_unavailable' } as const;
+  }
   const result = TeamCredentialNativeBindingReadResponseV1Schema.safeParse(response.data);
   if (!result.success) throw new TeamCredentialDirectMaterialHttpContractError();
   return result.data;

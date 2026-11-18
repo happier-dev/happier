@@ -13,8 +13,9 @@ import {
 import tweetnacl from 'tweetnacl';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { logger } from '@/ui/logger';
 
-vi.mock('axios', () => ({ default: { post: vi.fn(), delete: vi.fn(), get: vi.fn() } }));
+vi.mock('axios', () => ({ default: { defaults: {}, post: vi.fn(), delete: vi.fn(), get: vi.fn() } }));
 
 describe('fetchTeamCredentialDirectMaterial', () => {
   beforeEach(() => {
@@ -34,9 +35,24 @@ describe('fetchTeamCredentialDirectMaterial', () => {
     vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { status: 'unavailable', reason: 'preparing' } });
     await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
       .rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpContractError);
-    vi.mocked(axios.post).mockResolvedValue({ status: 404, data: { error: 'resource_not_found' } });
-    await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
-      .resolves.toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+    const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    try {
+      for (const status of [404, 503]) {
+        vi.mocked(axios.post).mockResolvedValue({ status, data: { error: 'private binding response' } });
+        await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
+          .resolves.toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+        expect(warn).toHaveBeenCalledWith(expect.any(String), { phase: 'providers.team_credential.native_binding_read', httpStatus: status });
+      }
+      vi.mocked(axios.post).mockRejectedValueOnce(Object.assign(new Error('private binding transport fixture'), { code: 'ECONNRESET' }));
+      await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
+        .rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpTransportError);
+      expect(warn).toHaveBeenCalledWith(expect.any(String), {
+        phase: 'providers.team_credential.native_binding_read', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null,
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private binding transport fixture');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it.each(['preparation', 'census', 'withdraw_request', 'withdraw_response'] as const)(
@@ -204,6 +220,21 @@ describe('fetchTeamCredentialDirectMaterial', () => {
         slot: { kind: 'provider_model' }, sourceMemberKey: 'member-1',
       },
     })).rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpTransportError);
+  });
+
+  it('retains a sanitized phase and cause for a recipient material transport failure', async () => {
+    const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    vi.mocked(axios.post).mockRejectedValueOnce(Object.assign(new Error('private direct material fixture'), { code: 'ECONNRESET' }));
+    try {
+      await expect(fetchTeamCredentialDirectMaterial({ token: 'token', teamId: 'team', resourceId: 'resource', request: {
+        resourceId: 'resource', consumer: { kind: 'session', sessionId: 'session-1' },
+        slot: { kind: 'provider_model' }, sourceMemberKey: 'member-1',
+      } })).rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpTransportError);
+      expect(warn).toHaveBeenCalledWith(expect.any(String), {
+        phase: 'providers.team_credential.direct_material_read', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null,
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private direct material fixture');
+    } finally { warn.mockRestore(); }
   });
 
   it('preserves abort during Axios instead of classifying it as transport failure', async () => {
