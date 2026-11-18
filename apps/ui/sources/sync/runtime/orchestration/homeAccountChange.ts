@@ -39,6 +39,7 @@ import {
     plannedSessionReadinessChanges,
     planSessionReadinessWake,
     type SessionReadinessChanges,
+    type ReviewCommentChange,
 } from './changesPlanner';
 import { log } from '@/log';
 
@@ -76,7 +77,10 @@ export type HomeAccountChangeEvent = Readonly<{
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Complete server-visible encoded Artifact kinds; omission keeps readers conservative. */
     artifactKinds?: readonly string[];
+    /** Exact personal collection spaces changed by the organization owner. */
     resourceSpaceMembershipSpaceIds?: readonly string[];
+    /** Parsed committed Review comment routing, supplied only by the consumed change page. */
+    reviewCommentChanges?: readonly ReviewCommentChange[];
     /** Exact content-free record/access routing; an empty list excludes record changes. */
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     /**
@@ -140,6 +144,7 @@ export type HomeAccountChangeEvent = Readonly<{
 }>;
 
 type HomeAccountChangeDetails = Readonly<{
+    reviewCommentChanges?: readonly ReviewCommentChange[];
     entityRevisions?: Readonly<Record<string, number>>;
     workflowRunsMaterialized?: true;
     savedSecretResourcesRefreshStarted?: true;
@@ -543,6 +548,8 @@ export function publishHomeAccountChangeForRouting(
                 .filter(id => WorkflowDefinitionIdV1Schema.safeParse(id).success)) } : {}),
         ...(details?.feedPageConsumed ? { feedPageConsumed: true as const } : {}),
         ...(details?.entityRevisions ? { entityRevisions: Object.freeze({ ...details.entityRevisions }) } : {}),
+        ...(details?.reviewCommentChanges !== undefined
+            ? { reviewCommentChanges: Object.freeze([...details.reviewCommentChanges]) } : {}),
         ...(details?.workflowRunsMaterialized ? { workflowRunsMaterialized: true as const } : {}),
         ...(details?.savedSecretResourcesRefreshStarted ? { savedSecretResourcesRefreshStarted: true as const } : {}),
         ...(changeKinds ? { changeKinds: Object.freeze([...new Set(changeKinds)]) } : {}),

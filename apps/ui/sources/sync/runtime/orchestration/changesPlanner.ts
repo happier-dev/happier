@@ -1,4 +1,6 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
+import { readReviewCommentChangesHintV1, type ReviewCommentChangesHintV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -1008,6 +1010,20 @@ export function plannedSessionListRowMembershipFacets(
 
 const ROW_METADATA_HINT_KEYS: ReadonlySet<string> = new Set(['metadataVersion', 'sharedMetadataVersion']);
 const ROW_ACTIVITY_HINT_KEYS: ReadonlySet<string> = new Set(['runtimeActivityRevision', 'latestTurnStatusObservedAt', 'meaningfulActivityAt']);
+
+export type ReviewCommentChange = ReviewCommentChangesHintV1['changes'][number] & Readonly<{ reviewId: string }>;
+
+/** The Review publication owner supplies bodyless revisions; consumers never reinterpret raw hints. */
+export function plannedReviewCommentChanges(planned: PlannedChangeActions): readonly ReviewCommentChange[] | undefined {
+    const result: ReviewCommentChange[] = [];
+    for (const change of planned.changes) {
+        if (change.kind !== 'artifact') continue;
+        const hint = readReviewCommentChangesHintV1(change.hint);
+        if (hint) result.push(...hint.changes.map(item => ({ reviewId: change.entityId, ...item })));
+        else if (artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint) ?? undefined, [REVIEW_ARTIFACT_KIND_V1])) return undefined;
+    }
+    return result;
+}
 
 /** The existing focused Home fanout consumes this decision, not copied key/hint classifiers. */
 /** A partial page cannot exclude a kind whose retained change has no classification. */

@@ -37,6 +37,27 @@ import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/a
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { encodeArtifactKindV1, PROMPT_DOC_ARTIFACT_KIND_V2 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+
+it('projects only admitted bodyless Review comment hints with their owning Review identity', () => {
+    const changes: ApiChangeEntry[] = [
+        { cursor: 1, kind: 'artifact', entityId: 'review-one', changedAt: 1, hint: { reviewComments: { v: 1,
+            changes: [{ commentId: 'finding', serverRevision: 4, state: 'dismissed', reviewTriageStatus: 'reject' }] } } },
+        { cursor: 2, kind: 'artifact', entityId: 'document', changedAt: 2, hint: { artifactKinds: [encodeArtifactKindV1({ kind: 'prompt', kindHint: PROMPT_DOC_ARTIFACT_KIND_V2 })], reviewComments: { v: 1,
+            changes: [{ commentId: 'finding', serverRevision: 'invalid', body: 'never route prose' }] } } },
+        { cursor: 3, kind: 'session', entityId: 'session', changedAt: 3, hint: { reviewComments: { v: 1,
+            changes: [{ commentId: 'other', serverRevision: 2, state: 'open' }] } } },
+    ];
+    expect(changePlanner.plannedReviewCommentChanges(planSyncActionsFromChanges(changes))).toEqual([
+        { reviewId: 'review-one', commentId: 'finding', serverRevision: 4, state: 'dismissed', reviewTriageStatus: 'reject' },
+    ]);
+    expect(changePlanner.plannedReviewCommentChanges(planSyncActionsFromChanges([
+        { cursor: 4, kind: 'artifact', entityId: 'unknown', changedAt: 4 },
+    ]))).toBeUndefined();
+    expect(changePlanner.plannedReviewCommentChanges(planSyncActionsFromChanges([
+        changes[0]!, { cursor: 5, kind: 'artifact', entityId: 'unclassified', changedAt: 5, hint: { artifactKinds: ['other'] } },
+    ]))).toBeUndefined();
+});
 
 it.each([false, true])('keeps Deployment changes out of generic Account refreshes (socket wake %s)', socket => {
     const identity = { projectSourceId: 'source-a', environmentId: 'environment-a' };
