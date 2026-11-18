@@ -1775,12 +1775,15 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
     if ((manifest.bundledDependencies ?? []).some(name => workspacePackages.get(name)?.manifest.happier?.publicSdkRelease)) {
       const author = await emitSourceAuthorPackages({repoDir,sourceRepoDir,projectDir,runtimeDir,workspacePackages,
         build,sourceInputDigests,readSourceInput,retainedRuntime,env,signal,
-        // A captured-dependency runtime has no installation linked yet: its author
-        // externals come from the installation its runtime dependencies are captured from.
-        ...(captureDependencies ? { authorDependencies: {
+        // Author externals come from the installation this runtime's dependencies
+        // come from, captured or linked: a linked runtime's node_modules name that
+        // installation (its dependency generation), never a physical tree inside
+        // this runtime (2026-11-18: every repo-dev start refused diff as outside
+        // the runtime root).
+        authorDependencies: {
           resolveFromPackageJsonPath: bundle => join(dependencyRootDir, relative(repoDir, bundle.srcDir), 'package.json'),
           toolRootDir: dependencyRootDir,
-          dereferenceRootDir: dependencyRootDir } } : {})});
+          dereferenceRootDir: dependencyRootDir }});
       // Author closures can exceed the engine's function-argument limit.
       for (const path of author.codeFiles) retainedCodeFiles.push(path);
       authorPackageInputIdentities = author.inputIdentities;
