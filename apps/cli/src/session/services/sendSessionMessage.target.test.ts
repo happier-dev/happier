@@ -840,7 +840,7 @@ describe('target Session input authoring through HTTP', () => {
     const result = await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId: 'withdrawn-team-input',
       message: 'Next prompt', ...(target ? { recipient: target } : {}), wait: true, timeoutMs: 1000 });
     expect(result).toMatchObject({ ok: false, code: 'wait_failed',
-      admissionResult: { status: 'rejected', code: 'session_input_unauthorized' } });
+      admissionResult: { status: 'outcomeUnknown', localId: 'withdrawn-team-input', code: 'session_input_turn_outcome_unknown' } });
     expect(result).toMatchObject({ message: expect.stringContaining('Team access') });
   });
 
@@ -885,11 +885,11 @@ describe('target Session input authoring through HTTP', () => {
       message: 'No tools. Reply QA_TEAM_DENIED.', ...(target ? { recipient: target } : {}), wait: true, timeoutMs: 100,
       ...(signed ? { resolveAuthorizationHeaders: () => ({ Authorization: 'Original-requester-proof' }) } : {}) });
     expect(result).toMatchObject({ ok: false, code: 'wait_failed',
-      admissionResult: { status: 'rejected', code: 'session_input_unauthorized' } });
+      admissionResult: { status: 'outcomeUnknown', localId, code: 'session_input_turn_outcome_unknown' } });
     if (!target) {
       expect(await waitForSessionInputResult({ credentials, idOrPrefix: sessionId, localId, timeoutMs: 100,
         ...(signed ? { resolveAuthorizationHeaders: () => ({ Authorization: 'Original-requester-proof' }) } : {}) }))
-        .toMatchObject({ ok: true, result: { kind: 'failed' } });
+        .toMatchObject({ ok: true, result: { kind: 'pending' } });
     }
   });
 

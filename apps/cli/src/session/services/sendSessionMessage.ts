@@ -1,4 +1,4 @@
-import { projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { isPendingDeliveryProviderEffectPossibleV1, projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -641,15 +641,19 @@ async function readOriginalReply(params: Readonly<{
   return readSessionMessageReply(params);
 }
 
-function readBlockedPromptDeliveryAdmissionCode(reason: PendingQueueDeliveryBlockedReason): SessionInputAdmissionRejectionCodeV1 {
-  if (reason === 'team_access_removed') return 'session_input_unauthorized';
+function projectBlockedPromptDeliveryAdmissionResult(reason: PendingQueueDeliveryBlockedReason, localId: string): SessionInputEnqueueResultV1 {
+  // Pending owns whether the provider may have acted. Publication refusal after
+  // native acceptance cannot turn that uncertainty into a no-effect rejection.
+  if (isPendingDeliveryProviderEffectPossibleV1({ status: 'blocked', reason })) {
+    return { status: 'outcomeUnknown', localId, code: 'session_input_turn_outcome_unknown' };
+  }
   const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(reason);
-  return rejection.success ? rejection.data : 'session_input_target_unavailable';
+  return { status: 'rejected', code: rejection.success ? rejection.data : 'session_input_target_unavailable' };
 }
 
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
-  if (reason === 'team_access_removed') return 'Current turn failed: Team access was withdrawn.';
-  return `Current turn failed: pending delivery blocked (${reason})`;
+  if (reason === 'team_access_removed') return 'Current input delivery blocked: Team access was withdrawn.';
+  return `Current input delivery blocked (${reason})`;
 }
 
 async function readPromptDeliveryStatus(params: Readonly<{
@@ -1447,7 +1451,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
         ok: true,
         sessionId: sessionTarget.sessionId,
         localId,
-        result: {
+        result: isPendingDeliveryProviderEffectPossibleV1({ status: 'blocked', reason: promptDelivery.reason }) ? { kind: 'pending' } : {
           kind: 'failed',
           message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
         },
@@ -2264,7 +2268,7 @@ export async function sendSessionMessage(
         ok: false,
         code: 'wait_failed',
         message: formatBlockedPromptDeliveryFailure(turnOutcome.reason),
-        admissionResult: { status: 'rejected', code: readBlockedPromptDeliveryAdmissionCode(turnOutcome.reason) },
+        admissionResult: projectBlockedPromptDeliveryAdmissionResult(turnOutcome.reason, localId),
       };
     }
     if (turnOutcome === 'failed' || turnOutcome === 'cancelled') {
@@ -2314,9 +2318,7 @@ export async function sendSessionMessage(
         ok: false,
         code: 'wait_failed',
         message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
-        // Retain the canonical queue's final refusal through Action output
-        // instead of treating enqueue acknowledgement as successful delivery.
-        admissionResult: { status: 'rejected', code: readBlockedPromptDeliveryAdmissionCode(promptDelivery.reason) },
+        admissionResult: projectBlockedPromptDeliveryAdmissionResult(promptDelivery.reason, localId),
       };
     }
     if (promptDelivery.kind === 'missing') {
