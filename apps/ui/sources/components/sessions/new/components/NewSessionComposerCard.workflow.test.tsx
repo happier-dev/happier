@@ -196,7 +196,10 @@ describe('New workflow entry', () => {
                 expect(command).toBeDefined();
                 await act(async () => { expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
                     { commandId: command!.id, input: { id: 'builtin:plan-with-a-panel' } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
-                expect(startWorkflow).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' } }));
+                expect(startWorkflow).toHaveBeenCalledWith(
+                    expect.objectContaining({ source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' } }),
+                    expect.objectContaining({ presentStart: expect.any(Function) }),
+                );
                 expect(screen.findByTestId('workflow-choice:builtin:plan-with-a-panel')).toBeNull();
             } finally { await screen.unmount(); }
         });

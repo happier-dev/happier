@@ -418,10 +418,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const datumOf = (bucket: HappierSeriesBucket) => ({
     label: describeHappierSeriesCoordinate(bucket, reading),
     value: bucket.values.map(entry => {
-      if (entry.value === null) return `${entry.label}: ${unknown}`;
+      if (entry.value === null) return `${entry.label} ${unknown}`;
       const exact = formatHappierDataValue(magnitude(entry.value), text.locale);
       const visible = format(entry.value);
-      return `${entry.label}: ${visible.includes(exact) ? visible : `${visible} (${exact})`}`;
+      return `${entry.label} ${visible.includes(exact) ? visible : `${visible} (${exact})`}`;
     }).join(' · '),
     subtitle: [bucket.annotation, props.summary].filter(Boolean).join(' · ') || undefined,
     color: bucket.values[0]?.color ?? color(0),
