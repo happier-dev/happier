@@ -2,6 +2,7 @@ import { PET_IMPORT_ACTION_ID_V1 } from '../../actions/actionIdsPetsV1.js';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '../../pets/constants.js';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
+import { createActionAutomationPortV1 } from '../../actions/executor/actionAutomationAdmission.js';
 import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV1.testkit.js';
 import { createPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '../../prompts/library/promptLibraryActionOperations.js';
 import { writeSessionContextIntentV1ToMetadata } from '../../sessions/context/sessionContextV1.js';
@@ -102,6 +103,11 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
     },
   });
   const executor = createActionExecutor({ botTemplateAction: execute,
+    actionAutomations: createActionAutomationPortV1({
+      accountId: 'recipient',
+      seed: async () => ({ v: 1, rows: [] }),
+      settle: async () => {},
+    }),
     mcpServerAction: createMcpServerActionExecuteV1({
       readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => ({ status: 'present', revision: catalogState.revision, content: { t: 'plain', v: catalogState.value } }) }),
       mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog: catalogState.value, revision: catalogState.revision, change, scope: null,

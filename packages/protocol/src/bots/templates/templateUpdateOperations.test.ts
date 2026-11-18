@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
+import { createActionAutomationPortV1 } from '../../actions/executor/actionAutomationAdmission.js';
 import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { createBotTemplateActionExecuteV1, type BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { type BotTemplateReleaseV1, projectBotTemplateArtifactHeaderV1, readBotTemplateReleaseV1 } from './botTemplateV1.js';
@@ -118,6 +119,11 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
   };
   const execute = createBotTemplateActionExecuteV1(port);
   const executor = createActionExecutor({ botTemplateAction: execute,
+    actionAutomations: createActionAutomationPortV1({
+      accountId: 'recipient',
+      seed: async () => ({ v: 1, rows: [] }),
+      settle: async () => {},
+    }),
     skillActionExecute: skillAction, sessionCapabilities: capabilities,
     mcpServerAction: createMcpServerActionExecuteV1({
       readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
