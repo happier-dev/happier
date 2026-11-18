@@ -99,7 +99,7 @@ it('Team Source Open links the existing checkout and its recipient inherits the 
   // Establish the checkout through the CLI Action before mounting the UI caller.
   // This case tests the Source carrier; first-Open push materialization has its
   // own composed coverage and must not hide the Source read behind its wait.
-  const attached = await owner.execute('projects.open', { ...machine.target,
+  const attached = await owner.executeReviewed('projects.open', { ...machine.target,
     source: { kind: 'folder', path: checkout }, materialization: { kind: 'attach' } });
   expect(attached.ok, JSON.stringify(attached)).toBe(true);
   if (!attached.ok) throw new Error(attached.errorCode);
@@ -118,8 +118,9 @@ it('Team Source Open links the existing checkout and its recipient inherits the 
     if (!('profileChange' in created) || !('id' in created.profileChange)
       || typeof created.profileChange.id !== 'string') throw new Error('Profile Artifact id missing');
     const id = created.profileChange.id;
-    expect(await owner.executeReviewed('artifact.access.grants.set', { artifactId: id,
-      principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })).toMatchObject({ ok: true });
+    const granted = await owner.executeReviewed('artifact.access.grants.set', { artifactId: id,
+      principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' });
+    expect(granted, JSON.stringify(granted)).toMatchObject({ ok: true });
     return id;
   };
   const teamProfileId = await createProfile('Source Team fallback');
@@ -163,11 +164,21 @@ it('Team Source Open links the existing checkout and its recipient inherits the 
     const rowReads = observedRequests.filter(request => request.method === 'POST'
       && ['/v1/account/project-rows/list', '/v1/account/project-rows/read']
         .includes(new URL(request.path, fixture.server.baseUrl).pathname));
-    const callerAuthorization = callerCredentials ? `Bearer ${callerCredentials.token}` : null;
-    expect(callerAuthorization !== null && openRequest?.headers.authorization === callerAuthorization
-      && callerAuthorization !== `Bearer ${owner.credentials.token}` && rowReads.length > 0
-      && rowReads.every(request => request.headers.authorization === callerAuthorization),
-    'Source UI client Project row reads, including bootstrap, retain the signed-in requester credential').toBe(true);
+    // The UI signs in afresh; its bearer need not equal the Account's first token.
+    const callerAuthorization = typeof openRequest?.headers.authorization === 'string'
+      ? openRequest.headers.authorization : null;
+    const requester = {
+      hasOpenRequest: openRequest !== undefined,
+      sameAccount: callerAuthorization?.startsWith('Bearer ') === true
+        && readAccountIdFromToken(callerAuthorization.slice('Bearer '.length)) === readAccountIdFromToken(callerCredentials.token),
+      usesTerminalCredential: callerAuthorization === `Bearer ${owner.credentials.token}`,
+      rowReads: rowReads.length,
+      allRowsUseRequester: rowReads.every(request => request.headers.authorization === callerAuthorization),
+    };
+    expect(requester, JSON.stringify(requester)).toMatchObject({
+      hasOpenRequest: true, sameAccount: true, usesTerminalCredential: false, allRowsUseRequester: true,
+    });
+    expect(requester.rowReads).toBeGreaterThan(0);
     const requests = fixture.takeRequestObservations();
     expect(result, JSON.stringify(requests)).toMatchObject({ ok: true, result: { kind: 'opened' } });
     if (!result.ok) throw new Error(`Source Open refused: ${result.errorCode}`);
