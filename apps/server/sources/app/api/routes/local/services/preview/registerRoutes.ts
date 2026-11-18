@@ -780,9 +780,9 @@ export function registerLocalServicePreviewRoutes(
         const reply = rawReply as RouteReply;
         const previewId = readPreviewId(request);
         const parsed = LocalServicePreviewAccessRequestV1Schema.safeParse(request.body);
-        if (!previewId || !parsed.success) return sendError(reply, 400, 'invalid_preview_request', 'invalid_native_access_request');
+        if (!previewId || !parsed.success) { sendError(reply, 400, 'invalid_preview_request', 'invalid_native_access_request'); return rawReply; }
         const resource = options.resolvePreview(previewId);
-        if (!resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
+        if (!resource) { sendError(reply, 404, 'preview_not_found', 'preview_not_found'); return rawReply; }
         const actorAccountId = readString(request.userId);
         const mintAccess = resource.serviceTarget && actorAccountId ? options.retainMachineAccess({
             machineId: resource.machineId, accountIds: [actorAccountId, resource.owner.id],
@@ -791,37 +791,39 @@ export function registerLocalServicePreviewRoutes(
             const serviceAdmission = resource.serviceTarget && actorAccountId
                 ? await readLocalServicePreviewAdmission({ accountId: actorAccountId, resource }) : null;
             if (resource.serviceTarget ? !serviceAdmission : !await isPreviewLifecycleAuthorized(request, options, resource, 'proxy')) {
-                return sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
+                sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
+                return rawReply;
             }
-            if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
+            if (options.resolvePreview(previewId) !== resource) { sendError(reply, 404, 'preview_not_found', 'preview_not_found'); return rawReply; }
             const accountId = options.resolvePreviewAccountId?.(previewId);
             if (options.isPreviewPortAllowed?.(resource, serviceAdmission ? resource : undefined) === false) return reply.code?.(403)
                 .send?.(createLocalServicePreviewPortPolicyRefusal(resource.target.port));
             if ('kind' in parsed.data) {
-                if (!accountId || !options.registerPreview) return sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable');
+                if (!accountId || !options.registerPreview) { sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable'); return rawReply; }
                 const admission = options.registerPreview({ resource, accountId,
                     ...(serviceAdmission ? { custodianAccountId: serviceAdmission.custodianAccountId } : {}),
                     machineAccessSignal: mintAccess?.signal,
                     ...(serviceAdmission && actorAccountId ? { viewerAccountId: actorAccountId } : {}) });
-                if (!admission.ok) return sendMintRefusal(reply, admission.reasonCode, 'transport');
-                if (!admission.accessUrl || admission.expiresAt === null) return sendError(reply, 503, 'preview_transport_unavailable', 'preview_private_route_unavailable');
+                if (!admission.ok) { sendMintRefusal(reply, admission.reasonCode, 'transport'); return rawReply; }
+                if (!admission.accessUrl || admission.expiresAt === null) { sendError(reply, 503, 'preview_transport_unavailable', 'preview_private_route_unavailable'); return rawReply; }
                 return reply.send?.(LocalServicePreviewServerAccessV1Schema.parse({
                     v: 1, kind: 'server_preview', previewId, machineId: resource.machineId,
                     accessUrl: admission.accessUrl, expiresAt: admission.expiresAt,
                 }));
             }
             if (!accountId || !options.resolveNativeDirectTarget || !options.mintNativeDirectAccess
-                || options.nativeDirectEnabled && !await options.nativeDirectEnabled(request)) return sendError(reply, 503, 'preview_transport_unavailable', 'native_preview_unavailable');
+                || options.nativeDirectEnabled && !await options.nativeDirectEnabled(request)) { sendError(reply, 503, 'preview_transport_unavailable', 'native_preview_unavailable'); return rawReply; }
             const target = await options.resolveNativeDirectTarget({ accountId: serviceAdmission?.custodianAccountId ?? accountId, machineId: resource.machineId });
-            if (!target) return sendError(reply, 503, 'preview_transport_unavailable', 'machine_iroh_endpoint_unavailable');
+            if (!target) { sendError(reply, 503, 'preview_transport_unavailable', 'machine_iroh_endpoint_unavailable'); return rawReply; }
             // Revoke/replacement during the asynchronous target read cannot mint old authority.
-            if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
+            if (options.resolvePreview(previewId) !== resource) { sendError(reply, 404, 'preview_not_found', 'preview_not_found'); return rawReply; }
             const result = options.mintNativeDirectAccess({ previewId, request: parsed.data, target,
                 machineAccessSignal: mintAccess?.signal,
                 ...(serviceAdmission && actorAccountId ? { actorAccountId } : {}) });
-            if (!result.ok) return sendMintRefusal(reply, result.reasonCode, 'transport');
+            if (!result.ok) { sendMintRefusal(reply, result.reasonCode, 'transport'); return rawReply; }
             reply.send?.(result.access);
         } finally { mintAccess?.release(); }
+        return rawReply;
     });
 
     app.post(`${PREVIEW_RESOURCE_ROUTE_PATH}/native-registration`, { preHandler: app.authenticate }, async (rawRequest, rawReply) => {
@@ -829,15 +831,15 @@ export function registerLocalServicePreviewRoutes(
         const reply = rawReply as RouteReply;
         const parsed = LocalServicePreviewNativeRegistrationRequestV1Schema.safeParse(request.body);
         const previewId = readPreviewId(request);
-        if (!previewId || !parsed.success || parsed.data.previewId !== previewId) return sendError(reply, 400, 'invalid_preview_request', 'preview_registration_mismatch');
+        if (!previewId || !parsed.success || parsed.data.previewId !== previewId) { sendError(reply, 400, 'invalid_preview_request', 'preview_registration_mismatch'); return rawReply; }
         const resource = options.resolvePreview(previewId);
-        if (!resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
-        if (!await isPreviewLifecycleAuthorized(request, options, resource, 'register')) return sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
+        if (!resource) { sendError(reply, 404, 'preview_not_found', 'preview_not_found'); return rawReply; }
+        if (!await isPreviewLifecycleAuthorized(request, options, resource, 'register')) { sendError(reply, 403, 'preview_access_denied', 'session_not_authorized'); return rawReply; }
         const { grantId, ...binding } = parsed.data;
         const lease = options.openNativeRegistration?.(binding, grantId);
-        if (!lease?.ok) return sendError(reply, 404, 'preview_not_found', lease?.reasonCode ?? 'preview_registration_unavailable');
+        if (!lease?.ok) { sendError(reply, 404, 'preview_not_found', lease?.reasonCode ?? 'preview_registration_unavailable'); return rawReply; }
         const raw = reply.raw;
-        if (!raw?.writeHead || !raw.write || !raw.end) { lease.close(); return sendError(reply, 503, 'preview_transport_unavailable', 'preview_registration_unavailable'); }
+        if (!raw?.writeHead || !raw.write || !raw.end) { lease.close(); sendError(reply, 503, 'preview_transport_unavailable', 'preview_registration_unavailable'); return rawReply; }
         let finished = false;
         const finish = () => {
             if (finished) return;
