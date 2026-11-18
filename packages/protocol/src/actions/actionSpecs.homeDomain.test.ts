@@ -394,6 +394,13 @@ describe('Home and Teams Action family', () => {
     }
   });
 
+  it.each(['review_access_forbidden', 'review_not_found', 'review_round_not_admitted'] as const)(
+    'preserves the strict %s refusal at the shared Home error boundary', (error) => {
+      expect(readHomeDomainActionErrorV1({ error })).toEqual({ code: error, details: { error } });
+      expect(readHomeDomainActionErrorV1({ error, unexpected: true })).toBeNull();
+    },
+  );
+
   it('preserves existing Home-family domain codes without inventing a new vocabulary', () => {
     expect(readHomeDomainActionErrorV1({ error: 'home_governance_forbidden' }))
       .toEqual({ code: 'home_governance_forbidden', details: { error: 'home_governance_forbidden' } });
@@ -500,14 +507,14 @@ describe('Home and Teams Action family', () => {
    * row may deliberately withhold it, and forcing agent exposure family-wide
    * would overrule that owner's narrower admission.
    */
-  it('reaches UI, CLI and trusted plugins, with invitation minting requestable under human approval', () => {
+  it('reaches UI and CLI while preserving the owning plugin grammar', () => {
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       if (actionId === 'teams.invitations.accept.prepareApproval') continue;
       const surfaces = getActionSpec(actionId).surfaces;
-      expect({ ui: surfaces.ui, cli: surfaces.cli, plugin: surfaces.plugin }).toEqual({
+      expect({ ui: surfaces.ui, cli: surfaces.cli, plugin: surfaces.plugin }, actionId).toEqual({
         ui: true,
         cli: true,
-        plugin: true,
+        plugin: PluginInvocableActionIdSchema.safeParse(actionId).success,
       });
     }
     for (const actionId of LANE_01_ACTION_IDS) {

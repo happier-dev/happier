@@ -1,4 +1,5 @@
 import { ReviewCommentOperationErrorCodeV1Schema } from '../reviews/comments/actions.js';
+import { ReviewHumanErrorV1Schema } from '../reviews/reviewHumanV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccountUsernameUpdateErrorV1Schema } from '../account/profile.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -97,6 +98,7 @@ export function isHomeDomainActionIdV1(value: string): value is HomeDomainAction
 }
 
 const HOME_DOMAIN_ERROR_SCHEMAS_V1 = [
+  ReviewHumanErrorV1Schema,
   lazyZodSchema(() => z.strictObject({ error: ReviewCommentOperationErrorCodeV1Schema })),
   AccountUsernameUpdateErrorV1Schema,
   FriendsMutationErrorSchema,
