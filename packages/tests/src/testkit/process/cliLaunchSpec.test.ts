@@ -950,6 +950,7 @@ describe('resolveCliTestLaunchSpec', () => {
 
       expect(spec.command).toBe(process.execPath);
       expect(spec.args).toContain(resolve(snapshotDir, 'src', 'index.ts'));
+      expect(spec.env?.NODE_OPTIONS).toContain('packages/cli-common/registerSourceRuntime.mjs');
       expect(lstatSync(resolve(snapshotDir, 'node_modules')).isDirectory()).toBe(true);
       expect(existsSync(resolve(snapshotDir, 'scripts', 'claude_launcher_runtime.cjs'))).toBe(true);
     } finally {

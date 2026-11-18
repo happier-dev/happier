@@ -32,7 +32,7 @@ import {
   ensureCliDistSnapshotNodeModules,
   hasCliDistSnapshotFirstPartyCopyClosure,
 } from './cliDistSnapshotNodeModules';
-import { resolveTsxImportHookSpecifier } from './tsxImportHook';
+import { resolveTsxImportHookSpecifier, withWorkspaceSourceRuntime } from './tsxImportHook';
 import { resolveCliWorkspacePackageDir } from './workspacePackageResolution';
 
 export type CliTestLaunchSpec = Readonly<{
@@ -515,6 +515,7 @@ async function resolveCliSourceLaunchSpec(
       args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookSpecifier, sourceEntrypoint],
       cwd: snapshotDir,
       env: {
+        NODE_OPTIONS: withWorkspaceSourceRuntime(params.env, rootDir).NODE_OPTIONS,
         TSX_TSCONFIG_PATH: resolveCliTsconfigPath(snapshotDir),
       },
       ...(cleanup ? { cleanup } : {}),
