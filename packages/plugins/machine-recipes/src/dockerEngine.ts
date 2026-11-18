@@ -20,7 +20,7 @@ export const dockerEngine: Omit<MachineRecipeV1, 'id'> = {
   inputSchema: { oneOf: [{ type: 'object', properties: {
     mode: { ...dockerEngineAccessModeInputSchema, enum: [dockerEngineAccessModeInputSchema.enum[0]] },
     daemonConfig: { type: 'object', properties: {}, additionalProperties: false },
-  }, required: ['mode', 'daemonConfig'], additionalProperties: false }, { type: 'object', properties: {
+  }, required: ['mode'], additionalProperties: false }, { type: 'object', properties: {
     mode: { ...dockerEngineAccessModeInputSchema, enum: [dockerEngineAccessModeInputSchema.enum[1]], default: 'group' },
     daemonConfig: { type: 'object', description: 'Reviewed daemon settings to merge. Leave empty to preserve existing values.', properties: {
       icc: { type: 'boolean' },
@@ -32,6 +32,16 @@ export const dockerEngine: Omit<MachineRecipeV1, 'id'> = {
       }, additionalProperties: false },
     }, additionalProperties: false },
   }, required: ['daemonConfig'], additionalProperties: false }] },
+  // Derived from the oneOf above, Mode would be a raw JSON box and Daemon settings would be asked even for rootless,
+  // which shares no daemon settings; group access (and saved inputs without a mode) still asks for them.
+  inputHints: { fields: [
+    { path: 'mode', title: 'Access', widget: 'select',
+      description: 'Rootless is recommended. Docker group access is compatible but close to administrator power.',
+      options: [{ value: 'rootless', label: 'Rootless (recommended)' }, { value: 'group', label: 'Docker group' }] },
+    { path: 'daemonConfig', title: 'Daemon settings', widget: 'json', required: true,
+      description: 'Reviewed daemon.json settings to merge. Enter {} to keep the current ones.',
+      visibleWhen: { op: 'not', predicate: { op: 'eq', path: 'mode', value: 'rootless' } } },
+  ] },
   checks: [
     commandCheck('supported-distro', 'grep', ['-Eq', '^ID="?(ubuntu|debian)"?$', '/etc/os-release']),
     commandCheck('ubuntu-family', 'grep', ['-Eq', '^ID="?ubuntu"?$', '/etc/os-release'], [1]),

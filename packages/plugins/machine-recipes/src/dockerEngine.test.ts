@@ -49,3 +49,23 @@ it('offers rootless alongside legacy group inputs without admitting shared daemo
   expect(resolveMachineRecipeStepInputsV1(install, inputs, facts))
     .toMatchObject({ kind: 'script', shell: 'sh', body: '/usr/local/bin/happier-docker-rootless\n' });
 });
+
+it('asks for the access mode as a choice and lets the recommended rootless mode install without daemon settings', async () => {
+  const { normalizePluginActionInputHintsV2 } = await import('@happier-dev/protocol/plugins/actions/v2');
+  const { resolveEffectiveActionInputFields } = await import('@happier-dev/protocol/actions/actionInputHintsRuntime');
+  const recipe = MachineRecipeV1Schema.parse({ id: 'docker-engine', ...dockerEngine });
+  const schema = compilePluginJsonSchema(recipe.inputSchema);
+  const hints = normalizePluginActionInputHintsV2(recipe.inputHints, recipe.inputSchema);
+  const visible = (draft: Record<string, unknown>) =>
+    resolveEffectiveActionInputFields({ inputHints: hints }, draft).filter(field => field.visible);
+  const mode = visible({}).find(field => field.path === 'mode');
+  expect(mode).toMatchObject({ widget: 'select' });
+  expect(mode?.options?.map(option => option.value)).toEqual(['rootless', 'group']);
+  // Rootless shares no daemon settings, so the form collects only the choice and the choice alone is valid.
+  expect(visible({ mode: 'rootless' }).map(field => field.path)).toEqual(['mode']);
+  expect(isValidPluginJsonSchemaValue(schema, { mode: 'rootless' })).toBe(true);
+  // Group access (and saved inputs without a mode) still asks for the reviewed daemon settings.
+  for (const draft of [{ mode: 'group' }, {}]) {
+    expect(visible(draft).find(field => field.path === 'daemonConfig')).toMatchObject({ widget: 'json', required: true });
+  }
+});
