@@ -455,6 +455,7 @@ describe('GitHub API URL admission', () => {
       },
     })).resolves.toMatchObject({ status: 200 });
     for (const refused of [
+      'https://ghe.internal.test/api/v3/repos/o/r',
       'https://api.github.com.evil.test/repos/o/r',
       'http://api.github.com/repos/o/r',
       'https://user:pass@api.github.com/repos/o/r',

@@ -223,7 +223,8 @@ describe('GitHub triage get', () => {
     expect(observation.snapshot.nativeRevision)
       .toBe('9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29');
     // An authoritative `get` resolves the diff stat a scan row answers `detailOnly`.
-    expect(observation.snapshot.rowFacts.length).toBeGreaterThan(4);
+    expect(observation.snapshot.rowFacts.find((fact) => fact.id === 'github/additions-deletions')?.value)
+      .toEqual({ kind: 'text', value: '+214 −88' });
     expect(observation.snapshot.rowFacts.every((fact) => fact.value.kind !== 'detailOnly'))
       .toBe(true);
   });
