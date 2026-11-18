@@ -19,7 +19,8 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { hasDeploymentPlacementOperand, resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readApiTokenDeploymentController } from '@/deployments/readApiTokenDeploymentController';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -591,6 +592,20 @@ async function resolvePatActionTransportPlan(params: Readonly<{
 
   if (executionPlacement === 'session') {
     return { kind: 'settled', result: actionFailure('target_required') };
+  }
+
+  // Deploy from CI (plan 40 §6.8): Home names the Environment's current controller
+  // through one scoped content-free read before an encrypted request seals its target.
+  if (publicActionId.data === 'deployments.deploy') {
+    const parsed = spec.inputSchema.safeParse(params.input);
+    if (!parsed.success) return { kind: 'settled', result: actionFailure('invalid_parameters') };
+    const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(publicActionId.data, parsed.data, {
+      ...(params.machineId !== undefined ? { explicitMachineId: params.machineId } : {}),
+      readEnvironmentController: request => readApiTokenDeploymentController({ serverApiUrl: params.serverApiUrl,
+        bearer: params.credentials.token, ...(signal ? { signal } : {}) }, request),
+    });
+    if (!selected.ok) return { kind: 'settled', result: selected };
+    return { kind: 'ready', input: params.input, target: { kind: 'machine', machineId: selected.machineId } };
   }
 
   if (daemonLocalMachineId) {
