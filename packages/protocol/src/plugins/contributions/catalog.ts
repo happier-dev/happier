@@ -40,6 +40,7 @@ import { readDeploymentTargetReferenceRolesV1, type DeploymentTargetContribution
 import type { ProjectNativeAdapterRoleV1 } from './projectNativeAdapters.js';
 import type { PluginDeclarativeButtonV1 } from './declarativeButtonsV1.js';
 import type { MachineSetupPresetContributionV1 } from './machineSetupPresets.js';
+import { isMachineSetupRecipeItemV1 } from '../../machines/managed/machineSetupV1.js';
 import type { BackupDestinationContributionV1 } from './backupDestinations.js';
 
 export type PluginContributionReferenceRuleV2 = Readonly<{
@@ -321,7 +322,7 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   }
   if (family === 'machineSetupPresets') {
     const preset = value as MachineSetupPresetContributionV1;
-    return (preset.setup.items ?? []).flatMap((item, index) => item.kind === 'app' ? [] : [{
+    return (preset.setup.items ?? []).flatMap((item, index) => !isMachineSetupRecipeItemV1(item) ? [] : [{
       targetFamily: 'machineRecipes', allowQualifiedSamePlugin: true, allowQualifiedCrossPlugin: true,
       reference: { pluginId: item.selection.ref.pluginId, localId: item.selection.ref.recipeId },
       revision: item.selection.ref.revision,

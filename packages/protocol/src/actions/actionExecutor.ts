@@ -4711,7 +4711,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           catch { return false; }
         };
         const isSharedSetupCreateInput = artifactActionId === ARTIFACT_CREATE_ACTION_ID_V1
-          && 'header' in artifactInput && 'body' in artifactInput && isSharedSetupArtifact(artifactInput);
+          && 'header' in artifactInput && 'body' in artifactInput && isSharedSetupArtifact({
+            header: artifactInput.header, body: artifactInput.body,
+          });
         // The incumbent Inbox may read and dismiss its captured Account's private
         // notices. This does not admit ordinary private-document authoring or egress.
         const noticeAccountId = readNoticeInboxAccountIdV1(ctx);
