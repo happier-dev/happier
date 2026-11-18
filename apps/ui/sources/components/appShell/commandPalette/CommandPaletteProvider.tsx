@@ -22,6 +22,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -209,7 +210,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             entries: await library.list(), undoHandle: library.lastUndo(),
             mode: resolveThemeRuntimeVisualTheme(state.localSettings.themePreference, readSystemTheme()),
             selection: readThemeProfileReferenceSelection(state.localSettings.themeProfileSelection),
-            execute: async (id, input) => requireActionSuccess(await actionExecutor.execute(id, input, { surface: 'ui' })),
+            execute: async (id: ActionId, input) => requireActionSuccess(await actionExecutor.execute(id, input, { surface: 'ui' })),
             push: path => router.push(path as never),
         }));
     }, [actionExecutor, router]);
