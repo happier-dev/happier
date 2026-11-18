@@ -164,7 +164,7 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                     failedStage = 'credential_rotation';
                     const outcome = await params.rotateCredentialSecrets({ secrets: rotations.map(({ resourceId, value }) => ({ resourceId, value })) });
                     if (outcome === 'conflict') return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-                    if (outcome === 'unavailable') return { status: 'unavailable', code: 'connected_account_credential_persistence_unavailable' };
+                    if (outcome === 'unavailable') return { status: 'unavailable', code: 'connected_account_credential_secret_rotation_unavailable' };
                     if (outcome === 'outcome_unknown') throw new Error('connected_account_settlement_outcome_unknown');
                 }
             }
@@ -193,12 +193,12 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
             });
             let acknowledgement: ReturnType<typeof QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse>;
             if (resources.length) {
-                if (!params.promoteCredentialSecrets) return { status: 'unavailable', code: 'connected_account_credential_persistence_unavailable' };
+                if (!params.promoteCredentialSecrets) return { status: 'unavailable', code: 'connected_account_credential_secret_promotion_unconfigured' };
                 const outcome = await params.promoteCredentialSecrets({ accountMode, credential: mutation,
                     secrets: resources.map(([key, resource]) => ({ ...resource, kind: 'apiKey', value: request.stagedCredentials[key]! })) });
                 if (outcome.status !== 'applied') {
                     if (outcome.status === 'conflict') return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-                    if (outcome.status === 'unavailable' || outcome.status === 'invalid') return { status: 'unavailable', code: 'connected_account_credential_persistence_unavailable' };
+                    if (outcome.status === 'unavailable' || outcome.status === 'invalid') return { status: 'unavailable', code: 'connected_account_credential_secret_promotion_refused' };
                     throw new Error('connected_account_settlement_outcome_unknown');
                 }
                 if (!outcome.credential) throw new Error('connected_account_settlement_outcome_unknown');

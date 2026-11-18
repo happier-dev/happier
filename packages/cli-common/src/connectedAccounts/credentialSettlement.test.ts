@@ -126,7 +126,7 @@ describe('Connected Account credential settlement', () => {
         expect(credential.health?.status).toBe(outcome === 'health-conflict' ? 'needs_reauth' : 'connected');
         expect(published).toBe(outcome !== 'health-conflict');
     });
-    it.each(['applied', 'outcome_unknown', 'revision_conflict'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
+    it.each(['applied', 'outcome_unknown', 'revision_conflict', 'unavailable'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
         const service = { pluginId: 'acme.cloud', localId: 'api' };
         const account = { service, accountId: 'held' };
         const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -171,7 +171,9 @@ describe('Connected Account credential settlement', () => {
             expect(await owner.reconcile(request)).toMatchObject({ status: 'unavailable' });
             expect(writes).toEqual([]);
         } else {
-            expect(await owner.settle(request)).toEqual({ status: 'conflict', code: 'connected_account_settlement_conflict' });
+            expect(await owner.settle(request)).toEqual(status === 'unavailable'
+                ? { status: 'unavailable', code: 'connected_account_credential_secret_rotation_unavailable' }
+                : { status: 'conflict', code: 'connected_account_settlement_conflict' });
             expect(writes).toEqual([]);
         }
         expect(rotations).toEqual([[{ resourceId: 'held-key', value: 'rotated-key' }]]);
@@ -207,7 +209,8 @@ describe('Connected Account credential settlement', () => {
             plaintext: openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: written.content }) });
         expect(payload).toEqual({ v: 1, values: {}, secretRefs: { token: selection.ref } });
     });
-    it('promotes declared entered keys atomically and keeps only resource references in the credential', async () => {
+    it.each(['applied', 'missing', 'invalid', 'unavailable'] as const)(
+        'settles entered keys atomically or reports the promotion failure (%s)', async status => {
         const writes: unknown[] = [];
         const promotions: Parameters<NonNullable<Parameters<typeof createConnectedAccountCredentialSettlement>[0]['promoteCredentialSecrets']>>[0][] = [];
         const service = { pluginId: 'acme.cloud', localId: 'api' };
@@ -220,21 +223,29 @@ describe('Connected Account credential settlement', () => {
             parseConfigurationContent: value => value,
             mutateCredentialHealth: async () => {},
             mutateCredential: async mutation => { writes.push(mutation); throw new Error('raw_credential_write'); },
-            promoteCredentialSecrets: async input => {
+            promoteCredentialSecrets: status === 'missing' ? undefined : async input => {
                 promotions.push(input);
+                if (status !== 'applied') return { status };
                 return { status: 'applied' as const, credential: { success: true as const,
                     credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null } };
             },
             readCredential: async () => null, readConfiguration: async () => null,
             readHttpStatus: () => null, readFailureCode: () => null,
         });
-        expect(await owner.settle({ intent: 'connect', service, accountId: account.accountId, authenticationModeId: 'api-key',
+        const result = await owner.settle({ intent: 'connect', service, accountId: account.accountId, authenticationModeId: 'api-key',
             expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null, expectedConfigurationRevision: 'unconfigured',
             sourceCustody: { kind: 'managed', immutableGenerationId: 'artifact-1', installSource: 'archive' },
             stagedCredentials: { token: 'entered-key', organization: 'org-one' },
             credentialSecretResources: { token: { resourceId: 'one-key', displayName: 'Cloud key' } },
-            displayName: 'Cloud', scopes: [] })).toEqual({ status: 'connected', account });
+            displayName: 'Cloud', scopes: [] });
         expect(writes).toEqual([]);
+        if (status !== 'applied') {
+            expect(result).toEqual({ status: 'unavailable', code: status === 'missing'
+                ? 'connected_account_credential_secret_promotion_unconfigured'
+                : 'connected_account_credential_secret_promotion_refused' });
+            return;
+        }
+        expect(result).toEqual({ status: 'connected', account });
         expect(promotions).toHaveLength(1);
         const promotion = promotions[0]!;
         expect(promotion.secrets).toEqual([{ resourceId: 'one-key', displayName: 'Cloud key', kind: 'apiKey', value: 'entered-key' }]);

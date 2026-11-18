@@ -249,6 +249,13 @@ this sign-in/reauth decision.
 Plugin failure diagnostics survive the shared attempt owner's non-reconcilable
 outcome response. Claude's known HTTP refusals and credential identity mismatches
 are conclusive results; only a lost exchange response remains outcome unknown.
+For a Reconnect that rotates a held Saved Secret, the update owner uses the
+revision of the exact resource it read for the update. Settlement reports
+`connected_account_credential_secret_rotation_unavailable` when rotation is
+unavailable. New resource promotion reports
+`connected_account_credential_secret_promotion_unconfigured` when the host
+provides no adapter or `connected_account_credential_secret_promotion_refused`
+when the adapter returns invalid or unavailable.
 
 Retained Sessions resume with their admitted Connected Account binding from
 owner metadata. A cross-Agent transition clears the departing Agent's binding

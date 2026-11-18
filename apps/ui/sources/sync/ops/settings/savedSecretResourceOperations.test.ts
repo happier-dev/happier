@@ -14,7 +14,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretListOutputV1Schema,
     SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretDeleteInputV1Schema,
-    SavedSecretResourceEnvelopeRepairInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+    SavedSecretResourceEnvelopeRepairInputV1Schema, SavedSecretResourceMaterialSelectionV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { SavedSecretResourceMaterialsResponseV1Schema, formatSavedSecretCatalogFingerprintV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -321,7 +321,13 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
             if (path === '/v1/account/saved-secrets/resources/materials') {
                 const url = new URL(String(rawUrl));
                 materialReadPaths.push(url.pathname + url.search);
-                const resourceId = url.searchParams.get('resourceId');
+                const query = Object.fromEntries(url.searchParams);
+                const resourceIds = url.searchParams.getAll('resourceIds');
+                const selection = SavedSecretResourceMaterialSelectionV1Schema.safeParse({
+                    ...query, ...(resourceIds.length ? { resourceIds } : {}),
+                });
+                if (!selection.success) return Response.json({ error: 'invalid_resource' }, { status: 400 });
+                const { resourceId } = selection.data;
                 const response = materialReadStatus === 200
                     ? Response.json({ resources: [...resources.values()].filter(row => !resourceId || 'resourceId' in row && row.resourceId === resourceId) })
                     : Response.json({ error: 'temporarily_unavailable' }, { status: materialReadStatus });

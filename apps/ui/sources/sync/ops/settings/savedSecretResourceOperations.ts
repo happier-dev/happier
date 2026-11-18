@@ -1826,8 +1826,12 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
     });
     try {
         const accountMode = await context.resolveAccountMode();
-        const catalog = await readSavedSecretCatalogInContext(context, context.invocationSignal, { resourceId: params.resourceId,
-            ...(params.expectedRevision === undefined ? {} : { expectedRevision: params.expectedRevision }), requireManage: true });
+        // A held Connected Account reference identifies the resource without pinning a revision.
+        // Read that exact resource and use its revision for the owner-only update below.
+        const catalog = await readSavedSecretCatalogInContext(context, context.invocationSignal, {
+            resourceId: params.resourceId,
+            ...(params.expectedRevision === undefined ? {} : { expectedRevision: params.expectedRevision, requireManage: true }),
+        });
         context.assertCurrent();
         if (!catalog.ok) return { ok: false, reason: catalog.failure.kind === 'conflict' ? 'changed' : 'unavailable' };
         const resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 => (
