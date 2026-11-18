@@ -2,7 +2,7 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createSessionFixture, makeToolCall, makeToolViewProps, renderScreen, renderHook, standardCleanup,
+import { createSessionFixture, makeToolCall, renderScreen, renderHook, standardCleanup,
     renderWithSessionTranscriptSource, createTestSessionTranscriptSource } from '@/dev/testkit';
 import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { APPROVAL_ARTIFACT_KINDS_V1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -44,7 +44,7 @@ const machineTransport = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unkn
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineTransport }));
 await loadSyncSingletonForTests();
 const { SavedSkillResult } = await import('./SavedSkillResult');
-const { MCPToolView } = await import('./MCPToolView');
+const { TranscriptToolResultCard } = await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
 const { ApprovalPromptCard } = await import('@/components/tools/shell/approvals/ApprovalPromptCard');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -114,7 +114,7 @@ it('renders a saved result without skill reads and keeps its commit count at zer
         summary: { name: 'Review', description: null, creator: { kind: 'agent', accountId: 'owner', sessionId } } };
     const tool = makeToolCall({ name: 'mcp__happier__skills_create', state: 'completed', input: { name: 'Review', files: [] }, result: fact });
     const screen = await renderScreen(<React.Profiler id="saved" onRender={() => { commits++; }}>
-        <MCPToolView {...makeToolViewProps(tool, { detailLevel: 'summary', serverId, sessionId })} />
+        <TranscriptToolResultCard tool={tool} serverId={serverId} sessionId={sessionId} mediaPreviewEnabled={false} />
     </React.Profiler>);
     expect(screen.getTextContent()).toContain('Review');
     expect(screen.getTextContent()).toContain('Researcher');
@@ -152,8 +152,8 @@ it.each([
     });
     const session = createSessionFixture({ id: sessionId, serverId, active: true, activeAt: Date.now(), metadata });
     const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
-    getStorage().setState({ sessions: { [sessionId]: session }, machines: { machine }, machineListByServerId: { [serverId]: [machine] },
-        sessionLocalStateScope: scope, settingsScope: scope, profileScope: scope });
+    getStorage().setState({ sessions: { [sessionId]: session }, sessionLocalStateScope: scope, settingsScope: scope, profileScope: scope });
+    getStorage().getState().applyMachines([machine], true, { sourceServerId: serverId, sourceAccountId: scope.accountId });
     const approval = ApprovalRequestV1Schema.parse(projectApprovalRequestForPublicRead(ApprovalRequestV1Schema.parse({
         v: 1, status: 'executed', createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'agent', sessionId },
         requestedSurface: 'agent', actionId: 'skills.create', actionArgs: {}, summary: 'Create skill',
