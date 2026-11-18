@@ -21,11 +21,13 @@ type AvailableSetupHandoffTarget =
     | Readonly<{ kind: 'descriptor_file_required' }>;
 export type WebDesktopSetupHandoffTarget = AvailableSetupHandoffTarget
     | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string }>
-    | Readonly<{ kind: 'unavailable'; code: 'guest_cli_identity_unavailable' }>
+    | Readonly<{ kind: 'unavailable'; code: 'guest_cli_identity_unavailable'; message: string }>
     | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
 export type MachineAddHomeTarget = Readonly<{
     descriptor: HomeConnectionDescriptorV1 | null;
     guestCli?: GuestCliIdentityV1;
+    /** Whether the Home's feature answer that carries `guestCli` has arrived; absent means it has. */
+    homeFeatures?: 'loading' | 'ready' | 'unreadable';
     fallbackHomeUrl: string | null;
     /** Another computer and SSH targets cannot use this computer's loopback route. */
     remote?: boolean;
@@ -36,7 +38,11 @@ export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget
     const delivery = readMachineProvisionerHostAvailability({ host: 'browser', guestCli: params.guestCli,
         ...MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES });
     if (!delivery.available && delivery.code === 'guest_cli_identity_unavailable') return {
-        kind: 'unavailable', code: delivery.code,
+        kind: 'unavailable', code: delivery.code, message: params.homeFeatures === 'loading'
+            ? 'Reading how this Home installs Happier…'
+            : params.homeFeatures === 'unreadable'
+                ? 'Couldn’t reach this Home to read how it installs Happier. The command appears here once it answers.'
+                : 'This Home doesn’t say which Happier CLI its machines install, so there is no command to copy yet.',
     };
     if (!delivery.available) return {
         kind: 'unavailable', code: 'guest_payload_missing',

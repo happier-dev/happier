@@ -117,6 +117,15 @@ describe('machine add commands', () => {
         expect(resolveWebDesktopSetupHandoffTarget({ ...target, os })).toMatchObject({ kind: 'https' });
         expect(buildMachineAddCommand({ ...target, os, kind: 'joinHome' })).toContain('--home-url https://home.example.test');
     });
+    it.each([
+        ['loading', /Reading how this Home installs Happier/],
+        ['unreadable', /Couldn’t reach this Home/],
+        ['ready', /doesn’t say which Happier CLI/],
+    ] as const)('says why no installer is offered while the Home CLI identity is unknown (%s)', (homeFeatures, message) => {
+        const handoff = resolveWebDesktopSetupHandoffTarget({ ...home, guestCli: undefined, homeFeatures, os: 'linux' });
+        expect(handoff).toMatchObject({ kind: 'unavailable', code: 'guest_cli_identity_unavailable' });
+        expect('message' in handoff ? handoff.message : null).toMatch(message);
+    });
     it('does not offer a public installer while the Home artifact identity is unknown', () => {
         const target = { ...home, guestCli: undefined };
         expect(resolveWebDesktopSetupHandoffTarget({ ...target, os: 'linux' })).toMatchObject({ kind: 'unavailable', code: 'guest_cli_identity_unavailable' });

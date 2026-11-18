@@ -243,10 +243,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         && (commandTarget.code === 'home_not_guest_reachable' || paths.find(path => path.id === draft.path)?.runs === 'command');
     const commandUnavailableDetails = React.useMemo(() => commandTarget.kind === 'unavailable'
         ? [commandTarget.code] : undefined, [commandTarget]);
-    const commandUnavailableMessage = commandTarget.kind === 'unavailable'
-        ? 'message' in commandTarget ? commandTarget.message
-            : commandTarget.code === 'guest_cli_identity_unavailable' ? t('common.unavailable') : null
-        : null;
+    const commandUnavailableMessage = commandTarget.kind === 'unavailable' && 'message' in commandTarget
+        ? commandTarget.message : null;
     const localTask = useThisComputerSetupTask({ runner, taskId: draft.thisComputerTask?.taskId ?? null,
         onTaskIdChange: (id) => replaceTaskId('thisComputer', draft.thisComputerTask?.taskId ?? null, id),
         ...(profile ? { authRequestApproval: { expectedRelayUrl: profile.serverUrl, serverId } } : {}),

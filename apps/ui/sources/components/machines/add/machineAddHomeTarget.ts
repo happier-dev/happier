@@ -11,6 +11,7 @@ function projectMachineAddHomeTarget(profile: ServerProfile | null, snapshot: Se
     fallbackHomeUrl: string | null): MachineAddHomeTarget {
     return { descriptor: profile ? buildHomeConnectionDescriptorForProfile(profile) : null,
         guestCli: profile && snapshot.status === 'ready' ? snapshot.features.capabilities.guestCli : undefined,
+        homeFeatures: snapshot.status === 'loading' ? 'loading' : snapshot.status === 'ready' ? 'ready' : 'unreadable',
         fallbackHomeUrl: profile?.serverUrl ?? fallbackHomeUrl };
 }
 
