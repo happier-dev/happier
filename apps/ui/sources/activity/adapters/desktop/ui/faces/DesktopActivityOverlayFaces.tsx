@@ -3,6 +3,9 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -19,8 +22,10 @@ import type {
   BotFaceSnapshot,
   NotchBotFaces,
 } from '../../presentation/notchBotTypes';
+import type { DesktopActivityOverlayAttentionMark } from '../../presentation/model/desktopActivityOverlayModelTypes';
+import { resolveNotchRestMarkShiftPx, resolveNotchRestMarks } from './notchRestMarks';
 import { createDesktopActivityOverlayFocusRingStyle } from '../DesktopActivityOverlayChrome';
-import { DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
+import { DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE, DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
 import type { DesktopActivityOverlayPressableInteractionState } from '../DesktopActivityOverlayPressableInteractionState';
 
 /** "Four, then +N" (DESIGN.md, lab `ntfaces`): the wing draws the first four; every member stays in the list. */
@@ -28,6 +33,8 @@ export const NOTCH_FACES_SHOWN = 4;
 /** The Inbox slot in the wing; the rail slot in the panel header and Bot rows (living-bots R1/R5). */
 export const NOTCH_FACE_WING_SIZE = 20;
 export const NOTCH_FACE_PANEL_SIZE = DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE;
+/** An Agent mark on the island, in rows and in the side stack (owner 2026-11-18: 14, no setting). */
+export const NOTCH_AGENT_MARK_SIZE = DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE;
 
 export type NotchConversationPresentation = 'overlay' | 'window';
 export type NotchConversationTarget = Readonly<{ sessionId: string; serverId: string | null }>;
@@ -136,7 +143,7 @@ export function NotchConversationMenu(
 
 /**
  * The faces wing: Show-Bots members in the one Bot order, four then "+N", each a press target that
- * opens that Bot's conversation. Horizontal on Top and Floating, stacked on the side docks. Every face
+ * opens that Bot's conversation. On Top and Floating; the side docks rest as `DesktopActivityOverlayRestMarks`. Every face
  * keeps its identity across republications (the producer reuses unchanged entries), so a state change
  * re-renders that face's marker only.
  */
@@ -144,7 +151,6 @@ export const DesktopActivityOverlayFaces = React.memo(
   function DesktopActivityOverlayFaces(
     props: Readonly<{
       faces: NotchBotFaces;
-      orientation: 'row' | 'column';
       handlers: NotchConversationHandlers;
       /** "+N": opens the list, where every member is reachable. */
       onMore: () => void;
@@ -153,46 +159,18 @@ export const DesktopActivityOverlayFaces = React.memo(
     const { theme } = useUnistyles();
     const shown = props.faces.faces.slice(0, NOTCH_FACES_SHOWN);
     const more = props.faces.faces.length - shown.length;
-    const column = props.orientation === 'column';
-    const tooltipPlacement = column ? 'right' : 'bottom';
     if (shown.length === 0) return null;
     return (
       <View
         testID="desktop-activity-overlay-faces"
-        style={column ? styles.column : styles.row}
+        style={styles.row}
       >
         {shown.map((face) => (
-          <NotchBotMenu
+          <NotchFaceButton
             key={`${face.serverId}:${face.sessionId}`}
             face={face}
             handlers={props.handlers}
-            testID={`desktop-activity-overlay-face-menu-${face.sessionId}`}
-            placement={column ? 'right' : 'bottom'}
-            trigger={(menu) => (
-              <IconButton
-                testID={`desktop-activity-overlay-face-${face.sessionId}`}
-                variant="plain"
-                size={NOTCH_FACE_WING_SIZE}
-                interactiveTargetEdgesPx={FACE_HIT_EDGES}
-                accessibilityLabel={readBotFaceLabel(face)}
-                tooltip={face.name}
-                tooltipPlacement={tooltipPlacement}
-                onLongPress={menu.openMenu}
-                onContextMenu={menu.onContextMenu}
-                onKeyDown={menu.onKeyDown}
-                onPress={() => props.handlers.onOpen(face)}
-                icon={
-                  <BotFaceMarker
-                    facts={face.face}
-                    size={NOTCH_FACE_WING_SIZE}
-                    activity={face.activity}
-                    monochrome={!face.live}
-                    planeColor={theme.colors.overlay.notch}
-                    dotTestID={`desktop-activity-overlay-face-${face.sessionId}-needs-you`}
-                  />
-                }
-              />
-            )}
+            column={false}
           />
         ))}
         {more > 0 ? (
@@ -223,6 +201,114 @@ export const DesktopActivityOverlayFaces = React.memo(
   },
 );
 
+/** One face in a strip: a press opens that Bot's conversation, a right-click or long press its menu. */
+function NotchFaceButton(props: Readonly<{
+  face: BotFaceSnapshot;
+  handlers: NotchConversationHandlers;
+  column: boolean;
+}>) {
+  const { theme } = useUnistyles();
+  const { face } = props;
+  return (
+    <NotchConversationMenu
+      target={face}
+      handlers={props.handlers}
+      testID={`desktop-activity-overlay-face-menu-${face.sessionId}`}
+      placement={props.column ? 'right' : 'bottom'}
+      trigger={(menu) => (
+        <IconButton
+          testID={`desktop-activity-overlay-face-${face.sessionId}`}
+          variant="plain"
+          size={NOTCH_FACE_WING_SIZE}
+          interactiveTargetEdgesPx={FACE_HIT_EDGES}
+          accessibilityLabel={readBotFaceLabel(face)}
+          tooltip={face.name}
+          tooltipPlacement={props.column ? 'right' : 'bottom'}
+          onLongPress={menu.openMenu}
+          onContextMenu={menu.onContextMenu}
+          onKeyDown={menu.onKeyDown}
+          onPress={() => props.handlers.onOpen(face)}
+          icon={
+            <BotFaceMarker
+              facts={face.face}
+              size={NOTCH_FACE_WING_SIZE}
+              activity={face.activity}
+              monochrome={!face.live}
+              planeColor={theme.colors.overlay.notch}
+              dotTestID={`desktop-activity-overlay-face-${face.sessionId}-needs-you`}
+            />
+          }
+        />
+      )}
+    />
+  );
+}
+
+/**
+ * A Session that needs you, at a side dock's rest (lab `ntshape` R): its Bot face or its Agent mark at the
+ * faces slot, with the face marker's needs-you dot. The column's press opens the list, where it acts.
+ */
+function NotchSessionMark(props: Readonly<{ mark: DesktopActivityOverlayAttentionMark }>) {
+  const { theme } = useUnistyles();
+  const { mark } = props;
+  const size = mark.botFace ? NOTCH_FACE_WING_SIZE : NOTCH_AGENT_MARK_SIZE;
+  return (
+    <View testID={`desktop-activity-overlay-rest-mark-${mark.sessionId}`} style={styles.markSlot}>
+      <View style={{ width: size, height: size }}>
+        {mark.botFace ? (
+          <SessionBotFace facts={mark.botFace} size={size} mood="needsYou" />
+        ) : (
+          <SessionAgentCatalogIdentityIcon
+            agentId={mark.agentId ?? ''}
+            machineId={mark.machineId}
+            serverId={mark.serverId}
+            color={theme.colors.text.secondary}
+            size={size}
+          />
+        )}
+        <AppRailBadge
+          signal={NEEDS_YOU_DOT}
+          glyphSizePx={size}
+          corner="bottomRight"
+          ringColor={theme.colors.overlay.notch}
+        />
+      </View>
+    </View>
+  );
+}
+
+const NEEDS_YOU_DOT = Object.freeze({ kind: 'dot', tone: 'attention' } as const);
+
+/**
+ * A side dock at rest (lab `ntshape` R): a slim column of what needs you, Bots by their face and Sessions by
+ * their mark, then the other Show-Bots faces; three, then "+N". No text: the list says the rest.
+ */
+export const DesktopActivityOverlayRestMarks = React.memo(function DesktopActivityOverlayRestMarks(
+  props: Readonly<{
+    faces: readonly BotFaceSnapshot[];
+    attention: readonly DesktopActivityOverlayAttentionMark[];
+    handlers: NotchConversationHandlers;
+  }>,
+) {
+  const { shown, more } = resolveNotchRestMarks(props.faces, props.attention);
+  if (shown.length === 0) return null;
+  return (
+    <View testID="desktop-activity-overlay-rest-marks" style={styles.column}>
+      {shown.map((mark) => (
+        <View key={mark.kind === 'face' ? `face:${mark.face.serverId}:${mark.face.sessionId}` : `session:${mark.mark.serverId}:${mark.mark.sessionId}`}
+          style={styles.markShift}>
+          {mark.kind === 'face'
+            ? <NotchFaceButton face={mark.face} handlers={props.handlers} column />
+            : <NotchSessionMark mark={mark.mark} />}
+        </View>
+      ))}
+      {more > 0 ? (
+        <Text testID="desktop-activity-overlay-rest-more" variant="micro" style={styles.restMore}>{`+${more}`}</Text>
+      ) : null}
+    </View>
+  );
+});
+
 /** The strip's gap between faces (lab `.nt-strip`, `theme.space.s10`); each face's hit area reaches half of it. */
 const FACE_GAP_PX = 10;
 /**
@@ -252,6 +338,22 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s2,
   },
   moreText: {
+    color: theme.colors.text.secondary,
+    fontVariant: ['tabular-nums'],
+  },
+  // A Session mark keeps the faces' slot, so a stack of faces and marks keeps one pitch.
+  markSlot: {
+    width: NOTCH_FACE_WING_SIZE,
+    height: NOTCH_FACE_WING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markShift: {
+    transform: [{ translateX: resolveNotchRestMarkShiftPx() }],
+  },
+  // "+N" sits under the last mark a step closer than the marks' own gap.
+  restMore: {
+    marginTop: -theme.space.s4,
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
   },

@@ -1,7 +1,7 @@
 import type { SharedActivityProjection } from '@/activity/delivery/sharedActivityProjection';
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 
-import { buildDesktopActivityOverlayCollapsedModel } from './model/buildDesktopActivityOverlayCollapsedModel';
+import { buildDesktopActivityOverlayAttentionMarks, buildDesktopActivityOverlayCollapsedModel } from './model/buildDesktopActivityOverlayCollapsedModel';
 import {
     buildDesktopActivityOverlayExpandedCards,
     buildDesktopActivityOverlaySessionRows,
@@ -28,6 +28,7 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
         visible: params.policy.enabled && (params.sharedActivity.visible || params.snapshot.conversation !== null),
         generatedAt: params.snapshot.generatedAt,
         faces: params.snapshot.bots,
+        attention: buildDesktopActivityOverlayAttentionMarks({ snapshot: params.snapshot, sharedActivity: params.sharedActivity }),
         conversation: params.snapshot.conversation,
         collapsed: buildDesktopActivityOverlayCollapsedModel({
             snapshot: params.snapshot,

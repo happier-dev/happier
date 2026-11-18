@@ -809,34 +809,35 @@ describe('DesktopActivityOverlayExpanded', () => {
         expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')).toBeNull();
     });
 
-    it('stops counting a status header once the panel no longer has one (a dock change from a side to the top)', async () => {
+    it('has no title row: the pin stands over the panel, adding no height above the content', async () => {
         const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
         const onNaturalHeight = vi.fn();
-        const element = (header: React.ReactNode) => (
+        const element = (pin: { pinned: boolean; onToggle: () => void } | null) => (
             <DesktopActivityOverlayExpanded
                 visualMode="notch_integrated"
                 model={createModel()}
-                header={header}
+                pin={pin}
                 onNaturalHeight={onNaturalHeight}
                 onOpenSession={() => {}}
             />
         );
-        const screen = await renderScreen(element(React.createElement('Text', null, 'Needs you')));
+        const screen = await renderScreen(element(null));
         const scroll = () => screen.findAllByTestId('desktop-activity-overlay-expanded-scroll')
             .find(node => typeof node.props.onContentSizeChange === 'function');
-        await act(async () => {
-            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-expanded-header'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 0, width: 440, height: 28 } } });
-            (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);
-        });
-        const withHeader = onNaturalHeight.mock.calls.at(-1)?.[0] as number;
+        const measure = async () => {
+            await act(async () => {
+                (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);
+            });
+            return onNaturalHeight.mock.calls.at(-1)?.[0] as number;
+        };
+        const withoutPin = await measure();
 
-        await screen.update(element(undefined));
-        await act(async () => {
-            (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);
-        });
-        const withoutHeader = onNaturalHeight.mock.calls.at(-1)?.[0] as number;
+        await screen.update(element({ pinned: false, onToggle: () => {} }));
+        const withPin = await measure();
 
-        expect(withHeader - withoutHeader).toBeGreaterThanOrEqual(28);
+        expect(screen.findByTestId('desktop-activity-overlay-pin')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-expanded-header')).toBeNull();
+        expect(withPin).toBe(withoutPin);
     });
 
     it('renders completion-state card content without unsupported-kind crash', async () => {

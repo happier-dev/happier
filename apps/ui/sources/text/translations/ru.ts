@@ -5553,6 +5553,7 @@ export const ru: TranslationStructure = {
       notchPin: "Не закрывать",
       notchUnpin: "Закрывать, когда я ухожу",
       notchMoreBots: ({ count }: { count: number }) => `Ещё ботов: ${count}`,
+      notchNeedYouCount: ({ count }: { count: number }) => `Ждут вас: ${count}`,
       notchAskCount: ({ count }: { count: number }) => `${count} ${count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'запроса' : 'запросов'}`,
       notchReplyTo: ({ name }: { name: string }) => `Ответить ${name}…`,
       notchHiddenReply: "Эта Home показывает здесь только статус. Откройте в окне, чтобы прочитать.",

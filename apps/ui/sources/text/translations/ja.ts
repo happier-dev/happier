@@ -6150,6 +6150,7 @@ localTailscale: {
       notchPin: "開いたままにする",
       notchUnpin: "離れたら閉じる",
       notchMoreBots: ({ count }: { count: number }) => `ほかに ${count} 体の Bot`,
+      notchNeedYouCount: ({ count }: { count: number }) => `${count} 件が対応待ち`,
       notchAskCount: ({ count }: { count: number }) => `${count} 件の確認`,
       notchReplyTo: ({ name }: { name: string }) => `${name} に返信…`,
       notchHiddenReply: "この Home はここでは状態のみ表示します。読むにはウインドウで開いてください。",

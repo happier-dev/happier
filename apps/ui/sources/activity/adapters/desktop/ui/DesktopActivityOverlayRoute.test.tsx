@@ -408,6 +408,21 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(notchForm(asking)).toBe('open');
     });
 
+    it('rests on a side dock as the marks of what needs you with no word, and opens with no title row', async () => {
+        const base = createWindowState();
+        const screen = await renderRoute({ ...base, policy: { ...base.policy, dock: 'left' },
+            model: { ...base.model, attention: [{ serverId: 'server-1', sessionId: 'session-1', agentId: null, machineId: null, botFace: null }] } });
+        expect(notchForm(screen)).toBe('standard');
+        expect(screen.findByTestId('desktop-activity-overlay-rest-mark-session-1')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-status-word')).toBeNull();
+
+        await act(async () => { presentation.handler?.({ state: 'open', focus: false }); });
+        await flushHookEffects();
+        expect(notchForm(screen)).toBe('open');
+        expect(screen.findByTestId('desktop-activity-overlay-status-header')).toBeNull();
+        expect(screen.findByTestId('desktop-activity-overlay-pin')).toBeTruthy();
+    });
+
     it('keeps the opened list open while its pin is on, and lets it collapse again once unpinned', async () => {
         vi.useFakeTimers();
         const screen = await renderRoute(createWindowState());

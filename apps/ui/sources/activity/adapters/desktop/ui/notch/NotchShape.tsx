@@ -13,7 +13,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { happierSurfaceGradientWebStyle, happierSvgGradientStop } from '@happier-dev/plugin-ui/presentation';
 
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { resolveGlassNotchPaint } from '@/components/ui/glass/glassMaterial';
 import { useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { useGlassMaterialSettings } from '@/components/ui/glass/useGlassMaterialSettings';
@@ -131,8 +130,6 @@ export function NotchShape(
         onNaturalHeight: (height: number) => void;
       }>,
     ) => React.ReactNode;
-    /** Side docks: the status word as a tab standing out from the edge beside the first face (lab V-B). */
-    renderSideTab?: (() => React.ReactNode) | null;
     /** A direct click on the tip opens the island without the hover dwell. */
     onTipPress: () => void;
     tipAccessibilityLabel: string | undefined;
@@ -163,9 +160,6 @@ export function NotchShape(
   const [standardLayout, setStandardLayout] =
     React.useState<NotchStandardLayout>(EMPTY_LAYOUT);
   const [panelNaturalHeight, setPanelNaturalHeight] = React.useState(0);
-  const [sideTabWidth, setSideTabWidth] = React.useState(0);
-  const showSideTab =
-    vertical && props.form === 'standard' && props.renderSideTab != null;
   const onStandardLayout = React.useCallback((layout: NotchStandardLayout) => {
     setStandardLayout((previous) =>
       previous.size.width === layout.size.width &&
@@ -177,8 +171,7 @@ export function NotchShape(
     );
   }, []);
 
-  // A side dock is one thickness wide around its faces strip; with no faces it carries the word
-  // itself, so it is as wide as the word (and one thickness tall).
+  // A side dock is one thickness wide around its column of marks.
   const standardContent: NotchSize = vertical
     ? { width: Math.max(metrics.thickness, standardLayout.size.width), height: standardLayout.size.height }
     : { width: standardLayout.size.width, height: metrics.thickness };
@@ -201,10 +194,7 @@ export function NotchShape(
     leadingWing: standardLayout.leadingWing,
     trailingWing: standardLayout.trailingWing,
   });
-  const bodyExtent = resolveNotchExtent(props.dock, body, shoulder);
-  const extent = showSideTab
-    ? { width: bodyExtent.width + sideTabWidth, height: bodyExtent.height }
-    : bodyExtent;
+  const extent = resolveNotchExtent(props.dock, body, shoulder);
 
   const target: NotchMotionTarget = {
     form: props.form,
@@ -361,16 +351,6 @@ export function NotchShape(
   const openLayerStyle = useAnimatedStyle(() => ({
     opacity: motion.openOpacity.value,
   }));
-  // The tab sits level with the first face slot of the strip.
-  const sideTabTop =
-    theme.space.s12 + theme.space.s20 / 2 - PAGE_LIST_METRICS.smallControlHeightPx / 2;
-  const sideTabStyle = useAnimatedStyle(() => ({
-    top: bodyTop.value + sideTabTop,
-    left:
-      dock === 'left' ? bodyLeft.value + motion.width.value : undefined,
-    right: dock === 'right' ? windowWidth - bodyLeft.value : undefined,
-    opacity: motion.standardOpacity.value * motion.islandOpacity.value,
-  }));
   const castShadow = floating || props.form === 'open';
   const openMaxHeight = Math.max(0, windowHeight - statusRowOffset - 2 * padY * openShoulder);
 
@@ -412,20 +392,6 @@ export function NotchShape(
           </Svg>
         </Animated.View>
       ))}
-      {showSideTab ? (
-        <Animated.View
-          testID={props.testID ? `${props.testID}-side-tab` : undefined}
-          onLayout={(event) => setSideTabWidth(event.nativeEvent.layout.width)}
-          style={[
-            styles.sideTab,
-            { backgroundColor: paint },
-            dock === 'left' ? styles.sideTabFromLeft : styles.sideTabFromRight,
-            sideTabStyle,
-          ]}
-        >
-          {props.renderSideTab?.()}
-        </Animated.View>
-      ) : null}
       <Animated.View
         testID={props.testID ? `${props.testID}-body` : undefined}
         data-notch-dock={props.dock}
@@ -577,22 +543,6 @@ const styles = StyleSheet.create((theme) => ({
   standardLayerRight: {
     left: undefined,
     right: 0,
-  },
-  // The tab is flush against the strip on the edge side and rounded on its free side.
-  sideTab: {
-    position: 'absolute',
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: PAGE_LIST_METRICS.smallControlHeightPx,
-    paddingHorizontal: theme.space.s10,
-  },
-  sideTabFromLeft: {
-    borderTopRightRadius: PAGE_LIST_METRICS.smallControlHeightPx / 2,
-    borderBottomRightRadius: PAGE_LIST_METRICS.smallControlHeightPx / 2,
-  },
-  sideTabFromRight: {
-    borderTopLeftRadius: PAGE_LIST_METRICS.smallControlHeightPx / 2,
-    borderBottomLeftRadius: PAGE_LIST_METRICS.smallControlHeightPx / 2,
   },
   standardLayerFromBottom: {
     top: undefined,

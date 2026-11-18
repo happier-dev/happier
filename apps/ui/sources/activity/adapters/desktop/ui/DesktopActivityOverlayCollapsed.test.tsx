@@ -55,14 +55,19 @@ describe('collapsed shared activity word', () => {
         expect(onPress).toHaveBeenCalledWith('keyboard');
     });
 
-    it('carries the word inside the island on a side dock with no faces, so no empty strip stands on the edge', async () => {
-        const screen = await renderScreen(
+    it('rests on a side dock as its column of marks alone: the word is never drawn there', async () => {
+        const column = (marks: React.ReactNode) => (
             <DesktopActivityOverlayCollapsed orientation="column" cameraGap={null}
-                slots={{ faces: null, word: { text: 'Needs you', needsYou: true } }}
-                accessibilityLabel="Needs you" onPress={vi.fn()} onLayout={() => {}} />,
+                slots={{ faces: marks ? () => marks : null, word: { text: 'Needs you', needsYou: true } }}
+                accessibilityLabel="2 need you" onPress={vi.fn()} onLayout={() => {}} />
         );
+        const screen = await renderScreen(column(React.createElement('View', { testID: 'rest-marks' })));
+        expect(screen.findByTestId('rest-marks')).not.toBeNull();
+        expect(collectHostText(screen.tree)).not.toContain('Needs you');
+        expect(screen.findByTestId('desktop-activity-overlay-status-word')).toBeNull();
+
+        await screen.update(column(null));
         expect(screen.findByTestId('desktop-activity-overlay-collapsed-row')).not.toBeNull();
-        expect(collectHostText(screen.tree)).toContain('Needs you');
+        expect(collectHostText(screen.tree)).not.toContain('Needs you');
     });
 });
-

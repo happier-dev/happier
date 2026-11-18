@@ -1,6 +1,7 @@
 import type { BotActivity } from '@/components/sessions/bots/botActivity';
 import type { DesktopActivityOverlayRequestSubject, DesktopActivityOverlaySessionIdentity } from '../snapshot/desktopActivityOverlaySnapshotTypes';
 import type { NotchBotFaces, PinnedDesktopOverlayConversation } from '../notchBotTypes';
+import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 /** `quiet`: a bare text choice beside the decision (Always allow); never the view's primary. */
 export type DesktopActivityOverlayActionTone = 'primary' | 'secondary' | 'danger' | 'quiet';
 
@@ -111,10 +112,24 @@ export type DesktopActivityOverlayExpandedCard =
         rows: readonly DesktopActivityOverlaySessionRowModel[];
     }>);
 
+/**
+ * A Session that needs you and has no face on the island (lab `ntshape` R): a side dock's rest stacks it
+ * by its Bot face or its Agent mark. No identity yet (outside the selected slots) draws the Session glyph.
+ */
+export type DesktopActivityOverlayAttentionMark = Readonly<{
+    sessionId: string;
+    serverId: string;
+    agentId: string | null;
+    machineId: string | null;
+    botFace: SessionBotFaceFacts | null;
+}>;
+
 export type DesktopActivityOverlayModel = Readonly<{
     visible: boolean;
     generatedAt: number;
     faces: NotchBotFaces;
+    /** Every Session that needs you and has no face, in the shared activity's order. */
+    attention?: readonly DesktopActivityOverlayAttentionMark[];
     conversation: PinnedDesktopOverlayConversation | null;
     collapsed: Readonly<{
         title: string;

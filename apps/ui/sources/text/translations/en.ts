@@ -6207,6 +6207,7 @@ const enSettingsDesktop = {
     notchPin: "Keep open",
     notchUnpin: "Close when I move away",
     notchMoreBots: ({ count }: { count: number }) => `${count} more Bots`,
+    notchNeedYouCount: ({ count }: { count: number }) => `${count} need you`,
     notchAskCount: ({ count }: { count: number }) => `${count} asks`,
     notchReplyTo: ({ name }: { name: string }) => `Reply to ${name}…`,
     notchHiddenReply: "This Home shows only status here. Open in a window to read.",

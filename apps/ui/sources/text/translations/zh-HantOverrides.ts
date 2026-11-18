@@ -4929,6 +4929,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		            notchPin: "保持開啟",
 		            notchUnpin: "移開時關閉",
 		            notchMoreBots: ({ count }: { count: number }) => `另外 ${count} 個 Bot`,
+		            notchNeedYouCount: ({ count }: { count: number }) => `${count} 個需要你`,
 		            notchAskCount: ({ count }: { count: number }) => `${count} 項請求`,
 		            notchReplyTo: ({ name }: { name: string }) => `回覆 ${name}…`,
 		            notchHiddenReply: "此 Home 在這裡只顯示狀態。在視窗中開啟即可閱讀。",

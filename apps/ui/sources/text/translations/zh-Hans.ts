@@ -5562,6 +5562,7 @@ export const zhHans: TranslationStructure = {
       notchPin: "保持打开",
       notchUnpin: "移开时关闭",
       notchMoreBots: ({ count }: { count: number }) => `另外 ${count} 个 Bot`,
+      notchNeedYouCount: ({ count }: { count: number }) => `${count} 个需要你`,
       notchAskCount: ({ count }: { count: number }) => `${count} 项请求`,
       notchReplyTo: ({ name }: { name: string }) => `回复 ${name}…`,
       notchHiddenReply: "此 Home 在这里只显示状态。在窗口中打开即可阅读。",

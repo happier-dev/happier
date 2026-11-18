@@ -17,6 +17,7 @@ export type DesktopActivityOverlayFields = Readonly<{
     visible: boolean;
     word: Model['collapsed'];
     faces: ModelLeaf<'faces'>;
+    attention: ModelLeaf<'attention'>;
     listDetail: Model['expanded'];
     blockingCard: boolean;
     conversation: ModelLeaf<'conversation'>;
@@ -49,6 +50,7 @@ function field<K extends keyof DesktopActivityOverlayFields>(state: DesktopActiv
     if (!state) return null;
     const fields: DesktopActivityOverlayFields = {
         visible: state.visible, word: state.model.collapsed, faces: modelLeaf(state.model, 'faces'),
+        attention: modelLeaf(state.model, 'attention'),
         listDetail: state.model.expanded, conversation: modelLeaf(state.model, 'conversation'),
         get blockingCard() {
             return (state.model.expanded.cards ?? []).some(card => card.kind === 'permission_request' || card.kind === 'user_question');

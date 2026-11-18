@@ -25,8 +25,6 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     DesktopActivityOverlayCollapsed,
-    DesktopActivityOverlaySideWordTab,
-    DesktopActivityOverlayStatusHeader,
     type DesktopActivityOverlayCollapsedPressOrigin,
     type DesktopActivityOverlayStatusSlots,
     type DesktopActivityOverlayStatusWord,
@@ -35,11 +33,13 @@ import { DesktopActivityOverlayListPanel } from './DesktopActivityOverlayListPan
 import { DesktopActivityOverlayPinnedPanel } from './conversation/DesktopActivityOverlayPinnedPanel';
 import {
     DesktopActivityOverlayFaces,
+    DesktopActivityOverlayRestMarks,
     type NotchConversationHandlers,
     type NotchConversationPresentation,
     type NotchConversationTarget,
 } from './faces/DesktopActivityOverlayFaces';
 import type { BotFaceSnapshot } from '../presentation/notchBotTypes';
+import type { DesktopActivityOverlayAttentionMark } from '../presentation/model/desktopActivityOverlayModelTypes';
 import { composeDesktopActivityOverlayAccessibilityLabel } from './desktopActivityOverlayAccessibilityLabel';
 import { NotchShape, type NotchPresentFrame } from './notch/NotchShape';
 import {
@@ -105,6 +105,9 @@ function readOpenedWindowRect(result: unknown): FlightRect | null {
         ? { x: x as number, y: y as number, w: width as number, h: height as number } : null;
 }
 
+const NO_FACES: readonly BotFaceSnapshot[] = Object.freeze([]);
+const NO_ATTENTION: readonly DesktopActivityOverlayAttentionMark[] = Object.freeze([]);
+
 /** The visual size class of a presentation state; the reducer alone decides the state. */
 function resolveNotchForm(surface: NotchSurface): NotchForm {
     if (surface === 'tip' || surface === 'camera_tip') return 'tip';
@@ -155,6 +158,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
     const collapsed = useDesktopActivityOverlayField('word');
     const blockingCard = useDesktopActivityOverlayField('blockingCard') === true;
     const faces = useDesktopActivityOverlayField('faces');
+    const attention = useDesktopActivityOverlayField('attention') ?? NO_ATTENTION;
     // The pinned slice's content is the pinned panel leaf's; the island only lays out whether one exists.
     const hasConversation = useDesktopActivityOverlayFieldPresent('conversation');
     const frame = useDesktopActivityOverlayField('frame');
@@ -398,15 +402,18 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
     const word = readStatusWord(collapsed);
     const botSection = React.useMemo(() => (faces && faces.faces.length > 0 ? { faces: faces.faces, handlers: conversationHandlers } : null),
         [conversationHandlers, faces]);
-    const renderFaces = React.useCallback((orientation: 'row' | 'column') => (faces ? (
-        <DesktopActivityOverlayFaces
-            faces={faces}
-            orientation={orientation}
-            handlers={conversationHandlers}
-            onMore={() => onCollapsedPress('pointer')}
-        />
-    ) : null), [conversationHandlers, faces, onCollapsedPress]);
-    const slots: DesktopActivityOverlayStatusSlots = { faces: faces && faces.faces.length > 0 ? renderFaces : null, word };
+    const faceList = faces?.faces ?? NO_FACES;
+    // A row carries the faces wing; a side dock rests as the column of what needs you (lab `ntshape` R).
+    const renderMarks = React.useCallback((orientation: 'row' | 'column') => orientation === 'row'
+        ? faces && faceList.length > 0 ? (
+            <DesktopActivityOverlayFaces faces={faces} handlers={conversationHandlers} onMore={() => onCollapsedPress('pointer')} />
+        ) : null
+        : faceList.length + attention.length > 0 ? (
+            <DesktopActivityOverlayRestMarks faces={faceList} attention={attention} handlers={conversationHandlers} />
+        ) : null, [attention, conversationHandlers, faceList, faces, onCollapsedPress]);
+    const slots: DesktopActivityOverlayStatusSlots = { faces: renderMarks, word };
+    const vertical = dock === 'left' || dock === 'right';
+    const needYouCount = faceList.filter((face) => face.activity === 'needsYou').length + attention.length;
     const extractPinned = React.useCallback(async (target: Readonly<{ sessionId: string; serverId: string | null }>) => {
         try {
             const result = await executeDesktopActivityOverlayInteractionWithResult({
@@ -434,9 +441,10 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
         }
         return false;
     }, []);
+    // A side dock draws no word, so its name says how many need you.
     const accessibilityLabel = composeDesktopActivityOverlayAccessibilityLabel([
         t('settingsDesktop.overlay.title'),
-        word?.text,
+        vertical && needYouCount > 0 ? t('settingsDesktop.overlay.notchNeedYouCount', { count: needYouCount }) : word?.text,
     ]);
 
     // Hidden orders the window out through the one `present` command; nothing else is drawn.
@@ -475,7 +483,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                     onPresent={onPresent}
                     renderStandard={(onLayout) => (
                         <DesktopActivityOverlayCollapsed
-                            orientation={dock === 'left' || dock === 'right' ? 'column' : 'row'}
+                            orientation={vertical ? 'column' : 'row'}
                             cameraGap={camera ? camera.width : null}
                             slots={slots}
                             accessibilityLabel={accessibilityLabel}
@@ -484,11 +492,9 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                             onLayout={onLayout}
                         />
                     )}
-                    renderSideTab={word && slots.faces ? () => <DesktopActivityOverlaySideWordTab word={word} /> : null}
                     renderOpen={({ includeStatusRow, maxHeight, onNaturalHeight }) => (
                         <DesktopActivityOverlayListPanel
                             visualMode="notch_integrated"
-                            header={includeStatusRow ? <DesktopActivityOverlayStatusHeader slots={slots} /> : undefined}
                             underStatusRow={!includeStatusRow}
                             maxHeight={maxHeight}
                             onNaturalHeight={onNaturalHeight}

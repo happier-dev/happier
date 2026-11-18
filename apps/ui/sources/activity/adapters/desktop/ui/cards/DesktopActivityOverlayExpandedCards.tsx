@@ -12,7 +12,7 @@ import type {
     DesktopActivityOverlayInitialFocusTarget,
 } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
-import { DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
+import { DesktopActivityOverlayLeadRowClearance, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
 import type {
     DesktopActivityOverlayActionHandler,
     DesktopActivityOverlayExpandedCard,
@@ -227,7 +227,8 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     bots?: Readonly<{ faces: readonly BotFaceSnapshot[]; handlers: NotchConversationHandlers }> | null;
     /** The expanded panel owns the scroll viewport; a conversation renders its own few ask cards inline. */
     scroll?: Omit<VirtualizedListProps<ExpandedRow>, 'data' | 'renderItem' | 'keyExtractor'> & Readonly<{ maxHeight: number }>;
-
+    /** How much of its trailing end the first row keeps clear for the panel's pin standing over it. */
+    leadRowClearance?: number;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const botFaces = props.bots?.faces ?? NO_FACES;
@@ -398,9 +399,12 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
         } else add(`card:${card.id}`, () => render(card), false, false,
             containsFocusCard([card]) || card.kind === 'session_overview' && isFocusedSession(card.sessionId, card.serverId));
     }
+    const leadClearance = props.leadRowClearance ?? 0;
     const drawRow = (row: ExpandedRow) => <View style={{ paddingTop: row.gap }}>
         {row.separator ? <View style={[styles.separator, { marginBottom: row.gap }]} /> : null}
-        {row.render()}
+        {leadClearance > 0 && row.key === rows[0]?.key ? (
+            <DesktopActivityOverlayLeadRowClearance.Provider value={leadClearance}>{row.render()}</DesktopActivityOverlayLeadRowClearance.Provider>
+        ) : row.render()}
     </View>;
     return <DesktopActivityOverlayCardActionStateProvider cards={allCards}>
         {/* Completion lifetime belongs to this inventory, including cards currently outside the viewport. */}

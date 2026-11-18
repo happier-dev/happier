@@ -928,4 +928,32 @@ describe('buildDesktopActivityOverlayModel', () => {
             ['neutral', 'codex', null],
         ]);
     });
+
+    it('marks every Session that needs you and has no face, in the shared order, with its own identity', () => {
+        const entry = (sessionId: string, activity: 'needsYou' | 'working', serverId = 'server-1') => ({
+            id: sessionAddressKey({ serverId, sessionId }), dismissKey: sessionId, address: { serverId, sessionId }, sessionId,
+            activity, title: sessionId, subtitle: null, contextLine: null, accessibilityContext: null,
+        });
+        const base = createSnapshot().sessions[0]!;
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                sessions: [
+                    { ...base, sessionId: 'asker', agentId: 'codex', machineId: 'machine-1' },
+                    { ...base, sessionId: 'bot-asker', agentId: 'claude' },
+                ],
+                bots: { faces: [{ serverId: 'server-1', sessionId: 'bot-asker' } as DesktopActivityOverlaySnapshot['bots']['faces'][number]], overflowCount: 0 },
+            }),
+            policy: createPolicy(),
+            sharedActivity: { ...QUIET_ACTIVITY, visible: true, activity: 'needsYou', word: 'Needs you',
+                entries: [entry('worker', 'working'), entry('bot-asker', 'needsYou'), entry('asker', 'needsYou'), entry('unselected', 'needsYou', 'server-2')] },
+        });
+
+        // The Bot already stands as its face and the working Session needs nothing; a Session outside the
+        // selected slots still counts, with no identity to draw.
+        expect(model.attention).toEqual([
+            { serverId: 'server-1', sessionId: 'asker', agentId: 'codex', machineId: 'machine-1', botFace: null },
+            { serverId: 'server-2', sessionId: 'unselected', agentId: null, machineId: null, botFace: null },
+        ]);
+        expect(buildDesktopActivityOverlayModel({ snapshot: createSnapshot(), policy: createPolicy() }).attention).toEqual([]);
+    });
 });

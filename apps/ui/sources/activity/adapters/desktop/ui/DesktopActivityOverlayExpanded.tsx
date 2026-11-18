@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -29,13 +30,11 @@ import type {
 export function DesktopActivityOverlayExpanded(props: Readonly<{
     model: Pick<DesktopActivityOverlayUiModel, 'expanded'>;
     visualMode: DesktopActivityOverlayVisualMode;
-    /** The status row heading the panel, when it is not already standing above it (side docks, Floating opening up). */
-    header?: React.ReactNode;
     /** The status row stands just above the panel (Top, Floating opening down): the panel tucks under it. */
     underStatusRow?: boolean;
     /** The tallest the panel may be: the window native clamped to the visible frame. */
     maxHeight?: number;
-    /** The panel's natural height, header and insets included, for the extent native frames. */
+    /** The panel's natural height, insets included, for the extent native frames. */
     onNaturalHeight?: (height: number) => void;
     surfaceRef?: React.Ref<View>;
     initialFocusRef?: DesktopActivityOverlayFocusTargetRef;
@@ -48,14 +47,16 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     onAction?: DesktopActivityOverlayActionHandler;
     /** The opened list's Bot section (faces' members, each with its ask). */
     bots?: React.ComponentProps<typeof DesktopActivityOverlayExpandedCards>['bots'];
-    /** A pinned Bot conversation in place of the list; the shell (insets, header, scroll, keys) is the same. */
+    /** A pinned Bot conversation in place of the list; the shell (insets, scroll, keys) is the same. */
     content?: React.ReactNode;
-    /** The list's pin, at the status row's trailing end: keeps the island open until Esc, the pin or a click outside. */
+    /**
+     * The list's pin: keeps the island open until Esc, the pin or a click outside. It sits at the end of a status
+     * row standing above the panel, and otherwise stands over the panel's top-right corner (lab `ntshape` O).
+     */
     pin?: Readonly<{ pinned: boolean; onToggle: () => void }> | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const viewport = useWindowDimensions();
-    const [headerHeight, setHeaderHeight] = React.useState(0);
     const surfaceTestID = resolveDesktopActivityOverlaySurfaceTestID('desktop-activity-overlay-expanded', props.visualMode);
     const [completionAutoDismissPaused, setCompletionAutoDismissPaused] = React.useState(false);
     const scrollFades = useScrollEdgeFades({
@@ -69,33 +70,17 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     );
     const insetTop = props.underStatusRow ? theme.space.s8 : theme.space.s12;
     const insetBottom = theme.space.s12;
-    const headerHeightRef = React.useRef(0);
     const contentHeightRef = React.useRef(0);
     const { onNaturalHeight } = props;
-    // A header measured earlier no longer counts once the panel has none (a dock change from a side to the top).
-    const hasHeader = Boolean(props.header);
     const reportNaturalHeight = React.useCallback(() => {
-        const headerHeight = hasHeader ? headerHeightRef.current : 0;
-        const gap = headerHeight > 0 ? theme.space.s10 : 0;
-        onNaturalHeight?.(insetTop + headerHeight + gap + contentHeightRef.current + insetBottom);
-    }, [hasHeader, insetBottom, insetTop, onNaturalHeight, theme.space.s10]);
-    const hadHeaderRef = React.useRef(hasHeader);
-    React.useEffect(() => {
-        if (hadHeaderRef.current === hasHeader) return;
-        hadHeaderRef.current = hasHeader;
-        reportNaturalHeight();
-    }, [hasHeader, reportNaturalHeight]);
+        onNaturalHeight?.(insetTop + contentHeightRef.current + insetBottom);
+    }, [insetBottom, insetTop, onNaturalHeight]);
     const onScrollContentSizeChange = scrollFades.onContentSizeChange;
     const handleContentSizeChange = React.useCallback((width: number, height: number) => {
         contentHeightRef.current = height;
         reportNaturalHeight();
         onScrollContentSizeChange(width, height);
     }, [onScrollContentSizeChange, reportNaturalHeight]);
-    const handleHeaderLayout = React.useCallback((event: LayoutChangeEvent) => {
-        headerHeightRef.current = event.nativeEvent.layout.height;
-        setHeaderHeight(headerHeightRef.current);
-        reportNaturalHeight();
-    }, [reportNaturalHeight]);
     const handleHoverIn = React.useCallback(() => {
         setCompletionAutoDismissPaused(true);
         props.onHoverIn?.();
@@ -126,6 +111,9 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
         />
     ) : null;
 
+    // The first row's trailing end clears the corner pin by a step: the pin's inset and width, less the panel's own inset.
+    const cornerPinClearance = theme.space.s8 + HAPPIER_ICON_BUTTON_SIZE + theme.space.s4 - theme.space.s12;
+
     return (
         // The shell only tracks hover to pause completion auto-dismiss. A `Pressable` would make it
         // a react-native-web focus stop with no action, so hover rides on pointer events instead.
@@ -148,14 +136,10 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
             ]}
         >
             <View pointerEvents="none" testID={surfaceTestID} style={StyleSheet.absoluteFill} />
-            {props.header ? (
-                <View testID="desktop-activity-overlay-expanded-header" style={styles.header} onLayout={handleHeaderLayout}>
-                    <View style={styles.headerContent}>{props.header}</View>
-                    {pinButton}
-                </View>
-            ) : pinButton ? (
-                // Under a status row standing on its edge, the pin sits at that row's trailing end.
-                <View style={styles.pinInStatusRow}>{pinButton}</View>
+            {pinButton ? (
+                // Under a status row standing on its edge, the pin sits at that row's trailing end; with no row
+                // above, it stands over the panel's top-right corner and the content starts at the top inset.
+                <View style={props.underStatusRow ? styles.pinInStatusRow : styles.pinInCorner}>{pinButton}</View>
             ) : null}
             {props.content != null ? (
                 <ScrollView testID="desktop-activity-overlay-expanded-scroll" style={[styles.scroll, scrollMaskStyle]}
@@ -169,10 +153,10 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                     onOpenSession={props.onOpenSession} conversationHandlers={props.conversationHandlers} onAction={props.onAction}
                     completionAutoDismissPaused={completionAutoDismissPaused} initialFocusTarget={initialFocusTarget}
                     initialFocusRef={props.initialFocusRef} onDismissKey={props.onDismissKey}
+                    leadRowClearance={pinButton && !props.underStatusRow ? cornerPinClearance : 0}
                     scroll={{
                         testID: 'desktop-activity-overlay-expanded-scroll',
-                        maxHeight: Math.max(0, (props.maxHeight ?? viewport.height) - insetTop - insetBottom
-                            - (props.header ? headerHeight + theme.space.s10 : 0)),
+                        maxHeight: Math.max(0, (props.maxHeight ?? viewport.height) - insetTop - insetBottom),
                         style: [styles.scroll, scrollMaskStyle], showsVerticalScrollIndicator: false, scrollEventThrottle: 16,
                         onLayout: scrollFades.onViewportLayout, onContentSizeChange: handleContentSizeChange,
                         onScroll: scrollFades.onScroll, onMomentumScrollEnd: scrollFades.onMomentumScrollEnd,
@@ -189,22 +173,18 @@ const styles = StyleSheet.create((theme) => ({
         position: 'relative',
         paddingHorizontal: theme.space.s12,
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s4,
-        marginBottom: theme.space.s10,
-    },
-    headerContent: {
-        flex: 1,
-        minWidth: 0,
-    },
     pinInStatusRow: {
         position: 'absolute',
         top: -PAGE_LIST_METRICS.controlHeightPx,
         right: theme.space.s8,
         height: PAGE_LIST_METRICS.controlHeightPx,
         justifyContent: 'center',
+    },
+    pinInCorner: {
+        position: 'absolute',
+        top: theme.space.s12,
+        right: theme.space.s8,
+        zIndex: 1,
     },
     scroll: {
         flexGrow: 0,

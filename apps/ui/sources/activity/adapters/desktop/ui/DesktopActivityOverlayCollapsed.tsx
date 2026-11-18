@@ -24,16 +24,15 @@ export type DesktopActivityOverlayStatusWord = Readonly<{
 }>;
 
 export type DesktopActivityOverlayStatusSlots = Readonly<{
-    /** Bot faces (N3 fills this slot), laid out for the island's orientation. */
+    /** The marks for the island's orientation: the faces wing in a row, the attention marks down a side dock. */
     faces: ((orientation: 'row' | 'column') => React.ReactNode) | null;
     word: DesktopActivityOverlayStatusWord | null;
 }>;
 
 /**
  * The standard island's content: the faces wing and the status word, sized to themselves (lab R2).
- * On the camera notch the two wings straddle the hardware block; on the side docks the faces stack and
- * the word stands out from the edge as its own tab (lab V-B), and with no faces the word alone is the
- * island. The whole row is the island's press target.
+ * On the camera notch the two wings straddle the hardware block. A side dock rests as a slim column of
+ * marks and no text (lab `ntshape` R). The whole island is its press target.
  */
 export function DesktopActivityOverlayCollapsed(props: Readonly<{
     orientation: 'row' | 'column';
@@ -74,10 +73,8 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
     }, [report]);
 
     const faces = props.slots.faces?.(props.orientation) ?? null;
-    // A side dock stands its faces down the edge; with no faces there is no strip, and the island is
-    // the word itself, standing out from the edge (sized to its content, like every other dock).
-    const column = props.orientation === 'column' && faces !== null;
-    const word = props.slots.word;
+    const column = props.orientation === 'column';
+    const word = column ? null : props.slots.word;
     const wordText = word ? (
         <Text
             testID="desktop-activity-overlay-status-word"
@@ -163,45 +160,6 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
     );
 }
 
-/**
- * The panel's first row where the island's own row does not stand above it (side docks, Floating
- * opening upward): the same faces and word, read-only (lab `.nt-ph`).
- */
-export function DesktopActivityOverlayStatusHeader(props: Readonly<{
-    slots: DesktopActivityOverlayStatusSlots;
-}>): React.ReactElement {
-    const word = props.slots.word;
-    return (
-        <View testID="desktop-activity-overlay-status-header" style={styles.header}>
-            <View style={styles.wing}>{props.slots.faces?.('row') ?? null}</View>
-            {word ? (
-                <Text variant="body" numberOfLines={1} style={word.needsYou ? styles.wordNeedsYou : styles.word}>
-                    {word.text}
-                </Text>
-            ) : null}
-        </View>
-    );
-}
-
-/**
- * The side docks' status word: a tab standing out from the edge beside the first face, the same black
- * as the island (lab ntdock-L "Attention").
- */
-export function DesktopActivityOverlaySideWordTab(props: Readonly<{
-    word: DesktopActivityOverlayStatusWord;
-}>): React.ReactElement {
-    return (
-        <Text
-            testID="desktop-activity-overlay-status-word"
-            variant="body"
-            numberOfLines={1}
-            style={props.word.needsYou ? styles.wordNeedsYou : styles.word}
-        >
-            {props.word.text}
-        </Text>
-    );
-}
-
 const styles = StyleSheet.create((theme) => ({
     row: {
         flexDirection: 'row',
@@ -227,16 +185,6 @@ const styles = StyleSheet.create((theme) => ({
         width: PAGE_LIST_METRICS.controlHeightPx,
         minHeight: theme.space.s48,
         paddingVertical: theme.space.s12,
-        gap: theme.space.s8,
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space.s8,
-        minHeight: PAGE_LIST_METRICS.smallControlHeightPx,
-        paddingLeft: theme.space.s4,
-        paddingRight: theme.space.s2,
     },
     wing: {
         flexDirection: 'row',

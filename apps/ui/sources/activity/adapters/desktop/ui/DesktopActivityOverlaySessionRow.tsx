@@ -16,8 +16,10 @@ import type { DesktopActivityOverlayPressableInteractionState } from './DesktopA
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from './shared/desktopActivityOverlaySelectors';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
-/** The Agent mark at the Session list's compact row size, so the island's rows read like the rail's. */
+/** A Bot face leading a row, at the Session list's compact row size. */
 const IDENTITY_MARK_SIZE = 16;
+/** The Agent mark on the island: rows and the side stack (owner 2026-11-18: 14, a step quieter than the list's). */
+export const DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE = 14;
 /** The Agent mark inside a Bot header's context line, at the meta type's size (lab `ntask` `.nt-ctx`). */
 const CONTEXT_MARK_SIZE = 12;
 /**
@@ -25,6 +27,12 @@ const CONTEXT_MARK_SIZE = 12;
  * so every title in the opened list starts on one edge (lab ntdock-T).
  */
 export const DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE = 24;
+
+/**
+ * How much of its trailing end the panel's first row keeps clear: the open panel's pin stands over it
+ * (lab `ntshape` O). Only the panel's first item provides it; every other row reads 0.
+ */
+export const DesktopActivityOverlayLeadRowClearance = React.createContext(0);
 
 /**
  * Where an asker runs: its Agent mark (when the mark does not already lead its row) and its Session's
@@ -85,6 +93,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
     onKeyDown?: (key: string, event: unknown) => boolean;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const clearance = React.useContext(DesktopActivityOverlayLeadRowClearance);
     const tone = props.tone ?? 'neutral';
     const asking = props.asking ?? null;
     const detail = props.previewText ?? props.subtitle;
@@ -117,6 +126,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
 
                 return [
                     styles.container,
+                    clearance > theme.space.s8 ? { paddingRight: clearance } : null,
                     interaction.hovered === true ? styles.hovered : null,
                     pressed ? { opacity: motionTokens.press.opacitySubtle } : null,
                     createDesktopActivityOverlayFocusRingStyle(theme, interaction.focused),
@@ -132,7 +142,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                         machineId={props.machineId ?? null}
                         serverId={props.serverId ?? null}
                         color={theme.colors.text.secondary}
-                        size={IDENTITY_MARK_SIZE}
+                        size={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
                         testID={props.testID ? `${props.testID}-identity` : undefined}
                     />
                 ) : null}
