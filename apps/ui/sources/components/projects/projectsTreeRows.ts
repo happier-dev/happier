@@ -8,6 +8,7 @@ import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidge
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
 import type { DeploymentEnvironmentState } from './deployments/rows/DeploymentEnvironmentRow';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref } from './deployments/deploymentNavigation';
+import { isSameDeploymentName } from './deployments/DeploymentEnvironmentCollection';
 
 /**
  * The Projects tree's rows (plan 10 §2/§8, lab p-projects TREE/RULES): one Project's accepted
@@ -289,7 +290,7 @@ function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, cont
         opens: null,
         attention: open ? null : mostUrgent(environments),
         state: open ? null : foldedEnvironmentState(environments),
-        fact: open ? null : foldedEnvironmentFact(environments),
+        fact: open ? null : foldedEnvironmentFact(project.name, environments),
         selected: false,
         child: { kind: 'href', href: buildDeploymentProjectHref(project.deploymentSource) },
     };
@@ -325,10 +326,12 @@ function foldedEnvironmentState(environments: readonly ProjectsTreeEnvironment[]
  * A folded Project's quiet end while none of its Environments speaks (lab rdReach tree): its one Environment's name, else
  * how many. A Project row that already ends on a count, or opens to list them, says nothing more.
  */
-function foldedEnvironmentFact(environments: readonly ProjectsTreeEnvironment[]): string | null {
+function foldedEnvironmentFact(projectName: string, environments: readonly ProjectsTreeEnvironment[]): string | null {
     if (environments.length === 0 || foldedEnvironmentState(environments)) return null;
-    return environments.length === 1 ? environments[0]!.title
-        : t('projects.deployments.services.countEnvironmentsTotal', { count: environments.length });
+    if (environments.length > 1) return t('projects.deployments.services.countEnvironmentsTotal', { count: environments.length });
+    // One named like its Project (a Store app) would only repeat the row's name: it says its own quiet fact instead.
+    const only = environments[0]!;
+    return isSameDeploymentName(only.title, projectName) ? only.fact ?? null : only.title;
 }
 
 function mostUrgent(checkouts: readonly Readonly<{ attention: ProjectsTreeAttention }>[]): ProjectsTreeAttention {
@@ -430,7 +433,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 workspaceAddress: only.workspaceAddress,
                 attention: open ? only.attention : mostUrgent([only, ...environments]),
                 state: open ? null : foldedEnvironmentState(environments),
-                fact: open ? null : foldedEnvironmentFact(environments),
+                fact: open ? null : foldedEnvironmentFact(project.name, environments),
                 offline: only.offline,
                 selected,
                 newFromSession: project.newFromSession === true,
@@ -731,7 +734,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             count: single || !expanded ? null : checkouts.length,
             attention: expanded ? (single ? single.attention : null) : mostUrgent([...checkouts, ...environments]),
             state: expanded ? null : foldedEnvironmentState(environments),
-            fact: expanded ? null : foldedEnvironmentFact(environments),
+            fact: expanded ? null : foldedEnvironmentFact(project.name, environments),
             offline: single?.offline,
             selected: single?.refId === input.openRefId && !holdsEnvironment(project, input.openEnvironmentId),
             newFromSession: project.newFromSession === true,

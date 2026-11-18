@@ -287,6 +287,9 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         // One Environment: its name.
         const landing: ProjectsTreeProject = { ...billing, environments: [environment('prod', 'Production')] };
         expect(facts(buildProjectsTreeRows({ projects: [landing], openRefId: null, expandedKeys: new Set() }))).toEqual(['Production']);
+        // Named like its Project (a Store app), its name would only repeat the row's: its own quiet fact instead.
+        const store: ProjectsTreeProject = { ...billing, environments: [environment('app', 'Billing-API ')] };
+        expect(facts(buildProjectsTreeRows({ projects: [store], openRefId: null, expandedKeys: new Set() }))).toEqual(['v1.42']);
         // A state that speaks takes the end instead.
         const failing: ProjectsTreeProject = { ...billing, environments: [environment('prod', 'Production', { state: { tone: 'danger', text: 'Failed' }, attention: 'needs-you' })] };
         expect(facts(buildProjectsTreeRows({ projects: [failing], openRefId: null, expandedKeys: new Set() }))).toEqual([null]);
