@@ -1649,7 +1649,8 @@ export function createAccountArtifactStore(params: Readonly<{
               && !(notice.healthPhase === 'open' && content.healthPhase === 'recovered'))) {
           return { artifactId, revision: current!.revision, changed: false, opened: false, pushWorthy: false };
         }
-        const reopen = health && notice?.healthPhase !== content.healthPhase;
+        const reopen = health ? notice?.healthPhase !== content.healthPhase
+          : notice?.resolved === true && !content.resolved;
         if (notice) {
           const previous = AccountNoticeArtifactBodyV1Schema.parse({ v: notice.v, source: notice.source, type: notice.type,
             resolved: health && content.healthPhase === 'recovered' ? content.resolved : notice.resolved,

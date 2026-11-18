@@ -12081,7 +12081,9 @@ updates, equal writes and replay report false. This is an ephemeral result,
 not a delivery queue or an authority grant. Enrolled plugin health notices may
 carry `healthPhase: 'open' | 'recovered'` through that writer, sharing the host
 health recovery/read lifecycle. Ordinary plugin notices omit the marker and
-use the ordinary open/resolve lifecycle. Source-local automatic Investigate consumes that
+use the ordinary open/resolve lifecycle. After resolution, a later unresolved
+send reopens the same item even if the previous request was dismissed. Repeating
+an unresolved request preserves its dismissal. Source-local automatic Investigate consumes that
 acknowledgement and current source admission through the existing configured
 Triage Action; it adds no Session launcher or Account setting.
 
