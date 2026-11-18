@@ -29,7 +29,7 @@ import { buildTerminalControlCapture, normalizeCapturedScreen } from '@/integrat
 import { captureTerminalInputState, TERMINAL_INPUT_STABILITY_DELAY_MS } from '@/integrations/terminalHost/inputStability';
 import { TERMINAL_SPECIAL_KEY_RAW_SEQUENCES } from '@/integrations/terminalHost/controlTypes';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
-import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PtyProvider } from './provider';
 import { delay } from '@/utils/time';
 import { createTerminalScreen, loadTerminalScreenModel, type TerminalScreen } from './terminalScreen';
