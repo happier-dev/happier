@@ -44,6 +44,7 @@ export type TransferSessionLifecycle = Readonly<{
     writeUploadTransferChunk(input: Readonly<{
         uploadId: string;
         index: number;
+        contentBytes?: Uint8Array;
         contentBase64?: string;
         payloadBase64?: string;
         encryptedDataKeyEnvelopeBase64?: string;
@@ -124,6 +125,7 @@ export function createTransferSessionLifecycle(params: Readonly<{
     async function writeUploadTransferChunk(input: Readonly<{
         uploadId: string;
         index: number;
+        contentBytes?: Uint8Array;
         contentBase64?: string;
         payloadBase64?: string;
         encryptedDataKeyEnvelopeBase64?: string;
@@ -143,7 +145,7 @@ export function createTransferSessionLifecycle(params: Readonly<{
                 }
                 if (input.index !== session.nextIndex) return { success: false, error: 'Unexpected chunk index' };
 
-                let buffer: Buffer;
+                let buffer: Uint8Array;
                 if (session.recipientSecretKeySeed) {
                     const payloadBase64 = typeof input.payloadBase64 === 'string' ? input.payloadBase64 : '';
                     const encryptedDataKeyEnvelopeBase64 = typeof input.encryptedDataKeyEnvelopeBase64 === 'string'
@@ -180,6 +182,8 @@ export function createTransferSessionLifecycle(params: Readonly<{
                     } catch (error) {
                         return { success: false, error: error instanceof Error ? error.message : `Failed to decrypt transfer chunk for ${input.uploadId}` };
                     }
+                } else if (input.contentBytes?.byteLength) {
+                    buffer = input.contentBytes;
                 } else {
                     const contentBase64 = typeof input.contentBase64 === 'string' ? input.contentBase64 : '';
                     if (!contentBase64) return { success: false, error: 'Missing contentBase64' };

@@ -75,7 +75,7 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                     if (!uploadId || canceled) throw new Error('Artifact upload canceled');
                     for (let offset = 0; offset < bytes.length; offset += config.chunkSizeBytes) {
                         const chunk = await lifecycle.writeUploadTransferChunk({ uploadId, index,
-                            contentBase64: encodeBase64(new Uint8Array(bytes.subarray(offset, offset + config.chunkSizeBytes))) });
+                            contentBytes: bytes.subarray(offset, offset + config.chunkSizeBytes) });
                         if (!chunk.success) throw new Error('Artifact upload chunk refused');
                         index += 1;
                     }

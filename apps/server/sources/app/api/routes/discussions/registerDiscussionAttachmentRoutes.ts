@@ -247,7 +247,7 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                             for await (const chunk of chunks) for (let offset = 0; offset < chunk.byteLength; offset += config.chunkSizeBytes) {
                                 if (canceled) throw new Error('Discussion upload canceled');
                                 const written = await lifecycle.writeUploadTransferChunk({ uploadId: opened.uploadId, index: chunkIndex++,
-                                    contentBase64: encodeBase64(new Uint8Array(chunk.subarray(offset, offset + config.chunkSizeBytes))) });
+                                    contentBytes: chunk.subarray(offset, offset + config.chunkSizeBytes) });
                                 if (!written.success) throw new Error('Discussion upload chunk refused');
                             }
                             const finalized = await lifecycle.finalizeUploadTransferSession({ uploadId: opened.uploadId });

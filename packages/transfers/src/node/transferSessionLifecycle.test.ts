@@ -1,10 +1,40 @@
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createTransferSessionLifecycle } from './transferSessionLifecycle.js';
 import { TransferSessionStore } from './transferSessionStore.js';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+
+it('writes binary chunks through the same receiver with its size and order checks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'happier-transfer-binary-'));
+  const store = new TransferSessionStore({ ttlMs: 30_000, tempRoot: directory });
+  const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: 1024 });
+  const bytes = Uint8Array.of(255, 0, 1, 128);
+  try {
+    const session = await lifecycle.openUploadTransferSession({ target: {
+      destPath: join(directory, 'dest.bin'), destDisplayPath: 'dest.bin', expectedSizeBytes: bytes.length, overwrite: false,
+      finalizeUpload: async ({ tempPath, sizeBytes }) => {
+        const content = await readFile(tempPath);
+        return { success: true, path: 'dest.bin', sizeBytes, result: content };
+      },
+    } });
+    const send = (index: number, contentBytes: Uint8Array) =>
+      lifecycle.writeUploadTransferChunk({ uploadId: session.uploadId, index, contentBytes });
+    expect(await send(1, bytes)).toEqual({ success: false, error: 'Unexpected chunk index' });
+    expect(await send(0, new Uint8Array(1025))).toEqual({ success: false, error: 'Chunk exceeds configured chunk size' });
+    expect(await send(0, new Uint8Array(5))).toEqual({ success: false, error: 'Chunk exceeds expected upload size' });
+    expect(await send(0, bytes)).toEqual({ success: true });
+    expect(await send(0, bytes)).toEqual({ success: true });
+    expect(await lifecycle.finalizeUploadTransferSession({ uploadId: session.uploadId })).toMatchObject({
+      success: true,
+      finalized: { sizeBytes: bytes.length, result: Buffer.from(bytes) },
+    });
+  } finally {
+    await store.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it('retains the filesystem cause when writing an upload chunk fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-transfer-write-cause-'));
