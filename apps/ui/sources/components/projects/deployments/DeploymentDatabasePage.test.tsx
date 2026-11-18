@@ -9,9 +9,10 @@ import {
   createDeploymentSecretVariableBindingV1,
   createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+  DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentBackupActionInputSchemasV1, deploymentBackupPolicyV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentListResultV1Schema, readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
   act,
   standardCleanup,
@@ -157,6 +158,8 @@ async function renderDatabase(
     /** The Environment shares the database on a private network (its saved export). */
     shared?: boolean;
     moveDestination?: boolean;
+    /** Exercise the picker across Projects and Machines through the public read transport. */
+    movePickerScope?: boolean;
     /** The Machine refuses the Move Workflow's start. */
     refuseWorkflowStart?: boolean;
     moveDestinationWithApp?: boolean;
@@ -236,7 +239,7 @@ async function renderDatabase(
           version: '17',
           service: 'postgres',
           port: 5432,
-        }, { engine: 'mysql', service: 'mysql', port: 3306 }],
+        }, ...(input.movePickerScope ? [] : [{ engine: 'mysql' as const, service: 'mysql', port: 3306 }])],
       },
     },
   });
@@ -251,7 +254,8 @@ async function renderDatabase(
         target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } });
   }
   // Each case uses its own Home and Machine.
-  const detail = { ...authored, environment: { ...authored.environment, serverId, controllerMachineId: machineId },
+  const detail = { ...authored, environment: { ...authored.environment,
+    serverId: input.movePickerScope ? serverIdentityId : serverId, controllerMachineId: machineId },
     targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
       ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
@@ -263,7 +267,9 @@ async function renderDatabase(
     targetLinks: detail.targetLinks.map(row => row.targetLink),
   } });
   const moved = createDeploymentEnvironmentDetailV1({
-    environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated' },
+    environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated',
+      contentArtifactId: 'artifact-database-dedicated',
+      ...(input.movePickerScope ? { projectSourceId: 'source-dedicated' } : {}) },
     targetLinks: input.moveManagedDestination ? [{ targetLink: createDeploymentTargetLinkHeaderV1({
       id: 'target-database-dedicated', environmentId: 'database-dedicated', role: 'data', targetKind: 'neon', machines: [], members: [],
       source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
@@ -294,6 +300,51 @@ async function renderDatabase(
     },
   });
   const moveCandidate = await isDeploymentDatabaseMoveCandidateV1(moved.content, selectDeploymentRuntimeTargetLinkV1(moved));
+  const movePickerQueries: URLSearchParams[] = [];
+  if (input.moveDestination || input.movePickerScope) {
+    const neighbor = (id: string, engine: 'postgres' | 'mysql', targetMachineId: string) => createDeploymentEnvironmentDetailV1({
+      environment: { ...moved.environment, id, projectSourceId: detail.environment.projectSourceId,
+        contentArtifactId: `artifact-${id}`, runtimeTargetLinkId: `target-${id}` },
+      content: { ...moved.content, name: id, definition: { kind: 'stored', contentRevision: 1,
+        composeDigest: `sha256:${'b'.repeat(64)}`, document: `services:\n  ${engine}:\n    image: ${engine}:latest\n`,
+        profiles: [], services: [engine], primaryService: engine },
+        template: { ...moved.content.template!, services: [engine], data: [{ engine, service: engine }] } },
+      targetLinks: moved.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+        id: `target-${id}`, environmentId: id, machines: [targetMachineId],
+        members: [{ machineId: targetMachineId, installationId: 'installation-a', state: 'active' }] } })),
+    });
+    const environments = [detail, ...(input.moveDestination ? [moved] : []),
+      ...(input.moveDestination && input.movePickerScope
+        ? [neighbor('database-other-machine', 'postgres', `${machineId}-other`), neighbor('database-mysql', 'mysql', machineId)] : [])];
+    // HTTP and Artifact storage are boundaries; the Action, transport, candidate classifier and read owners stay real.
+    for (const environment of environments) {
+      await account.createArtifactDocument({ artifactId: environment.environment.contentArtifactId,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.content.name }, body: JSON.stringify(environment.content) });
+      for (const row of environment.targetLinks) {
+        // Selected platform details open their private method through the same Artifact boundary.
+        if (row.targetLink.source.kind === 'plugin' && row.content) await account.createArtifactDocument({
+          artifactId: row.targetLink.contentArtifactId,
+          header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: environment.content.name }, body: JSON.stringify(row.content),
+        });
+      }
+      homes.answer(serverId, `GET /v1/deployments/environments/${environment.environment.id}`, { body: {
+        ok: true, environment: { ...environment.environment, serverId: serverIdentityId },
+        targetLinks: environment.targetLinks.map(row => row.targetLink),
+      } });
+    }
+    homes.answer(serverId, 'GET /v1/deployments/environments', { select: (_body, request) => {
+      const query = new URL(request.url).searchParams;
+      movePickerQueries.push(query);
+      // The Home applies the selected Project before the public transport opens the page's private content.
+      const selected = environments.filter(environment => !query.has('projectSourceId')
+        || environment.environment.projectSourceId === query.get('projectSourceId'));
+      return { body: DeploymentEnvironmentListResultV1Schema.parse({ ok: true,
+        items: selected.map(environment => ({ ...environment.environment, serverId: serverIdentityId })),
+        runtimeTargetLinks: selected.flatMap(environment => environment.targetLinks
+          .filter(row => row.targetLink.id === environment.environment.runtimeTargetLinkId).map(row => row.targetLink)),
+        nextCursor: null, coverage: 'complete' }) };
+    } });
+  }
   const plain = createDeploymentReceiptDetailV1();
   const receipt = input.retainedBackup
     ? createDeploymentReceiptDetailV1({
@@ -499,10 +550,6 @@ async function renderDatabase(
           ownerAccountId: 'account-owner', origin: { kind: 'direct' } }) };
       },
     });
-    homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
-      ok: true, environment: { ...detail.environment, controllerMachineId: machineId },
-      targetLinks: detail.targetLinks.map(row => row.targetLink),
-    } });
     await answerExternalActionAccountForHome(homes, serverId, {
       machineId, installationId: 'installation-a', actionId: 'deployments.environments.update', tokenEpoch: 0,
       execute: raw => {
@@ -524,8 +571,9 @@ async function renderDatabase(
     const { createDeploymentActions } = await import('./deploymentActions');
     setBindings = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).setBindings;
   }
+  const publicReadTransport = input.movePickerScope
+    ? (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime) : null;
   const controller = createDeploymentReadControllerV1({
-    // The read controller is scoped to the Environment header's own Home id.
     scope: {
       serverId: detail.environment.serverId,
       accountId: 'account-owner',
@@ -548,6 +596,7 @@ async function renderDatabase(
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
       }),
       readReceipt: async () => ({ ok: true, value: receipt }),
+      ...(publicReadTransport ? { listEnvironments: publicReadTransport.listEnvironments } : {}),
     },
   });
   const navigate = vi.fn();
@@ -590,6 +639,7 @@ async function renderDatabase(
     environmentId,
     serverIdentityId,
     machineId,
+    movePickerQueries,
     moveDestination: moved,
     readScheduleSets: async () => {
       const { createDeploymentActions } = await import('./deploymentActions');
@@ -732,6 +782,29 @@ describe('Environment → Database → Workbench', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it('offers dedicated Postgres across Projects and Machines and excludes unsupported destinations', async () => {
+    const view = await renderDatabase({ moveDestination: true, movePickerScope: true, storedDefinition: true, databaseOnly: true });
+    try {
+      expect(await view.settle(`${page}.move`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      const destination = await view.settle('project-deployments.move.destination:database-dedicated');
+      expect(destination, JSON.stringify({ queries: view.movePickerQueries.map(query => Object.fromEntries(query)),
+        failures: view.screen.findAll(node => typeof node.props.diagnosticCode === 'string')
+          .map(node => ({ testID: node.props.testID, code: node.props.diagnosticCode })), text: view.screen.getTextContent() })).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.destination:database-other-machine')).not.toBeNull();
+      for (const environmentId of [view.environmentId, 'database-mysql']) {
+        expect(view.screen.findByTestId(`project-deployments.move.destination:${environmentId}`)).toBeNull();
+      }
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
+      // One Account page supplies the picker; selecting opens the cross-Project detail through the same owner.
+      expect(view.movePickerQueries.map(query => ({ machineId: query.get('machineId'), projectSourceId: query.get('projectSourceId') })))
+        .toEqual([{ machineId: null, projectSourceId: null }]);
+      // The public source also reads targets through action.invoke; its boundary verifies the exact read-only contribution.
+      expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start'
+        || effect.actionId === 'deployments.environments.update')).toEqual([]);
+    } finally { await view.dispose(); }
+  });
   it('does not offer an app-plus-database destination and refuses a stale selection without effects', async () => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const view = await renderDatabase({ moveDestination: true, moveDestinationWithApp: true, storedDefinition: true });
@@ -863,7 +936,6 @@ describe('Environment → Database → Move', () => {
       expect(compose!.props.code).toContain('${DB_MOVE_PORT}');
       expect(compose!.props.code).not.toMatch(/\$\{[^}]*[\r\n]/u);
       expect(compose!.props.wrap).not.toBe(true);
-      expect(view.effects.filter(effect => effect.actionId === 'machines.services.list')).toHaveLength(1);
       expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
       await view.screen.pressByTestIdAsync('project-deployments.move.save');
       await waitForHomeGovernance(() => expect(view.effects.some(effect => effect.actionId === 'workflow.run.start')).toBe(true));
@@ -1596,6 +1668,7 @@ describe('Environment → Data → Database page (P9)', () => {
 
   it('restores the kept backup from the page and shows each step the running restore pushes', async () => {
     let releaseConfirm!: () => void;
+    let confirmation: Promise<void> | undefined;
     const confirmGate = new Promise<void>((resolve) => {
       releaseConfirm = resolve;
     });
@@ -1663,7 +1736,7 @@ describe('Environment → Data → Database page (P9)', () => {
             },
           });
         }
-        // The native owner pushes its phase on the restore's own Action operation, named by the request id.
+        // The daemon retains the restore intent identity, independently of this press's transport UUID.
         const { ActionOperationSnapshotV1Schema } =
           await import('@happier-dev/protocol/actions/operations/v1');
         actionOperationStore.mergeSnapshots({
@@ -1677,7 +1750,7 @@ describe('Environment → Data → Database page (P9)', () => {
               state: 'running',
               scope: { accountId: 'account-owner', machineId: 'machine-a' },
               title: 'Restore',
-              requestId: operation?.actionRequestId,
+              requestId: readDeploymentActionOperationRequestIdV1('deployments.backups.restore', { ...input, serverId: 'home' }),
               createdAt: 1,
               startedAt: 2,
               progress: { kind: 'phase', phase: 'restore.stop.running', label: 'Stop writers' },
@@ -1722,13 +1795,14 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(
         await view.settle('project-deployments.restore.confirm'),
       ).not.toBeNull();
-      void view.screen.pressByTestIdAsync(
+      confirmation = view.screen.pressByTestIdAsync(
         'project-deployments.restore.confirm',
       );
       expect(
         await view.settle('project-deployments.restore.step.stop'),
       ).not.toBeNull();
       releaseConfirm();
+      await confirmation;
       expect(
         await view.settle('project-deployments.restore.result.restored'),
       ).not.toBeNull();
@@ -1748,7 +1822,7 @@ describe('Environment → Data → Database page (P9)', () => {
       }
     } finally {
       releaseConfirm();
-      await view.dispose();
+      try { await confirmation; } finally { await view.dispose(); }
     }
   });
 });

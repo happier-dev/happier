@@ -6,6 +6,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import {
+  readDeploymentActionOperationRequestIdV1,
   readDeploymentRestoreStepProgressV1,
   type DeploymentRestoreStepV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -40,6 +41,7 @@ import {
 } from './deploymentRestore';
 
 export type DeploymentRestoreSheetInput = Readonly<{
+  serverId: string;
   /** The Environment whose data is replaced, by name. */
   name: string;
   /** Where the restore runs, by name. */
@@ -53,8 +55,8 @@ export type DeploymentRestoreSheetInput = Readonly<{
     destinations: readonly (Readonly<{ kind: 'database'; service: string; database?: string }> | Readonly<{ kind: 'volume'; service: string; volume: string }>)[];
   }>;
   /**
-   * One step through the restore Action; the sheet is its designed confirmation. The request id names the
-   * Action operation whose pushed phases the sheet shows while the restore runs.
+   * One step through the restore Action; the sheet is its designed confirmation. The request id identifies
+   * this transport call; the prepared restore intent identifies its retained Action operation.
    */
   restore: (
     input: DeploymentUiRestoreInput,
@@ -117,8 +119,8 @@ function mergeRestoreStep(steps: readonly RestoreStep[], step: RestoreStep): rea
 }
 
 /**
- * The phases the running restore pushes on its existing Action operation, found by the request id the confirm
- * press issued. Nothing is read or polled; the store is fed by the operation subscription the app already holds.
+ * The phases the running restore pushes on its retained Action operation. Nothing is read or polled;
+ * the store is fed by the operation subscription the app already holds.
  */
 function observeRestoreSteps(requestId: string, onStep: (step: RestoreStep) => void): () => void {
   const read = () => {
@@ -203,7 +205,9 @@ function DeploymentRestoreSheet(
     if (input.mode === 'confirm') lastConfirmation.current = input;
     if (input.mode === 'confirm') {
       setSteps([]);
-      stopObserving.current = observeRestoreSteps(actionRequestId, (step) =>
+      const requestId = readDeploymentActionOperationRequestIdV1(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+        { ...input, serverId: props.serverId }) ?? actionRequestId;
+      stopObserving.current = observeRestoreSteps(requestId, (step) =>
         setSteps((current) => mergeRestoreStep(current, step)));
     }
     try {
@@ -224,8 +228,9 @@ function DeploymentRestoreSheet(
       }
       if (outcome.kind === 'refused') {
         const stale = isDeploymentRestoreCheckStale(outcome.code);
-        // A check that is no longer current cannot be confirmed; the person checks again.
-        if (stale) setStep({ kind: 'check' });
+        // Terminal confirms retain their result; another attempt needs a fresh check.
+        // The snapshot-review footer keeps its explicit continuation of the original intent.
+        if (stale || input.mode === 'confirm') setStep({ kind: 'check' });
         setRefusal({ code: outcome.code, stale, failure: outcome.failure });
       }
     } finally {

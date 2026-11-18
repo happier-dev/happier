@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
-import { deploymentDataTargetOperands, type DeploymentEnvironmentReadDetailV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { deploymentDataTargetOperands, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Item } from '@/components/ui/lists/Item';
@@ -24,6 +24,7 @@ import { deploymentDatabaseMoveDestination } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { useDeploymentAccountController } from './useDeploymentProject';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
 import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
@@ -38,7 +39,6 @@ type Actions = ReturnType<typeof createDeploymentActions>;
 type Detail = DeploymentEnvironmentReadDetailV1;
 type Data = NonNullable<NonNullable<Detail['content']['template']>['data']>[number];
 type Input = Readonly<{
-  controller: DeploymentReadControllerV1;
   source: Detail;
   data: Data;
   actions: Actions;
@@ -54,8 +54,9 @@ export function showDeploymentDatabaseMoveSheet(input: Input): void {
 
 function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const router = useRouter();
+  const controller = useDeploymentAccountController(props.lifetime, true, { mounted: true, visible: true, focused: true });
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
-  const selected = useDeploymentEnvironmentRecord(props.controller, selectedId, { mounted: true, visible: true, focused: true });
+  const selected = useDeploymentEnvironmentRecord(controller, selectedId, { mounted: true, visible: true, focused: true });
   const destination = selected.snapshot.value;
   const destinationDecision = deploymentDatabaseMoveDestination(destination);
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
@@ -131,7 +132,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
-      <DeploymentEnvironmentChooser controller={props.controller} testID="project-deployments.move.destination"
+      <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination"
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
           && row.databaseMoveCandidate === true}

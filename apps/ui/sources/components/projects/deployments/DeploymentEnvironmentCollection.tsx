@@ -313,7 +313,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
  * while this chooser is open, one radio row per eligible Environment, its finite pages and its load states.
  */
 export function DeploymentEnvironmentChooser(props: Readonly<{
-  controller: DeploymentReadControllerV1;
+  controller: DeploymentReadControllerV1 | null;
   testID: string;
   title: string;
   /** Which Environments can be the destination: the caller's capability rule (and never the source itself). */

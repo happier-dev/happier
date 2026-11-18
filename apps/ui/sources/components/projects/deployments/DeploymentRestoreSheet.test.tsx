@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import {
@@ -46,15 +47,15 @@ vi.mock('expo-document-picker', () => ({ getDocumentAsync: uploadBoundary.pick }
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
   callGuardedMachineRpcWithPolicy: uploadBoundary.rpc,
 }));
-const { DeploymentEnvironmentDetail } =
-  await import('./DeploymentEnvironmentDetail');
+const { DeploymentDatabasePage } =
+  await import('./DeploymentDatabasePage');
 const { HappyError } = await import('@/utils/errors/errors');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
 const snapshotId = 'c'.repeat(64);
 const safetyId = 'e'.repeat(64);
 const shown = { mounted: true, visible: true, focused: true };
-const settings = 'project-deployments.environment.settings.backups';
+const restoreOpener = 'project-deployments.database.restore';
 
 function manifest(environmentId: string, id: string, time: string) {
   return {
@@ -82,9 +83,9 @@ type Answer = (
   input: Record<string, unknown>,
 ) =>
   | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string; details?: unknown }>;
+  | Readonly<{ ok: false; errorCode: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
 
-/** Settings → Backups of an Environment whose serving deploy kept a pre-migration backup; only the HTTP boundary is answered. */
+/** Database → Restore of an Environment whose serving deploy kept a pre-migration backup. */
 async function renderRestore(answer: Answer) {
   const homeId = `srv_${'a'.repeat(32)}`;
   const serverId = await homes.addHome({
@@ -158,7 +159,11 @@ async function renderRestore(answer: Answer) {
   });
   const withBackup = {
     ...detail,
-    content: { ...detail.content, backup: backupConfiguration },
+    content: { ...detail.content, backup: backupConfiguration,
+      template: { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17',
+        ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
+        definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+        services: ['postgres'], data: [{ engine: 'postgres' as const, service: 'postgres' }] } },
   };
   const controller = createDeploymentReadControllerV1({
     scope: { ...scope, serverId: homeId },
@@ -185,24 +190,22 @@ async function renderRestore(answer: Answer) {
     const parsed = DeploymentActionInputSchemasV1['deployments.backups.restore'].parse({ ...(input as object), serverId: 'home' });
     observed.push(parsed as Record<string, unknown>);
     const outcome = answer(parsed as Record<string, unknown>);
-    if (!outcome.ok) throw new HappyError(outcome.errorCode, false, { code: outcome.errorCode, details: outcome.details });
+    if (!outcome.ok) throw new HappyError(outcome.errorCode, false, { code: outcome.errorCode, details: outcome.details,
+      failureCause: outcome.failureCause });
     return DeploymentActionOutputSchemasV1['deployments.backups.restore'].parse(outcome.result);
   };
   const { ModalProvider } = await import('@/modal');
   const screen = await renderScreen(
     <ModalProvider>
-    <DeploymentEnvironmentDetail
+    <DeploymentDatabasePage
       controller={controller}
       lifetime={account.accountLifetime}
       environmentId={environmentId}
+      database="postgres"
       demand={shown}
-      accountId={scope.accountId}
-      serverId={serverId}
       phone={false}
-      deploy={null}
       review={{ pendingId: null, request() {}, open() {} }}
-      onOpenReceipt={() => {}}
-      destination={{ tab: 'settings', section: null }}
+      onBack={() => {}}
       restore={restore}
     />
     </ModalProvider>,
@@ -286,7 +289,7 @@ const prepared = (environmentId: string, withSafety: boolean) => ({
   },
 });
 
-describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
+describe('Environment → Database → Restore: restore a backup (L3B)', () => {
   beforeEach(() => homes.reset());
   afterEach(async () => {
     const { Modal } = await import('@/modal');
@@ -331,8 +334,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       } } } } };
     });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore.upload');
       await view.screen.pressByTestIdAsync('project-deployments.restore.upload');
       await view.until('project-deployments.restore.uploaded');
@@ -362,8 +367,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       } } } };
     });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
       expect(view.screen.getTextContent()).toContain('/data/shop.sqlite on embedded');
@@ -384,8 +391,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       } } } };
     });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
       expect(view.screen.findByTestId('project-deployments.restore.fact.volume')).not.toBeNull();
@@ -401,8 +410,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
         } } }
       : { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
       expect(view.screen.findByTestId('project-deployments.restore.snapshotUnavailable')).not.toBeNull();
@@ -440,8 +451,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
         : { ok: false, errorCode: code, details: { snapshot: { kind, code: 'provider_unconfirmed' } } };
     });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore.check');
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.snapshot');
@@ -466,8 +479,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       : { ok: true, result: { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',
         integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' }, evidence: {} } });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore');
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.fact.safety');
@@ -497,8 +512,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
           },
     );
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore');
       // Nothing runs until the person asks for the check.
       expect(view.observed).toHaveLength(0);
@@ -544,8 +561,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       : { ok: true, result: { kind: 'superseded', verified: false, nextAction: 'none',
           newerActivation: { deploymentId: 'newer-deployment', revision: 2 }, evidence: {} } });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore.check');
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
@@ -582,8 +601,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
           },
     );
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore.check');
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
@@ -603,15 +624,26 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     }
   });
 
-  it('a check that is no longer current returns to Check backup instead of confirming it', async () => {
-    const view = await renderRestore((input) =>
-      input.mode === 'prepare'
-        ? { ok: true, result: prepared(String(input.environmentId), false) }
-        : { ok: false, errorCode: 'restore_prepare_required' },
-    );
+  it.each(['restore_prepare_required', 'artifact_read_unavailable'])(
+    'checks again after %s instead of replaying the failed confirmation', async (errorCode) => {
+    let preparation = 0;
+    const view = await renderRestore((input) => {
+      if (input.mode === 'prepare') {
+        preparation += 1;
+        return { ok: true, result: { ...prepared(String(input.environmentId), false), operationId: `prepare-op-${preparation}` } };
+      }
+      return preparation === 1 ? { ok: false, errorCode,
+        ...(errorCode === 'artifact_read_unavailable' ? { failureCause: {
+          phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+          errorCode: 'database_connection_unavailable', httpStatus: 503,
+        } } : {}) }
+        : { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } };
+    });
     try {
-      await view.until(`${settings}.restore.open`);
-      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until(restoreOpener);
+      await view.screen.pressByTestIdAsync(restoreOpener);
+      await view.until(`project-deployments.restore.choice.${snapshotId}`);
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${snapshotId}`);
       await view.until('project-deployments.restore.check');
       await view.screen.pressByTestIdAsync('project-deployments.restore.check');
       await view.until('project-deployments.restore.confirm');
@@ -625,10 +657,22 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       expect(
         view.screen.findByTestId('project-deployments.restore.check'),
       ).not.toBeNull();
+      if (errorCode === 'artifact_read_unavailable') {
+        await view.screen.pressByTestIdAsync('project-deployments.restore.refused-details-toggle');
+        expect(view.screen.getTextContent()).toContain('home.database.transaction');
+        expect(view.screen.getTextContent()).toContain('database_connection_unavailable');
+      }
       expect(view.observed.map((input) => input.mode)).toEqual([
         'prepare',
         'confirm',
       ]);
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.restored');
+      expect(view.observed.map((input) => input.mode)).toEqual(['prepare', 'confirm', 'prepare', 'confirm']);
+      expect(view.observed[1]?.prepareOperationId).toBe('prepare-op-1');
+      expect(view.observed[3]?.prepareOperationId).toBe('prepare-op-2');
     } finally {
       view.dispose();
     }

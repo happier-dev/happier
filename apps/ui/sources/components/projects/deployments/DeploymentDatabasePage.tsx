@@ -388,6 +388,7 @@ export function DeploymentDatabasePage(
         ? [{ kind: 'volume' as const, service: source.service, volume: source.volume }] : [])] } : undefined;
   const restoreMachineId = restoreOperands?.machineId ?? target?.machineId ?? null;
   const openRestore = restoreAction && loadChoices && restoreMachineId ? () => showDeploymentRestoreSheet({
+    serverId: detail.environment.serverId,
     name: detail.content.name,
     machine: machineName(restoreMachineId),
     loadChoices,
@@ -450,7 +451,7 @@ export function DeploymentDatabasePage(
   }) : null;
   const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput && lifetime
     && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
-      controller, source: detail, data: database.data, actions, backupTarget: factsInput,
+      source: detail, data: database.data, actions, backupTarget: factsInput,
       review: props.review, lifetime,
     }) : null;
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
