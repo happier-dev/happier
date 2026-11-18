@@ -197,6 +197,39 @@ describe('what the gate measures', () => {
 });
 
 describe('the derivation follows the schema', () => {
+    it('measures positional tuples and their bounded additional items', () => {
+        const fixed: PluginJsonSchema = {
+            type: 'array',
+            items: [{ type: 'string', maxLength: 2 }, { const: 123 }],
+            additionalItems: false,
+        };
+        const fixedValue = buildMaximalSchemaValue(fixed, 'fixed tuple');
+        expect(fixedValue).toEqual([expect.any(String), 123]);
+        expect(encodedJsonBytes(fixedValue)).toBe(encodedJsonBytes(['\u0000\u0000', 123]));
+
+        const extended: PluginJsonSchema = {
+            type: 'array',
+            items: [{ const: 'head' }],
+            additionalItems: { type: 'string', maxLength: 2 },
+            maxItems: 3,
+        };
+        const extendedValue = buildMaximalSchemaValue(extended, 'extended tuple');
+        expect(extendedValue).toEqual(['head', expect.any(String), expect.any(String)]);
+        expect(encodedJsonBytes(extendedValue)).toBe(encodedJsonBytes(['head', '\u0000\u0000', '\u0000\u0000']));
+        expect(() => buildMaximalSchemaValue({ type: 'array', items: [{ const: 1 }, { const: 1 }],
+            additionalItems: false, uniqueItems: true,
+        }, 'unique tuple')).toThrow(/distinct/u);
+    });
+
+    it('collects bounded strings in each tuple position and its typed additional items', () => {
+        const fields = new Map<string, PluginJsonSchema>();
+        collectSchemaStringFields({ type: 'array',
+            items: [{ type: 'string', maxLength: 2 }, { type: 'string', maxLength: 3 }],
+            additionalItems: { type: 'string', maxLength: 4 },
+        }, 'tuple', fields);
+        expect([...fields.values()].map(field => field.maxLength)).toEqual([2, 3, 4]);
+    });
+
     it('reaches serialized JSON bounds including a tighter enclosing command bound', () => {
         const input = defineProtocolJsonValue({ maxSerializedUtf8Bytes: 64 });
         const command = defineProtocolUnion([

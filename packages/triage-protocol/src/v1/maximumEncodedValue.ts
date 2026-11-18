@@ -331,6 +331,20 @@ function buildOpaqueJsonBytes(bytes: number, path: string): string | number {
 function buildMaximalArray(fragment: PluginJsonSchema, path: string, stringFills: Map<string, string>): unknown[] {
     const { items, maxItems } = fragment;
     if (items === undefined) throw new Error(`${path}: an array without an item schema has no maximum`);
+    if (Array.isArray(items)) {
+        const length = fragment.additionalItems === false
+            ? Math.min(maxItems ?? items.length, items.length) : maxItems;
+        if (length === undefined) throw new Error(`${path}: an unbounded array has no maximum`);
+        const values = Array.from({ length }, (_, index) => buildMaximalValue(
+            items[index] ?? (typeof fragment.additionalItems === 'object' ? fragment.additionalItems : {}),
+            `${path}[${index}]`, stringFills,
+        ));
+        if (values.length < (fragment.minItems ?? 0)
+            || (fragment.uniqueItems === true && new Set(values.map(value => JSON.stringify(value))).size !== values.length)) {
+            throw new Error(`${path}: cannot derive distinct items satisfying the tuple schema`);
+        }
+        return values;
+    }
     if (maxItems === undefined) throw new Error(`${path}: an unbounded array has no maximum`);
     if (fragment.uniqueItems !== true) {
         const item = buildMaximalValue(items, `${path}[]`, stringFills);
@@ -447,7 +461,12 @@ export function collectSchemaStringFields(
     for (const [key, child] of Object.entries(fragment.properties ?? {})) {
         collectSchemaStringFields(child, key, into);
     }
-    if (fragment.items !== undefined) collectSchemaStringFields(fragment.items, name, into);
+    if (Array.isArray(fragment.items)) {
+        fragment.items.forEach((item, index) => collectSchemaStringFields(item, `${name}[${index}]`, into));
+        if (typeof fragment.additionalItems === 'object') {
+            collectSchemaStringFields(fragment.additionalItems, `${name}[]`, into);
+        }
+    } else if (fragment.items !== undefined) collectSchemaStringFields(fragment.items, name, into);
     for (const [index, arm] of (fragment.anyOf ?? []).entries()) {
         collectSchemaStringFields(arm, `${name}|${index}`, into);
     }

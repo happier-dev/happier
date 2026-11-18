@@ -10,7 +10,10 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
     return {
         ...fragment,
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(withTaskFactsWitness) }),
-        ...(fragment.items === undefined ? {} : { items: withTaskFactsWitness(fragment.items) }),
+        ...(fragment.items === undefined ? {} : { items: Array.isArray(fragment.items)
+            ? fragment.items.map(withTaskFactsWitness) : withTaskFactsWitness(fragment.items) }),
+        ...(typeof fragment.additionalItems === 'object'
+            ? { additionalItems: withTaskFactsWitness(fragment.additionalItems) } : {}),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
             // Provider-sized labels and retained source pages use the real Action
             // envelope. They have no independent finite collection quota.
@@ -47,7 +50,8 @@ function measureFiniteListAllocation(fieldBytes: number): number {
     );
     const shape = withTaskFactsWitness(TriageListEntriesResultV1Schema.jsonSchema);
     const window = shape.properties?.window?.properties;
-    const row = window?.rows?.items?.properties;
+    const items = window?.rows?.items;
+    const row = Array.isArray(items) ? undefined : items?.properties;
     if (window === undefined || row?.otherObservations === undefined || row.observedByCount === undefined) {
         throw new Error('The Triage list allocation requires its row and window geometry');
     }
