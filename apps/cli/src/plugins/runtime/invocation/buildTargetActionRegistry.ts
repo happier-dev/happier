@@ -149,9 +149,11 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     createAccountSourceMachineResolver?(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string; family?: 'actions' | 'deploymentTargets' }>): Promise<void>;
     beginDiagnosticScope?: BeginPluginInvocationDiagnosticScope;
+    /** `purpose: 'result'` projects a successful result: credential material only, not declared operands. */
     redactDiagnosticText?: (
         scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
         value: string,
+        purpose?: 'result',
     ) => string;
     completeDiagnosticScope?: (
         scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,

@@ -52,13 +52,22 @@ export type PluginInvocationSecretRedactionScope = Readonly<{
 
 export type PluginInvocationSecretRedactor = Readonly<{
     beginInvocation(scope: PluginInvocationSecretRedactionScope, signal: AbortSignal): void;
+    /** Host-materialized credential material: redacted from diagnostics and from successful results. */
     registerRaw(scope: PluginInvocationSecretRedactionScope, value: string): void;
     registerExact(scope: PluginInvocationSecretRedactionScope, value: string): void;
+    /**
+     * A declared confidential operand the requester itself supplied: redacted from diagnostics
+     * and logs only. A successful result returns to that requester, so matching its operand
+     * values there would only erase coincident result words such as a status or a count.
+     */
+    registerConfidentialOperand(scope: PluginInvocationSecretRedactionScope, value: string): void;
     registerConfidentialPaths(scope: PluginInvocationSecretRedactionScope, paths: readonly string[], nonStringPaths: readonly string[]): void;
     isConfidentialPath(scope: PluginInvocationSecretRedactionScope, path: readonly string[]): boolean;
     projectIssue(scope: PluginInvocationSecretRedactionScope, value: unknown): ReturnType<typeof projectTargetActionDiagnosticIssue>;
     containsRegisteredValue(scope: PluginInvocationSecretRedactionScope, value: string): boolean;
     redact(scope: PluginInvocationSecretRedactionScope, value: string): string;
+    /** Successful-result projection: credential material only. */
+    redactResult(scope: PluginInvocationSecretRedactionScope, value: string): string;
     completeInvocation(scope: PluginInvocationSecretRedactionScope): void;
 }>;
 
@@ -68,8 +77,12 @@ function secretRedactionScopeKey(scope: PluginInvocationSecretRedactionScope): s
 
 type PluginInvocationSecretRedactionState = {
     readonly scope: PluginInvocationSecretRedactionScope;
+    /** Credentials and confidential operands, for diagnostics and logs. */
     readonly redactor: SensitiveDiagnosticTextRedactor;
     readonly values: Set<string>;
+    /** Credentials only, for successful results. */
+    readonly resultRedactor: SensitiveDiagnosticTextRedactor;
+    readonly resultValues: Set<string>;
     readonly leases: SensitiveDiagnosticValuesLease[];
     readonly confidentialPaths: Set<string>;
     readonly nonStringPaths: Set<string>;
@@ -98,6 +111,8 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
                 scope: Object.freeze({ ...scope }),
                 redactor: createSensitiveDiagnosticTextRedactor(),
                 values: new Set(),
+                resultRedactor: createSensitiveDiagnosticTextRedactor(),
+                resultValues: new Set(),
                 leases: [],
                 confidentialPaths: new Set(),
                 nonStringPaths: new Set(),
@@ -107,19 +122,45 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
         }
         return state;
     };
-    const registerExact = (
-        scope: PluginInvocationSecretRedactionScope,
+    const registerIn = (
+        state: PluginInvocationSecretRedactionState,
+        redactor: SensitiveDiagnosticTextRedactor,
+        values: Set<string>,
         value: string,
     ): void => {
-        if (value.length === 0) return;
-        const state = statesByScope.get(secretRedactionScopeKey(scope));
-        if (!state || state.saturated || state.values.has(value)) return;
+        if (state.saturated || values.has(value)) return;
         try {
-            state.leases.push(state.redactor.register([value]));
-            state.values.add(value);
+            state.leases.push(redactor.register([value]));
+            values.add(value);
         } catch {
             state.saturated = true;
         }
+    };
+    const registerValue = (
+        scope: PluginInvocationSecretRedactionScope,
+        value: string,
+        credential: boolean,
+    ): void => {
+        if (value.length === 0) return;
+        const state = statesByScope.get(secretRedactionScopeKey(scope));
+        if (!state) return;
+        registerIn(state, state.redactor, state.values, value);
+        if (credential) registerIn(state, state.resultRedactor, state.resultValues, value);
+    };
+    const registerExact = (scope: PluginInvocationSecretRedactionScope, value: string): void => registerValue(scope, value, true);
+    const registerRepresentations = (
+        scope: PluginInvocationSecretRedactionScope,
+        value: string,
+        credential: boolean,
+    ): void => {
+        if (value.length === 0) return;
+        for (const representation of readCredentialRedactionValues({ rawCredential: value })) {
+            registerValue(scope, representation, credential);
+        }
+        const bytes = Buffer.from(value, 'utf8');
+        registerValue(scope, bytes.toString('base64'), credential);
+        registerValue(scope, bytes.toString('base64url'), credential);
+        registerValue(scope, bytes.toString('hex'), credential);
     };
     return Object.freeze({
         beginInvocation(scope, signal): void {
@@ -131,16 +172,12 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
             if (signal.aborted) completeInvocation(scope);
         },
         registerRaw(scope, value): void {
-            if (value.length === 0) return;
-            for (const representation of readCredentialRedactionValues({ rawCredential: value })) {
-                registerExact(scope, representation);
-            }
-            const bytes = Buffer.from(value, 'utf8');
-            registerExact(scope, bytes.toString('base64'));
-            registerExact(scope, bytes.toString('base64url'));
-            registerExact(scope, bytes.toString('hex'));
+            registerRepresentations(scope, value, true);
         },
         registerExact,
+        registerConfidentialOperand(scope, value): void {
+            registerRepresentations(scope, value, false);
+        },
         registerConfidentialPaths(scope, paths, nonStringPaths): void {
             const state = statesByScope.get(secretRedactionScopeKey(scope));
             if (state) {
@@ -173,6 +210,12 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
             if (!state) return baselineRedactor.redact(value);
             if (state.saturated) return REDACTED;
             return state.redactor.redact(value);
+        },
+        redactResult(scope, value): string {
+            const state = statesByScope.get(secretRedactionScopeKey(scope));
+            if (!state) return baselineRedactor.redact(value);
+            if (state.saturated) return REDACTED;
+            return state.resultRedactor.redact(value);
         },
         completeInvocation,
     });

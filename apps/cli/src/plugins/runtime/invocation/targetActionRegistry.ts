@@ -367,9 +367,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     /** Join the host's exact demand before synchronous invocation services are exposed, including warm Actions. */
     prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
     beginDiagnosticScope?: BeginPluginInvocationDiagnosticScope;
+    /** `purpose: 'result'` projects a successful result: credential material only, not declared operands. */
     redactDiagnosticText?: (
         scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
         value: string,
+        purpose?: 'result',
     ) => string;
     completeDiagnosticScope?: (
         scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
@@ -906,9 +908,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         }, { retire: retireReadObservation,
                             ...(invocation.readObservation.emit ? { emit: async (value: JsonValue) => {
                                 if (lifetime.signal.aborted || !indexed.isCurrent()) return;
-                                const projected = projectTargetActionFailure(indexed.invocation.projectResult(value), params.redactDiagnosticText
+                                const emitted = indexed.invocation.projectResult(value);
+                                const projected = projectTargetActionFailure(emitted, params.redactDiagnosticText
                                     ? text => params.redactDiagnosticText!({ pluginId: registration.pluginId,
-                                        occurrenceId: registration.occurrenceId, correlationId }, text) : undefined);
+                                        occurrenceId: registration.occurrenceId, correlationId }, text,
+                                        emitted.status === 'executed' ? 'result' : undefined) : undefined);
                                 if (projected.status !== 'executed') throw new PluginError({ code: projected.code, message: projected.message });
                                 await invocation.readObservation?.emit?.(projected.value);
                             } } : {}),
@@ -1323,9 +1327,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 },
                 ...(params.redactDiagnosticText
                     ? {
-                        redactFailureText: (_action, value) => params.redactDiagnosticText!(
+                        redactFailureText: (_action, value, purpose) => params.redactDiagnosticText!(
                             diagnosticScope,
                             value,
+                            purpose,
                         ),
                     }
                     : {}),

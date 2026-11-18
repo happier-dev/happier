@@ -254,7 +254,8 @@ export function createTargetActionExecutor(deps: Readonly<{
     /** The gate admitted these exact operands as a host-reviewed child. */
     reviewedChild?: true;
   }>, serviceBinding: PluginInvocationServiceBinding) => Promise<TargetActionExecutionResult>;
-  redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
+  /** Projects failures and, with `purpose: 'result'`, successful values. */
+  redactFailureText?: (action: ResolvedTargetAction, value: string, purpose?: 'result') => string;
   /** In-process host consumer: return the executed value unredacted as native operands. */
   hostConsumesExecutedValue?: true;
   /** Captured before executable normalization can consume confidential operands. */
@@ -308,7 +309,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         const publicResult = result.status === 'executed' && deps.hostConsumesExecutedValue
           ? result
           : projectTargetActionFailure(result, redactedAction && redactFailureText
-          ? value => redactFailureText(redactedAction, value)
+          ? value => redactFailureText(redactedAction, value, result.status === 'executed' ? 'result' : undefined)
           : result.status === 'failed' ? projectPluginFailureMessage : undefined,
           redactedAction ? {
             input: redactedAction.input,

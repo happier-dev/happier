@@ -288,7 +288,7 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         // Enroll its actual confidential subtrees in the incumbent redactor;
         // diagnostic key spelling must not classify plugin operands.
         const projection = registerTargetActionDiagnosticInput(input, secretInputPaths,
-            value => secretRedactor.registerRaw(scope, value));
+            value => secretRedactor.registerConfidentialOperand(scope, value));
         secretRedactor.registerConfidentialPaths(scope, projection.paths, projection.nonStringPaths);
     };
     const listenerDiagnosticLoggers = new WeakMap<object, ReturnType<typeof createPluginInvocationLogger>>();
@@ -1008,8 +1008,9 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         redactDiagnosticText(
             scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
             value: string,
+            purpose?: 'result',
         ): string {
-            return secretRedactor.redact(scope, value);
+            return purpose === 'result' ? secretRedactor.redactResult(scope, value) : secretRedactor.redact(scope, value);
         },
         completeDiagnosticScope(
             scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,

@@ -2525,7 +2525,11 @@ Contributed Actions can declare `secretInputPaths` using the existing input-path
 grammar, including `[]` for array elements and `**` for zero or more descendant
 segments. The current approval presenter
 redacts those values while retaining other input, and the diagnostic owner
-enrolls the same confidential operands. `approvalInputCustody: 'live_only'`
+enrolls the same confidential operands for failures, diagnostics and logs. A
+successful result returns to the requester that supplied those operands, so its
+projection redacts only host-materialized credential material (Saved Secrets,
+connected-account tokens); it never erases result values that merely coincide
+with an operand, such as a status word or a count. `approvalInputCustody: 'live_only'`
 selects the existing live approval waiter even when no confidential value is
 present, so executable operands are not made durable replay input. These fields
 are part of the contributed declaration and its canonical host projection.

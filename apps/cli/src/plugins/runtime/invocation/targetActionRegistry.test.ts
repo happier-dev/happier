@@ -830,6 +830,31 @@ describe('target action invocation registry', () => {
         } finally { registry.dispose(); }
     });
 
+    it.each(['agent', 'mcp', 'cli'] as const)(
+        'keeps successful result values that coincide with declared operands and redacts materialized credentials on %s', async surface => {
+            const credential = 'synthetic-materialized-result-credential';
+            const records: PluginInvocationLogRecord[] = [];
+            const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write: record => records.push(record) } });
+            let seed: Parameters<typeof owners.registerRawForRedaction>[0] | undefined;
+            const registry = createRegistry({ ...owners,
+                createServices: (captured, binding) => { seed = captured; return owners.createServices(captured, binding); },
+                actions: [{ ...action({ inputSchema: {}, resultSchema: {}, secretInputPaths: ['changes.[].value'], surfaces: ['agent', 'mcp', 'cli'] }),
+                    handler: async (_input, context) => {
+                        owners.registerRawForRedaction(seed!, credential);
+                        context.services.logger.info('Applied', { status: 'committed', updated: '1' });
+                        return { ok: true, status: 'committed', updated: '1', echoed: `token ${credential}` };
+                    },
+                }] });
+            try {
+                const result = await registry.invoke({ pluginId: 'acme.alpha', localId: 'run',
+                    input: { changes: [{ value: 'committed' }, { value: '1' }] }, surface });
+                // The requester supplied these operands; the result's own words are not their echo.
+                expect(result).toEqual({ status: 'executed', value: { ok: true, status: 'committed', updated: '1', echoed: 'token [REDACTED]' } });
+                // Diagnostics keep the declared operands redacted.
+                expect(records.at(-1)?.fields).toEqual({ status: '[REDACTED]', updated: '[REDACTED]' });
+            } finally { registry.dispose(); }
+        });
+
     it('keeps bounded log sanitization before confidential path projection', async () => {
         const records: PluginInvocationLogRecord[] = [];
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write: record => records.push(record) } });
