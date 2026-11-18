@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
-import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation } from './resolveSessionRoutePresentation';
+import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, presentSessionRouteSource, resolveSessionRoutePresentation } from './resolveSessionRoutePresentation';
 
 describe('session route presentation', () => {
     it('names a same-name source once in the model picker route', () => {
@@ -112,6 +112,10 @@ describe('session route presentation', () => {
         expect(presentSessionRouteChip(nativeDraft, pool)).toHaveProperty('label', t('connectedServices.authChip.runsThrough', { source: 'Claude: Work pool' }));
         expect(presentSessionRouteChip(nativeDraft, { label: 'Native', authSource: 'native' })).toHaveProperty('label',
             t('connectedServices.authChip.runsThroughOwnSignIn'));
+        // A field select says "Runs through" as its field's name, so it reads the same route's source alone (WF-ACCEPT-1118B item 5).
+        expect(presentSessionRouteSource(draft, pool)).toEqual({ kind: 'source', source: 'DeepSeek' });
+        expect(presentSessionRouteSource(nativeDraft, pool)).toEqual({ kind: 'source', source: 'Claude: Work pool' });
+        expect(presentSessionRouteSource(nativeDraft, { label: 'Native', authSource: 'native' })).toMatchObject({ kind: 'own_sign_in' });
         const unread = resolveSessionRoutePresentation({ phase: 'running', selection: null, appliedSelection: null,
             sources: [source], native: { ...pool, connectedCount: 1 } });
         // Without applied evidence the chip keeps the incumbent label instead of guessing the route.

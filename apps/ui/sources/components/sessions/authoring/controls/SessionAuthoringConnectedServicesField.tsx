@@ -185,7 +185,8 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     if (connectedServicesAuthChip === null) return null;
     const popover = connectedServicesAuthChip.collapsedContentPopover;
     return (
-        <View testID={props.testID} style={{ alignSelf: 'flex-start' }}>
+        // Never wider than its row: a long account name ellipsizes inside the field (WF-ACCEPT-1118B item 1, Auth).
+        <View testID={props.testID} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>
             <SessionAuthoringChipDescriptorTrigger chip={connectedServicesAuthChip} renderContext={renderContext} trigger={props.trigger}
                 anchorRef={anchorRef} open={open} onToggle={() => setOpen((current) => !current)} testID={props.testID} />
             {popover === undefined ? null : (

@@ -18,6 +18,7 @@ import { withoutWorkflowAuthoringEngine } from '@/sync/domains/workflows/workflo
 import type { SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 
 import { WorkflowNumberField } from './WorkflowNumberField';
+import { WorkflowFieldPair } from './WorkflowStepDataEditor';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
@@ -56,16 +57,22 @@ export function WorkflowStepTimeoutField(props: Readonly<{
     onChange: (timeoutMs: number | undefined) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    // One row on the options' label track: the field on the control column, its placeholder the one "No deadline",
+    // the unit after a set number; what it means is the field's hint, not a paragraph in the row (WF-ACCEPT-1118B item 1).
     return (
-        <View>
-            <WorkflowNumberField
-                label={t('workflows.editor.timeoutTitle')}
-                value={props.timeoutMs}
-                onChange={props.onChange}
-                placeholder={t('workflows.editor.noDeadline')}
-                testID={`${props.testIDPrefix}-timeout`}
-            />
-            <Text style={styles.inheritedBadge}>{t('workflows.editor.timeoutExplain')}</Text>
+        <View style={workflowEditorStyles.actionFieldRow}>
+            <WorkflowFieldPair label={t('workflows.editor.timeoutTitle')} trackKey="timeout">
+                <WorkflowNumberField
+                    presentation="track"
+                    label={t('workflows.editor.timeoutTitle')}
+                    value={props.timeoutMs}
+                    onChange={props.onChange}
+                    placeholder={t('workflows.editor.noDeadline')}
+                    {...(props.timeoutMs === undefined ? {} : { suffix: t('workflows.editor.timeoutUnit') })}
+                    accessibilityHint={t('workflows.editor.timeoutExplain')}
+                    testID={`${props.testIDPrefix}-timeout`}
+                />
+            </WorkflowFieldPair>
         </View>
     );
 }

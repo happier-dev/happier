@@ -463,6 +463,10 @@ export function WorkflowContinuityControls(props: Readonly<{
                     role="radiogroup"
                     testIDPrefix={`${testIDPrefix}-conversation`}
                 />
+                {/* A step following its workflow says what Default means here (the item layout's subtitle). */}
+                {props.conversation === undefined && inherits ? (
+                    <Text testID={`${testIDPrefix}-conversation-consequence`} style={workflowEditorStyles.metaText}>{conversationConsequence}</Text>
+                ) : null}
                 {conversationDetails}
             </WorkflowFieldPair>
         </View>

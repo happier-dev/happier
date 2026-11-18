@@ -20007,6 +20007,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
     editor: {
         namePlaceholder: '工作流名称',
         agentRuntime: '智能体运行时',
+        sessionType: '会话类型',
         approvalProfile: "审批配置",
         firstPromptTitle: '第一步要做什么？',
         firstPromptBody: '一个提示词就是一个工作流。需要时再添加步骤。',
@@ -20033,6 +20034,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         loadFailedTitle: '无法打开此工作流',
         loadFailedBody: '暂时无法读取已保存的工作流。',
         timeoutTitle: '时间限制',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: '毫秒',
         noDeadline: '无期限',
         timeoutExplain: '等待此步骤结果的毫秒数，超过后将需要关注。留空表示没有期限。',
         wholeNumberRequired: '请输入不小于 1 的整数。',
@@ -20126,6 +20129,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         explain: '这个工作流结束时返回的内容。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '报告',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: '结果',
     },
 
     conversation: {

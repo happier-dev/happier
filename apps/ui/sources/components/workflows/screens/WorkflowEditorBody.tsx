@@ -121,7 +121,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { formatWorkflowIssueText } from '../editor/workflowIssueText';
-import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -205,6 +205,11 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    pageTabsNavigation: {
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 0,
+    },
     /** The page's first cards above the steps, one block gap apart. */
     firstCards: {
         gap: theme.space.s16,
@@ -226,6 +231,10 @@ const styles = StyleSheet.create((theme) => ({
     /** Wide: the root list's name column on the title's edge, so its ordinals hang under the mark's gutter. */
     documentUnderTitle: {
         paddingLeft: WORKFLOW_DOCUMENT_INSET_PX,
+    },
+    /** Wide: the Flow map's cards start on the title's edge, where the Steps view's cards do (WF-ACCEPT-1118B item 8). */
+    flowUnderTitle: {
+        paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX,
     },
     undoRow: {
         flexDirection: 'row',
@@ -474,7 +483,11 @@ function WorkflowEditorPageTabs(props: Readonly<{
     if (!navigationShown && !historyShown) return null;
     return (
         <View testID={`${props.testIDPrefix}-page-tabs`} style={[styles.pageTabs, styles.pageTabsRow, props.onMark ? styles.pageTabsOnMark : null]}>
-            <WorkflowPageNavigation navigation={props.navigation} phone={props.phone} onSelect={props.onSelect} testIDPrefix={`${props.testIDPrefix}-view`} />
+            {/* The tab bar spans what it is given (its More needs the room), so it takes the row's remainder and the
+                pair keeps the row's end, on the cards' edge, instead of being pushed past it (WF-ACCEPT-1118B item 3). */}
+            <View style={styles.pageTabsNavigation}>
+                <WorkflowPageNavigation navigation={props.navigation} phone={props.phone} onSelect={props.onSelect} testIDPrefix={`${props.testIDPrefix}-view`} />
+            </View>
             {props.phone ? null : <WorkflowEditorHistoryIcons testIDPrefix={props.testIDPrefix} history={props.history} />}
         </View>
     );
@@ -1647,7 +1660,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 </WorkflowDocumentGridContext.Provider>
             </View>
             {settingsPopoverNode}
-            {props.view === 'flow' ? <View style={styles.document}>{flowContent}</View> : null}
+            {props.view === 'flow' ? <View style={[styles.document, compactLayout ? null : styles.flowUnderTitle]}>{flowContent}</View> : null}
             {sentenceContent === null ? null : <View style={[styles.document, compactLayout ? null : styles.documentUnderTitle]}>{sentenceContent}</View>}
             </View>
         </KeyboardAwareScrollView>

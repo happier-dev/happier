@@ -39,6 +39,8 @@ function resolveRunsThroughPopoverHeader(agentId: string | null | undefined): Ag
  */
 export function createConnectedServicesAuthActionChip(params: Readonly<{
     label: string;
+    /** The route's source alone, for the field select that says "Runs through" as its field's name. */
+    fieldValue?: string;
     connectedCount: number;
     authSource: ConnectedServicesAuthActionChipSource;
     popoverContent: AgentInputPopoverContent;
@@ -59,6 +61,7 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
         collapsedContentPopover: {
             title: params.label,
             label: params.label,
+            ...(params.fieldValue === undefined ? {} : { fieldValue: params.fieldValue }),
             icon: (tint: string) =>
                 normalizeNodeForView(<Icon name="path" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             renderContent: params.popoverContent,

@@ -154,17 +154,30 @@ export function presentSessionRouteChip(
     presentation: Readonly<{ applied: SessionRoute; pending: SessionRoute | null; reported?: SessionRoute }>,
     native: Readonly<{ label: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown' }>,
 ): Readonly<{ label: string }> | null {
+    const route = presentSessionRouteSource(presentation, native);
+    if (route === null) return null;
+    return {
+        label: route.kind === 'armed' ? t('connectedServices.authChip.nextVia', { source: route.source })
+            : route.kind === 'own_sign_in' ? t('connectedServices.authChip.runsThroughOwnSignIn')
+                : t('connectedServices.authChip.runsThrough', { source: route.source }),
+    };
+}
+
+/**
+ * The route's source alone, for a field select whose field name ("Runs through") is said apart from its value: an
+ * armed change, the Agent's own sign-in, or the source a running route goes through. `null` as for the chip.
+ */
+export function presentSessionRouteSource(
+    presentation: Readonly<{ applied: SessionRoute; pending: SessionRoute | null; reported?: SessionRoute }>,
+    native: Readonly<{ label: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown' }>,
+): Readonly<{ kind: 'armed' | 'own_sign_in' | 'source'; source: string }> | null {
     const armed = presentArmedSessionRouteSource(presentation, native);
-    if (armed) return { label: t('connectedServices.authChip.nextVia', { source: armed }) };
+    if (armed) return { kind: 'armed', source: armed };
     const applied = readRunningRoute(presentation);
     if (applied.kind === 'native' && native.authSource === 'unknown') return null;
     const source = routeSourceLabel(applied, native.label);
     if (!source) return null;
-    return {
-        label: applied.kind === 'native' && native.authSource === 'native'
-            ? t('connectedServices.authChip.runsThroughOwnSignIn')
-            : t('connectedServices.authChip.runsThrough', { source }),
-    };
+    return { kind: applied.kind === 'native' && native.authSource === 'native' ? 'own_sign_in' : 'source', source };
 }
 
 export function readProviderRouteConnectionId(selection: RouteSelection): string | null {

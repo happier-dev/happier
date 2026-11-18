@@ -351,7 +351,7 @@ export const en = {
         turnOff: 'Turn off',
         turnOn: 'Turn on',
         deleteTrigger: 'Delete trigger',
-        repeat: 'Repeat',
+        repeat: 'Repeats',
         everyHour: 'Every hour',
         everyDay: 'Every day',
         weekdays: 'Weekdays',

@@ -19694,7 +19694,7 @@ const ru: WorkflowTriggersCopy = {
         turnOff: 'Выключить',
         turnOn: 'Включить',
         deleteTrigger: 'Удалить триггер',
-        repeat: 'Повтор',
+        repeat: 'Повторяется',
         everyHour: 'Каждый час',
         everyDay: 'Каждый день',
         weekdays: 'По будням',
@@ -20161,6 +20161,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
     editor: {
         namePlaceholder: 'Название рабочего процесса',
         agentRuntime: 'Среда выполнения агента',
+        sessionType: 'Тип сессии',
         approvalProfile: "Профиль подтверждения",
         firstPromptTitle: 'Что должно произойти первым?',
         firstPromptBody: 'Один промпт — уже рабочий процесс. Добавляйте шаги, когда они понадобятся.',
@@ -20187,6 +20188,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         loadFailedTitle: 'Не удалось открыть этот рабочий процесс',
         loadFailedBody: 'Сохранённый рабочий процесс сейчас не удалось прочитать.',
         timeoutTitle: 'Лимит времени',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'мс',
         noDeadline: 'Без срока',
         timeoutExplain: 'Сколько миллисекунд ждать результат этого шага, прежде чем ему потребуется внимание. Оставьте пустым, чтобы не задавать срок.',
         wholeNumberRequired: 'Введите целое число не меньше 1.',
@@ -20280,6 +20283,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         explain: 'То, что рабочий процесс возвращает по завершении.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Сообщает',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Результат',
     },
 
     conversation: {

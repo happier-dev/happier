@@ -31,6 +31,8 @@ import { WorkflowDocumentGridContext } from './workflowEditorStyles';
  * and Required edited in place, a "…" per row and "Add an input" at its foot. A phone keeps Name, Type
  * and Required; Default and Description move into the row's "…".
  */
+const WEB_TEXT_OVERFLOW = { textOverflow: 'ellipsis' };
+
 const styles = StyleSheet.create((theme) => ({
     root: { gap: theme.space.s8 },
     title: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary },
@@ -72,6 +74,9 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: 'transparent',
         borderRadius: FIELD_BOX_METRICS.radiusPx,
         minWidth: 0,
+        // A cell longer than its column ends in an ellipsis instead of a clipped word (WF-ACCEPT-1118B item 10);
+        // react-native-web draws it on the single-line input through this web-only property.
+        ...WEB_TEXT_OVERFLOW,
     },
     cellMono: { ...Typography.mono() },
     cellFocused: { borderColor: theme.colors.border.strong, backgroundColor: theme.colors.input.background },

@@ -19690,7 +19690,7 @@ const pl: WorkflowTriggersCopy = {
         turnOff: 'Wyłącz',
         turnOn: 'Włącz',
         deleteTrigger: 'Usuń wyzwalacz',
-        repeat: 'Powtarzaj',
+        repeat: 'Powtarza się',
         everyHour: 'Co godzinę',
         everyDay: 'Codziennie',
         weekdays: 'Dni robocze',
@@ -20157,6 +20157,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
     editor: {
         namePlaceholder: 'Nazwa przepływu pracy',
         agentRuntime: 'Środowisko wykonawcze agenta',
+        sessionType: 'Typ sesji',
         approvalProfile: "Profil zatwierdzania",
         firstPromptTitle: 'Co ma się wydarzyć najpierw?',
         firstPromptBody: 'Jeden prompt to już przepływ pracy. Dodawaj kroki wtedy, gdy będą potrzebne.',
@@ -20183,6 +20184,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         loadFailedTitle: 'Nie udało się otworzyć tego przepływu pracy',
         loadFailedBody: 'Zapisanego przepływu pracy nie udało się teraz odczytać.',
         timeoutTitle: 'Limit czasu',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Bez terminu',
         timeoutExplain: 'Milisekundy oczekiwania na wynik tego kroku, zanim będzie wymagał uwagi. Zostaw puste, aby nie ustawiać terminu.',
         wholeNumberRequired: 'Wpisz liczbę całkowitą równą co najmniej 1.',
@@ -20276,6 +20279,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         explain: 'To, co ten przepływ pracy zwraca po zakończeniu.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Zgłasza',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Wynik',
     },
 
     conversation: {

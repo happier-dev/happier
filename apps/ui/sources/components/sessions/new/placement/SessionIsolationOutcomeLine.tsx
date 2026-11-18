@@ -230,9 +230,9 @@ export function OutcomeRow(
       <View style={styles.body}>
         <View style={styles.sentence}>
           {props.lead}
-          {/* Two lines in all (lab sbx-outcome phone): after a verb phrase the sentence keeps one line, alone two;
-              a shortened sentence is still read whole. */}
-          <Text style={props.warning ? styles.warning : styles.text} numberOfLines={props.lead ? 1 : 2}
+          {/* After a verb phrase the sentence keeps one line (lab sbx-outcome phone). Alone it wraps whole: a status
+              sentence (an offline Machine's) is never cut mid-sentence (WF-ACCEPT-1118B item 7). */}
+          <Text style={props.warning ? styles.warning : styles.text} {...(props.lead ? { numberOfLines: 1 } : {})}
             {...(typeof props.text === 'string' ? { accessibilityLabel: props.text } : {})}>
             {props.text}
           </Text>

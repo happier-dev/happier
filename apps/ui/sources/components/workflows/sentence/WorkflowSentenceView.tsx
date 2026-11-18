@@ -222,7 +222,8 @@ const WorkflowSentencePlace = React.memo(function WorkflowSentencePlace(
           anchorRef={chip.anchorRef}
           kind={chip.value === null ? 'placeholder' : 'option'}
           icon={chip.field === 'machine' ? 'laptop' : 'folder'}
-          mono={chip.field === 'folder' && chip.value !== null}
+          // A folder path reads in the code face; a named folder ("Home folder") is words (WF-ACCEPT-1118B item 10).
+          mono={chip.field === 'folder' && chip.value !== null && chip.value !== t('workspacePresentation.homeFolder')}
           title={chip.title}
           label={
             chip.value ??

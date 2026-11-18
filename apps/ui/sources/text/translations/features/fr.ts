@@ -19723,7 +19723,7 @@ const fr: WorkflowTriggersCopy = {
         turnOff: 'Désactiver',
         turnOn: 'Activer',
         deleteTrigger: 'Supprimer le déclencheur',
-        repeat: 'Répéter',
+        repeat: 'Se répète',
         everyHour: 'Toutes les heures',
         everyDay: 'Tous les jours',
         weekdays: 'En semaine',
@@ -20190,6 +20190,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
     editor: {
         namePlaceholder: 'Nom du flux de travail',
         agentRuntime: 'Environnement d’exécution de l’agent',
+        sessionType: 'Type de session',
         approvalProfile: "Profil d’approbation",
         firstPromptTitle: 'Que doit-il se passer en premier ?',
         firstPromptBody: 'Un seul prompt est déjà un flux de travail. Ajoute des étapes quand tu en as besoin.',
@@ -20216,6 +20217,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         loadFailedTitle: 'Impossible d’ouvrir ce flux de travail',
         loadFailedBody: 'Le flux de travail enregistré n’a pas pu être lu pour l’instant.',
         timeoutTitle: 'Limite de temps',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Aucune limite',
         timeoutExplain: 'Millisecondes d’attente du résultat de cette étape avant qu’elle ne demande ton attention. Laisse vide pour aucune limite.',
         wholeNumberRequired: 'Saisis un nombre entier d’au moins 1.',
@@ -20309,6 +20312,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         explain: 'Ce que ce flux de travail renvoie lorsqu’il se termine.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Rapporte',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Résultat',
     },
 
     conversation: {

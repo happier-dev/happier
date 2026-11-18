@@ -19680,7 +19680,7 @@ const ca: WorkflowTriggersCopy = {
         turnOff: 'Desactiva',
         turnOn: 'Activa',
         deleteTrigger: "Elimina l'activador",
-        repeat: 'Repeteix',
+        repeat: 'Es repeteix',
         everyHour: 'Cada hora',
         everyDay: 'Cada dia',
         weekdays: 'Dies feiners',
@@ -20147,6 +20147,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
     editor: {
         namePlaceholder: 'Nom del flux de treball',
         agentRuntime: 'Entorn d’execució de l’agent',
+        sessionType: 'Tipus de sessió',
         approvalProfile: "Perfil d’aprovació",
         firstPromptTitle: 'Què ha de passar primer?',
         firstPromptBody: 'Un sol prompt ja és un flux de treball. Afegeix passos quan els necessitis.',
@@ -20173,6 +20174,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         loadFailedTitle: 'No s’ha pogut obrir aquest flux de treball',
         loadFailedBody: 'Ara mateix no s’ha pogut llegir el flux de treball desat.',
         timeoutTitle: 'Límit de temps',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Sense termini',
         timeoutExplain: 'Mil·lisegons d’espera del resultat d’aquest pas abans que necessiti atenció. Deixa-ho buit per no fixar termini.',
         wholeNumberRequired: 'Introdueix un nombre enter d’almenys 1.',
@@ -20266,6 +20269,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         explain: 'El que retorna aquest flux de treball quan acaba.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Informa',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Resultat',
     },
 
     conversation: {

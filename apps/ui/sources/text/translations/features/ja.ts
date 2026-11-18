@@ -20067,6 +20067,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
     editor: {
         namePlaceholder: 'ワークフロー名',
         agentRuntime: 'エージェントランタイム',
+        sessionType: 'セッションの種類',
         approvalProfile: "承認プロファイル",
         firstPromptTitle: '最初に何をしますか？',
         firstPromptBody: 'プロンプト 1 つでもワークフローです。必要になったらステップを追加してください。',
@@ -20093,6 +20094,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         loadFailedTitle: 'このワークフローを開けませんでした',
         loadFailedBody: '保存されたワークフローを今は読み取れませんでした。',
         timeoutTitle: '制限時間',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ミリ秒',
         noDeadline: '期限なし',
         timeoutExplain: 'このステップの結果を待つミリ秒数。超えると注意が必要になります。空欄なら期限はありません。',
         wholeNumberRequired: '1 以上の整数を入力してください。',
@@ -20186,6 +20189,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         explain: 'このワークフローが終了したときに返すもの。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '報告する内容',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: '結果',
     },
 
     conversation: {

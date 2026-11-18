@@ -6,7 +6,7 @@ import { Modal } from '@/modal';
 import { presentSessionSpawnNewConnectedAccountFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation, readProviderRouteConnectionId, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
+import { presentNativeRouteSourceLabel, presentSessionRouteChip, presentSessionRouteSource, resolveSessionRoutePresentation, readProviderRouteConnectionId, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 
 import { t } from '@/text';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -635,8 +635,11 @@ export function useNewSessionConnectedServices(params: Readonly<{
         // "Runs through …" names the route the draft would start with; while account defaults load,
         // the incumbent loading/unavailable label stays rather than a guessed route.
         const routeChip = presentSessionRouteChip(routePresentation, { label: authLabel.label, authSource: nativeAuthSource });
+        // A field select names "Runs through" itself, so it shows the source alone (WF-ACCEPT-1118B item 5).
+        const routeSource = presentSessionRouteSource(routePresentation, { label: authLabel.label, authSource: nativeAuthSource });
         return createConnectedServicesAuthActionChip({
             placementId: params.placementId,
+            ...(routeSource?.kind === 'source' ? { fieldValue: routeSource.source } : {}),
             pending: params.placementPending === true || authLabel.warningCodes.length > 0 || connectedAccountDefaultsStatus === 'unavailable',
             label: params.labelOverride ?? routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
                 ? t(connectedAccountDefaultsStatus === 'loading' ? 'common.loading' : 'common.unavailable')

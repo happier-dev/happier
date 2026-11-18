@@ -394,6 +394,8 @@ export const en = {
     editor: {
         namePlaceholder: 'Workflow name',
         agentRuntime: 'Agent runtime',
+        /** A Session's type (Happier or direct) as an authoring field's label. */
+        sessionType: 'Session type',
         approvalProfile: "Approval profile",
         firstPromptTitle: 'What should happen first?',
         firstPromptBody: 'One prompt is a workflow. Add steps when you need them.',
@@ -420,6 +422,8 @@ export const en = {
         loadFailedTitle: 'Could not open this workflow',
         loadFailedBody: 'The saved workflow could not be read just now.',
         timeoutTitle: 'Time limit',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'No deadline',
         timeoutExplain: 'Milliseconds to wait for this step’s result before it needs attention. Leave empty for no deadline.',
         wholeNumberRequired: 'Enter a whole number of at least 1.',
@@ -518,6 +522,8 @@ export const en = {
         explain: 'What this workflow returns when it finishes.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Reports',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Result',
     },
 
     conversation: {

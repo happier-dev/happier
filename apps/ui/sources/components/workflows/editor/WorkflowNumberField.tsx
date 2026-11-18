@@ -49,6 +49,13 @@ export function WorkflowNumberField(props: Readonly<{
     suffix?: string;
     /** The field's spoken name when the visible label is only the start of that sentence. */
     accessibilityLabel?: string;
+    /**
+     * `track`: the host's label track names the field beside it, so the field draws only its box (its placeholder
+     * says what empty means, once) and the unit after a set value (WF-ACCEPT-1118B item 1).
+     */
+    presentation?: 'inline' | 'track';
+    /** What the number means, for assistive technology (the unit and what empty means). */
+    accessibilityHint?: string;
     testID: string;
 }>): React.ReactElement {
     const { onChange, required, value } = props;
@@ -71,11 +78,13 @@ export function WorkflowNumberField(props: Readonly<{
 
     const invalid = value !== undefined && !isAuthoredPositiveInteger(value);
     const invalidMessage = t('workflows.editor.wholeNumberRequired');
+    const track = props.presentation === 'track';
+    const hint = invalid ? invalidMessage : props.accessibilityHint;
 
     return (
         <View>
             <View style={workflowEditorStyles.inlineControl}>
-                <Text style={workflowEditorStyles.metaText}>{props.label}</Text>
+                {track ? null : <Text style={workflowEditorStyles.metaText}>{props.label}</Text>}
                 <TextInput
                     testID={props.testID}
                     style={[workflowEditorStyles.inlineValue, workflowEditorStyles.numberValue]}
@@ -84,7 +93,7 @@ export function WorkflowNumberField(props: Readonly<{
                     accessibilityLabel={props.accessibilityLabel ?? props.label}
                     // The repair reaches assistive technology on the field itself,
                     // not only as nearby text.
-                    {...(invalid ? { accessibilityHint: invalidMessage } : {})}
+                    {...(hint === undefined ? {} : { accessibilityHint: hint })}
                     {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
                     onChangeText={(next) => {
                         setText(next);
@@ -94,7 +103,7 @@ export function WorkflowNumberField(props: Readonly<{
                 {props.suffix !== undefined ? (
                     <Text style={workflowEditorStyles.metaText}>{props.suffix}</Text>
                 ) : null}
-                {value === undefined && props.placeholder !== undefined ? (
+                {!track && value === undefined && props.placeholder !== undefined ? (
                     <Text testID={`${props.testID}-omitted`} style={workflowEditorStyles.groupSummary}>
                         {props.placeholder}
                     </Text>

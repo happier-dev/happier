@@ -69,6 +69,24 @@ describe('workflow final output accessibility', () => {
         expect(results.every((item) => item.category === 'workflows.input.stepResults' && item.icon !== undefined)).toBe(true);
     });
 
+    // WF-ACCEPT-1118B item 4 (lab round 1116c sent-v-result): the chosen result's footer reads "Field · The whole result",
+    // and the menu keeps its own content width in Steps as in the Sentence clause (not the page row's width).
+    it('names the chosen result\'s footer "Field" and sizes the menu to its content in both presentations', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'footer', name: 'Review' });
+        const blockId = draft.blocks[0]!.id;
+        const chosen = { ...draft, finalOutput: { kind: 'result' as const, producer: { blockId, scope: { kind: 'current' as const } }, path: [] } };
+        for (const presentation of ['field', 'chip'] as const) {
+            const screen = await renderScreen(<WorkflowFinalOutputEditor draft={chosen} onChange={vi.fn()} presentation={presentation} testIDPrefix="output" />);
+            const select = screen.root.findByType(DropdownMenu);
+            expect(select.props.matchTriggerWidth).toBe(false);
+            await act(async () => select.props.onOpenChange(true));
+            expect(screen.getTextContent()).toContain('workflows.page.inspector.resultFields.field');
+            expect(screen.getTextContent()).not.toContain('workflows.finalOutput.fieldPath');
+            expect(screen.findByTestId('output-final-output-path')?.props.placeholder).toBe('workflows.finalOutput.wholeResult');
+            await screen.unmount();
+        }
+    });
+
     it('keeps an unavailable authored producer visible without rewriting it', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'missing', name: 'Review' });
         const finalOutput = { kind: 'result' as const, producer: { blockId: 'removed', scope: { kind: 'current' as const } }, path: ['summary'] };

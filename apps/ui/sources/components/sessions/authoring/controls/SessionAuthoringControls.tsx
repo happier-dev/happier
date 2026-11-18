@@ -512,6 +512,11 @@ export type SessionAuthoringControlsProps = Readonly<{
      * one field, `agentTarget`.
      */
     resetOverride?: Readonly<{ label: string; onResetField: (field: SessionAuthoringFieldId) => void }>;
+    /**
+     * An unset field inherits its parent's value when it runs (a workflow's own fields inherit the Machine's), so an
+     * unset Approval names the default it inherits rather than its field. A subject with `resetOverride` inherits too.
+     */
+    inheritsUnsetValues?: boolean;
     /** The host draws the engine chip beside these chips (a step card's header), so it alone says "Choose an agent". */
     engineChipBeside?: boolean;
     /** Which fields to render, in the caller's order. */
@@ -799,8 +804,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 if (field === 'approvalProfileId') return inRow(field, withReset(field, <SessionAuthoringApprovalProfileField key={field}
                     value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
                     machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
-                    // A host whose unset values inherit (it offers a way back to its parent's) names the inherited default.
-                    {...(props.resetOverride === undefined ? {} : { inherited: true })}
+                    // A host whose unset values inherit (a workflow, or a step with a way back to its workflow's) names the
+                    // inherited default (WF-ACCEPT-1118B item 5).
+                    {...(props.inheritsUnsetValues === true || props.resetOverride !== undefined ? { inherited: true } : {})}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
                     titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />));
                 if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;

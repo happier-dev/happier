@@ -290,6 +290,8 @@ export function WorkflowHowAndWhereCard(
             </Text>
             <SessionAuthoringControls
               presentation="selects"
+              // The workflow's unset fields follow the Machine's defaults when a step runs (lab round 1116b bhow-card).
+              inheritsUnsetValues
               disabled={readOnly}
               fields={props.showsWorkflowAgent ? SESSION_COMPOSER_CHIP_FIELDS : SESSION_FIELDS_WITHOUT_ENGINE}
               values={values}

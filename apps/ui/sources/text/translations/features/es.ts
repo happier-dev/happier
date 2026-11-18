@@ -19602,7 +19602,7 @@ const es: WorkflowTriggersCopy = {
         turnOff: 'Desactivar',
         turnOn: 'Activar',
         deleteTrigger: 'Eliminar disparador',
-        repeat: 'Repetir',
+        repeat: 'Se repite',
         everyHour: 'Cada hora',
         everyDay: 'Cada día',
         weekdays: 'Días laborables',
@@ -20069,6 +20069,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
     editor: {
         namePlaceholder: 'Nombre del flujo de trabajo',
         agentRuntime: 'Entorno de ejecución del agente',
+        sessionType: 'Tipo de sesión',
         approvalProfile: "Perfil de aprobación",
         firstPromptTitle: '¿Qué debería ocurrir primero?',
         firstPromptBody: 'Un solo prompt ya es un flujo de trabajo. Añade pasos cuando los necesites.',
@@ -20095,6 +20096,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         loadFailedTitle: 'No se pudo abrir este flujo de trabajo',
         loadFailedBody: 'Ahora mismo no se pudo leer el flujo de trabajo guardado.',
         timeoutTitle: 'Límite de tiempo',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Sin plazo',
         timeoutExplain: 'Milisegundos de espera del resultado de este paso antes de que necesite atención. Déjalo vacío para no fijar plazo.',
         wholeNumberRequired: 'Introduce un número entero de al menos 1.',
@@ -20188,6 +20191,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         explain: 'Lo que devuelve este flujo de trabajo al terminar.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Informa',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Resultado',
     },
 
     conversation: {

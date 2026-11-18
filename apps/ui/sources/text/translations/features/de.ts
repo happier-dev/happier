@@ -19160,7 +19160,7 @@ const de: WorkflowTriggersCopy = {
         turnOff: 'Ausschalten',
         turnOn: 'Einschalten',
         deleteTrigger: 'Auslöser löschen',
-        repeat: 'Wiederholen',
+        repeat: 'Wiederholt sich',
         everyHour: 'Stündlich',
         everyDay: 'Täglich',
         weekdays: 'Werktags',
@@ -19627,6 +19627,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
     editor: {
         namePlaceholder: 'Workflow-Name',
         agentRuntime: 'Agent-Laufzeit',
+        sessionType: 'Sitzungstyp',
         approvalProfile: "Freigabeprofil",
         firstPromptTitle: 'Was soll zuerst passieren?',
         firstPromptBody: 'Ein einzelner Prompt ist bereits ein Workflow. Füg Schritte hinzu, wenn du sie brauchst.',
@@ -19653,6 +19654,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         loadFailedTitle: 'Dieser Workflow lässt sich nicht öffnen',
         loadFailedBody: 'Der gespeicherte Workflow konnte gerade nicht gelesen werden.',
         timeoutTitle: 'Zeitlimit',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Keine Frist',
         timeoutExplain: 'Millisekunden, die auf das Ergebnis dieses Schritts gewartet wird, bevor er Aufmerksamkeit braucht. Leer lassen für keine Frist.',
         wholeNumberRequired: 'Gib eine ganze Zahl von mindestens 1 ein.',
@@ -19746,6 +19749,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         explain: 'Was dieser Workflow beim Abschluss zurückgibt.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Meldet',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Ergebnis',
     },
 
     conversation: {

@@ -287,7 +287,8 @@ export function resolveSessionAuthoringFieldTitle(
         case 'profileId': return t('agentInput.profile.sectionTitle');
         case 'approvalProfileId': return t('workflows.editor.approvalProfile');
         case 'sessionConfigOptionOverrides': return t('agentInput.actionMenu.settings');
-        case 'transcriptStorage': return t('settingsSession.defaultStorage.title');
+        // This Session's type, not the settings' default for new ones: it fits the label track (WF-ACCEPT-1118B item 6).
+        case 'transcriptStorage': return t('workflows.editor.sessionType');
         case 'capabilitySelection': return t('capabilities.session.sheet.title');
         case 'connectedServices': return t('connectedServices.authChip.label');
         case 'terminal': return t('profiles.tmux.spawnSessionsTitle');

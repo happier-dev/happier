@@ -97,6 +97,11 @@ export const workflowFlowStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
     },
+    editActionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s6,
+    },
     editAction: {
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.button.secondary.tint,
@@ -110,6 +115,10 @@ export const workflowFlowStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+    },
+    markSlot: {
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     /** The step's ordinal numbers the block as the editor does, set before its mark. */
     ordinal: {
@@ -217,14 +226,18 @@ function createNodeSlots(props: FlowNodeInputs) {
                     <Text style={styles.ordinalText}>{node.stepOrdinal}</Text>
                 </View>
             );
+            const markSize = compact ? 22 : 28;
             // The ordinal is set apart, ahead of the mark, so a logo drawn without a tile is never covered.
             return (
                 <View style={styles.leadingRow}>
                     {ordinal}
+                    {/* A kind's glyph sits in the Agent mark's slot, so every row's name starts on one edge (WF-ACCEPT-1118B item 8). */}
                     {glyph !== undefined
-                        ? <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                        ? <View style={[styles.markSlot, { width: markSize, height: markSize }]}>
+                            <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                        </View>
                         : node.kind === 'wait' ? null
-                            : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={compact ? 22 : 28} />}
+                            : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={markSize} />}
                 </View>
             );
         })(),

@@ -90,11 +90,14 @@ export function SessionAuthoringChipDescriptorTrigger(props: Readonly<{
     if (props.trigger !== 'select') return <>{props.chip.render(props.renderContext)}</>;
     const popover = props.chip.collapsedContentPopover;
     const title = popover?.title ?? '';
+    // A descriptor with a value of its own reads as field and value ("Runs through: ChatGPT · Work"), so a row of
+    // selects keeps each one short (WF-ACCEPT-1118B item 5: the How card's Who runs it holds one line at 1440).
+    const fieldValue = popover?.fieldValue;
     return (
         <SessionAuthoringFieldSelectTrigger
             anchorRef={props.anchorRef}
-            title={title}
-            label={popover?.label ?? title}
+            title={fieldValue === undefined ? title : props.chip.placement?.title ?? title}
+            label={fieldValue ?? popover?.label ?? title}
             leading={popover?.icon?.(theme.colors.text.secondary)}
             open={props.open}
             onPress={props.onToggle}

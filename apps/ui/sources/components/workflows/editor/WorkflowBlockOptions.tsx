@@ -7,10 +7,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { Switch } from '@/components/ui/forms/Switch';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -50,7 +51,7 @@ import { formatWorkflowContinuitySummary, useWorkflowContinuedSessionLabel, Work
 import { formatWorkflowGroupSentence, WorkflowGroupOptions } from './WorkflowGroupEditor';
 import type { WorkflowInspectorProps } from './WorkflowInspector';
 import { formatWorkflowLoopSentence, WorkflowLoopOptions } from './WorkflowLoopEditor';
-import { formatWorkflowResultSummary } from './WorkflowStepDataEditor';
+import { formatWorkflowResultSummary, WorkflowFieldPair } from './WorkflowStepDataEditor';
 import { WorkflowResultFieldsEditor } from './WorkflowResultFieldsEditor';
 import {
     WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE,
@@ -131,6 +132,23 @@ const styles = StyleSheet.create((theme) => ({
     },
     trailing: {
         marginLeft: 'auto',
+    },
+    /** A row's control and its note stack in the control column, each at its own width. */
+    trackControl: {
+        alignItems: 'flex-start',
+        gap: theme.space.s4,
+        minWidth: 0,
+    },
+    pushValue: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        maxWidth: '100%',
+    },
+    pushValueText: {
+        ...Typography.variant('label'),
+        color: theme.colors.text.primary,
+        flexShrink: 1,
     },
 }));
 
@@ -274,6 +292,53 @@ export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ 
     );
 }
 
+/** A block's Run when: the default ("success") is no value of its own. */
+function writeWorkflowRunWhen(draft: WorkflowEditorDraft, blockId: string, next: WorkflowRunWhenV1): WorkflowEditorDraft {
+    return updateWorkflowBlock(draft, blockId, (current) => {
+        if (next !== 'success') return { ...current, runWhen: next };
+        const { runWhen: _dropped, ...rest } = current as WorkflowBlock & { runWhen?: WorkflowRunWhenV1 };
+        return rest as WorkflowBlock;
+    });
+}
+
+/** One Step options row on the label track (lab round 1116b "This step"): its label, then its control on the control column. */
+function StepOptionRow(props: Readonly<{
+    trackKey: string;
+    label: string;
+    marker?: React.ReactNode;
+    testID?: string;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    return (
+        <SectionContentRow {...(props.testID === undefined ? {} : { testID: `${props.testID}-row` })}>
+            <View style={workflowEditorStyles.actionFieldRow} {...(props.testID === undefined ? {} : { testID: props.testID })}>
+                <WorkflowFieldPair label={props.label} trackKey={props.trackKey} {...(props.marker === undefined ? {} : { marker: props.marker })}>
+                    <View style={styles.trackControl}>{props.children}</View>
+                </WorkflowFieldPair>
+            </View>
+        </SectionContentRow>
+    );
+}
+
+/** A row's value that opens its editor in the same surface ("Always ›", "Verdict, reason ›"). */
+function StepOptionPushValue(props: Readonly<{ label: string; value: string; onPress: () => void; testID: string }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return (
+        <HappierPressable
+            testID={props.testID}
+            accessibilityRole="button"
+            accessibilityLabel={`${props.label}: ${props.value}`}
+            onPress={props.onPress}
+            style={(state) => [styles.pushValue, workflowEditorStyles.actionTarget,
+                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+        >
+            <Text style={styles.pushValueText} numberOfLines={2}>{props.value}</Text>
+            <Icon name="caret-right" size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} />
+        </HappierPressable>
+    );
+}
+
 /** Whether a block follows another in its list, so the previous step's outcome can decide it. */
 function followsAnotherBlock(draft: WorkflowEditorDraft, blockId: string): boolean {
     const ref = findWorkflowBlockListRef(draft, blockId);
@@ -304,11 +369,7 @@ function WhenItRunsGroup(props: Readonly<{
                 <WorkflowRunWhenOption
                     value={runWhen}
                     testIDPrefix={`${testIDPrefix}-run-when`}
-                    onChange={(next: WorkflowRunWhenV1) => onChange(updateWorkflowBlock(draft, block.id, (current) => {
-                        if (next !== 'success') return { ...current, runWhen: next };
-                        const { runWhen: _dropped, ...rest } = current as WorkflowBlock & { runWhen?: WorkflowRunWhenV1 };
-                        return rest as WorkflowBlock;
-                    }))}
+                    onChange={(next: WorkflowRunWhenV1) => onChange(writeWorkflowRunWhen(draft, block.id, next))}
                 />
             ) : null}
             <OnlyRunWhenRow draft={draft} block={block} onOpen={props.onOpenCondition} testIDPrefix={testIDPrefix} />
@@ -595,30 +656,38 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
             </ItemGroup>
 
             <ItemGroup title={t('workflows.page.sections.whereTitle')}>
-                <SegmentedChoiceItem<WorkflowLeafExecutionTargetV1['kind']>
-                    testIDPrefix={`${testIDPrefix}-runs-in`}
-                    title={t('workflows.page.inspector.runsIn')}
-                    {...(ownTarget === undefined && sessionBound ? { subtitle: t('workflows.page.inspector.runsInBoundBySession') } : {})}
-                    titleMeta={<WorkflowFieldInheritance fieldId={`${testIDPrefix}-runs-in`}
+                <StepOptionRow trackKey="runs-in" label={t('workflows.page.inspector.runsIn')} testID={`${testIDPrefix}-runs-in`}
+                    marker={<WorkflowFieldInheritance fieldId={`${testIDPrefix}-runs-in`}
                         inheritance={ownTarget === undefined ? 'inherited' : 'override'}
-                        onReset={() => onChange(setWorkflowStepExecutionTarget(draft, step.id, undefined))} />}
-                    valueSource={ownTarget === undefined ? 'inherited' : 'set'}
-                    value={ownTarget ?? workflowTarget}
-                    // Choosing a value pins it, even one equal to the workflow's (F24); "Use workflow's" clears it.
-                    onChange={(next) => onChange(setWorkflowStepExecutionTarget(draft, step.id, next))}
-                    accessoryLayout="stacked"
-                    options={[
-                        { id: 'session', label: runsInLabel('session') },
-                        {
-                            id: 'detached_run',
-                            label: runsInLabel('detached_run'),
-                            // An unavailable class stays visible with its reason; never downgraded.
-                            ...(detachedUnavailable === undefined || detachedUnavailable.available
-                                ? {}
-                                : { unavailableReason: t(`workflows.page.unavailable.${detachedUnavailable.unavailableReason}`) }),
-                        },
-                    ]}
-                />
+                        onReset={() => onChange(setWorkflowStepExecutionTarget(draft, step.id, undefined))} />}>
+                    <SegmentedTabBar<WorkflowLeafExecutionTargetV1['kind']>
+                        tabs={[
+                            { id: 'session', label: runsInLabel('session') },
+                            {
+                                id: 'detached_run',
+                                label: runsInLabel('detached_run'),
+                                // An unavailable class stays visible with its reason; never downgraded.
+                                ...(detachedUnavailable === undefined || detachedUnavailable.available ? {} : {
+                                    disabled: true,
+                                    unavailableReason: t(`workflows.page.unavailable.${detachedUnavailable.unavailableReason}`),
+                                }),
+                            },
+                        ]}
+                        activeTabId={ownTarget ?? workflowTarget}
+                        valueSource={ownTarget === undefined ? 'inherited' : 'set'}
+                        // Choosing a value pins it, even one equal to the workflow's (F24); "Use workflow's" clears it.
+                        onSelectTab={(next) => onChange(setWorkflowStepExecutionTarget(draft, step.id, next))}
+                        segmentSizing="content"
+                        accessibilityLabel={t('workflows.page.inspector.runsIn')}
+                        role="radiogroup"
+                        testIDPrefix={`${testIDPrefix}-runs-in`}
+                    />
+                    {ownTarget === undefined && sessionBound ? (
+                        <Text style={workflowEditorStyles.metaText}>{t('workflows.page.inspector.runsInBoundBySession')}</Text>
+                    ) : detachedUnavailable !== undefined && !detachedUnavailable.available ? (
+                        <Text style={workflowEditorStyles.metaText}>{t(`workflows.page.unavailable.${detachedUnavailable.unavailableReason}`)}</Text>
+                    ) : null}
+                </StepOptionRow>
                 {/* Workspace is the sessions' checkout picker at step scope (round 1116b change a), on the label track. */}
                 <SectionContentRow testID={`${testIDPrefix}-workspace-row`}>
                     {renderWorkflowCardFieldRow('workspace', t('workflows.workspace.title'), (
@@ -632,9 +701,9 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         />
                     ))}
                 </SectionContentRow>
-                {/* The controls are page rows with their own inset: a content row around them indents a second grid. */}
-                <View testID={`${testIDPrefix}-continuity-row`}>
+                <SectionContentRow testID={`${testIDPrefix}-continuity-row`}>
                     <WorkflowContinuityControls
+                        layout="track"
                         draft={draft}
                         consumerBlockId={step.id}
                         conversation={step.execution?.conversation}
@@ -650,31 +719,41 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         })}
                         testIDPrefix={`${testIDPrefix}-continuity`}
                     />
-                </View>
+                </SectionContentRow>
             </ItemGroup>
 
-            <WhenItRunsGroup draft={draft} block={step} onChange={onChange}
-                onOpenCondition={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
-
+            {/* This step (lab round 1116b bstep-v-Aopen): when it runs, then its own choices, each on the label track. */}
             <ItemGroup title={t('workflows.page.sections.thisStepTitle')}>
-                <Item
-                    testID={`${testIDPrefix}-review`}
-                    title={t('workflows.page.inspector.reviewTitle')}
-                    subtitle={insideEvaluator
-                        ? `${t('workflows.page.inspector.reviewDescription')} ${t('workflows.page.inspector.reviewEvaluator')}`
-                        : t('workflows.page.inspector.reviewDescription')}
-                    // The consequence is the decision here; it reads whole, never clipped (lab E1o).
-                    subtitleLines={0}
-                    showChevron={false}
-                    rightElement={(
-                        <Switch
-                            testID={`${testIDPrefix}-review-switch`}
-                            accessibilityLabel={t('workflows.page.inspector.reviewTitle')}
-                            value={step.pauseForReview === true}
-                            onValueChange={(on) => onChange(setWorkflowLeafPauseForReview(draft, step.id, on))}
+                {step.runWhen !== undefined || followsAnotherBlock(draft, step.id) ? (
+                    <SectionContentRow>
+                        <WorkflowRunWhenOption
+                            layout="track"
+                            value={step.runWhen}
+                            testIDPrefix={`${testIDPrefix}-run-when`}
+                            onChange={(next) => onChange(writeWorkflowRunWhen(draft, step.id, next))}
                         />
-                    )}
-                />
+                    </SectionContentRow>
+                ) : null}
+                <StepOptionRow trackKey="only-when" label={t('workflows.condition.onlyWhen')}>
+                    <StepOptionPushValue
+                        testID={`${testIDPrefix}-only-when`}
+                        label={t('workflows.condition.onlyWhen')}
+                        value={step.onlyWhen === undefined ? t('workflows.condition.always') : formatWorkflowConditionSentence(draft, step.onlyWhen)}
+                        onPress={() => props.onOpenPage('condition')}
+                    />
+                </StepOptionRow>
+                <StepOptionRow trackKey="review" label={t('workflows.page.inspector.reviewTitle')} testID={`${testIDPrefix}-review`}>
+                    <Switch
+                        testID={`${testIDPrefix}-review-switch`}
+                        accessibilityLabel={t('workflows.page.inspector.reviewTitle')}
+                        value={step.pauseForReview === true}
+                        onValueChange={(on) => onChange(setWorkflowLeafPauseForReview(draft, step.id, on))}
+                    />
+                    {/* The consequence is the decision here; it reads whole, never clipped (lab E1o). */}
+                    <Text style={workflowEditorStyles.metaText}>{insideEvaluator
+                        ? `${t('workflows.page.inspector.reviewDescription')} ${t('workflows.page.inspector.reviewEvaluator')}`
+                        : t('workflows.page.inspector.reviewDescription')}</Text>
+                </StepOptionRow>
                 <SectionContentRow testID={`${testIDPrefix}-timeout-row`}>
                     <WorkflowStepTimeoutField
                         timeoutMs={step.timeoutMs}
@@ -682,12 +761,14 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         testIDPrefix={testIDPrefix}
                     />
                 </SectionContentRow>
-                <Item
-                    testID={`${testIDPrefix}-result`}
-                    title={t('workflows.page.inspector.resultTitle')}
-                    subtitle={formatWorkflowResultSummary(step.result)}
-                    onPress={() => props.onOpenPage('result')}
-                />
+                <StepOptionRow trackKey="result" label={t('workflows.page.inspector.resultTitle')}>
+                    <StepOptionPushValue
+                        testID={`${testIDPrefix}-result`}
+                        label={t('workflows.page.inspector.resultTitle')}
+                        value={formatWorkflowResultSummary(step.result)}
+                        onPress={() => props.onOpenPage('result')}
+                    />
+                </StepOptionRow>
                 {/* Adding an input lives with Result (named results), not on the step's footer, so
                     selecting a step never reveals a row (DESIGN-7 N27). The new input is edited in
                     the document, where bound inputs read. */}

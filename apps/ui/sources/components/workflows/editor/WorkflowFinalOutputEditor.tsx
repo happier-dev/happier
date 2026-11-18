@@ -13,7 +13,7 @@ import { listWorkflowFinalOutputOptions } from '@/sync/domains/workflows/workflo
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { formatWorkflowValueReference, workflowResultFieldText } from '../presentation/workflowValuePresentation';
 import { WorkflowSentenceChip } from '../sentence/WorkflowSentenceChip';
 import { WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
 
@@ -58,10 +58,12 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                     ...(unavailable && selected ? [{ id: `result:${selected.producer.blockId}`, title: t('workflows.contentUnavailable'),
                         icon: <Icon name="check-circle" />, category: t('workflows.input.stepResults'), disabled: true }] : []),
                 ]}
+                // The menu is as wide as its rows (lab round 1116c sent-v-result), in Steps as in the Sentence clause,
+                // never the page row's width (WF-ACCEPT-1118B item 4).
+                matchTriggerWidth={false}
                 {...(props.presentation === 'chip' ? {
                     popoverPhonePresentation: 'sheet' as const,
                     popoverAccessibilityLabel: t('workflows.sentence.reportsSheet'),
-                    matchTriggerWidth: false,
                 } : {})}
                 trigger={({ toggle }) => props.presentation === 'chip' ? (
                     <WorkflowSentenceChip
@@ -105,7 +107,7 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                 // The chosen result's field, on one line under the rows (lab round 1116c `svr-f`).
                 footer={selected === undefined ? null : (
                     <View style={styles.footer}>
-                        <Text style={styles.footerLabel}>{t('workflows.finalOutput.fieldPath')}</Text>
+                        <Text style={styles.footerLabel}>{workflowResultFieldText('field')}</Text>
                         <View style={styles.footerField}>
                             <WorkflowResultFieldPathInput
                                 draft={props.draft}

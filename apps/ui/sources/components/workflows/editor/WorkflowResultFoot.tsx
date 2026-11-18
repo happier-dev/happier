@@ -105,7 +105,7 @@ export function WorkflowResultFoot(
               accessibilityRole="header"
               style={workflowEditorStyles.headingName}
             >
-              {t('workflows.page.inspector.resultTitle')}
+              {t('workflows.finalOutput.sectionTitle')}
             </Text>
           </View>
           <View style={workflowEditorStyles.actionFieldRow}>

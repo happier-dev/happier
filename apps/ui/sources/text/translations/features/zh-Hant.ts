@@ -20007,6 +20007,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
     editor: {
         namePlaceholder: '工作流程名稱',
         agentRuntime: '智慧代理執行環境',
+        sessionType: '工作階段類型',
         approvalProfile: "核准設定檔",
         firstPromptTitle: '第一步要做什麼？',
         firstPromptBody: '一個提示詞就是一個工作流程。需要時再加入步驟。',
@@ -20033,6 +20034,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         loadFailedTitle: '無法開啟此工作流程',
         loadFailedBody: '目前無法讀取已儲存的工作流程。',
         timeoutTitle: '時間限制',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: '毫秒',
         noDeadline: '無期限',
         timeoutExplain: '等待此步驟結果的毫秒數，超過後將需要關注。留空表示沒有期限。',
         wholeNumberRequired: '請輸入不小於 1 的整數。',
@@ -20126,6 +20129,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         explain: '這個工作流程結束時回傳的內容。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '報告',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: '結果',
     },
 
     conversation: {

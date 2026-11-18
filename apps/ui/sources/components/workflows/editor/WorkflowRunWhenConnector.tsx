@@ -1,10 +1,14 @@
 import * as React from 'react';
 import { WorkflowRunWhenV1Schema, type WorkflowRunWhenV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
+import { View } from 'react-native';
+
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowFieldPair } from './WorkflowStepDataEditor';
 
 /**
  * A block's run-when edge (D9): which outcome of the previous step lets it run. The coordinator, not
@@ -29,16 +33,35 @@ export function WorkflowRunWhenCaption(props: Readonly<{ value: WorkflowRunWhenV
 export function WorkflowRunWhenOption(props: Readonly<{
     value: WorkflowRunWhenV1 | undefined;
     onChange: (value: WorkflowRunWhenV1) => void;
+    /** `item` (default): a settings row. `track`: its segments beside the label on the options' label track. */
+    layout?: 'item' | 'track';
     testIDPrefix: string;
 }>): React.ReactElement {
+    const options = WorkflowRunWhenV1Schema.options.map(id => ({ id, label: id === 'failure' ? t('workflows.runWhen.failure')
+        : id === 'always' ? t('workflows.runWhen.always') : t('workflows.runWhen.success') }));
+    if (props.layout === 'track') return (
+        <View style={workflowEditorStyles.actionFieldRow}>
+            <WorkflowFieldPair label={t('workflows.runWhen.title')} trackKey="run-when">
+                <SegmentedTabBar<WorkflowRunWhenV1>
+                    tabs={options}
+                    activeTabId={props.value ?? 'success'}
+                    onSelectTab={props.onChange}
+                    segmentSizing="content"
+                    accessibilityLabel={t('workflows.runWhen.title')}
+                    role="radiogroup"
+                    testIDPrefix={props.testIDPrefix}
+                />
+                <Text style={workflowEditorStyles.metaText}>{t('workflows.runWhen.previousStep')}</Text>
+            </WorkflowFieldPair>
+        </View>
+    );
     return (
         <SegmentedChoiceItem<WorkflowRunWhenV1>
             title={t('workflows.runWhen.title')}
             subtitle={t('workflows.runWhen.previousStep')}
             value={props.value ?? 'success'}
             testIDPrefix={props.testIDPrefix}
-            options={WorkflowRunWhenV1Schema.options.map(id => ({ id, label: id === 'failure' ? t('workflows.runWhen.failure')
-                : id === 'always' ? t('workflows.runWhen.always') : t('workflows.runWhen.success') }))}
+            options={options}
             onChange={props.onChange}
         />
     );

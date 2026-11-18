@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import {
@@ -178,7 +180,11 @@ export function WorkflowFlowView(props: Readonly<{
                         pressed ? styles.occurrencePressed : null,
                         focusRingStyle({ focused, color: theme.colors.border.focus })]}
                 >
-                    <Text style={styles.editAction}>{editLabel}</Text>
+                    {/* An action, not a heading: its mark says it opens the selected step (WF-ACCEPT-1118B item 8). */}
+                    <View style={styles.editActionRow}>
+                        <Icon name="pencil-simple" size={ICON_SIZE.xs} color={theme.colors.button.secondary.tint} />
+                        <Text style={styles.editAction}>{editLabel}</Text>
+                    </View>
                 </HappierPressable>
             )}
         />

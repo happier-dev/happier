@@ -295,6 +295,11 @@ export type AgentInputExtraActionChip = Readonly<{
     collapsedContentPopover?: Readonly<{
         title: string;
         label?: string | null;
+        /**
+         * The value alone ("ChatGPT · Work"), for a field select that names its field apart from it; `label` keeps the
+         * chip's whole phrase ("Runs through ChatGPT · Work"). Absent: the select shows `label`.
+         */
+        fieldValue?: string;
         /** Optional menu-row name when its visible fallback label is not descriptive enough. */
         accessibilityLabel?: string;
         icon?: (tint: string) => React.ReactNode;

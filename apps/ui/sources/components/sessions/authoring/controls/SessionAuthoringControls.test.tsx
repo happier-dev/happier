@@ -657,6 +657,18 @@ describe('SessionAuthoringControls', () => {
     await selects.screen.unmount();
   });
 
+  // WF-ACCEPT-1118B item 5 (lab round 1116b bhow-card): a workflow's unset Approval inherits the Machine's default, so
+  // its select names that value, as a step's chip does; the composer's empty field keeps naming its field (QA-SHELL-1114 F3).
+  it('names the inherited Machine default for an unset Approval where unset values inherit, and the field otherwise', async () => {
+    const inherits = await renderControls({ presentation: 'selects', fields: ['approvalProfileId'], values: {}, inheritsUnsetValues: true });
+    expect(inherits.screen.getTextContent()).toContain('workflows.triggers.guided.profile.machineDefault');
+    expect(inherits.screen.getTextContent()).not.toContain('workflows.triggers.guided.profile.title');
+    await inherits.screen.unmount();
+    const composer = await renderControls({ presentation: 'chips', fields: ['approvalProfileId'], values: {} });
+    expect(composer.screen.getTextContent()).toContain('workflows.triggers.guided.profile.title');
+    await composer.screen.unmount();
+  });
+
   it('keeps a field select\'s choices inside the panel that holds the selects', async () => {
     const { SessionAuthoringControls } = await import('./SessionAuthoringControls');
     const { PopoverBoundaryProvider } = await import('@/components/ui/popover/PopoverBoundary');

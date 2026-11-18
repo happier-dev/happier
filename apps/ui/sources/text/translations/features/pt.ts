@@ -19652,7 +19652,7 @@ const pt: WorkflowTriggersCopy = {
         turnOff: 'Desligar',
         turnOn: 'Ligar',
         deleteTrigger: 'Excluir gatilho',
-        repeat: 'Repetir',
+        repeat: 'Repete-se',
         everyHour: 'A cada hora',
         everyDay: 'Todos os dias',
         weekdays: 'Dias úteis',
@@ -20119,6 +20119,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
     editor: {
         namePlaceholder: 'Nome do fluxo de trabalho',
         agentRuntime: 'Runtime do agente',
+        sessionType: 'Tipo de sessão',
         approvalProfile: "Perfil de aprovação",
         firstPromptTitle: 'O que deve acontecer primeiro?',
         firstPromptBody: 'Um único prompt já é um fluxo de trabalho. Adicione etapas quando precisar.',
@@ -20145,6 +20146,8 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         loadFailedTitle: 'Não foi possível abrir este fluxo de trabalho',
         loadFailedBody: 'De momento não foi possível ler o fluxo de trabalho guardado.',
         timeoutTitle: 'Limite de tempo',
+        /** The unit after a set time limit's number. */
+        timeoutUnit: 'ms',
         noDeadline: 'Sem prazo',
         timeoutExplain: 'Milissegundos de espera pelo resultado desta etapa antes de precisar de atenção. Deixe vazio para não definir prazo.',
         wholeNumberRequired: 'Digite um número inteiro de pelo menos 1.',
@@ -20238,6 +20241,8 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         explain: 'O que este fluxo de trabalho devolve quando termina.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Reporta',
+        /** The page-foot section's heading (a step's own row says what it returns). */
+        sectionTitle: 'Resultado',
     },
 
     conversation: {
