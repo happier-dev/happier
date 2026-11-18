@@ -1,5 +1,5 @@
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
@@ -61,13 +61,15 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
         if (resolved.kind === 'missing' && input.allowUnassociated && input.address.workspaceId === undefined) return null;
         if (input.address.workspaceId === undefined) return fail(resolved.kind === 'ambiguous' ? 'project_workspace_ambiguous' : 'project_workspace_unavailable');
         const identity = resolveWorkspaceRefV1(workspaceRefs, { serverId: input.serverId, id: input.address.workspaceId }, context);
-        return fail(identity.kind === 'resolved' && identity.ref.projectKey ? 'project_workspace_changed' : 'project_workspace_unavailable');
+        return fail(identity.kind === 'resolved' ? 'project_workspace_changed' : 'project_workspace_unavailable');
     }
     const workspace = resolved.ref;
-    if (!workspace.projectKey) {
+    // A cold root lookup only opts into a Project when it already has a stable anchor.
+    if (!workspace.projectKey && input.address.workspaceId === undefined) {
         if (input.allowProjectless) return { workspace, project: null };
-        if (input.allowUnassociated && input.address.workspaceId === undefined) return null;
+        if (input.allowUnassociated) return null;
         return fail('project_workspace_unavailable');
     }
-    return { workspace, project: { serverId: workspace.serverId, projectId: workspace.projectKey } };
+    const { serverId, projectKey } = projectWorkspaceRefV1(workspace);
+    return { workspace, project: { serverId, projectId: projectKey } };
 }

@@ -50,7 +50,7 @@ describe('preparation accepted workspace association', () => {
             allowUnassociated: true, signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' });
     });
 
-    it('does not activate a Project for an accepted Workspace that has no Project association', async () => {
+    it('resolves an explicitly selected self Project without activating an ordinary cold root', async () => {
         const key = { kind: 'workspace-ref', serverId: 'home', id: 'ordinary-workspace' };
         mockProjectAccountRowsHttpBoundary([{
             key, revision: 1, content: { t: 'plain', v: { key, value: {
@@ -61,7 +61,7 @@ describe('preparation accepted workspace association', () => {
             allowUnassociated: true as const };
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).resolves.toBeNull();
         await expect(resolveProjectSetupAcceptedWorkspace({ ...input, address: { ...launch.address, workspaceId: key.id } }))
-            .rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+            .resolves.toMatchObject({ workspace: { id: key.id }, project: { serverId: 'home', projectId: key.id } });
         await expect(resolveProjectSetupAcceptedWorkspace({ ...launch, allowProjectless: true })).resolves.toMatchObject({
             workspace: { id: key.id, rootPath: '/ordinary-folder' }, project: null,
         });
