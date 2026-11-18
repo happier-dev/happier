@@ -35,6 +35,11 @@ const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
 /** A menu that is not tied to its trigger's width reads as a menu, not a sheet: this is its widest. */
 export const DROPDOWN_MENU_MAX_WIDTH_PX = 320;
 /**
+ * A menu that hangs from a chip or button stands this far from it (WF-ACCEPT-1118B item 9, as the filter chip's own
+ * chooser does); a field's menu, matched to the field's width, hangs flush from the field.
+ */
+const DROPDOWN_MENU_TRIGGER_GAP_PX = 6;
+/**
  * A field's menu whose rows explain themselves (a subtitle under each choice) needs room to read them: a narrow
  * field hangs it at least this wide, from the edge facing the room (lab machine-sandboxes-1115 F1, 440).
  */
@@ -901,7 +906,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     anchor={props.popoverAnchor}
                     autoFocusOnOpen
                     placement={requestedPlacement}
-                    gap={props.gap ?? 0}
+                    gap={props.gap ?? (matchTriggerWidth ? 0 : DROPDOWN_MENU_TRIGGER_GAP_PX)}
                     maxHeightCap={maxHeightCap}
                     placementMinSpace={placementMinSpace}
                     maxWidthCap={maxWidthCap}

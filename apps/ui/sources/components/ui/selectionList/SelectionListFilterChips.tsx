@@ -147,6 +147,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     onPress={pressFromUi}
                     style={(state) => [
                         styles.chip,
+                        filter.muted && !filter.active ? styles.chipMuted : null,
                         filter.active ? { borderColor: theme.colors.text.link } : null,
                         state.pressed ? styles.chipPressed : null,
                         { backgroundColor: paintColor(state.pressed ? theme.colors.surface.pressed : toggledOn ? theme.colors.surface.selected : theme.colors.surface.base) },
@@ -296,6 +297,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     chip: {
         borderColor: theme.colors.border.strong,
         backgroundColor: theme.colors.surface.base,
+    },
+    // An inherited or placeholder value (`muted`) reads quiet beside the chips that say a choice (WF-ACCEPT-1118B item 9).
+    chipMuted: {
+        borderColor: theme.colors.border.subtle,
     },
     chipToggledOn: {
         borderColor: 'transparent',

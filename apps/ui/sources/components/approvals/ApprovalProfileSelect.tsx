@@ -46,9 +46,13 @@ function machineDefaultTitle(machineDefault: ApprovalProfileMachineDefault): str
     });
 }
 
-/** The one approval-profile choice list: the field's menu, the composer chip and the Machine row offer the same rows. */
+/**
+ * The one approval-profile choice list: the field's menu, the composer chip and the Machine row offer the same rows.
+ * Given the current choice, it marks that row checked, so every menu showing the list says which one is chosen.
+ */
 export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[],
-    testID: string, machineDefault: ApprovalProfileMachineDefault = null, defaultChoices?: ApprovalProfileDefaultChoices): DropdownMenuItem[] {
+    testID: string, machineDefault: ApprovalProfileMachineDefault = null, defaultChoices?: ApprovalProfileDefaultChoices,
+    selectedId?: string | null): DropdownMenuItem[] {
     const result: DropdownMenuItem[] = [];
     if (mode === 'default') {
         if (!defaultChoices) throw new Error('A default approval profile choice needs its inherit and None rows');
@@ -62,7 +66,7 @@ export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, pro
         : { id: APPROVAL_PROFILE_ACCOUNT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_ACCOUNT_OPTION_ID}`,
             title: t('workflows.triggers.guided.profile.accountSettings') });
     for (const profile of profiles) result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title: profile.name });
-    return result;
+    return selectedId == null ? result : result.map((choice) => ({ ...choice, checked: choice.id === selectedId }));
 }
 
 /** The choice row a stored value selects: no profile follows the Machine (a Session) or the Account (a Machine). */
@@ -139,13 +143,13 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     const machineDefault = props.machineDefault ?? null;
     const displayProfiles = props.source.displayProfiles ?? props.source.profiles;
     const defaultChoices = props.mode === 'default' ? props.defaultChoices : undefined;
-    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, displayProfiles, props.testID, machineDefault, defaultChoices),
-        [props.mode, displayProfiles, props.testID, machineDefault, defaultChoices]);
+    const selectedId = approvalProfileChoiceId(props.mode, props.value);
+    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, displayProfiles, props.testID, machineDefault, defaultChoices, selectedId),
+        [props.mode, displayProfiles, props.testID, machineDefault, defaultChoices, selectedId]);
     const displayReady = props.source.ready || props.source.selectedDescriptor !== undefined;
     const missing = displayReady && typeof props.value === 'string'
         && !displayProfiles.some(profile => profile.id === props.value);
     const disabled = props.disabled === true || (!props.source.ready && !props.source.requestCatalog);
-    const selectedId = approvalProfileChoiceId(props.mode, props.value);
     const select = (id: string) => {
         if (disabled || !props.source.ready) return;
         setOpen(false);

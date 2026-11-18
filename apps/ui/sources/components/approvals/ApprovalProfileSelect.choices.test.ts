@@ -30,6 +30,14 @@ describe('approval profile picker resolution', () => {
             .toMatch(/^(workflows\.triggers\.guided\.profile\.machineDefault|Machine default)$/);
     });
 
+    // WF-ACCEPT-1118B item 9: the chip's menu showed no check, so its rows did not say which one was chosen.
+    it('marks the current choice, and only it, as checked', () => {
+        const choices = buildApprovalProfileChoices('session', profiles, 'p', { profile: careful }, undefined, deploy.id);
+        expect(choices.map(choice => [choice.id, choice.checked === true])).toEqual([
+            [APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID, false], [careful.id, false], [deploy.id, true],
+        ]);
+    });
+
     it('reads a Session without its own profile as the Machine default, and writes that choice back as null', () => {
         expect(approvalProfileChoiceId('session', undefined)).toBe(APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID);
         expect(approvalProfileChoiceId('session', null)).toBe(APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID);
