@@ -3,6 +3,7 @@ import * as React from 'react';
 import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { storage } from '@/sync/domains/state/storage';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -33,9 +34,12 @@ import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStore
 import { decideApprovalAsInbox, replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
-// The Home answers Machine list and batched row reads for the one Machine Bob owns.
+let bobInstallationPublicKey: string | null = null;
+
+// The Home answers Machine list and batched row reads for the one installed Machine Bob owns.
 function serveBobMachine(request: Readonly<{ path: string; method: string; body?: unknown }>): Response | undefined {
-    const machine = createPlainMachineRowFixture({ id: 'machine', accountId: 'bob' });
+    const machine = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'bob' }),
+        ...(bobInstallationPublicKey ? { installationPublicKey: bobInstallationPublicKey } : {}) };
     if (request.path === '/v1/machines') return Response.json([machine]);
     if (request.path === '/v1/machines/read-batch' && request.method === 'POST') {
         return createMachineReadBatchResponseFixture(request.body, id => id === machine.id ? machine : null);
@@ -43,9 +47,25 @@ function serveBobMachine(request: Readonly<{ path: string; method: string; body?
     return undefined;
 }
 
+/** Served Bob Homes with their Home identity and the real relay own-Machine terminal Actions use since 297471a2e97. */
+async function serveBobActionHomes(params: Parameters<typeof serveActionHomes>[0]) {
+    bobInstallationPublicKey = await servedMachineActionRelayInstallationPublicKey();
+    let relay: Awaited<ReturnType<typeof createServedTerminalActionRelay>> | null = null;
+    // A present-user Account on an identified Home takes the relay; other Homes keep their incumbent transport.
+    const homes = params.homes.map(home => home.currentAccount && !home.serverIdentityId
+        ? { ...home, serverIdentityId: `srv_${new URL(home.serverUrl).hostname.replace(/[^a-z0-9]/gi, '_')}` } : home);
+    const served = await serveActionHomes({ ...params, homes,
+        route: async request => (relay && await relay.handle(request)) || params.route(request) });
+    relay = await createServedTerminalActionRelay({ machineIds: ['machine'],
+        homes: homes.flatMap(home => home.serverIdentityId ? [{ serverId: served.homes[home.key]!.id, serverUrl: home.serverUrl,
+            serverIdentityId: home.serverIdentityId, accountId: home.accountId }] : []),
+        machineRpc: request => rpc(request) });
+    return served;
+}
+
 async function serveTerminalApprovalHome(serverUrl: string) {
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'bob', encryptionMode: 'plain' });
-    const home = await serveActionHomes({ homes: [{ key: 'session', serverUrl, accountId: 'bob', currentAccount: true,
+    const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl, accountId: 'bob', currentAccount: true,
         settings: { actionsSettingsV1: { v: 1, actions: { 'machines.terminal.open': { approvalRequiredSurfaces: ['ui'] } } } } }],
         route: request => artifacts.handle(`${request.path}${request.url.search}`, { method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
@@ -104,7 +124,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { acknowledgement.resolve(); await hook.unmount(); await home.dispose(); }
     });
     it('opens an explicitly requested machine shell directly with default settings', async () => {
-        const home = await serveActionHomes({ homes: [{ key: 'session', serverUrl: 'https://terminal-direct.test', accountId: 'bob', currentAccount: true }],
+        const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl: 'https://terminal-direct.test', accountId: 'bob', currentAccount: true }],
             route: serveBobMachine });
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
@@ -123,7 +143,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         const serverUrl = `https://terminal-project-refusal-${requiresApproval}.test`;
         const serverIdentityId = `srv_terminal_refusal_${requiresApproval}`;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'bob', encryptionMode: 'plain' });
-        const home = await serveActionHomes({ homes: [{ key: 'session', serverUrl, serverIdentityId, accountId: 'bob', currentAccount: true,
+        const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl, serverIdentityId, accountId: 'bob', currentAccount: true,
             ...(requiresApproval ? { settings: { actionsSettingsV1: { v: 1, actions: {
                 'machines.terminal.open': { approvalRequiredSurfaces: ['ui'] },
             } } } } : {}) }],
@@ -345,7 +365,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { await leaf?.unmount(); await host.unmount(); await home.dispose(); }
     });
     it('requires the same Machine Action admission for a Session package-script process', async () => {
-        const home = await serveActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-terminal-admission.test', accountId: 'bob',
+        const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-terminal-admission.test', accountId: 'bob',
             settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
             route: serveBobMachine });
         try {
@@ -362,7 +382,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { await home.dispose(); }
     });
     it('clears active requester bytes and stops attachment when the applied Home retires', async () => {
-        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-retire.test', accountId: 'bob' }], route: () => undefined });
+        const home = await serveBobActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-retire.test', accountId: 'bob' }], route: () => undefined });
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             const workspace = { serverId: home.homes.project!.id, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
@@ -385,7 +405,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { await home.dispose(); }
     });
     it('opens one admitted requester shell and rejects retired Account interest before another open', async () => {
-        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-admission.test', accountId: 'bob',
+        const home = await serveBobActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-admission.test', accountId: 'bob',
             settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
             route: serveBobMachine });
         try {

@@ -30,6 +30,8 @@ import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deploymen
 import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionResolvedTargetV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '../fixtures/machineFixtures';
@@ -164,7 +166,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     }
 )>) {
     await sodium.ready;
-    const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(27));
+    const installation = readFixtureInstallationKeyPair();
     const projection = createMachineFixture({ id: params.machineId, activeAt: Date.now() });
     const codec = params.encryption ? await params.encryption.openEncryption(null) : null;
     const machine = {
@@ -323,4 +325,76 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             }));
         },
     };
+}
+
+/**
+ * Served Homes' relay for own-Machine Actions that carry a requester invocation (terminal open/restart/
+ * close/list since 297471a2e97): the real mint + execute HTTP boundary per Home × Machine × Action, whose
+ * receiver forwards the opened input to the test's own daemon boundary. Machine rows must carry
+ * `installationPublicKey` from `servedMachineActionRelayInstallationPublicKey()`.
+ */
+export async function createServedMachineActionRelay(params: Readonly<{
+    homes: readonly Readonly<{ serverId: string; serverUrl: string; serverIdentityId: string; accountId: string }>[];
+    machineIds: readonly string[];
+    actionIds: readonly ActionId[];
+    execute: (actionId: ActionId, input: unknown, target: Readonly<{ serverId: string; machineId: string; accountId: string }>) => unknown;
+}>) {
+    const boundaries = new Map<string, ExternalActionAccountHttpBoundary>();
+    await Promise.all(params.homes.flatMap(home => params.machineIds.flatMap(machineId => params.actionIds.map(async actionId => {
+        boundaries.set(`${new URL(home.serverUrl).origin}|${actionId}|${machineId}`, await createExternalActionAccountHttpBoundary({
+            serverUrl: home.serverUrl, serverIdentityId: home.serverIdentityId, accountId: home.accountId, machineId, actionId, tokenEpoch: 0,
+            // The receiving daemon reports its RPC failure as the Action's execution failure.
+            execute: async input => {
+                try { return await params.execute(actionId, input, { serverId: home.serverId, machineId, accountId: home.accountId }); }
+                catch (error) { return { [relayedFailure]: { errorCode: readRpcErrorCode(error) ?? 'action_failed',
+                    error: error instanceof Error ? error.message : 'action_failed' } }; }
+            },
+            failure: result => result && typeof result === 'object' && relayedFailure in result
+                ? (result as { [relayedFailure]: { errorCode: string; error: string } })[relayedFailure] : null }));
+    }))));
+    return {
+        async handle(request: Readonly<{ url: URL; method: string; headers: Headers; body: unknown }>): Promise<Response | null> {
+            const actionId = /^\/v1\/actions\/([^/]+)(?:\/execution-authorization)?$/.exec(request.url.pathname)?.[1];
+            const body = request.body && typeof request.body === 'object' ? request.body as Record<string, unknown> : null;
+            const target = body?.envelope && typeof body.envelope === 'object' ? (body.envelope as Record<string, unknown>).target : body?.target;
+            const machineId = typeof body?.machineId === 'string' ? body.machineId
+                : target && typeof target === 'object' ? (target as Record<string, unknown>).machineId : undefined;
+            const boundary = actionId && typeof machineId === 'string'
+                ? boundaries.get(`${request.url.origin}|${actionId}|${machineId}`) : undefined;
+            return boundary ? boundary.handle(request.url, { method: request.method, headers: request.headers, body: JSON.stringify(request.body) }) : null;
+        },
+    };
+}
+
+const relayedFailure = Symbol('relayedFailure');
+
+const TERMINAL_RELAY_RPC_METHODS = {
+    'machines.terminal.open': RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+    'machines.terminal.restart': RPC_METHODS.DAEMON_TERMINAL_RESTART,
+    'machines.terminal.close': RPC_METHODS.DAEMON_TERMINAL_CLOSE,
+    'machines.terminal.list': RPC_METHODS.DAEMON_TERMINAL_LIST,
+} as const;
+
+/** Own-Machine terminal lifecycle Actions relayed to the test's daemon Machine RPC boundary, as the installed daemon executes them. */
+export function createServedTerminalActionRelay(params: Readonly<{
+    homes: Parameters<typeof createServedMachineActionRelay>[0]['homes'];
+    machineIds: readonly string[];
+    machineRpc: (request: Readonly<{ machineId: string; serverId: string; accountId: string; method: string; payload: unknown }>) => unknown;
+}>) {
+    return createServedMachineActionRelay({ homes: params.homes, machineIds: params.machineIds,
+        actionIds: Object.keys(TERMINAL_RELAY_RPC_METHODS) as ActionId[],
+        execute: (actionId, input, target) => {
+            const { serverId: _serverId, machineId: _machineId, ...payload } = input as Record<string, unknown>;
+            return params.machineRpc({ ...target, method: TERMINAL_RELAY_RPC_METHODS[actionId as keyof typeof TERMINAL_RELAY_RPC_METHODS], payload });
+        } });
+}
+
+/** The deterministic installation key every `createExternalActionAccountHttpBoundary` Machine publishes. */
+export async function servedMachineActionRelayInstallationPublicKey(): Promise<string> {
+    await sodium.ready;
+    return encodeBase64(readFixtureInstallationKeyPair().publicKey, 'base64');
+}
+
+function readFixtureInstallationKeyPair() {
+    return sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(27));
 }

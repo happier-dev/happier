@@ -18,6 +18,7 @@ import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { isRecoverableTerminalRpcError, resolveTerminalAutoRetryDelayMs, TERMINAL_AUTO_RETRY_MAX_ATTEMPTS } from '@/components/sessions/terminal/terminalRpcRecovery';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -258,19 +259,24 @@ describe('useMachineTerminalSession', () => {
                 'action.operations.cancel': ['ui'],
             } },
         };
+        const homeSpecs = [
+            { key: 'cancel', serverUrl: 'https://terminal-cancel.test', serverIdentityId: 'srv_terminal_cancel', accountId: 'terminal-account', currentAccount: true, settings },
+            { key: 'attach', serverUrl: 'https://terminal-attach.test', serverIdentityId: 'srv_terminal_attach', accountId: 'terminal-account', currentAccount: true, settings },
+            { key: 'primary', serverUrl: 'https://terminal-primary.test', serverIdentityId: 'srv_terminal_primary', accountId: 'terminal-account', currentAccount: true, settings },
+        ] as const;
+        const machineIds = ['machine', 'machine-cancel', 'machine-1'];
+        // Installed daemons publish their installation key; own-Machine open/restart/close/list
+        // reach them through Home's real execution-authorization relay.
+        const installationPublicKey = await servedMachineActionRelayInstallationPublicKey();
+        const machineRow = (id: string) => ({ ...createPlainMachineRowFixture({ id, accountId: 'terminal-account' }), installationPublicKey });
+        let relay: Awaited<ReturnType<typeof createServedTerminalActionRelay>> | null = null;
         servedHomes = await serveActionHomes({
-            homes: [
-                { key: 'cancel', serverUrl: 'https://terminal-cancel.test', serverIdentityId: 'srv_terminal_cancel', accountId: 'terminal-account', currentAccount: true, settings },
-                { key: 'attach', serverUrl: 'https://terminal-attach.test', serverIdentityId: 'srv_terminal_attach', accountId: 'terminal-account', currentAccount: true, settings },
-                { key: 'primary', serverUrl: 'https://terminal-primary.test', serverIdentityId: 'srv_terminal_primary', accountId: 'terminal-account', currentAccount: true, settings },
-            ],
-            route: request => request.path === '/v1/machines'
-                ? Response.json(['machine', 'machine-cancel', 'machine-1'].map(id =>
-                    createPlainMachineRowFixture({ id, accountId: 'terminal-account' })))
+            homes: [...homeSpecs],
+            route: async request => (relay && await relay.handle(request)) || (request.path === '/v1/machines'
+                ? Response.json(machineIds.map(machineRow))
                 // Account Machine Actions resolve their target through the batched Machine row read.
                 : request.path === '/v1/machines/read-batch' && request.method === 'POST'
-                ? createMachineReadBatchResponseFixture(request.body, id => ['machine', 'machine-cancel', 'machine-1'].includes(id)
-                    ? createPlainMachineRowFixture({ id, accountId: 'terminal-account' }) : null)
+                ? createMachineReadBatchResponseFixture(request.body, id => machineIds.includes(id) ? machineRow(id) : null)
                 : request.path === '/v1/machines/managed/actions/list'
                 ? Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }))
                 : request.path === '/v1/account/project-rows/list'
@@ -278,9 +284,15 @@ describe('useMachineTerminalSession', () => {
                 : request.path === '/v1/features' || request.path === '/v1/features/authenticated'
                 ? Response.json(createRootLayoutFeaturesResponse({ features: { terminal: {
                     embeddedPty: { enabled: true }, transport: { byteStream: { enabled: byteStreamEnabled } },
-                } } })) : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined,
+                } } })) : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined),
         });
         homeIds = { primary: servedHomes.homes.primary!.id, cancel: servedHomes.homes.cancel!.id, attach: servedHomes.homes.attach!.id };
+        relay = await createServedTerminalActionRelay({
+            homes: homeSpecs.map(home => ({ serverId: servedHomes.homes[home.key]!.id, serverUrl: home.serverUrl,
+                serverIdentityId: home.serverIdentityId, accountId: home.accountId })),
+            machineIds,
+            machineRpc: async request => (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')).machineRpcWithServerScope(request),
+        });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         await refreshTerminalFeatures();
         terminalOps.ensure.mockReset();
