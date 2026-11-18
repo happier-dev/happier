@@ -498,8 +498,12 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // 251 GiB", lab rdDelta-dMachines overlay). On a phone the columns are gone, so line 2 is its one status line
         // (DESIGN "Phones recompose"): why it is quiet, else what needs attention with its one value, else its work.
         // The grid's cards carry their own lines.
-        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem, layout?: Readonly<{ fieldColumns: boolean }>) => layout?.fieldColumns
-            ? <MachineIndexFactsLine item={item} /> : <MachineIndexListLine item={item} /> }),
+        // A wide row with nothing to say there returns no line, so the list draws its name on one centre line.
+        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem, layout?: Readonly<{ fieldColumns: boolean }>) => {
+            if (!layout?.fieldColumns) return <MachineIndexListLine item={item} />;
+            const line = describeMachineIndexFacts(item);
+            return line ? <Text testID={`machines.index.facts.${item.key}`} numberOfLines={1} style={stylesheet.quiet}>{line}</Text> : null;
+        } }),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal says why in its Work cell.
             ...(anyOnline ? [
@@ -567,10 +571,9 @@ const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Rea
 });
 
 /** A wide row's second line: what the machine is (its owner or platform, then cores and memory), never its status. */
-const MachineIndexFactsLine = React.memo(function MachineIndexFactsLine(props: Readonly<{ item: MachineIndexItem }>) {
-    const line = [describeWhere(props.item), props.item.facts].filter(Boolean).join(' · ');
-    return line ? <Text testID={`machines.index.facts.${props.item.key}`} numberOfLines={1} style={stylesheet.quiet}>{line}</Text> : null;
-});
+function describeMachineIndexFacts(item: MachineIndexItem): string | null {
+    return [describeWhere(item), item.facts].filter(Boolean).join(' · ') || null;
+}
 
 /** A card's one status line: the reason it needs you as a sentence, lead word in the attention tone, then its detail. */
 const MachineIndexCardStatus = React.memo(function MachineIndexCardStatus(props: Readonly<{
