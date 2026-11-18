@@ -33,7 +33,7 @@ import {
   flushDevTargetSync,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
-import { inspectDevTargetSync, runDevTargetCommand, runDevTargetDependencyBootstrap } from './executor.mjs';
+import { defaultSpawnProcess as spawnDevTargetProcess, inspectDevTargetSync, runDevTargetCommand, runDevTargetDependencyBootstrap } from './executor.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
 import { retireStackDevTarget } from './retirement.mjs';
 import { waitForExpoMetroRunning } from '../expo/expo.mjs';
@@ -129,6 +129,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
         ...(plan.services.daemon ? { daemon: null } : {}),
       } };
       const diagnostic = { out: '', err: '' };
+      let printed = false;
       let refusal = null;
       let phaseProjection = Promise.resolve();
       let phaseError;
@@ -152,6 +153,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
         controlStdin: true, dependencyAdmission: 'skip', provenance: 'skip',
         signal: cancellation.signal, env, silent: true,
         onLine: ({ stream, line }) => {
+          printed = true;
           const failure = stream === 'stderr' ? parseSourceReloadRefusalLine(line, env) : null;
           if (failure) { refusal ??= failure; return; }
           const sourceTimes = stream === 'stdout' ? parseSourceRuntimeSourceTimesLine(line) : null;
@@ -188,11 +190,9 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
           }
         },
       }, { ...executorDependencies, spawnProcess: input => {
-        const { label, command, args, env: workerEnv, onLine } = input;
-        worker.child = executorDependencies.spawnProcess
-          ? executorDependencies.spawnProcess(input)
-          : spawnProc(label, command, args, workerEnv,
-            { onLine, stdio: ['pipe', 'pipe', 'pipe'], ownedProcessGroup: true, silent: true });
+        // The executor owns its SSH worker's spawn (stdin script frame, process
+        // group); this keeps the child only for the control pipe.
+        worker.child = (executorDependencies.spawnProcess ?? spawnDevTargetProcess)({ ...input, lifetimeStdin: true });
         worker.child.stdin.on('error', () => {});
         return worker.child;
       } });
@@ -200,6 +200,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
       // the target's old /health is still responding.
       await Promise.race([ready, worker.completion.then(result => {
         throw Object.assign(new Error(`[reload] ${plan.target.name} preparation exited before readiness (${result.code ?? result.signal})`
+          + (printed ? '' : `: the remote worker printed nothing before SSH ended${result.diagnosticReason ? ` (${result.diagnosticReason})` : ''}`)
           + formatFailureDiagnostic({
             out: diagnostic.out || result.out || result.stdout,
             err: diagnostic.err || result.err || result.stderr || result.error?.message,

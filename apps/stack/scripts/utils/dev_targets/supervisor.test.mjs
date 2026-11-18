@@ -1821,6 +1821,47 @@ test('remote source preparation refusal leaves the observed incumbent process an
   assert.equal(retained?.startedAt, initial.startedAt);
 });
 
+test('a remote preparation that ends with no output says so in the reload verdict', async (t) => {
+  // 2026-11-18 nl3 incident: the SSH worker exited 255 before the remote side
+  // printed anything, and the verdict carried only "(255)".
+  const { root } = await createTempFixture(t, { prefix: 'hstack-remote-reload-silent-' });
+  const target = { name: 'nl3', platform: 'posix', ssh: 'boundary-ssh', repoDir: join(root, 'remote-repo'),
+    cliHomeDir: join(root, 'remote-home') };
+  const producerStackBaseDir = join(root, 'producer');
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: join(root, 'storage'),
+    HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_DB_PROVIDER: 'sqlite' };
+  const mutagen = resolveDevTargetMutagenRuntime({ stackBaseDir: producerStackBaseDir, sourceDir: repoDir, env });
+  await mkdir(dirname(mutagen.projectFile), { recursive: true });
+  await writeFile(mutagen.projectFile, renderMutagenProject({ sourceDir: repoDir, targets: [target], ownerId: 'producer' }));
+  await assert.rejects(prepareStackDevTargetSourceReload({
+    stackName: 'agent-qa',
+    stackBaseDir: join(root, 'consumer'),
+    repoDir,
+    placement: {
+      authority: { producerStackBaseDir },
+      config: { targets: [target] },
+      targetPlans: [{ target, services: { server: false, daemon: true, expo: false } }],
+    },
+    args: ['--no-server', '--server-url=http://fixture.invalid', '--no-ui'],
+    env,
+    signal: new AbortController().signal,
+    serverRequested: false,
+    sourceStartRequestId: 'remote-silent',
+  }, {
+    runProcess: async () => readySyncResult(target),
+    executorDependencies: {
+      runCaptureResult: async () => ({ ok: true, out: readySyncResult(target).out, err: '', exitCode: 0 }),
+      // The SSH client is the boundary: it exits 255 without writing a byte.
+      spawnProcess: input => spawnProc(input.label, process.execPath, ['-e', 'process.exit(255)'], input.env,
+        { onLine: input.onLine, stdio: ['pipe', 'pipe', 'pipe'], ownedProcessGroup: true, silent: true }),
+    },
+  }), error => {
+    assert.match(error.message, /preparation exited before readiness \(255\)/);
+    assert.match(error.message, /printed nothing/);
+    return true;
+  });
+});
+
 for (const reportsTimes of [true, false]) {
 test(`remote source preparation carries ${reportsTimes ? 'separate source times' : 'unknown legacy source times'} over its prepared transport`, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-source-times-' });

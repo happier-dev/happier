@@ -30,7 +30,7 @@ async function defaultRunCaptureResult({ command, args, env, streamLabel = '', s
   });
 }
 
-function defaultSpawnProcess({ label, command, args, env, tty, lifetimeStdin, onLine, silent, lineFilter, persistOutput }) {
+export function defaultSpawnProcess({ label, command, args, env, tty, lifetimeStdin, onLine, silent, lineFilter, persistOutput }) {
   return spawnProc(label, command, args, env, { onLine, silent, lineFilter, persistOutput, ...(tty ? { stdio: 'inherit' } : lifetimeStdin ? { ownedProcessGroup: true, stdio: ['pipe', 'pipe', 'pipe'] } : {}) });
 }
 
