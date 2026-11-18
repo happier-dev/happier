@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { ThemeProfileV1Schema } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -11,6 +12,7 @@ import { buildPluginProjectionV2 } from './projection/v2';
 import { normalizePluginUiProjection } from '../../../../../ui/sources/sync/domains/plugins/ui/projection';
 import { unionPluginUiProjections } from '../../../../../ui/sources/sync/domains/plugins/ui/projectionUnion';
 import { resolvePluginThemeList } from '../../../../../ui/sources/theme/profiles/pluginThemeCatalog';
+import { PLUGIN_UI_SECTIONS } from '../../../../../ui/sources/sync/domains/plugins/ui/projectionSections';
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 
 const theme = ThemeProfileV1Schema.parse({ schemaVersion: 1, id: 'paper', name: 'Paper',
@@ -42,6 +44,16 @@ describe('plugin themes', () => {
         expect(full?.normalizedManifest.contributes.themes).toEqual([{ id: 'paper', theme }]);
         const firstPaint = await projectBundledPluginUiFirstPaintDeclaration(full);
         expect(firstPaint.presentationManifest.contributes.themes).toEqual([]);
+    });
+
+    it('demands the admitted theme family for the app-shell theme library', () => {
+        const projection = authoredProjection(['org.example.paper']);
+        const { manifest } = buildDeferredDaemonProjectionSections({ protocolVersion: 1,
+            projectionDigest: 'a'.repeat(64), projection });
+        expect(demandedDaemonProjectionSections(manifest, PLUGIN_UI_SECTIONS)).toContain('familiesById.themes');
+        expect(resolvePluginThemeList(normalizePluginUiProjection(projection))).toMatchObject([
+            { pluginId: 'org.example.paper', contributionId: 'paper', theme: { name: 'Paper' } },
+        ]);
     });
 
     it('retains portable bodies, qualified identities and plugin attribution through admission and withdrawal', () => {

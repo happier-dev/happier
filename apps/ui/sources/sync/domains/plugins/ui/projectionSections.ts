@@ -11,7 +11,7 @@ export const CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS = ['actionsById', 'r
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.machineProvisioners'] as const;
 export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.pluginBrowser',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
-    'familiesById.subjectKinds', 'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.backupDestinations', 'resourcesById'] as const;
+    'familiesById.subjectKinds', 'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.themes', 'familiesById.backupDestinations', 'resourcesById'] as const;
 /**
  * Store registry source declarations alone (Deploy an app's starters). A Machine publishes them as soon as
  * this section is read; its other presentation sections are not waited on.
