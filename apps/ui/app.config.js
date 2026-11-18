@@ -473,6 +473,7 @@ const baseExpoConfig = {
             require("./plugins/withIosSceneLifecycle.js"),
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
+            require("./plugins/withAndroidRootBackToBackground.js"),
             ...(terminalNativeRendererEnabled ? [[
                 "./plugins/withTerminalNativeBuildInputs.js",
                 { buildIdentity: terminalNativeEvidenceBuildIdentity },
