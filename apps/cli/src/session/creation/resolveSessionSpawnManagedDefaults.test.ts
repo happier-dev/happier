@@ -16,6 +16,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
@@ -53,6 +54,23 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it.each([undefined, 'custom:team-profile'])('retains inherited approval provenance only for an omitted choice (%s)', async approvalProfileId => {
+    const executionTarget = { serverId: 'home', machineId: 'machine' };
+    const admittedInput = SessionSpawnNewInputV2Schema.parse({
+      executionTarget, directory: { kind: 'path', path: '/tmp' }, agentTarget: target, approvalProfileId,
+    });
+    const resolverContext = {
+      agentId: 'codex', accountSettings: {}, organizationPolicy: { status: 'absent' as const },
+      capturedContext: buildManagedSessionDefaultsContext({}), admittedInput,
+      startContext: { surface: 'cli' as const, defaultSessionId: 'parent', approvalProfileId: 'custom:team-profile',
+        approvalProfileTeamOrGroupDerived: true },
+    };
+    const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget: target,
+      approvalProfileId: 'custom:team-profile' }, resolverContext);
+    expect(resolved).toMatchObject({ approvalProfileId: 'custom:team-profile',
+      approvalProfileTeamOrGroupDerived: approvalProfileId === undefined });
+  });
+
   it('uses explicit Session placement without switching to Workflow policy', async () => {
     const configured = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
     const input = { executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,

@@ -99,6 +99,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   agentId: string;
   openedMachineMetadata?: unknown;
   startContext?: ActionExecutorContext;
+  admittedInput?: Pick<SessionSpawnNewInputV2, 'approvalProfileId'>;
   admittedWorkflowPlacement?: SessionPlacementSelectionV1;
   machineIsolation?: MachineIsolationV1 | null;
   machineIsolationPolicy?: Readonly<Pick<MachineIsolationPolicyV1, 'agentNativeSandboxEnabled'>> | null;
@@ -234,13 +235,20 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     ...(payload?.teamCredentialBindings ?? []), ...(modelBinding ? [modelBinding] : []),
   ];
   const teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({ explicit: explicitTeamBindings, admitted: admittedTeamBindings });
+  const approvalProfile = resolved.approvalProfileId;
+  const inheritedTeamOrGroupProfile = params.admittedInput !== undefined
+    && params.admittedInput.approvalProfileId === undefined
+    && params.startContext?.approvalProfileTeamOrGroupDerived === true
+    && approvalProfile.source === 'explicit'
+    && typeof approvalProfile.value === 'string'
+    && approvalProfile.value === params.startContext.approvalProfileId;
   return {
     resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext, params.admittedWorkflowPlacement),
     placement: resolved.placement,
     ...(captured.unavailableDefaults ? { unavailableDefaults: captured.unavailableDefaults } : {}),
     primaryTeamId: capturedContext.primaryTeamId,
-    approvalProfileId: resolved.approvalProfileId.value ?? null,
-    approvalProfileTeamOrGroupDerived: resolved.approvalProfileId.teamOrGroupDerived,
+    approvalProfileId: approvalProfile.value ?? null,
+    approvalProfileTeamOrGroupDerived: approvalProfile.teamOrGroupDerived || inheritedTeamOrGroupProfile,
     nativeSandbox: resolved.agentSandbox.value,
     agentSandbox: resolved.agentSandbox,
     permissionMode: resolved.permissionMode.value,

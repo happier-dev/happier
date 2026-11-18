@@ -767,7 +767,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         identity, attestedContext, isolationOverride, sourceContext,
         ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}) }, {
         agentId: resolvedAgentTarget.agentId, accountSettings: defaultsSettings,
-        openedMachineMetadata, startContext: context,
+        openedMachineMetadata, startContext: context, admittedInput: input.admittedInput,
         ...(context?.sessionCreationDefaults ? { capturedContext: context.sessionCreationDefaults.context,
           authoredChoices: context.sessionCreationDefaults.authoredChoices } : {}),
         ...(birthContext?.sessionPlacement ? { admittedWorkflowPlacement: birthContext.sessionPlacement } : {}),
