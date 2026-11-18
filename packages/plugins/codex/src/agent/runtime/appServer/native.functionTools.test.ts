@@ -47,9 +47,13 @@ describe('Codex native host function tools', () => {
         tools: [{ type: 'function', ...descriptor }],
       }] : [{ type: 'function', ...descriptor }]);
       expect(session.functionToolsDelivered).toBe(true);
-      expect(fixture.nativeLaunches.some(argv => argv.includes(
-        `features.code_mode.direct_only_tool_namespaces=["${namespace ?? 'functions'}"]`,
-      ))).toBe(true);
+      // A restricted launch proves its confinement at spawn; otherwise the Session binds it per thread.
+      const directOnly = `features.code_mode.direct_only_tool_namespaces=["${namespace ?? 'functions'}"]`;
+      expect(fixture.nativeLaunches.some(argv => argv.includes(directOnly))).toBe(namespace !== null);
+      if (namespace === null) {
+        expect(fixture.requests.find(request => request.method === 'thread/start')?.params.config)
+          .toMatchObject({ 'features.code_mode.direct_only_tool_namespaces': ['functions'] });
+      }
       const response = await fixture.requestNativeTool({ threadId: 'fresh-thread', turnId: 'turn-1',
         callId: 'call-1', namespace, tool: descriptor.name, arguments: action });
       expect(calls).toEqual([{ input: action, context: { callId: 'call-1' } }]);

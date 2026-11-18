@@ -1373,7 +1373,7 @@ describe('native Codex attachment preparation', () => {
     );
   });
 
-  it('passes the host-frozen raw MCP launch configuration to the native app-server', async () => {
+  it('binds the host-frozen raw MCP configuration to the native thread, not the app-server launch', async () => {
     const mcpServers = Object.freeze({
       happier: Object.freeze({
         command: 'happier-mcp',
@@ -1385,16 +1385,14 @@ describe('native Codex attachment preparation', () => {
     await withFixture(
       async ({ openConfiguredSession, requests }) => {
         await openConfiguredSession();
-        expect(launches[0]).toEqual(
-          expect.arrayContaining([
-            'mcp_servers.happier.command="happier-mcp"',
-            'mcp_servers.happier.args=["serve"]',
-            'mcp_servers.happier.env={HAPPIER_MCP_MODE="session"}',
-          ]),
-        );
-        expect(
-          requests.find((request) => request.method === 'thread/start')?.params,
-        ).not.toHaveProperty('modelProvider');
+        expect(launches[0]?.join(' ')).not.toContain('mcp_servers.');
+        const threadStart = requests.find((request) => request.method === 'thread/start')?.params;
+        expect(threadStart?.config).toMatchObject({
+          'mcp_servers.happier.command': 'happier-mcp',
+          'mcp_servers.happier.args': ['serve'],
+          'mcp_servers.happier.env': { HAPPIER_MCP_MODE: 'session' },
+        });
+        expect(threadStart).not.toHaveProperty('modelProvider');
       },
       {
         mcpServers,
@@ -2069,12 +2067,13 @@ describe('native Codex attachment preparation', () => {
               .map((request) => request.params.threadId),
           ).toEqual(['fresh-thread']);
           expect(nativeLaunches).toHaveLength(2);
-          expect(nativeLaunches[0]).not.toContain(
-            'mcp_servers.happier__wilson.command="fixture-bridge"',
-          );
-          expect(nativeLaunches[1]).toContain(
-            'mcp_servers.happier__wilson.command="fixture-bridge"',
-          );
+          expect(nativeLaunches.flat().join(' ')).not.toContain('mcp_servers.');
+          expect(
+            requests.find((request) => request.method === 'thread/start')?.params.config,
+          ).not.toHaveProperty('mcp_servers.happier__wilson.command');
+          expect(
+            requests.find((request) => request.method === 'thread/resume')?.params.config,
+          ).toMatchObject({ 'mcp_servers.happier__wilson.command': 'fixture-bridge' });
           const resumedEvents: AgentSessionRuntimeEvent[] = [];
           const resumedSubscription = resumed.watch((event) =>
             resumedEvents.push(event),

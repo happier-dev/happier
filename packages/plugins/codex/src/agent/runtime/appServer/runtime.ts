@@ -96,7 +96,7 @@ import {
   readCodexAppServerResumeRecoveryTimeoutMs,
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
-import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, buildCodexPromptProfileConfig, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, buildCodexPromptProfileConfig, buildCodexUserMcpServerDisableOverrides, codexConfigOverridesToThreadConfig, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
 import {
   CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
   CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -919,6 +919,8 @@ export function createCodexAppServerRuntime(
     params.processEnv ?? params.host.baseProcessEnv;
   let clientPromise: Promise<DisposableCodexAppServerClient> | null = null;
   let client: DisposableCodexAppServerClient | null = null;
+  /** The current client's Session config overrides, bound on every thread/start and thread/resume. */
+  let clientThreadConfig: Record<string, JsonValue> = {};
   let currentSkills = params.skills;
   let skillsDelivered = params.appServerTransport === 'daemonProxy' || params.skills ? false : undefined;
   let handleAsyncQuestionNotification: ((raw: unknown) => boolean) | null = null;
@@ -2476,18 +2478,28 @@ export function createCodexAppServerRuntime(
     if (!clientPromise) {
       const clientStartedAt = Date.now();
       const processEnv = readRuntimeProcessEnv();
+      const sessionConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers, {
+        processEnv,
+        ...params.toolRestriction,
+        functionTools: params.functionTools,
+        promptProfile: params.promptProfile,
+        mcpToolPolicy: params.mcpToolPolicy,
+        ...(params.appServerTransport !== 'daemonProxy' ? { skills: params.skills } : {}),
+      });
+      // Session overrides bind per thread, so the app-server launch depends only on
+      // the executable, environment and transport. Two launches keep them at spawn:
+      // tool restriction proves its confinement from the process-level config
+      // (config/read, `debug models`), and a daemon proxy carries no launch overrides.
+      const bindsOverridesPerThread = params.toolRestriction?.unlistedTools !== 'deny'
+        && params.appServerTransport !== 'daemonProxy';
+      clientThreadConfig = bindsOverridesPerThread
+        ? codexConfigOverridesToThreadConfig([...buildCodexUserMcpServerDisableOverrides(processEnv), ...sessionConfigOverrides])
+        : {};
       clientPromise = params.host.createClient({
         cwd: params.directory,
         processEnv,
-        configOverrides: buildCodexAppServerConfigOverrides(mcpServers, {
-          processEnv,
-          ...params.toolRestriction,
-          functionTools: params.functionTools,
-          promptProfile: params.promptProfile,
-          mcpToolPolicy: params.mcpToolPolicy,
-          ...(params.appServerTransport !== 'daemonProxy' ? { skills: params.skills } : {}),
-        }),
-        disableUserMcpServers: true,
+        configOverrides: bindsOverridesPerThread ? [] : sessionConfigOverrides,
+        disableUserMcpServers: !bindsOverridesPerThread,
         toolRestrictionRequired: params.toolRestriction?.unlistedTools === 'deny',
         toolRestrictionAllowedMcpServerKeys: [...mcpServerKeys.values()],
         nativeHome: requiresConfinedTools ? params.host.nativeHome : undefined,
@@ -2689,6 +2701,7 @@ export function createCodexAppServerRuntime(
     const reasoningConfig = buildThreadConfigOverrideParams(effectiveReasoningEffort).config ?? {};
     const providerConfig = buildCodexNativeUpstreamConfig(params.initialProviderBinding ?? null);
     const threadConfig = {
+      ...clientThreadConfig,
       ...reasoningConfig,
       ...providerConfig,
       ...buildCodexPromptProfileConfig(params.promptProfile),

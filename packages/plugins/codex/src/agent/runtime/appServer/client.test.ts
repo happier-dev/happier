@@ -313,6 +313,52 @@ describe('createCodexAppServerClient', () => {
         }
     });
 
+    it('launches one byte-equal app-server for Sessions that differ only in late-bound inputs and binds them at thread/start', async () => {
+        // A parked app-server is adopted only when its launch is byte-equal to the Session's.
+        // Exec is the genuine process boundary; the native Session, runtime and launch builder stay real.
+        const codexHome = join(osBoundary.home, 'codex-home');
+        await mkdir(codexHome, { recursive: true });
+        await writeFile(join(codexHome, 'config.toml'), '[mcp_servers.usermcp]\ncommand = "/fixture/user-mcp"\n');
+        const open = async (variant: Readonly<{ model: string; permission: 'default' | 'read-only'; mcp: string; instructions: string }>) => {
+            const capture = createCapturingExec({
+                async request(method, params): Promise<JsonValue> {
+                    capture.requests.push({ method, params: params ?? {} });
+                    if (method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
+                    if (method.startsWith('thread/')) return { thread: { id: '11111111-1111-4111-8111-111111111111' } };
+                    return {};
+                },
+            });
+            // A runtime without Unix shared control takes the stdio launch the holder hand-off adopts.
+            vi.spyOn(capture.exec, 'run').mockImplementation(async request => processResult(request.args.includes('--version')
+                ? 'codex-cli 0.130.0' : 'realtime_conversation under development false'));
+            const context = { signal: new AbortController().signal, services: { exec: capture.exec,
+                logger: { debug() {}, warn() {} }, sessions: { current: null } },
+                session: { id: 'late-bind', services: {} } } as unknown as AgentSessionRuntimeContext;
+            const runtime = await openCodexNativeAppServerSession({
+                kind: 'create', sessionId: 'late-bind', cwd: osBoundary.home,
+                launchEnvironment: { values: { CODEX_HOME: codexHome }, unset: [] },
+                configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: variant.model, updatedAtMs: 0 },
+                    permissionIntent: { value: variant.permission, updatedAtMs: 0 }, options: {} },
+                mcpServers: { [variant.mcp]: { command: `/fixture/${variant.mcp}` } },
+                startupInstructions: { v: 1, id: 'instructions', revision: 1, instructions: variant.instructions },
+            } as Parameters<typeof openCodexNativeAppServerSession>[0], context);
+            await runtime.dispose();
+            return capture;
+        };
+        const first = await open({ model: 'gpt-5.4', permission: 'default', mcp: 'alpha', instructions: 'first' });
+        const second = await open({ model: 'gpt-5.5', permission: 'read-only', mcp: 'beta', instructions: 'second' });
+
+        expect(first.specs).toHaveLength(1);
+        expect(second.specs).toHaveLength(1);
+        expect(second.specs[0]?.launch).toEqual(first.specs[0]?.launch);
+        expect(JSON.stringify(first.specs[0]?.launch)).not.toMatch(/mcp_servers|fixture/u);
+        const threadConfig = (capture: typeof first) => JSON.stringify(
+            (capture.requests.find(request => request.method === 'thread/start')?.params as { config?: unknown } | undefined)?.config);
+        expect(threadConfig(first)).toContain('/fixture/alpha');
+        expect(threadConfig(second)).toContain('/fixture/beta');
+        expect(JSON.parse(threadConfig(first))).toMatchObject({ 'mcp_servers.usermcp.enabled': false });
+    });
+
     it('leaves cold stdio admission available during a pending feature probe and after native readiness', async () => {
         const capture = createCapturingExec();
         let releaseProbe!: () => void;

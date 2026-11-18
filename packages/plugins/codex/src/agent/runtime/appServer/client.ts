@@ -24,7 +24,7 @@ import {
     initializeCodexAppServerClient,
 } from './connection.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
-import { readCodexMcpServerKeysFromConfigToml } from '../../mcp/configServers.js';
+import { buildCodexUserMcpServerDisableOverrides } from './config/overrides.js';
 import { assertCodexToolRestrictionRuntimeSupported, readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { createCodexRealtimeEnabledAppServerLaunchUnavailableError, readCodexAppServerProbeFailureCode } from './startupFailure.js';
@@ -174,7 +174,7 @@ export function buildCodexAppServerArgs(params: Readonly<{
         return ['app-server', 'proxy', '--sock', params.transport.socketPath];
     }
     const userMcpOverrides = params.disableUserMcpServers === true
-        ? readCodexMcpServerKeysFromConfigToml(params.env).map((key) => `mcp_servers.${key}.enabled=false`)
+        ? buildCodexUserMcpServerDisableOverrides(params.env)
         : [];
     return appendConfigOverrides(buildCodexAppServerBaseArgs(
         params.enableRealtimeConversation === true,

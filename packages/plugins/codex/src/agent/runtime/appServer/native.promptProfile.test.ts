@@ -10,7 +10,7 @@ describe('Codex native conversation prompt profile', () => {
     { promptProfile: 'conversation' as const, providerSessionId: 'retained-thread' },
     { promptProfile: undefined, providerSessionId: undefined },
     { promptProfile: undefined, providerSessionId: 'retained-thread' },
-  ])('applies the profile at launch and thread open (%j)', async ({ promptProfile, providerSessionId }) => {
+  ])('applies the profile at thread open without a launch override (%j)', async ({ promptProfile, providerSessionId }) => {
     const descriptor = getVoiceActionFunctionTool();
     const action = { t: getActionSpec('servers.list').bindings?.voiceClientToolName, args: {} };
     await withCodexNativeAttachFixture(async fixture => {
@@ -21,8 +21,7 @@ describe('Codex native conversation prompt profile', () => {
       expect(request?.developerInstructions).toBe('Actual startup instructions.');
       if (promptProfile === 'conversation') {
         expect(request?.config).toMatchObject({ project_doc_max_bytes: 0, 'skills.include_instructions': false });
-        expect(fixture.nativeLaunches.some(argv => argv.includes('project_doc_max_bytes=0')
-          && argv.includes('skills.include_instructions=false'))).toBe(true);
+        expect(fixture.nativeLaunches.flat()).not.toContain('project_doc_max_bytes=0');
       } else {
         expect(request?.config).not.toHaveProperty('project_doc_max_bytes');
         expect(request?.config).not.toHaveProperty('skills.include_instructions');

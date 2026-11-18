@@ -1,12 +1,14 @@
 import { listHappierToolAutoApprovedNamesV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionOpenRequest, AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { parse as parseToml } from 'smol-toml';
 
 import {
     createCodexInjectedMcpServerKey,
     isFirstPartyHappierMcpBridgeServerName,
 } from '../../../mcp/serverKeys.js';
 import { readCodexAppServerStartupRpcTimeoutMs } from '../client/timeout.js';
+import { readCodexMcpServerKeysFromConfigToml } from '../../../mcp/configServers.js';
 import { resolveCodexTerminalPermissionPolicy } from '../../terminal/permissionPolicy.js';
 
 export type CodexAppServerMcpServerConfig = Readonly<{
@@ -103,6 +105,27 @@ function serializeTomlInlineTable(values: Readonly<Record<string, string>>): str
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, value]) => `${key}=${quoteTomlString(value)}`);
     return `{${entries.join(',')}}`;
+}
+
+/** Disables every MCP server the user's Codex config declares; the host supplies the Session's own. */
+export function buildCodexUserMcpServerDisableOverrides(env: Readonly<Record<string, string | undefined>>): string[] {
+    return readCodexMcpServerKeysFromConfigToml(env).map((key) => `mcp_servers.${key}.enabled=false`);
+}
+
+/**
+ * Codex applies a `thread/start` / `thread/resume` `config` entry exactly like the
+ * same `-c key=value` override at spawn (verified per key group on Codex 0.162.1,
+ * P03-PARK-CORE V2b). Binding Session overrides per thread leaves the app-server
+ * launch independent of the Session's inputs. Later entries win, as with `-c`.
+ */
+export function codexConfigOverridesToThreadConfig(overrides: readonly string[]): Record<string, JsonValue> {
+    const config: Record<string, JsonValue> = {};
+    for (const override of overrides) {
+        const separator = override.indexOf('=');
+        if (separator <= 0) throw new Error('Codex config override has no key.');
+        config[override.slice(0, separator).trim()] = parseToml(`value = ${override.slice(separator + 1)}`).value as JsonValue;
+    }
+    return config;
 }
 
 export function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, string> {

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parse } from 'smol-toml';
 import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { startCodexAppServerRuntime } from './runtime.js';
@@ -81,16 +80,15 @@ describe('Codex session-private skill delivery', () => {
     }, { skills });
   });
 
-  it('native Session open delivers skills and applies path disables only in launch config', async () => {
+  it('native Session open delivers skills and binds path disables in the thread config', async () => {
     await withCodexNativeAttachFixture(async ({ requests, nativeLaunches, openConfiguredSession }) => {
       const runtime = await openConfiguredSession();
       expect(runtime.skillsDelivered).toBe(true);
       expect(requests.filter(({ method }) => method === 'skills/extraRoots/set').map(({ params }) => params))
         .toEqual([{ extraRoots: [skills.skillsRoot] }]);
-      const argv = nativeLaunches.flat();
-      const config = argv.find((arg) => arg.startsWith('skills.config='));
-      expect(config).toBeDefined();
-      expect(parse(config!)).toEqual({ skills: { config: [{ path: skills.nativeDisables[0].path, enabled: false }] } });
+      expect(nativeLaunches.flat().some((arg) => arg.startsWith('skills.config='))).toBe(false);
+      expect(requests.find(({ method }) => method === 'thread/start')?.params.config)
+        .toMatchObject({ 'skills.config': [{ path: skills.nativeDisables[0].path, enabled: false }] });
     }, { skills });
   });
 
@@ -106,14 +104,14 @@ describe('Codex session-private skill delivery', () => {
     }, { skills, appServerTransport: 'daemonProxy' });
   });
 
-  it('native Execution Run open applies its own skills and launch-only native disables', async () => {
+  it('native Execution Run open applies its own skills and binds native disables in the thread config', async () => {
     await withCodexNativeAttachFixture(async ({ requests, nativeLaunches, openConfiguredRun }) => {
       await openConfiguredRun();
       expect(requests.filter(({ method }) => method === 'skills/extraRoots/set').map(({ params }) => params))
         .toEqual([{ extraRoots: [skills.skillsRoot] }]);
-      const config = nativeLaunches.flat().find((arg) => arg.startsWith('skills.config='));
-      expect(config).toBeDefined();
-      expect(parse(config!)).toEqual({ skills: { config: [{ path: skills.nativeDisables[0].path, enabled: false }] } });
+      expect(nativeLaunches.flat().some((arg) => arg.startsWith('skills.config='))).toBe(false);
+      expect(requests.find(({ method }) => method === 'thread/start')?.params.config)
+        .toMatchObject({ 'skills.config': [{ path: skills.nativeDisables[0].path, enabled: false }] });
     }, { skills });
   });
 
