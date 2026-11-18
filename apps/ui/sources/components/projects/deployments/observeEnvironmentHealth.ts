@@ -3,12 +3,15 @@ import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 
 type CurrentEdge = ReturnType<typeof DeploymentHealthCurrentResultV1Schema.parse>;
+type MachineServicesList = ReturnType<typeof MachineServicesListResultV1Schema.parse>
+    & Readonly<{ firstInventoryCount: number | null }>;
 const currentEdgeProjection = Object.freeze({
     decode(content: Readonly<{ bytes: Uint8Array }>, previous: CurrentEdge | undefined): CurrentEdge {
         const next = DeploymentHealthCurrentResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
@@ -173,13 +176,13 @@ export function environmentCollectionHealthObserver(lifetime: ServerAccountScope
     return (_scope, items, publish, options) => {
         if (options.signal.aborted) return () => {};
         const rows = items as readonly DeploymentEnvironmentCollectionV1['items'][number][];
-        const bindings = new Map<string, ReturnType<typeof createMachineServiceResourceBinding>>();
+        const bindings = new Map<string, ReturnType<typeof createMachineServiceResourceBinding<MachineServicesList>>>();
         for (const item of rows) {
             const link = item.runtimeTargetLink;
             if (!link || link.targetKind !== 'ownServer') continue;
             for (const member of link.members.filter(member => member.state === 'active')) {
                 if (bindings.has(member.machineId)) continue;
-                bindings.set(member.machineId, createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+                bindings.set(member.machineId, createMachineServiceResourceBinding<MachineServicesList>({ accountLifetime: lifetime, reference: {
                     hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId, machineId: member.machineId },
                 }, projection: machineServicesListProjection }));
             }
