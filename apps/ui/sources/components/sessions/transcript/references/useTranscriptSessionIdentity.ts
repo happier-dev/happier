@@ -1,5 +1,4 @@
-import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { useSessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
@@ -16,6 +15,6 @@ export function useTranscriptSessionIdentity(sessionId: string | null, serverId:
   const visibleSession = sessionId && isSessionVisible({ sessionId, serverId }) ? session : null;
   return {
     name: visibleSession ? getSessionName(visibleSession, serverId) : t('message.provenanceSession'),
-    agentId: resolveAgentIdFromFlavor(visibleSession ? readSessionOwnerMetadataView(visibleSession)?.flavor ?? null : null),
+    agentId: visibleSession ? readSessionPresentationAgentId(visibleSession) : null,
   };
 }

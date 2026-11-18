@@ -35,6 +35,20 @@ describe('incidental Session identity during recording', () => {
         expect(hook.getCurrent().name).toBe(title);
     });
 
+    it('keeps the exact Agent identity for a transcript reference after unmasking', async () => {
+        const { useTranscriptSessionIdentity } = await import('./useTranscriptSessionIdentity');
+        const session = storage.getState().sessions[address.sessionId];
+        storage.setState({ sessions: { [session.id]: { ...session, metadata: {
+            ...session.metadata!,
+            flavor: 'codex',
+            runtimeDescriptorV1: { v: 1, agentId: 'acme.agent/codex', agent: {} },
+        } } } });
+        const hook = await renderHook(() => useTranscriptSessionIdentity(address.sessionId, address.serverId));
+        expect(hook.getCurrent().agentId).toBeNull();
+        await act(async () => setScreenSharingPrivacyActive(false));
+        expect(hook.getCurrent().agentId).toBe('acme.agent/codex');
+    });
+
     it('masks Artifact source identity while retaining the configured source link', async () => {
         const { ArtifactProvenanceLabel } = await import('@/components/artifacts/ArtifactProvenance');
         const screen = await renderScreen(<ArtifactProvenanceLabel provenance={{ sha: 'a'.repeat(64),
