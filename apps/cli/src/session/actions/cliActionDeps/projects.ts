@@ -70,7 +70,8 @@ export function createCliProjectActionDeps(
   return {
     projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
       const refused = await projectAccountAdmission(input.projectRef.serverId, context);
-      if (refused) return { ok: false, errorCode: refused.errorCode };
+      if (refused) return { ok: false, errorCode: refused.errorCode,
+        ...(refused.details === undefined ? {} : { details: refused.details }) };
       const serverId = await resolveProjectHomeIdentity();
       const rows = await readProjectRows({ key: { kind: 'workspace-ref', serverId, id: input.workspace.workspaceId } },
         context.signal, context, 'projects.setup.set');

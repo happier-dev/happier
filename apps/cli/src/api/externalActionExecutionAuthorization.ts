@@ -446,13 +446,33 @@ export async function isReviewedSessionActionCreationChild(input: Readonly<{
       && !input.signal?.aborted;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return false; }
 }
+type PrepareSessionCreationRefusalReason =
+  | 'root_unavailable'
+  | 'operands_invalid'
+  | 'child_not_reviewed'
+  | 'child_request_id'
+  | 'machine_admission_missing'
+  | 'machine_admission_installation'
+  | 'machine_admission_actor'
+  | 'machine_admission_custodian'
+  | 'spawn_target'
+  | 'spawn_not_derived'
+  | 'public_input'
+  | 'envelope_missing'
+  | 'envelope_unbound'
+  | 'execution_unavailable';
+
+type PrepareSessionCreationAuthorizationResult =
+  | Readonly<{ ok: true; authorization: SessionCreationAuthorizationV1 }>
+  | Readonly<{ ok: false; reason: PrepareSessionCreationRefusalReason }>;
+
 /** The admitted Prepare receiver binds its one canonical Session child to the actual birth body. */
 export function createPrepareSessionCreationAuthorization(input: Readonly<{
   context: ActionExecutorContext & Partial<Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
   publicInput: SessionSpawnNewInputV2;
   installationId: string;
   privateKey: ExternalActionMachineRequestSigningKey;
-}>): SessionCreationAuthorizationV1 | null {
+}>): PrepareSessionCreationAuthorizationResult {
   const { context } = input;
   const authorization = context.externalActionExecutionAuthorization;
   const parent = readHostReviewedParentV1(context);
@@ -461,11 +481,10 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const spawn = SessionSpawnNewActionInputV2Schema.safeParse(child?.input);
   const admission = context.machineAdmission;
   const identity = authorization && deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
-  // Content-free diagnostic: each clause keeps the same public refusal; the file
-  // log names which one fired (no ids, operands or credentials).
-  const refused = (reason: string): null => {
+  // The fixed reason is safe for the Action result and the diagnostic log.
+  const refused = (reason: PrepareSessionCreationRefusalReason): PrepareSessionCreationAuthorizationResult => {
     try { logger.warnLocalFile('[SessionCreation] Prepare creation authorization refused', { reason }); } catch { /* Best effort. */ }
-    return null;
+    return { ok: false, reason };
   };
   if (!authorization || !identity) return refused('root_unavailable');
   if (!root.success || !spawn.success || root.data.sessionRef) return refused('operands_invalid');
@@ -498,13 +517,14 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const sourceExecution = { requestId: identity.requestId, method, ...(params === undefined ? {} : { params }),
     externalActionExecution: { ...execution, authorization: ExternalActionExecutionAuthorizationV1Schema.parse(execution.authorization) },
     originalActionEnvelope: envelope };
-  return { token: authorization.token, prepareRequestProof: async body => {
+  const prepareRequestProof: NonNullable<SessionCreationAuthorizationV1['prepareRequestProof']> = async body => {
     if (!await context.verifyMachineAdmissionCurrent!() || context.signal?.aborted
       || body.tag !== identity.sessionCreationTag) throw new Error('prepare_session_creation_authorization_unavailable');
     return { v: 1, sourceExecution, machineAdmission: admission,
       proof: signMachineInstallationProof({ privateKey: input.privateKey,
         payload: buildSessionActionChildCreationProofPayloadV1({ sourceExecution, machineAdmission: admission, body }) }) };
-  } };
+  };
+  return { ok: true, authorization: { token: authorization.token, prepareRequestProof } };
 }
 
 /** Only the reached native receiver may bind the reviewed public child to its final HTTP birth body. */

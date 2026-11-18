@@ -593,7 +593,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
         readWorkspaceRefs: async input => {
           const denied = await projectAccountAdmission(input.project?.serverId, input.context);
-          if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+          if (denied) throw createActionExecuteFailureError(denied);
           const rows = await readProjectRows({ kinds: ['workspace-ref'], serverId: await resolveProjectHomeIdentity() },
             input.signal, input.context, input.context.externalActionExecutionAuthorization?.binding.actionId ?? 'session.list');
           await assertProjectRequesterCurrent(input.context);
@@ -849,7 +849,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const assertDeploymentReadCurrent = async (context: ActionExecutorContext) => {
     context.signal?.throwIfAborted();
     const denied = await admitAccountStorage(projectHomeId, context);
-    if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+    if (denied) throw createActionExecuteFailureError(denied);
     await assertProjectRequesterCurrent(context);
     if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
       throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });

@@ -9,6 +9,7 @@ import {
   ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1,
   type ProjectAccountRowV1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectSetupSetOutputV1Schema } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { createCliActionDeps } from './createCliActionDeps';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -350,17 +351,17 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
     const boundary = accountRows([refRow()]);
     const actions = dependencies();
     await expect(actions.projectsWorkspaceUpdate!({ serverId: 'home-b', workspaceId: ref.id, label: 'Wrong' })).resolves.toMatchObject({ ok: false });
-    await expect(actions.projectsWorkspaceForget!({ serverId: 'home-a', workspaceId: ref.id }, { runtimeAccountId: 'foreign-account' })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+    await expect(actions.projectsWorkspaceForget!({ serverId: 'home-a', workspaceId: ref.id }, { runtimeAccountId: 'foreign-account' })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'runtime_account_mismatch' } });
     await expect(actions.projectsWorkspaceForget!({ serverId: 'home-a', workspaceId: ref.id }, {
       rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session-a' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'rpc_session_without_account' } });
     // Matching public identity is not an admitted host-private requester projection.
     await expect(actions.projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: ref.id, label: 'Unadmitted' }, {
       externalActionCredential: { accountId: 'account-a', principalId: 'principal-a', credentialId: 'credential-a', grant: API_TOKEN_FULL_GRANT_V1 },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'external_credential_without_root' } });
     await expect(actions.projectsWorkspaceUpdate!({ serverId: 'home-a', workspaceId: ref.id, label: 'Foreign' }, {
       externalActionCredential: { accountId: 'foreign-account', principalId: 'foreign-principal', credentialId: 'foreign-credential', grant: API_TOKEN_FULL_GRANT_V1 },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'external_credential_without_root' } });
     await expect(actions.projectsWorkspaceForget!({ serverId: 'home-a', workspaceId: ref.id }, {
       externalActionExecutionAuthorization: { v: 1, token: 'authorization', binding: {
         accountId: 'foreign-account', custodianAccountId: 'account-a', principalId: 'foreign-principal', credentialId: 'foreign-credential',
@@ -368,7 +369,7 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
         actionId: 'projects.workspace.forget', requestId: 'request-a', requestEnvelopeDigest: 'a'.repeat(43),
         target: { kind: 'machine', machineId: 'machine-a' },
       } },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'signed_root_projection' } });
     await expect(actions.projectsVisibilitySet!({ target: { serverId: 'home-a', projectKey: 'anchor-a' }, expectedRevision: 'absent', hidden: true },
       { runtimeAccountId: 'foreign-account' })).resolves.toMatchObject({ ok: false, errorCode: 'project_visibility_access_denied' });
     const contextInput = { target: { serverId: 'home-a', projectKey: 'anchor-a' }, expectedRevision: 'absent' as const,
@@ -377,6 +378,25 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
       .resolves.toEqual({ ok: false, errorCode: 'project_context_access_denied' });
     await expect(actions.projectsContextUpdate!(contextInput, { rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session-a' } }))
       .resolves.toEqual({ ok: false, errorCode: 'project_context_access_denied' });
+    expect(boundary.get).not.toHaveBeenCalled();
+    expect(boundary.post).not.toHaveBeenCalled();
+  });
+
+  it('retains the requester refusal in the Project Setup result without opening Project rows', async () => {
+    const boundary = accountRows([refRow()]);
+    const result = await dependencies().projectsSetupSet!({
+      input: {
+        projectRef: { serverId: ref.serverId, projectKey: ref.projectKey },
+        workspace: { serverId: ref.serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath },
+        expectedRevision: 'absent',
+        intent: { kind: 'detach' },
+      },
+      context: { runtimeAccountId: 'foreign-account' },
+      executeCanonicalAction: async () => { throw new Error('Refused Project Setup must not execute a child'); },
+    });
+    expect(ProjectSetupSetOutputV1Schema.parse(result)).toEqual({
+      ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'runtime_account_mismatch' },
+    });
     expect(boundary.get).not.toHaveBeenCalled();
     expect(boundary.post).not.toHaveBeenCalled();
   });

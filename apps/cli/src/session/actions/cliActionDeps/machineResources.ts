@@ -171,7 +171,7 @@ export function createCliMachineResourceActionDeps(
       const assertCurrent = async () => {
         signal?.throwIfAborted();
         const scopeDenied = await projectAccountAdmission(serverId, context);
-        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
+        if (scopeDenied) throw createActionExecuteFailureError(scopeDenied);
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
           throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
@@ -216,7 +216,7 @@ export function createCliMachineResourceActionDeps(
       const assertCurrent = async () => {
         signal?.throwIfAborted();
         const scopeDenied = await projectAccountAdmission(serverId, context);
-        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
+        if (scopeDenied) throw createActionExecuteFailureError(scopeDenied);
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
           throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
@@ -442,7 +442,7 @@ export function createCliMachineResourceActionDeps(
       const assertCurrent = async () => {
         signal?.throwIfAborted();
         const scopeDenied = await projectAccountAdmission(serverId, context);
-        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
+        if (scopeDenied) throw createActionExecuteFailureError(scopeDenied);
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         signal?.throwIfAborted();
@@ -604,7 +604,7 @@ export function createCliMachineResourceActionDeps(
       const assertCurrent = async () => {
         signal?.throwIfAborted();
         const denied = await projectAccountAdmission(serverId, context);
-        if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+        if (denied) throw createActionExecuteFailureError(denied);
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         signal?.throwIfAborted();

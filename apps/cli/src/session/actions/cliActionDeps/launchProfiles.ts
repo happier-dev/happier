@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCliProjectAdmission } from './projectAdmission';
 import type { CliActionDepsParams } from './types';
 import type { createCliProfileStore, createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
@@ -25,7 +26,7 @@ export function createCliLaunchProfilesActionDeps(
       const credentials = params.credentials;
       if (!roleArtifactStore || !credentials) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
       const denied = await projectAccountAdmission(undefined, context?.context);
-      if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+      if (denied) throw createActionExecuteFailureError(denied);
       return await runWithServerHttpBaseUrl(launchProfilePublicationServerUrl, async () => {
         context?.signal?.throwIfAborted();
         if (!params.savedSecretOperationContext && !getActiveAccountSettingsSnapshot()) {

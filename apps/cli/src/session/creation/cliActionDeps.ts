@@ -429,11 +429,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         ? buildHostOnboardingInput(continuation.hostOnboarding) : null;
       const initialInput = onboardingInput?.initialInput ?? authoredInitialInput;
       const prepareSpawn = context?.externalActionExecutionAuthorization?.binding.actionId === 'deployments.prepare';
+      const prepareAuthorization = prepareSpawn && input.admittedInput
+        && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
+        ? createPrepareSessionCreationAuthorization({ context: context!, publicInput: input.admittedInput,
+          installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey })
+        : null;
       const creationAuthorization = prepareSpawn
-        ? input.admittedInput && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
-          ? createPrepareSessionCreationAuthorization({ context: context!, publicInput: input.admittedInput,
-            installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey })
-          : null
+        ? prepareAuthorization?.ok ? prepareAuthorization.authorization : null
         : context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start'
         ? input.admittedInput && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
           ? createReviewedSecondOpinionSessionCreationAuthorization({ context, publicInput: input.admittedInput,
@@ -442,6 +444,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         : admittedCreationAuthorization;
       if ((prepareSpawn || context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start') && !creationAuthorization) {
         return { ok: false, errorCode: 'permission_denied', error: 'permission_denied', effectAttempted: false,
+          ...(prepareAuthorization?.ok === false ? { details: { reason: prepareAuthorization.reason } } : {}),
           failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied' }, 'session.creation.authorization') };
       }
       const birthContext = params.sessionSpawnBirthContext;

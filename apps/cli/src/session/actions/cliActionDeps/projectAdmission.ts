@@ -1,5 +1,6 @@
 import type { CliActionDepsParams } from './types';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { readProjectAccountRows, ProjectAccountRowsInput, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
 import { createCliMachineActionServerScopeCurrent } from './machineTransport';
@@ -50,11 +51,11 @@ export function createCliProjectAdmission(
     }
     return null;
   };
-  // Content-free refusal reason in the file log: the four refusals share one public code.
+  // The four fixed reasons share one public refusal code.
   const refuseRequester = (reason: 'signed_root_projection' | 'external_credential_without_root'
     | 'rpc_session_without_account' | 'runtime_account_mismatch') => {
     logger.infoFile('[ProjectAdmission] requester authority refused', { reason });
-    return executionRunActionFailure('project_requester_authority_unavailable');
+    return executionRunActionFailure('project_requester_authority_unavailable', undefined, { reason });
   };
   const projectAccountAdmission = async (serverId?: string, context?: ActionExecutorContext) => {
     const homeDenied = await projectHomeAdmission(serverId, context);
@@ -107,8 +108,9 @@ export function createCliProjectAdmission(
   };
   const assertProjectRequesterCurrent = async (context?: ActionExecutorContext) => {
     if (!context?.externalActionExecutionAuthorization) return;
-    if (await projectAccountAdmission(projectHomeId, context)) {
-      throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
+    const denied = await projectAccountAdmission(projectHomeId, context);
+    if (denied) {
+      throw createActionExecuteFailureError(executionRunActionFailure('project_requester_authority_unavailable', undefined, denied.details));
     }
     await assertProjectRequesterCustodyCurrent(context);
   };

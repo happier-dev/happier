@@ -14,7 +14,7 @@ import { PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../actions/projectActionI
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
-import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import type { ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectSetupSetInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -32,7 +32,7 @@ export const ProjectSetupSetOutputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationV1Schema,
     revision: z.number().check(z.int(), z.nonnegative()), effectiveDefinition: ProjectEffectiveDefinitionV1Schema }),
   z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)),
-    currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema), failureCause: z.optional(ActionFailureCauseV1Schema) }),
+    currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema), details: ActionExecuteFailureSchema.shape.details, failureCause: z.optional(ActionFailureCauseV1Schema) }),
 ]));
 export type ProjectSetupSetOutputV1 = z.infer<typeof ProjectSetupSetOutputV1Schema>;
 

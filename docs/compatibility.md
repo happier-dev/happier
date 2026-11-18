@@ -690,6 +690,15 @@ reload together under the 0.3 direct cut. The 0.2 frontier at `73c533b470ac`
 has no deployment target role result. Retained receipts use their existing
 failure format.
 
+## Session and Project admission refusal details (unreleased 0.3)
+
+The reviewed Prepare-to-Session authorization and Project requester admission
+publish fixed reason labels in existing Action failure details. Project Setup's
+domain failure also accepts optional details while retaining its result shape
+and error code. The 0.2 frontier at `73c533b470ac` has no Project Setup result.
+The labels contain no Account identifiers, tokens, or request operands, and the
+same admission checks still decide whether an effect may proceed.
+
 ## Agent preflight failure causes (unreleased 0.3)
 
 Capability invocation errors accept optional `failureCause` using the existing

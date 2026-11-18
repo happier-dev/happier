@@ -618,14 +618,23 @@ function sessionCallerRegression() {
           context: { ...context, ...custody.ingress }, publicInput,
           installationId: 'workspace-installation', privateKey: installationKeys.secretKey,
         });
-        expect(issue(spawn)).not.toBeNull();
+        const allowed = issue(spawn);
+        if (!allowed.ok) throw new Error(`Unexpected Prepare authorization refusal: ${allowed.reason}`);
         // The birth proof crosses HTTP as JSON; the admitted requester's host-private custody stays behind.
-        const proof = await issue(spawn)!.prepareRequestProof!({ tag: identity.sessionCreationTag });
+        const proof = await allowed.authorization.prepareRequestProof!({ tag: identity.sessionCreationTag });
         expect(JSON.parse(JSON.stringify(proof))).toEqual(proof);
-        expect(issue({ ...spawn, directory: { kind: 'path', path: join(f.rootPath, 'outside-reviewed-directory') } })).toBeNull();
-        expect(issue({ ...spawn, memoryEnabled: false })).toBeNull();
-        expect(issue({ ...spawn, organizationPlacement: { folderId: 'unreviewed-folder', tagIds: ['reviewed-tag'] } })).toBeNull();
-        expect(issue({ ...spawn, connectedServices: { v: 2, bindingsByServiceId: {} } })).toBeNull();
+        expect(issue({ ...spawn, directory: { kind: 'path', path: join(f.rootPath, 'outside-reviewed-directory') } })).toEqual({ ok: false, reason: 'public_input' });
+        expect(issue({ ...spawn, memoryEnabled: false })).toEqual({ ok: false, reason: 'public_input' });
+        expect(issue({ ...spawn, organizationPlacement: { folderId: 'unreviewed-folder', tagIds: ['reviewed-tag'] } })).toEqual({ ok: false, reason: 'public_input' });
+        expect(issue({ ...spawn, connectedServices: { v: 2, bindingsByServiceId: {} } })).toEqual({ ok: false, reason: 'public_input' });
+        const { buildSessionSpawnNewArgs } = await import('@happier-dev/protocol/actions/executor/sessionSpawn');
+        const { completeSpawnActionResult } = await import('@happier-dev/protocol/actions/executor/resultProjection');
+        const deniedContext = { ...context, ...custody.ingress, machineAdmission: undefined, verifyMachineAdmissionCurrent: undefined };
+        const args = buildSessionSpawnNewArgs(spawn, deniedContext);
+        if (!args || !custody.receiver.sessionSpawnNew) throw new Error('Missing reviewed Session receiver arguments');
+        const refusal = completeSpawnActionResult(await custody.receiver.sessionSpawnNew({ ...args, admittedInput: spawn }));
+        expect(refusal).toMatchObject({ ok: false, errorCode: 'permission_denied', effectAttempted: false,
+          details: { reason: 'machine_admission_missing' } });
         return { ok: true as const, result: {} };
       },
     });
