@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { getCurrentAuth, setCurrentAuth } from './currentAuth';
 export { getCurrentAuth, setCurrentAuth } from './currentAuth';
 import { readCredentialAuthorityKind, type CredentialAuthorityKind } from './credentialAuthority';
-import { TokenStorage, replayHomeCredentialMutation, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, areCredentialsEqual, replayHomeCredentialMutation, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -175,6 +175,7 @@ function isSameServerTarget(
 export function AuthProvider({ children, initialCredentials }: { children: ReactNode; initialCredentials: AuthCredentials | null }) {
     const [isAuthenticated, setIsAuthenticated] = useState(!!initialCredentials);
     const [credentials, setCredentials] = useState<AuthCredentials | null>(initialCredentials);
+    const initiallyAuthenticatedRef = React.useRef(initialCredentials !== null);
     const credentialAuthorityKind = React.useMemo(() => readCredentialAuthorityKind(credentials?.token), [credentials?.token]);
     const activeServerKeyRef = React.useRef<string | null>(
         resolveActiveServerKey(getActiveServerSnapshot()),
@@ -188,7 +189,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             const activeServerKey = resolveActiveServerKey(getActiveServerSnapshot());
             if (isLoginSyncInFlightRef.current && activeServerKey === loginSyncServerKeyRef.current) return;
         }
-        setCredentials(nextCredentials);
+        setCredentials(previous => nextCredentials && areCredentialsEqual(previous, nextCredentials) ? previous : nextCredentials);
         setIsAuthenticated(Boolean(nextCredentials));
     }, []);
 
@@ -563,6 +564,10 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             activeServerKeyRef.current = serverKey;
             fireAndForget(refreshFromActiveServer(), { tag: 'AuthContext.refreshFromActiveServer' });
         });
+        // Cold restore can learn a newer Home descriptor before the listener mounts.
+        if (initiallyAuthenticatedRef.current) {
+            fireAndForget(refreshFromActiveServer(), { tag: 'AuthContext.refreshFromActiveServerOnMount' });
+        }
         return unsubscribe;
     }, [refreshFromActiveServer]);
 

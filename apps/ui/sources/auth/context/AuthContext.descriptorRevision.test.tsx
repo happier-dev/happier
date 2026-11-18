@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 // Keep the real Home publisher, credential owner, connection manager and Sync.
@@ -41,23 +42,42 @@ afterEach(async () => {
 });
 
 describe('AuthContext descriptor publication', () => {
-    it('rebinds the same focused Home through its real publisher while retaining legacy custody', async () => {
+    it('applies a focused Home descriptor published before or after mount while retaining legacy custody', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'auth_context_descriptor_revision';
         profiles.resetServerProfilesRuntimeForTests();
         const endpoint = 'https://descriptor-context.test';
         const homeServerIdentityId = 'srv_descriptor_context';
         const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'descriptor-account' })).toString('base64url')}.signature`,
             secret: Buffer.alloc(32, 8).toString('base64url') };
-        restored = await restoreServerAccountForTest({ serverUrl: endpoint, serverIdentityId: homeServerIdentityId, credentials });
+        const currentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
+        restored = await restoreServerAccountForTest({
+            serverUrl: endpoint, serverIdentityId: homeServerIdentityId, credentials,
+            request: async (url) => {
+                const pathname = new URL(String(url)).pathname;
+                if (pathname === '/v1/account/encryption/currentness') return Response.json(currentness);
+                if (pathname === '/v1/account/encryption') {
+                    return Response.json({ mode: currentness.mode, updatedAt: currentness.updatedAt });
+                }
+                return null;
+            },
+        });
+        const before = connection.getAppliedActiveServerSnapshot();
         const descriptor = { v: 1 as const, homeServerIdentityId, canonicalServerUrl: endpoint, revision: 1,
             endpoints: [{ kind: 'https' as const, url: endpoint }] };
         await profiles.adoptHomeProfile({ descriptor, source: 'qr', descriptorAuthority: 'current_connection_observation' });
-        await connection.switchConnectionToActiveServer();
-        const before = connection.getAppliedActiveServerSnapshot();
+        const startup = getActiveServerSnapshot();
+        expect(startup.connectionDescriptorRevision).toBe(1);
+        expect(startup.generation).toBeGreaterThan(before.generation);
         const screen = await renderScreen(React.createElement(AuthProvider, {
             initialCredentials: credentials, children: React.createElement(React.Fragment),
         }));
         try {
+            await vi.waitFor(() => {
+                expect(connection.getAppliedActiveServerSnapshot()).toMatchObject({
+                    serverId: startup.serverId, generation: startup.generation,
+                });
+                expect(getActiveServerSnapshot().carrier).toBe('https');
+            });
             await act(async () => {
                 expect(await profiles.reconcileServerProfileHomeConnectionDescriptor({ serverUrl: endpoint,
                     observedServerIdentityId: homeServerIdentityId, descriptor: { ...descriptor, revision: 2 },
@@ -65,7 +85,7 @@ describe('AuthContext descriptor publication', () => {
             });
             const selected = getActiveServerSnapshot();
             expect(selected.connectionDescriptorRevision).toBe(2);
-            expect(selected.generation).toBeGreaterThan(before.generation);
+            expect(selected.generation).toBeGreaterThan(startup.generation);
             await vi.waitFor(() => expect(connection.getAppliedActiveServerSnapshot()).toMatchObject({
                 serverId: selected.serverId, generation: selected.generation,
             }));
