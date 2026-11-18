@@ -1,7 +1,7 @@
 import type { MachineRecipeV1 } from '@happier-dev/plugin-sdk';
 
 const group = { kind: 'input' as const, path: 'journalGroup' };
-const membership = { id: 'journal-access', kind: 'group' as const, name: group, members: ['happier'], existingOnly: true as const };
+const membership = { id: 'journal-access', kind: 'group' as const, name: group, members: [{ kind: 'targetFact' as const, fact: 'daemon.username' as const }], existingOnly: true as const };
 
 /** The native prerequisite verifies the reviewed group; a familiar name proves nothing. */
 export const JOURNAL_READER_RECIPE: Omit<MachineRecipeV1, 'id'> = {

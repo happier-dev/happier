@@ -1,3 +1,6 @@
+/** getfacl ships in the `acl` package, which stock cloud images may omit. */
+export const MISSING_ACL_REMEDY = 'Install the acl package on this Machine, then try again.';
+
 /** getfacl access entries; default ACLs describe future children, not current access. */
 export function parsePosixAcl(text: string): string[] {
     return text.split('\n').map(line => line.split('#')[0]!.trim()).filter(Boolean).sort();

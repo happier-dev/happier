@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/plugin-sdk';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { MachineRecipeV1Schema, resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 it('publishes the Docker recipe under the reference used to prepare a deployment host', () => {
@@ -44,12 +45,20 @@ it('publishes journal access only as a reviewed existing-group daemon membership
   expect(journal).toBeDefined();
   expect(journal?.revision).toBe('1');
   const group = { kind: 'input', path: 'journalGroup' };
-  expect(journal?.steps).toMatchObject([{ id: 'journal-access', kind: 'group', name: group, members: ['happier'], existingOnly: true,
+  const daemon = { kind: 'targetFact', fact: 'daemon.username' };
+  expect(journal?.steps).toMatchObject([{ id: 'journal-access', kind: 'group', name: group, members: [daemon], existingOnly: true,
     requiredFacts: [{ kind: 'journalReadGroup', group }] }]);
   expect(journal?.steps).toHaveLength(1);
-  expect(journal?.removeSteps).toMatchObject([{ id: 'journal-access', kind: 'group', name: group, members: ['happier'], existingOnly: true, state: 'absent' }]);
+  expect(journal?.removeSteps).toMatchObject([{ id: 'journal-access', kind: 'group', name: group, members: [daemon], existingOnly: true, state: 'absent' }]);
   expect(journal?.removeSteps).toHaveLength(1);
   if (!journal) throw new Error('Journal reader declaration is absent');
+  // A managed guest's daemon runs as its bootstrap account, not a fixed `happier` user.
+  const facts = { 'daemon.username': 'happier-bootstrap' };
+  const recipe = MachineRecipeV1Schema.parse(journal);
+  for (const step of [...recipe.steps, ...(recipe.removeSteps ?? [])]) {
+    expect(resolveMachineRecipeStepInputsV1(step, { journalGroup: 'systemd-journal' }, facts))
+      .toMatchObject({ kind: 'group', name: 'systemd-journal', members: ['happier-bootstrap'] });
+  }
   const validator = compilePluginJsonSchema(journal.inputSchema);
   expect(isValidPluginJsonSchemaValue(validator, { journalGroup: 'systemd-journal' })).toBe(true);
   expect(isValidPluginJsonSchemaValue(validator, { journalGroup: 'adm' })).toBe(true);

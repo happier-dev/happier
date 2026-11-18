@@ -5,12 +5,11 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { MachineSetupEffectError, readMachineSetupObservationFailureV1, type MachineRecipeStepV1, type MachineSetupStepObservationV1 } from './index.js';
 import { readLocalAccount, type NativeRun } from './nativeSystemBackend.js';
-import { parsePosixAcl, posixAclEntryAllows } from './posixAcl.js';
+import { MISSING_ACL_REMEDY, parsePosixAcl, posixAclEntryAllows } from './posixAcl.js';
 import { inspectNativeAncestors, isMissingNativeFile } from './nativeFileSafety.js';
 
 type WorkspaceStep = Extract<MachineRecipeStepV1, { kind: 'workspaceAccess' | 'pathTraversal' }>;
 const safeGitEnvironment = { LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
-const missingAclRemedy = 'Install the acl package on this Machine, then try again.';
 
 /** Git configuration belongs only to metadata at the reviewed Workspace root,
  * never an enclosing repository. Plain folder Workspaces need filesystem access. */
@@ -52,7 +51,7 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
     const checked = async (command: string, args: readonly string[]) => {
         const result = await run(command, args, { LC_ALL: 'C' });
         if (result.errorCode === 'ENOENT') throw new MachineSetupEffectError('required_fact_unavailable', {
-            kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable', remedy: missingAclRemedy,
+            kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable', remedy: MISSING_ACL_REMEDY,
         });
         if (result.code !== 0) throw new MachineSetupEffectError('native_effect_failed');
     };
@@ -71,7 +70,7 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
         if (!user && step.state === 'absent') return { stepId: step.id, status: 'satisfied', facts: { agentUid: null } };
         const acl = await run('getfacl', ['-n', '-c', '-p', step.path], { LC_ALL: 'C' });
         if (acl.errorCode === 'ENOENT') return { stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable',
-            facts: { requiredFact: 'commandExecutable', executable: 'getfacl', remedy: missingAclRemedy } };
+            facts: { requiredFact: 'commandExecutable', executable: 'getfacl', remedy: MISSING_ACL_REMEDY } };
         if (acl.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
         const lines = parsePosixAcl(acl.stdout);
         const entry = `user:${user?.[2]}:`;

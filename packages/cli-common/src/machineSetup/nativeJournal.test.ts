@@ -87,7 +87,9 @@ describe('native journal read-group prerequisite', () => {
         }
         filesystem();
         expect(await runner({ present: false }).backend.observe(step())).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
-        expect(await runner({ aclUnavailable: true }).backend.observe(step())).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+        // A stock cloud image without getfacl names the missing prerequisite and its remedy.
+        expect(await runner({ aclUnavailable: true }).backend.observe(step())).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable',
+            facts: { requiredFact: 'commandExecutable', executable: 'getfacl', remedy: 'Install the acl package on this Machine, then try again.' } });
         vi.restoreAllMocks(); filesystem({ denied: true });
         expect(await runner().backend.observe(step())).toMatchObject({ status: 'unavailable', reason: 'needs_admin_to_check' });
     });
