@@ -88,9 +88,8 @@ describe('Template Info slot', () => {
             await storage.getState().activateSettingsScope(scope);
             storage.getState().applySettingsForScope(scope, storage.getState().settings, 1);
             // This admitted focused fixture must publish both Account projections on the adopted Home.
-            storage.setState({ profileScope: scope, machines: { [machine.id]: machine },
-                machineListByServerId: { ...storage.getState().machineListByServerId, [account.serverId]: [machine] },
-                machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [account.serverId]: 'idle' } });
+            storage.setState({ profileScope: scope });
+            storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
             expect(resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: identity, machineId: machine.id },
                 { accountScope: scope })).not.toBeNull();
             const source = { kind: 'plugin' as const, registryItem: { sourceId, itemId: 'garden.bot', version: '9.0.0' }, contributionId: 'gardener' };

@@ -89,8 +89,8 @@ describe('template update review', () => {
             apply: async input => { submitted = BotTemplateUpdateApplyInputV1Schema.parse(input); } }} />);
         expect(screen.getTextContent()).toContain('Sort the harvest');
         expect(screen.getTextContent()).toContain('Plan the planting');
-        expect(screen.getTextContent()).toContain('agentInput.agent.claude · old-model');
-        expect(screen.getTextContent()).toContain('agentInput.agent.codex · new-model');
+        expect(screen.getTextContent()).toContain('Claude · old-model');
+        expect(screen.getTextContent()).toContain('Codex · new-model');
         await screen.pressByTestIdAsync('bot-template-update:apply');
         expect(submitted).toBeDefined();
         expect(submitted).not.toHaveProperty('firstTask');
@@ -113,7 +113,7 @@ describe('template update review', () => {
             acceptedSuggestions: { firstTask: 'Sort the harvest', suggestedAgent: { agentId: 'claude' } } });
         const removed = await renderScreen(<BotTemplateUpdateForm review={removedReview} ready update={update} />);
         expect(removed.getTextContent()).toContain('Sort the harvest');
-        expect(removed.getTextContent()).toContain('agentInput.agent.claude');
+        expect(removed.getTextContent()).toContain('Claude');
         expect(removed.getTextContent()).toContain('common.none');
         await removed.unmount();
     });
