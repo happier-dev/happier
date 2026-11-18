@@ -2,11 +2,15 @@ import type { ProjectDefinitionInspectRead, ProjectDefinitionInspectOutput, Proj
 import type { ProjectDefinitionDetectionV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { resolveProjectDefinitionV1, type ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import type { PendingProjectSharedSetupInput } from './projectEffectiveDefinition';
 
 /** All query projections select from the same fresh discovery; they never decide readiness or execution. */
 export function selectProjectDefinitionRead(definition: ProjectManifestInspectionSnapshot, detection: ProjectDefinitionDetectionV1,
     read: ProjectDefinitionInspectRead = { kind: 'scripts' },
-    effectiveDefinition = resolveProjectDefinitionV1({ repositoryManifest: definition.document?.status === 'valid' ? definition.document.manifest : null })) {
+    effectiveDefinition?: ProjectEffectiveDefinitionV1,
+    pendingSharedSetup?: PendingProjectSharedSetupInput) {
+    effectiveDefinition ??= resolveProjectDefinitionV1({ repositoryManifest: definition.document?.status === 'valid' ? definition.document.manifest : null,
+        ...(pendingSharedSetup ? { pendingSharedSetup } : {}) });
     const manifest = effectiveDefinition.effectiveManifest ?? undefined;
     const compact = read.kind === 'overview' || read.kind === 'rail';
     const declaredSources = new Set(read.kind === 'scripts' && manifest ? [
