@@ -42,7 +42,8 @@ import { createSessionAccessFixture, createSessionFixture, createSessionListRend
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createMachineFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
-import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -98,6 +99,7 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { buildUsageBreakdownList } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { formatUsageCost } from '@happier-dev/protocol/usage/usageFormatting';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { summarizeUsageWork } from '@/components/settings/usage/widgets/usageWorkPresentation';
 import { buildUsagePriceEditorModel } from '@/sync/domains/usage/usagePriceEditorModel';
 import { resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -3134,12 +3136,17 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
-  it('refreshes quota-free Work when its admitted Machine becomes reachable', async () => {
-    const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, contributions: [workContribution] }) : undefined);
+  it('refreshes quota-free Work after an authenticated Machine reconnect', async () => {
+    let daemonReachable = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [workContribution] });
+      return createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { active: daemonReachable, activeAt: daemonReachable ? Date.now() : 1, presenceProtocolVersion: 1 }) ?? undefined;
+    });
     const scope = captured.accountLifetime.scope;
     const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
-    storage.getState().applyMachines([machine]);
+    await publishMachineInventoryForTest(scope, [machine]);
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true, serverId: scope.serverId,
       metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
     const witness: UsageWorkEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
@@ -3147,7 +3154,14 @@ describe('usage query captured Resource adapter', () => {
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
-    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness], branchEvidence: [] }));
+    scmTransport.mockImplementation(async request => {
+      // The real carrier, rather than a consumer presence preflight, reports
+      // an unreachable daemon. Its later recovery supplies these witnesses.
+      if (!daemonReachable) throw createRpcCallError({
+        error: 'Machine unavailable', errorCode: 'target_unavailable',
+      });
+      return workBatch(request, { status: 'partial', evidence: [witness], branchEvidence: [] });
+    });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -3158,8 +3172,11 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
       expect(work()?.mergedPrCount ?? 0).toBe(0);
       const accountingReads = home!.requests.filter(request => request.path === '/v2/usage/query').length;
-      storage.getState().applyMachines([{ ...machine, active: true, activeAt: Date.now() }]);
+      daemonReachable = true;
+      publishMachineActivityForTest([storage.getState().machines[machine.id]!], { active: true, activeAt: Date.now() });
       observeMachinePresenceForTest(scope, [machine.id]);
+      // Presence does not retire a failed request; the authenticated reconnect does.
+      clearMachineRequestReachabilityForMachine(scope, machine.id);
       expect(entry.isAllowanceReadPending(), 'Machine recovery has no allowance consumer').toBe(false);
       await expect.poll(() => work()?.mergedPrCount).toBe(1);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
@@ -5703,7 +5720,12 @@ describe('usage query captured Resource adapter', () => {
           .then(response => { timings.currentResponse = performance.now() - readStarted; return response.clone(); });
       }
       // Every HTTP request has its own body, including the sibling and subsequent Retry read.
-      if (request.path === '/v4/connect/qualified/provider-account-usage/history') return history.promise.then(response => response.clone());
+      if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        return 'projection' in query ? Response.json({ projection: null, complete: false })
+          : history.promise.then(response => response.clone());
+      }
       if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
       return undefined;
     }, {
@@ -5731,6 +5753,16 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => slice()?.quota?.[0]?.current).toEqual(snapshot);
       expect(projectUsagePlans(slice()?.quota, now).accounts[0]?.headline?.remainingFraction).toBe(0.6);
       expect(entry.getSnapshot().pending).toBe('initial');
+      const historyDrains = () => home!.requests.filter(request => request.method === 'GET'
+        && request.path === '/v4/connect/qualified/provider-account-usage/history'
+        && 'history' in parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'))).length;
+      await expect.poll(historyDrains).toBe(1);
+      if (!failureFirst) {
+        for (let index = 0; index < 3; index++) publishHomeAccountChange(captured.accountLifetime.scope.serverId,
+          ['provider-account-usage'], { changeKinds: ['account'], usageQueryAffects: true });
+        await flushHookEffects({ cycles: 20 });
+      }
       if (!failureFirst) expect(slowState()).toMatchObject({ status: 'pending' });
       const { UsageCapacityWidget } = await import('@/components/settings/usage/widgets/UsageCapacityWidget');
       const { UsagePlanFitWidget } = await import('@/components/settings/usage/widgets/UsagePlanFitWidget');
@@ -5775,6 +5807,8 @@ describe('usage query captured Resource adapter', () => {
       history.resolve(Response.json({ entries: [], nextCursor: null }));
       accounting.resolve(Response.json(value));
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      if (!failureFirst) expect.soft(historyDrains(),
+        'Quota arrivals age the admitted finite history read without starting replacement drains').toBe(1);
       expect(slowState()).toMatchObject({ status: 'error', errorCode: 'snapshot_read_failed' });
       expect(slice()?.quota?.[0]?.source).toEqual(source);
       expect(slice()?.quota?.some(read => read.source.ref.accountId === slowSource.ref.accountId)).toBe(false);
