@@ -168,11 +168,13 @@ export function useProcessesController(
     }
   }, [capturedAt]);
 
-  const scope = React.useCallback((): MachineProcessesActionScope | null => {
-    const accountId = latest.current.expectedAccountId;
-    return accountId
-      ? { serverId: latest.current.serverId, expectedAccountId: accountId }
-      : null;
+  const captureTarget = React.useCallback(() => {
+    const { machineId, serverId, expectedAccountId } = latest.current;
+    if (!expectedAccountId) return null;
+    const actionScope = { serverId, expectedAccountId };
+    const isCurrent = () => latest.current.isCurrent() && latest.current.machineId === machineId
+      && latest.current.serverId === serverId && latest.current.expectedAccountId === expectedAccountId;
+    return { machineId, actionScope, isCurrent };
   }, []);
 
   const add = (set: ReadonlySet<string>, key: string) => new Set([...set, key]);
@@ -219,19 +221,21 @@ export function useProcessesController(
 
   const startAgain = React.useCallback(
     (ref: string, name: string) => {
-      const actionScope = scope();
-      if (!actionScope) return;
+      const captured = captureTarget();
+      if (!captured) return;
+      const { machineId, actionScope, isCurrent } = captured;
       setMeterNote(null);
       fireAndForget(
         (async () => {
           const outcome = await executeMachineProcessesStartAgainV1(
-            { machineId: latest.current.machineId, ref },
+            { machineId, ref },
             actionScope,
             {
               runtimeActionExecute: createFrontDoorRuntimeActionExecutor(),
-              isCurrent: latest.current.isCurrent,
+              isCurrent,
             },
           );
+          if (!isCurrent()) return;
           const result = readActionResult(outcome.processAction, (value) =>
             MachineProcessesStartAgainResultV1Schema.safeParse(value),
           );
@@ -252,20 +256,20 @@ export function useProcessesController(
                 ? t('machineProcesses.results.resumesOnMessage')
                 : result.kind === 'approval'
                   ? t('machineProcesses.results.approvalPending')
-                  : t('machineProcesses.results.startAgainFailed', { name }),
+                  : resolveActionExecutionErrorMessage(outcome.processAction, t('machineProcesses.results.startAgainFailed', { name })),
           });
         })(),
         { tag: 'MachineProcesses.startAgain' },
       );
     },
-    [scope],
+    [captureTarget],
   );
 
   const runStop = React.useCallback(
     (item: ProcessesOwnerItem, confirmation?: MachineProcessesActionScope['confirmation']) => {
-      const actionScope = scope();
-      if (!item.rootRef || !actionScope || latest.current.unavailableReason)
-        return;
+      const captured = captureTarget();
+      if (!item.rootRef || !captured || latest.current.unavailableReason) return;
+      const { machineId, actionScope, isCurrent } = captured;
       const name = describeProcessesItemTitle(item, latest.current.titles);
       const optimistic = item.memoryBytes ?? 0;
       setMeterNote(null);
@@ -282,9 +286,10 @@ export function useProcessesController(
         (async () => {
           const outcome = await executeMachineProcessesActionV1(
             'machines.processes.stop',
-            { machineId: latest.current.machineId, targets: [target] },
+            { machineId, targets: [target] },
             { ...actionScope, confirmation },
           );
+          if (!isCurrent()) return;
           const result = readActionResult(outcome, (value) =>
             MachineProcessesActionResultV1Schema.safeParse(value),
           );
@@ -314,13 +319,13 @@ export function useProcessesController(
               ? t('machineProcesses.results.approvalPending')
               : first?.outcome === 'survived'
                 ? t('machineProcesses.results.survived', { name })
-                : t('machineProcesses.results.failedReason');
+                : resolveActionExecutionErrorMessage(outcome, t('machineProcesses.results.failedReason'));
           comeBack(item.key, note);
         })(),
         { tag: 'MachineProcesses.stop' },
       );
     },
-    [comeBack, leave, scope, startAgain],
+    [captureTarget, comeBack, leave, startAgain],
   );
 
   /**
@@ -349,18 +354,19 @@ export function useProcessesController(
   const recheck = React.useCallback(
     (ref: string): (() => Promise<ProcessRecheck>) =>
       async () => {
-        const actionScope = scope();
-        if (!actionScope)
+        const captured = captureTarget();
+        if (!captured)
           return {
             kind: 'blocked',
             line: t('machineProcesses.kill.recheckedChanged'),
           };
+        const { machineId, actionScope } = captured;
         const [outcome, detail] = await Promise.all([executeMachineProcessesActionV1(
           'machines.processes.check',
-          { machineId: latest.current.machineId, refs: [ref] },
+          { machineId, refs: [ref] },
           actionScope,
         ),
-        executeMachineProcessesActionV1('machines.processes.get', { machineId: latest.current.machineId, ref }, actionScope),
+        executeMachineProcessesActionV1('machines.processes.get', { machineId, ref }, actionScope),
       ]);
         const result = readActionResult(outcome, (value) =>
           MachineProcessesCheckResultV1Schema.safeParse(value),
@@ -399,7 +405,7 @@ export function useProcessesController(
           }),
         };
       },
-    [scope],
+    [captureTarget],
   );
 
   const runKill = React.useCallback(
@@ -412,11 +418,9 @@ export function useProcessesController(
       content: ProcessConfirmContent,
       alternative?: () => void,
     ) => {
-      const actionScope = scope();
-      if (!actionScope) return;
-      const machineId = latest.current.machineId;
-      const isCurrent = () => latest.current.isCurrent() && latest.current.machineId === machineId
-        && latest.current.serverId === actionScope.serverId && latest.current.expectedAccountId === actionScope.expectedAccountId;
+      const captured = captureTarget();
+      if (!captured) return;
+      const { machineId, actionScope, isCurrent } = captured;
       fireAndForget(
         (async () => {
           // Identity and evidence remain required input validation even when approval is waived.
@@ -438,6 +442,7 @@ export function useProcessesController(
               return decision === 'confirm';
             } },
           );
+          if (!isCurrent()) return;
           const result = readActionResult(outcome, (value) =>
             MachineProcessesActionResultV1Schema.safeParse(value),
           );
@@ -465,13 +470,13 @@ export function useProcessesController(
                 ? t('machineProcesses.results.approvalPending')
                 : first?.outcome === 'survived'
                   ? t('machineProcesses.results.survived', { name })
-                  : t('machineProcesses.results.refused', { name }),
+                  : resolveActionExecutionErrorMessage(outcome, t('machineProcesses.results.refused', { name })),
           });
         })(),
         { tag: 'MachineProcesses.kill' },
       );
     },
-    [leave, scope],
+    [captureTarget, leave],
   );
 
   const killProcess = React.useCallback(
@@ -643,13 +648,9 @@ export function useProcessesController(
 
   const cleanUp = React.useCallback(
     (items: readonly ProcessesLeftBehindItem[]) => {
-      const actionScope = scope();
-      if (
-        !actionScope ||
-        items.length === 0 ||
-        latest.current.unavailableReason
-      )
-        return;
+      const captured = captureTarget();
+      if (!captured || items.length === 0 || latest.current.unavailableReason) return;
+      const { machineId, actionScope, isCurrent } = captured;
       fireAndForget(
         (async () => {
           const rows = items.map((item) => ({
@@ -663,11 +664,12 @@ export function useProcessesController(
           });
           if (!selectedRefs) return;
           const outcome = await executeMachineProcessesLeftBehindCleanUpV1(
-            latest.current.machineId,
+            machineId,
             items.map((item) => item.row),
             { selectedRefs },
             actionScope,
           );
+          if (!isCurrent()) return;
           const result = readActionResult(outcome, (value) =>
             MachineProcessesCleanUpResultV1Schema.safeParse(value),
           );
@@ -679,7 +681,7 @@ export function useProcessesController(
               message:
                 result.kind === 'approval'
                   ? t('machineProcesses.results.approvalPending')
-                  : t('machineProcesses.results.failedReason'),
+                  : resolveActionExecutionErrorMessage(outcome, t('machineProcesses.results.failedReason')),
             });
             return;
           }
@@ -725,7 +727,7 @@ export function useProcessesController(
         { tag: 'MachineProcesses.cleanUp' },
       );
     },
-    [leave, scope],
+    [captureTarget, leave],
   );
 
   const openSession = React.useCallback(

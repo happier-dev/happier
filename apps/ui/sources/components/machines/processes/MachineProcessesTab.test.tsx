@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { DaemonLocalServiceActionExecuteResponseV1Schema, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { t } from '@/text';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -819,6 +819,31 @@ describe('MachineProcessesTab', () => {
         key: 'machine-processes:kill:p:vite', severity: 'warning', message: t('errors.permissionDenied'),
       }));
       expect(transport.rpc.mock.calls.some(([rpc]) => rpc.method === RPC_METHODS.MACHINES_PROCESSES_KILL)).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
+  it('does not publish the result of an admitted Kill to the next Account', async () => {
+    retirePresentationNotice();
+    const reply = createDeferred<unknown>();
+    const { screen, serverId } = await mount({
+      reply: rpc => {
+        if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_GET) return { row: null };
+        if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_CHECK)
+          return { checks: [{ ref: 'vite', present: true, identityEqual: true, level: 'likely' }] };
+        if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_KILL) return reply.promise;
+        return undefined;
+      },
+    });
+    try {
+      await act(async () => { screen.pressByTestId('machine-processes-row-o:session:refactor'); });
+      await act(async () => { chooseMenuItem(screen, 'p:vite', 'kill'); });
+      await vi.waitFor(() => expect(transport.rpc.mock.calls.some(([rpc]) => rpc.method === RPC_METHODS.MACHINES_PROCESSES_KILL)).toBe(true));
+      await act(async () => { await home.switchAccount(serverId, 'replacement'); });
+      await act(async () => {
+        reply.reject(new RpcError('Private diagnostic', RPC_ERROR_CODES.FORBIDDEN));
+        await flushHookEffects();
+      });
+      expect(readPresentationNotice()).toBeNull();
     } finally { await screen.unmount(); }
   });
 
