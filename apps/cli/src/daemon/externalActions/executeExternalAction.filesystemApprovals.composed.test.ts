@@ -389,6 +389,14 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.rpcOutcomes).toContainEqual(expect.objectContaining({ phase: 'original.hostChild', actionId }));
     } finally { await h.close(); }
   });
+  it('answers a background task runner read for this Machine through the same original-owner path (AUTO-LIVE U1)', async () => {
+    const h = await createHarness('agents.models.list', 'allowed');
+    try {
+      const result = await h.runOriginalCli({ purpose: 'llm_task_runner', task: 'deploy_suggestion', machineId: 'machine' }, 'agents.models.list');
+      expect(result.ok ? null : result.errorCode).toBeNull();
+      expect(result).toMatchObject({ ok: true, result: { llmTaskRunner: expect.objectContaining({ ok: expect.any(Boolean) }) } });
+    } finally { await h.close(); }
+  });
   it.each([
     { actionId: 'machines.capabilities.install' as const,
       input: { machineId: 'machine', capabilityId: 'dep.review-unavailable', method: 'install' } },

@@ -4154,6 +4154,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return readActionFailureEnvelope(result) ?? DaemonAgentInstallCancelResponseSchema.parse(result);
     },
     agentsModelsList: async (args) => {
+      if (args.purpose === 'llm_task_runner') {
+        // A background task's runner is the Machine's answer (its ready Agents); this host only forwards the read.
+        if (!accountContext || !args.machineId || !args.task) return { items: [], source: 'unavailable' };
+        const { executeLlmTaskRunnerResolutionOnMachine } = await import('./llmTaskRunnerResolution');
+        return await executeLlmTaskRunnerResolutionOnMachine(accountContext, { machineId: args.machineId, task: args.task,
+          choice: args.choice ?? null, ...(args.sessionAgentTargetKey ? { sessionAgentTargetKey: args.sessionAgentTargetKey } : {}),
+          ...(args.signal ? { signal: args.signal } : {}) });
+      }
       if (args.purpose === 'scm_diff_summary') {
         if (!accountContext || !args.machineId) return { items: [], source: 'unavailable' };
         const { readScmDiffSummaryModelCatalogForMachine } = await import('./scmDiffSummarySettingsCatalog');

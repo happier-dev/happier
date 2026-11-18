@@ -2,6 +2,8 @@ import { completeActionResult } from '../resultProjection.js';
 import { listAgentBackendsWithReadinessV1 } from './agentBackendReadiness.js';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '../../../daemon/agentInstallJobs.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../../scm/diffSummary.js';
+import { LlmTaskRunnerChoiceV1Schema } from '../../../llm/tasks/llmTaskRunnerConfigV1.js';
+import { LlmTaskIdV1Schema } from '../../../llm/tasks/llmTaskRunnerSelection.js';
 import { resolveActionBackendTargetSelection } from '../../resolveActionBackendTargetSelection.js';
 import { readOptionalString } from '../inputReading.js';
 import { AgentInventoryProbeInputSchema, type AdmittedActionInputById } from '../../actionSpecs.js';
@@ -90,6 +92,14 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'agents.models.list') {
           if (!deps.agentsModelsList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          if (data.purpose === 'llm_task_runner') {
+            return completeActionResult(await deps.agentsModelsList({ purpose: 'llm_task_runner',
+              task: LlmTaskIdV1Schema.parse(data.task),
+              ...(data.choice ? { choice: LlmTaskRunnerChoiceV1Schema.parse(data.choice) } : {}),
+              ...(typeof data.sessionAgentTargetKey === 'string' ? { sessionAgentTargetKey: data.sessionAgentTargetKey } : {}),
+              machineId: String(data.machineId), ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
+              ...(ctx.signal ? { signal: ctx.signal } : {}) }, ctx));
+          }
           if (data.purpose === 'scm_diff_summary') {
             return completeActionResult(await deps.agentsModelsList({ purpose: 'scm_diff_summary',
               ...(typeof data.discoveryTargetKey === 'string' ? { discoveryTargetKey: data.discoveryTargetKey } : {}),
