@@ -147,9 +147,10 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(persisted.directory).toBe(directory ?? '');
     });
 
-    it('previews an executable model choice through ordinary authoring without prompt or creation identity', () => {
+    it.each(['mirrored', 'binding-only'] as const)('previews an executable %s Team model without prompt or creation identity', (form) => {
         const teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' },
             resourceId: 'review-team-credential', expectedResourceRevision: 7, deliveryMode: 'brokered', teamId: 'team-a',
+            providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'review-model' },
         }] satisfies NonNullable<SessionAuthoringDraft['teamCredentialBindings']>;
         const draft = { ...buildNewSessionAuthoringDraftFromTempData({
             prompt: 'This stays an unsent authoring draft', directory: '/workspace',
@@ -157,14 +158,16 @@ describe('sessionAuthoringDraftAdapters', () => {
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             permissionMode: 'read-only',
             primaryTeamId: 'team-a',
-        }), teamCredentialBindings, modelSelection: modelSelection('agent:happier.agent.codex/codex', 'review-model', 456) };
+        }), teamCredentialBindings, modelSelection: form === 'mirrored'
+            ? modelSelection('agent:happier.agent.codex/codex', 'review-model', 456) : null };
         const params = { draft, permissionMode: 'read-only', configurationUpdatedAtMs: 123 } as const;
         const choice = buildExecutableModelParticipantSelectionFromAuthoringDraft(params);
         expect(choice).toMatchObject({ kind: 'model', launch: {
             executionTarget: { serverId: 'home-a', machineId: 'machine-a' },
             directory: { kind: 'path', path: '/workspace' }, agentTarget: draft.agentTarget,
-            permissionMode: 'read-only', configuration: { permissionIntent: { value: 'read-only', updatedAtMs: 123 } },
-            modelSelection: draft.modelSelection,
+            permissionMode: 'read-only', configuration: { permissionIntent: { value: 'read-only', updatedAtMs: 123 },
+                model: { value: 'review-model' } },
+            ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
             primaryTeamId: 'team-a', teamCredentialBindings,
         } });
         expect(choice).not.toHaveProperty('launch.initialInput');

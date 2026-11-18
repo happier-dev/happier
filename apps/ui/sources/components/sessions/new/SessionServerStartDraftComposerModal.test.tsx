@@ -210,6 +210,29 @@ describe('mounted Session server-start recipe composer', () => {
         return { screen, submit, submitButton };
     }
 
+    it('shows a saved Team recipe model and carries a replacement binding out of the chooser', async () => {
+        const teamBinding = { v: 1 as const, slot: { kind: 'provider_model' as const },
+            teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 2, deliveryMode: 'brokered' as const,
+            providerModelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-recipe-model' } };
+        const draft = { ...recipe(true), teamCredentialBindings: [teamBinding] };
+        const { screen, submit } = await mount(draft);
+        try {
+            await waitForHomeGovernance(() => {
+                expect(screen.findAllByType(SessionAuthoringControls)[0]?.props.values.teamCredentialBindings).toEqual([teamBinding]);
+            });
+            const replacement = { ...teamBinding, resourceId: 'resource-b',
+                providerModelSelection: { ...teamBinding.providerModelSelection, modelId: 'team-recipe-model-b' } };
+            await act(async () => {
+                screen.findAllByType(SessionAuthoringControls)[0]!.props.onChangeFields({
+                    modelSelection: null, teamCredentialBindings: [replacement],
+                });
+            });
+            expect(await submit()).toMatchObject({ teamCredentialBindings: [replacement],
+                configuration: { model: { value: replacement.providerModelSelection.modelId },
+                    providerSessionResume: draft.configuration?.providerSessionResume } });
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps Account section placement before a Machine is selected and after same-Home placement changes', async () => {
         const draft = recipe();
         const initialProps: Pick<Parameters<typeof useNewSessionOrganizationPlacement>[0], 'executionTarget' | 'directory'> = {

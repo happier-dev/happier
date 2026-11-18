@@ -17,6 +17,7 @@ import { RawIngressStructuredInputV1Schema, type RawIngressStructuredInputV1 } f
 import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
@@ -1104,7 +1105,7 @@ export type SessionServerStartSpawnDraftEdits = Readonly<Partial<Pick<
     SessionServerStartSpawnDraftV1,
     | 'executionTarget' | 'directory' | 'agentTarget' | 'permissionMode'
     | 'allowedTools' | 'unlistedTools' | 'organizationPlacement'
-    | 'profileId' | 'approvalProfileId' | 'modelSelection' | 'capabilitySelection' | 'connectedServices'
+    | 'profileId' | 'approvalProfileId' | 'modelSelection' | 'capabilitySelection' | 'connectedServices' | 'teamCredentialBindings'
     | 'agentModeId' | 'configuration'
 >> & {
     sessionConfigOptionOverrides?: SessionAuthoringDraft['sessionConfigOptionOverrides'];
@@ -1131,12 +1132,16 @@ export function applySessionServerStartSpawnDraftEdits(params: Readonly<{
         next.modelSelection = modelSelection;
     }
     const updatedAtMs = Math.max(0, Math.floor(params.configurationUpdatedAtMs));
+    const authoredModel = readAuthoredSessionModelSelection(next);
+    const modelWasEdited = ('modelSelection' in params.edits && params.edits.modelSelection !== draft.modelSelection)
+        || ('teamCredentialBindings' in params.edits
+            && authoredModel?.ref.modelId !== readAuthoredSessionModelSelection(draft)?.ref.modelId);
     if ('sessionConfigOptionOverrides' in params.edits) {
         next.configuration = {
             ...(next.configuration ?? {
                 mode: { value: next.agentModeId ?? null, updatedAtMs },
-                model: { value: next.modelSelection?.ref.modelId ?? null,
-                    updatedAtMs: next.modelSelection?.updatedAt ?? updatedAtMs },
+                model: { value: authoredModel?.ref.modelId ?? null,
+                    updatedAtMs: authoredModel?.updatedAt ?? updatedAtMs },
                 permissionIntent: { value: next.permissionMode ?? 'default', updatedAtMs },
             }),
             options: buildServerStartConfigurationOptions(sessionConfigOptionOverrides ?? null),
@@ -1149,9 +1154,8 @@ export function applySessionServerStartSpawnDraftEdits(params: Readonly<{
                 ? { permissionIntent: { value: params.edits.permissionMode, updatedAtMs } } : {}),
             ...('agentModeId' in params.edits && params.edits.agentModeId !== draft.agentModeId
                 ? { mode: { value: params.edits.agentModeId ?? null, updatedAtMs } } : {}),
-            ...('modelSelection' in params.edits && params.edits.modelSelection !== draft.modelSelection
-                ? { model: { value: params.edits.modelSelection?.ref.modelId ?? null,
-                    updatedAtMs: params.edits.modelSelection?.updatedAt ?? updatedAtMs } } : {}),
+            ...(modelWasEdited ? { model: { value: authoredModel?.ref.modelId ?? null,
+                updatedAtMs: authoredModel?.updatedAt ?? updatedAtMs } } : {}),
         };
     }
     // An explicit undefined edit clears an optional choice. Omit the property
@@ -1174,6 +1178,7 @@ export function buildSessionAuthoringCredentialOperands(
 /** The ordinary start and managed continuation share every target-independent authored field. */
 function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftFromAuthoringParams) {
     const fields = resolveSharedSessionAuthoringSpawnFields(params.draft);
+    const authoredModel = readAuthoredSessionModelSelection(params.draft);
     const updatedAtMs = Math.max(0, Math.floor(params.configurationUpdatedAtMs));
     const terminal = buildStrictV2TerminalFromAuthoringDraft(params.draft);
     const options = buildServerStartConfigurationOptions(fields.sessionConfigOptionOverrides ?? null);
@@ -1198,8 +1203,8 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
         configuration: {
             mode: { value: fields.agentModeId, updatedAtMs },
             model: {
-                value: fields.modelSelection?.ref.modelId ?? null,
-                updatedAtMs: fields.modelSelection?.updatedAt ?? updatedAtMs,
+                value: authoredModel?.ref.modelId ?? null,
+                updatedAtMs: authoredModel?.updatedAt ?? updatedAtMs,
             },
             permissionIntent: { value: params.permissionMode, updatedAtMs },
             options,

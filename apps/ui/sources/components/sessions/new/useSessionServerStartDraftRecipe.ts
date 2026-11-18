@@ -3,7 +3,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowSessionAuthoringSelection, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 
 import { useMachineListStatusByServerId, useActiveMachineFacts, useMachineListByServerId } from '@/sync/domains/state/storage';
@@ -35,11 +35,14 @@ import {
 } from './serverStartDraftCandidateSelection';
 
 
+type RecipeSelection = WorkflowSessionAuthoringSelection & Pick<WorkflowStepExecutionSelection, 'teamCredentialBindings'>;
+
 /** The edited recipe as the Session-authoring selection the shared controls read. */
-function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): WorkflowSessionAuthoringSelection {
+function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): RecipeSelection {
     return {
         agentTarget: draft.agentTarget,
         modelSelection: draft.modelSelection ?? null,
+        ...(draft.teamCredentialBindings === undefined ? {} : { teamCredentialBindings: draft.teamCredentialBindings }),
         ...(draft.profileId ? { profileId: draft.profileId } : {}),
         ...(draft.approvalProfileId === undefined ? {} : { approvalProfileId: draft.approvalProfileId }),
         permissionMode: draft.permissionMode,
@@ -49,7 +52,7 @@ function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): WorkflowSess
         ...(draft.connectedServices ? { connectedServices: draft.connectedServices } : {}),
         ...(draft.allowedTools ? { allowedTools: draft.allowedTools } : {}),
         ...(draft.unlistedTools ? { unlistedTools: draft.unlistedTools } : {}),
-    } as WorkflowSessionAuthoringSelection;
+    };
 }
 
 /** One recipe model for default selection, inline Change and the returning selector. It never starts a Session. */
@@ -114,12 +117,12 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         directory: directory.trim() || null,
     });
     const agentTargets = facts.agentTargets ?? [];
-    const [selection, setSelection] = React.useState<WorkflowSessionAuthoringSelection>(() => (
+    const [selection, setSelection] = React.useState<RecipeSelection>(() => (
         existingDraft
             ? selectionFromDraft(existingDraft)
-            : { permissionMode: props.seed.permissionMode ?? 'default', ...(props.seed.profileId ? { profileId: props.seed.profileId } : {}) } as WorkflowSessionAuthoringSelection
+            : { permissionMode: props.seed.permissionMode ?? 'default', ...(props.seed.profileId ? { profileId: props.seed.profileId } : {}) }
     ));
-    const [edited, setEdited] = React.useState<ReadonlySet<SessionAuthoringFieldId>>(() => new Set());
+    const [edited, setEdited] = React.useState<ReadonlySet<keyof RecipeSelection>>(() => new Set());
     // A new recipe starts on the seeded Agent, else the one default-Agent owner's
     // answer for this Machine, once this Machine lists its Agents.
     const initialAgentTarget = agentTargets.find((option) => option.agentId === props.seed.agentId)?.target
@@ -128,10 +131,10 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         if (selection.agentTarget || !initialAgentTarget) return;
         setSelection((current) => current.agentTarget ? current : { ...current, agentTarget: initialAgentTarget });
     }, [initialAgentTarget, selection.agentTarget]);
-    const changeFields = React.useCallback((fields: Partial<WorkflowSessionAuthoringSelection>) => {
+    const changeFields = React.useCallback((fields: Partial<RecipeSelection>) => {
         setError(false);
-        setSelection((current) => ({ ...current, ...fields }) as WorkflowSessionAuthoringSelection);
-        setEdited((current) => new Set([...current, ...(Object.keys(fields) as SessionAuthoringFieldId[])]));
+        setSelection((current) => ({ ...current, ...fields }));
+        setEdited((current) => new Set([...current, ...(Object.keys(fields) as (keyof RecipeSelection)[])]));
     }, []);
     const changeField = React.useCallback((field: SessionAuthoringFieldId, value: unknown) => {
         changeFields({ [field]: value } as Partial<WorkflowSessionAuthoringSelection>);
@@ -211,7 +214,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
                 configurationUpdatedAtMs: now,
             });
             // Only what the reader changed is written; every other recipe field is kept as authored.
-            const changed = (field: SessionAuthoringFieldId) => !existingDraft || edited.has(field);
+            const changed = (field: keyof RecipeSelection) => !existingDraft || edited.has(field);
             return applySessionServerStartSpawnDraftEdits({
                 draft,
                 edits: {
@@ -221,6 +224,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
                         ? { kind: 'managed' } : { kind: 'path', path: directory.trim() } } : {}),
                     permissionMode,
                     ...(changed('modelSelection') ? { modelSelection: selection.modelSelection ?? undefined } : {}),
+                    ...(changed('teamCredentialBindings') ? { teamCredentialBindings: selection.teamCredentialBindings } : {}),
                     ...(changed('profileId') ? { profileId: selection.profileId ?? undefined } : {}),
                     ...(changed('approvalProfileId') ? { approvalProfileId: selection.approvalProfileId } : {}),
                     ...(changed('acpSessionModeId') ? { agentModeId: selection.acpSessionModeId ?? undefined } : {}),
