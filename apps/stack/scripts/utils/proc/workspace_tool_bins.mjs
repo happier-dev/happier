@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
+import { readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from './dependency_generations.mjs';
 
 const STACK_TOOLING_FALLBACK_PACKAGE_NAMES = ['typescript', 'tsx', 'prisma'];
 const NODE_BACKED_BIN_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
@@ -68,11 +69,16 @@ async function resolveWorkspaceToolCommandSpecs(dir, { outputBinDir = null } = {
       ...STACK_TOOLING_FALLBACK_PACKAGE_NAMES,
     ],
   );
+  const generation = monorepoRoot && readCurrentDependencyGeneration(monorepoRoot);
+  const generationRoot = generation ? join(resolveDependencyGenerationContainer(monorepoRoot), generation) : null;
   const specs = [];
   const seenEntries = new Set();
 
   for (const resolutionRoot of resolutionRoots) {
-    const req = createPackageRequire(resolutionRoot);
+    // Node caches package symlink realpaths for each require origin. Resolve from
+    // the immutable generation so a long-lived owner can launch its replacement.
+    const requireRoot = generationRoot ? join(generationRoot, relative(monorepoRoot, resolutionRoot)) : resolutionRoot;
+    const req = createPackageRequire(requireRoot);
     for (const packageName of candidatePackageNames) {
       let packageJsonPath = '';
       try {

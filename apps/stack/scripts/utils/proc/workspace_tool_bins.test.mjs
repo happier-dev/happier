@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -223,4 +224,30 @@ test('resolveWorkspaceToolBinDirs can publish isolated shims without mutating in
     await readFile(join(isolatedBinDir, 'workspace-tool'), 'utf-8'),
     /workspace-tool\/dist\/bin\.js/,
   );
+});
+
+test('a long-lived tool owner starts the published generation after an atomic dependency switch', async t => {
+  const { createDependencyGeneration, flipDependencyGeneration } = await import('./dependency_generations.mjs');
+  const { execFileSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'hstack-tool-publication-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeJson(join(root, 'package.json'), { private: true });
+  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  for (const name of ['ui', 'cli', 'server']) {
+    await mkdir(join(root, 'apps', name), { recursive: true });
+    await writeJson(join(root, 'apps', name, 'package.json'), { name, dependencies: { expo: '*' } });
+  }
+  for (const label of ['before', 'after']) {
+    const generation = await createDependencyGeneration(root);
+    const expo = join(generation.genRoot, 'node_modules/expo');
+    await mkdir(join(expo, 'bin'), { recursive: true });
+    await writeJson(join(expo, 'package.json'), { name: 'expo', bin: { expo: 'bin/cli' } });
+    await writeFile(join(expo, 'bin/cli'), `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)});\n`);
+    await flipDependencyGeneration(root, generation);
+    // The owner and its Node resolver caches survive; only the Expo child changes.
+    const [bin] = await resolveWorkspaceToolBinDirs(join(root, 'apps/ui'));
+    const command = join(bin, process.platform === 'win32' ? 'expo.cmd' : 'expo');
+    assert.equal(execFileSync(command, { encoding: 'utf8', shell: process.platform === 'win32' }).trim(), label);
+  }
 });
