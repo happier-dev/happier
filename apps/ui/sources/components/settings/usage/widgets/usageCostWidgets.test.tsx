@@ -253,23 +253,19 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findHostByTestId('river.river')).toBeNull();
     expect(screen.findHostByTestId('river.needsData')).not.toBeNull();
   });
-  it('uses the agent presentation owner for Constellation unattributed identities', async () => {
+  it('shares the accounting cohort with Constellation and keeps unattributed contributions', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeActivity: true });
+    const accounting = props.slice.accounting!;
     const slice = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, status: 'available', value: props.slice.accounting! }],
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }],
+      accounting: [{ query, status: 'available', value: { ...accounting,
+        contributions: accounting.contributions!.map((row, index) => ({ ...row, agentId: index === 0 ? 'legacy' : null })) } }],
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [{ kind: 'busy', workId: 'private-work',
+        evidenceId: 'private-turn', agentId: 'activity-only', machineId: null, startMs: 10, endMs: 1000 }] } }],
     }, bundledUsageModelPriceCatalog).results[0]!;
-    const calendar = slice.howYouWork!.agentCalendar!;
-    const member = calendar.periodSummary.agents[0]!;
-    const unknowns = { ...slice, howYouWork: { ...slice.howYouWork!, agentCalendar: { ...calendar,
-      periodSummary: { ...calendar.periodSummary, agents: [
-        { ...member, agentId: 'legacy', shares: { ...member.shares, tokens: 0.5 } },
-        { ...member, agentId: null, shares: { ...member.shares, tokens: 0.5 } },
-      ] },
-    } } };
-    const screen = await renderScreen(<UsageConstellationBody {...props} query={query} slice={unknowns} id="usage_constellation" testID="constellation" />);
+    const screen = await renderScreen(<UsageConstellationBody {...props} query={query} slice={slice} id="usage_constellation" testID="constellation" />);
     const chart = screen.findByType(UsageConstellation);
+    expect(chart.props.model.nodes.map((node: { agentId: string | null }) => node.agentId).sort()).toEqual(['legacy', null]);
     await act(async () => {
       chart.findAll(node => node.props.testID === 'constellation.constellationChart' && typeof node.props.onLayout === 'function')[0]!
         .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 330 } } });

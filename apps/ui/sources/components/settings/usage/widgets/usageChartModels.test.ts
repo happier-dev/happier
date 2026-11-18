@@ -1064,7 +1064,7 @@ describe('Usage chart models', () => {
     expect(projectUsageDaylight(value, 'busy', slice)!.night?.share).toBe(share);
   });
 
-  it('draws only collaboration between Agents and says when no collaboration summary exists', () => {
+  it('draws collaboration within the contributing population and says when no summary exists', () => {
     const slice = (collaboration: unknown) =>
       ({ howYouWork: { collaboration } }) as unknown as UsageQueryResultSlice;
     const model = projectUsageConstellationModel(
@@ -1098,10 +1098,17 @@ describe('Usage chart models', () => {
             relation: 'spawn',
             count: 1,
           },
+          {
+            sourceAgentId: 'claude',
+            targetAgentId: 'no-contribution',
+            relation: 'spawn',
+            count: 1,
+          },
         ],
       }),
-      [],
+      [{ agentId: 'claude', share: 0.6 }, { agentId: 'codex', share: 0.4 }],
     );
+    expect(model.nodes.map(node => node.agentId)).toEqual(['claude', 'codex']);
     expect(model.edges).toEqual([
       { from: 'claude', to: 'codex', kind: 'run', count: 7 },
     ]);

@@ -306,19 +306,19 @@ export function projectUsageShippedModel(slice: UsageQueryResultSlice): UsageShi
 const COLLABORATION_KIND = { spawn: 'session', run: 'run', review: 'run', plan: 'run', native: 'native' } as const;
 export function projectUsageConstellationModel(slice: UsageQueryResultSlice, shares: readonly UsageAgentShare[]): UsageConstellationModel {
   const summary = slice.howYouWork?.collaboration ?? null;
+  const members = new Set(shares.map(share => share.agentId));
   const edges = new Map<string, { from: string; to: string; kind: 'session' | 'run' | 'native'; count: number }>();
   // Reporting, replay and handoff are not collaboration between two Agents (moved or reported work); they are not drawn as edges.
   for (const edge of summary?.edges ?? []) {
     const kind = (COLLABORATION_KIND as Record<string, 'session' | 'run' | 'native' | undefined>)[edge.relation];
-    if (!kind || !edge.sourceAgentId || !edge.targetAgentId) continue;
+    if (!kind || !edge.sourceAgentId || !edge.targetAgentId
+      || !members.has(edge.sourceAgentId) || !members.has(edge.targetAgentId)) continue;
     const key = `${edge.sourceAgentId}\u0000${edge.targetAgentId}\u0000${kind}`;
     const entry = edges.get(key) ?? { from: edge.sourceAgentId, to: edge.targetAgentId, kind, count: 0 };
     entry.count += edge.count;
     edges.set(key, entry);
   }
-  const ids = new Set(shares.map((share) => share.agentId));
-  for (const edge of edges.values()) { ids.add(edge.from); ids.add(edge.to); }
-  return { nodes: [...ids].map((agentId) => ({ agentId, share: shares.find((share) => share.agentId === agentId)?.share ?? null })),
+  return { nodes: shares.map(({ agentId, share }) => ({ agentId, share })),
     edges: summary ? [...edges.values()] : null, unknownStarts: summary?.unknownSourceAgentCount ?? 0 };
 }
 

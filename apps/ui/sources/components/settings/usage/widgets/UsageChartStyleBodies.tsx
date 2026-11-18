@@ -5,6 +5,7 @@ import {
   UsageAgentRiver, UsageConstellation, UsageCrew, UsageDayInAgents, UsageDaylight, UsageOrbit, UsagePlanetPortrait, UsageRunLength,
   UsageChartGhost, UsagePersonalRecords, UsageScore, UsageShipped, UsageSkyOfDays, UsageSteeringTide, UsageWeekTide, type UsageChartGhostShape,
 } from '@happier-dev/plugin-ui/presentation';
+import { readUsageAgentAccountingCalendar } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { t } from '@/text';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
@@ -215,45 +216,45 @@ export function UsageScoreBody(props: UsageChartStyleBodyProps) {
   </View>;
 }
 
-function useAgentShares(props: UsageChartStyleBodyProps, metric: UsageChartMetric) {
-  const calendar = useCalendar(props);
-  return React.useMemo(() => calendar ? projectUsageAgentShares(calendar, metric) : null, [calendar, metric]);
+function useAgentShares(props: UsageChartStyleBodyProps, metric: UsageChartMetric, formatCoverage?: Parameters<typeof projectUsageAgentShares>[2]) {
+  const calendar = React.useMemo(() => readUsageAgentAccountingCalendar(props.slice), [props.slice]);
+  const shares = React.useMemo(() => calendar ? projectUsageAgentShares(calendar, metric, formatCoverage) : null, [calendar, metric, formatCoverage]);
+  return { calendar, shares };
 }
 
 export function UsageOrbitBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
-  useWidgetFrameBodyCaption(t('usage.board.charts.shareOf', { metric: usageChartMetricName(resolveUsageChartMetric(props.query.metric, 'tokens'), props.slice.howYouWork?.agentCalendar?.periodSummary.totals.tokensFromParts) }));
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
-  const shares = useAgentShares(props, metric);
+  const { calendar, shares } = useAgentShares(props, metric);
+  const metricName = usageChartMetricName(metric, calendar?.periodSummary.totals.tokensFromParts);
+  useWidgetFrameBodyCaption(t('usage.board.charts.shareOf', { metric: metricName }));
   const agents = React.useMemo(() => (shares ?? []).flatMap((share) => share.agentId === null ? [] : [host.agent(share.agentId)]), [shares, host.agent]);
   if (!shares || shares.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.orbit`}>
     <UsageOrbit theme={host.theme} paint={host.paint} agents={agents} model={shares} renderPlanet={host.renderPlanet} testID={`${props.testID}.orbitChart`}
-      label={t('usage.board.charts.orbitA11y', { metric: usageChartMetricName(metric, props.slice.howYouWork?.agentCalendar?.periodSummary.totals.tokensFromParts) })}
+      label={t('usage.board.charts.orbitA11y', { metric: metricName })}
       labels={usageOrbitLabels()} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }
 
+function usageCrewCoverageLabel(status: UsageAgentCalendarCoverage['accounting']) {
+  // Unknown coverage makes no claim on the row; the page's own coverage line says why once.
+  return status === 'complete_for_supplied_facts' ? { long: t('usage.board.charts.coverageMeasured'), short: t('usage.board.charts.coverageMeasuredShort') }
+    : status === 'partial' ? { long: t('usage.board.charts.coveragePartial'), short: t('usage.board.charts.coveragePartialShort') }
+    : undefined;
+}
+
 export function UsageCrewBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
-  useStyleCaption(t('usage.board.charts.inputCrew'), usageChartMetricName(resolveUsageChartMetric(props.query.metric, 'tokens'), props.slice.howYouWork?.agentCalendar?.periodSummary.totals.tokensFromParts));
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
-  const shares = useAgentShares(props, metric);
+  const { calendar, shares } = useAgentShares(props, metric, usageCrewCoverageLabel);
+  useStyleCaption(t('usage.board.charts.inputCrew'), usageChartMetricName(metric, calendar?.periodSummary.totals.tokensFromParts));
   const agents = React.useMemo(() => (shares ?? []).flatMap((share) => share.agentId === null ? [] : [host.agent(share.agentId)]), [shares, host.agent]);
-  const calendar = useCalendar(props);
-  // How each Agent is measured comes from its own admitted source members, never one global badge.
-  const model = React.useMemo(() => {
-    const label = (status: string | undefined) => status === 'complete_for_supplied_facts' ? { long: t('usage.board.charts.coverageMeasured'), short: t('usage.board.charts.coverageMeasuredShort') }
-      : status === 'partial' ? { long: t('usage.board.charts.coveragePartial'), short: t('usage.board.charts.coveragePartialShort') }
-      // Unknown coverage makes no claim on the row; the page's own coverage line says why once.
-      : undefined;
-    return calendar ? projectUsageAgentShares(calendar, metric, label) : [];
-  }, [calendar, metric]);
   if (!shares || shares.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
-  const activeDays = props.slice.howYouWork?.agentCalendar?.days.filter((day) => (day.totals.eventCount ?? 0) > 0).length ?? null;
+  const activeDays = calendar?.days.filter((day) => (day.totals.eventCount ?? 0) > 0).length ?? null;
   return <View style={{ gap: 12 }} testID={`${props.testID}.crew`}>
-    <UsageCrew theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.crewChart`} label={t('usage.board.charts.crewA11y')}
+    <UsageCrew theme={host.theme} paint={host.paint} agents={agents} model={shares} testID={`${props.testID}.crewChart`} label={t('usage.board.charts.crewA11y')}
       labels={usageCrewLabels(activeDays)} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
@@ -305,7 +306,7 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
 export function UsageConstellationBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
   useWidgetFrameBodyCaption(t('usage.board.charts.constellationSubtitle'));
-  const shares = useAgentShares(props, 'tokens');
+  const { shares } = useAgentShares(props, 'tokens');
   const model = React.useMemo(() => projectUsageConstellationModel(props.slice, shares ?? []), [props.slice, shares]);
   const agents = React.useMemo(() => model.nodes.flatMap((node) => node.agentId === null ? [] : [host.agent(node.agentId)]), [model, host.agent]);
   if (model.nodes.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCollaborationReason')} />;
