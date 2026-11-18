@@ -1,5 +1,6 @@
 import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+export { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
 
 import type {
     JsonValue,

@@ -289,7 +289,7 @@ export { arePluginMachineMaterializationRefsEqual } from './executionOrigin.js';
 export { buildQualifiedPluginContributionKey } from './identity.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
 export { computeSha256HexDigest } from './identity.js';
-export { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
+export { isDelegatedActionRequesterV1 } from './actions/contracts.js';
 export { createCaddyContainerSetupDeclarations } from './machineSetup.js';
 export { createCanonicalJsonSigningInput } from './identity.js';
 export { createDockerEngineSetupSteps } from './machineSetup.js';

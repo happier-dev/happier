@@ -230,7 +230,7 @@ export type { PluginJsonValueV2 } from './identity.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
 export { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from './identity.js';
 export { computeSha256HexDigest } from './identity.js';
-export { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
+export { isDelegatedActionRequesterV1 } from './actions/contracts.js';
 export { createCanonicalJsonSigningInput } from './identity.js';
 export type { PluginMachineMaterializationRefV1 } from './invocation.js';
 export type { PluginOperationAvailability } from './availability.js';
