@@ -305,6 +305,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             memberGrants: { create: { teamMembershipId: f.membership.id, deliveryMode: '["vendor-native"]' } } } });
         const app = createAuthenticatedTestApp();
         let supported = true;
+        let qualificationReachable = true;
         let checkCount = 0;
         let sourceCount = 0;
         // Only the controller network boundary is substituted. Resource,
@@ -314,6 +315,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             expect(request.method.startsWith(`${f.controller.id}:`)).toBe(true);
             if (request.method.endsWith('machines.provisioners.check')) {
                 checkCount += 1;
+                if (!qualificationReachable) throw new Error('controller disconnected');
                 return { ok: true, result: { available: true,
                     nativeCredentialDelivery: { status: supported ? 'supported' : 'unsupported' } } };
             }
@@ -350,6 +352,15 @@ describe("planned Session Team credential selection (SQLite)", () => {
             expect(unsupported.resources.every(resource => resource.providerModels.length === 0)).toBe(true);
             expect(unsupported.resources.every(resource => resource.deliveryUnavailableReason === 'provider_credential_transport_unavailable')).toBe(true);
             expect(checkCount).toBe(2);
+            expect(sourceCount).toBe(2);
+            qualificationReachable = false;
+            const unavailable = await read(f.guest.id);
+            expect(unavailable.resources).toHaveLength(2);
+            for (const resource of unavailable.resources) {
+                expect(resource).toMatchObject({ providerModels: [],
+                    deliveryUnavailableReason: 'provider_catalog_unavailable', recoveryAction: 'retry' });
+            }
+            expect(checkCount).toBe(3);
             expect(sourceCount).toBe(2);
         } finally { await app.close(); }
     });

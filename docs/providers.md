@@ -3087,6 +3087,11 @@ Readiness and failures use the typed Team-credential result unions; clients must
 reported recovery action and must not silently fall back to a personal connection or from direct
 to brokered delivery.
 
+In 0.3 development, the recipient catalog asks the managed Machine's controller
+whether it supports native credential delivery. If the qualification check is
+unavailable, the catalog offers Retry. An answered check that does not establish
+native delivery support tells the recipient to choose another resource.
+
 In development 0.3, the Shared credentials page combines the member's custodied
 administration rows with the existing least-privilege recipient catalog. Entitled
 resources remain visible with their typed readiness and owner-recovery guidance,

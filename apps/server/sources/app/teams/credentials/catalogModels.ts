@@ -15,7 +15,7 @@ export async function projectTeamCredentialCatalogModels(
     const resourcesById = new Map(result.page.resources.map(resource => [resource.id, resource] as const));
     const { presenceByAccount, poolSnapshots } = result.brokerReadiness;
     const projectionRpcByKey = new Map<string, ReturnType<typeof app.forwardRpcForUser>>();
-    const nativeQualificationByManagedId = new Map<string, Promise<boolean>>();
+    const nativeQualificationByManagedId = new Map<string, ReturnType<typeof readManagedNativeCredentialQualification>>();
     type ProjectionFailureReason = TeamCredentialSourceModelProjectionFailureV1['reason'] | 'catalog_empty';
     const projectionFailuresByResourceId = new Map<string, ProjectionFailureReason[]>();
     await Promise.all(result.projectionRequests.map(async projectionRequest => {
@@ -33,9 +33,11 @@ export async function projectTeamCredentialCatalogModels(
                 qualified = readManagedNativeCredentialQualification(app, target);
                 nativeQualificationByManagedId.set(target.machine.id, qualified);
             }
-            if (!await qualified) {
-                resource.deliveryUnavailableReason = 'provider_credential_transport_unavailable';
-                resource.recoveryAction = 'choose_another_resource';
+            const qualification = await qualified;
+            if (qualification !== 'supported') {
+                const unavailable = qualification === 'unavailable';
+                resource.deliveryUnavailableReason = unavailable ? 'provider_catalog_unavailable' : 'provider_credential_transport_unavailable';
+                resource.recoveryAction = unavailable ? 'retry' : 'choose_another_resource';
                 return;
             }
         }

@@ -65,10 +65,12 @@ export async function readManagedNativeCredentialTargetInTx(tx: Tx, input: Reado
     }
 }
 
+type ManagedNativeCredentialQualification = 'supported' | 'unsupported' | 'unavailable';
+
 /** Demanded once by the caller's exact-Machine catalog batch or fresh install.
  * A declaration or missing/newer check fact never implies tenant support. */
 export async function readManagedNativeCredentialQualification(app: Pick<Fastify, 'forwardRpcForUser'>,
-    target: NonNullable<Awaited<ReturnType<typeof readManagedNativeCredentialTargetInTx>>>) {
+    target: NonNullable<Awaited<ReturnType<typeof readManagedNativeCredentialTargetInTx>>>): Promise<ManagedNativeCredentialQualification> {
     const { machine, controller } = target;
     const launch = readManagedLaunchSnapshot(machine.launch);
     const input = ManagedMachineActionInputSchemasV1['machines.provisioners.check'].parse({
@@ -79,11 +81,11 @@ export async function readManagedNativeCredentialQualification(app: Pick<Fastify
     try {
         const response = await app.forwardRpcForUser({ userId: machine.custodianAccountId,
             method: `${controller.machineId}:machines.provisioners.check`, params: input });
-        if (!response.ok) return false;
+        if (!response.ok) return 'unavailable';
         const checked = MachineProvisionerCheckResultV1Schema.safeParse(response.result);
-        return checked.success && checked.data.available
-            && checked.data.nativeCredentialDelivery?.status === 'supported';
-    } catch { return false; }
+        if (!checked.success || !checked.data.available) return 'unavailable';
+        return checked.data.nativeCredentialDelivery?.status === 'supported' ? 'supported' : 'unsupported';
+    } catch { return 'unavailable'; }
 }
 
 /** Existing Run-owner evidence, resolved before the authority transaction. */
@@ -190,7 +192,7 @@ export async function prepareManagedCredentialDeliveryForAction(app: Pick<Fastif
     input: ManagedCredentialDeliveryAuthorityInput): Promise<boolean> {
     if (input.request.operation === 'release') return await inTx(tx => readManagedCredentialDeliveryAuthorityInTx(tx, input)) !== null;
     const accepted = await inTx(tx => readManagedCredentialDeliveryPendingAuthorityInTx(tx, input));
-    if (!accepted?.admission || !await readManagedNativeCredentialQualification(app, accepted)) return false;
+    if (!accepted?.admission || await readManagedNativeCredentialQualification(app, accepted) !== 'supported') return false;
     const binding = accepted.binding;
     const source = accepted.admission.sourceBinding;
     const selection = binding.providerModelSelection;
