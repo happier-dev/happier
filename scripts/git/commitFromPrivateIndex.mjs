@@ -108,6 +108,17 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
         throw new Error([`Commit refused: the packet adds ${boundary.findings.length} extension import-boundary violation(s):`,
           ...boundary.findings.map(finding => `  ${finding}`)].join('\n'));
       }
+      // Entry loads of the packet's own tree (owner ruling 2026-11-18), shared with the commit wrapper's gate. Report
+      // mode (default) records the verdict after the commit lands; HAPPIER_COMMIT_TREE_GATE=block refuses here.
+      const treeEntryLoads = await import('../workspaces/commitTreeEntryLoads.mjs');
+      const treeGate = treeEntryLoads.commitTreeGateMode();
+      if (treeGate === 'block') {
+        const loads = await treeEntryLoads.commitTreeEntryLoads({ repo: cwd, base: head, tree });
+        if (loads.findings.length) {
+          throw new Error([`Commit refused: ${loads.findings.length} entry graph(s) fail to load from the packet's own tree:`,
+            ...loads.findings.map(finding => `  ${finding}`)].join('\n'));
+        }
+      }
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
         // The ref update takes the commit wrapper's lock (.project/scripts/p03/cw-head/commit-partial.sh), so it never
@@ -126,6 +137,10 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
       const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
       console.error(kickRollingHeadTypecheck({ repo: cwd }));
+      if (treeGate === 'report') {
+        const pid = treeEntryLoads.startCommitTreeEntryLoadReport({ repo: cwd, base: head, tree: commit, label: 'commitFromPrivateIndex' });
+        if (pid) console.error(`Commit tree entry loads: report started (pid ${pid}); verdict in ${treeEntryLoads.defaultCommitTreeLedger(cwd)}`);
+      }
       await syncSharedIndex(cwd, commit, committed);
       return commit;
     }

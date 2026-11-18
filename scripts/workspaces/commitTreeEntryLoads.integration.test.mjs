@@ -1,0 +1,100 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import { commitTreeEntryLoads, selectCommitTreeEntryGraphs } from './commitTreeEntryLoads.mjs';
+
+// A miniature shared checkout: this repository's HEAD objects (alternates, no copy), a full working
+// tree of HEAD with the installation mounted the way captured trees mount it, and uncommitted edits
+// on top. Entry loads of that working tree are what the gate used to judge.
+// The repository that owns the installation (through apps/, so a scratch copy of this file resolves it too).
+const real = path.dirname(fs.realpathSync(fileURLToPath(new URL('../../apps', import.meta.url))));
+const ENTRY = 'packages/protocol/src/actions/specs/projectServicePlacement.ts';
+const PRODUCER = 'packages/protocol/src/actions/specs/projectWorkersActionIdsV1.ts';
+const BROKEN = 'packages/protocol/src/machines/managed/credentialDeliveryV1.ts';
+
+async function sharedCheckout(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'commit-tree-checkout-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env };
+  delete env.GIT_INDEX_FILE;
+  const git = (args, input) => execFileSync('git', args, { cwd: dir, env, input, encoding: 'utf8', maxBuffer: 2 ** 30 });
+  git(['init', '-q']);
+  const objects = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: real, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(dir, '.git/objects/info/alternates'), `${path.join(objects, 'objects')}\n`);
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: real, encoding: 'utf8' }).trim();
+  git(['update-ref', 'HEAD', head]);
+  git(['read-tree', head]);
+  const { extractRevision } = await import('../../apps/stack/scripts/build/source_revision_install.mjs');
+  const { mountCapturedWorkspaceDependencies } = await import('./buildInputConvergence.mjs');
+  const { readWorkspacePackages } = await import('../../packages/cli-common/sourceRuntimeEntries.mjs');
+  await extractRevision({ repoDir: dir, revision: head, outputDir: dir });
+  const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(w => path.relative(dir, w.root)).filter(Boolean);
+  await mountCapturedWorkspaceDependencies({ sourceDir: real, captureDir: dir, workspaceDirs });
+  const read = name => fs.readFileSync(path.join(dir, name), 'utf8');
+  const write = (name, value) => fs.writeFileSync(path.join(dir, name), value);
+  // A lane's packet: its own working-tree edits, committed from HEAD in a private index (no worktree).
+  const packet = files => {
+    for (const [name, value] of Object.entries(files)) write(name, value);
+    const index = path.join(dir, '.git', `packet-${process.hrtime.bigint()}`);
+    const penv = { ...env, GIT_INDEX_FILE: index };
+    execFileSync('git', ['read-tree', head], { cwd: dir, env: penv });
+    for (const [name, value] of Object.entries(files)) {
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: value, encoding: 'utf8' }).trim();
+      execFileSync('git', ['update-index', '--cacheinfo', `100644,${blob},${name}`], { cwd: dir, env: penv });
+    }
+    const tree = execFileSync('git', ['write-tree'], { cwd: dir, env: penv, encoding: 'utf8' }).trim();
+    fs.rmSync(index, { force: true });
+    return tree;
+  };
+  return { dir, head, git, read, write, packet };
+}
+
+test('refuses a packet that needs a producer existing only as an uncommitted edit in the shared checkout', { timeout: 900_000 }, async (t) => {
+  const c = await sharedCheckout(t);
+  // The uncommitted producer edit (the 1f986f64d8a shape: a consumer reads a registration only the
+  // checkout has). A namespace read is invisible to the textual producer-closure check.
+  c.write(PRODUCER, `${c.read(PRODUCER)}\nexport const GATE_TREE_PRODUCER = 'uncommitted';\n`);
+  const tree = c.packet({ [ENTRY]: `${c.read(ENTRY)}
+import * as gateTreeProducer from './projectWorkersActionIdsV1.js';
+if (!('GATE_TREE_PRODUCER' in gateTreeProducer)) throw new Error('GATE_TREE_PRODUCER is not committed');
+` });
+  const result = await commitTreeEntryLoads({ repo: c.dir, base: c.head, tree, installDir: c.dir, graphIds: ['protocol-service-placement-actions'] });
+  assert.deepEqual(result.selected, ['protocol-service-placement-actions']);
+  assert.equal(result.findings.length, 1, JSON.stringify(result));
+  assert.match(result.findings[0], /^protocol-service-placement-actions: .*GATE_TREE_PRODUCER is not committed/);
+});
+
+test('accepts a packet unrelated to a broken uncommitted edit elsewhere in the shared checkout', { timeout: 900_000 }, async (t) => {
+  const c = await sharedCheckout(t);
+  c.write(BROKEN, `${c.read(BROKEN)}\nexport const = ;\n`);
+  const tree = c.packet({ [ENTRY]: `${c.read(ENTRY)}\n// An unrelated packet.\n` });
+  const result = await commitTreeEntryLoads({ repo: c.dir, base: c.head, tree, installDir: c.dir,
+    graphIds: ['protocol-managed-credential-delivery', 'protocol-service-placement-actions'] });
+  assert.deepEqual(result.findings, [], JSON.stringify(result));
+  assert.deepEqual(result.results.map(r => r.status), ['passed', 'passed']);
+});
+
+test('selects only the entry graphs whose workspace closure owns a changed path', async () => {
+  const git = (...args) => execFileSync('git', args, { cwd: real, encoding: 'utf8' }).trim();
+  const head = git('rev-parse', 'HEAD');
+  const docs = await selectCommitTreeEntryGraphs({ repo: real, base: `${head}~1`, tree: `${head}~1` });
+  assert.deepEqual(docs.selected, []);
+  // A changed UI file reaches the UI graphs, never the server or the Protocol entries.
+  const ui = await selectCommitTreeEntryGraphs({ repo: real, base: head, tree: (() => {
+    const index = path.join(os.tmpdir(), `select-index-${process.pid}`);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+    execFileSync('git', ['read-tree', head], { cwd: real, env });
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: real, input: '// ui\n', encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${blob},apps/ui/sources/gateTreeSelection.ts`], { cwd: real, env });
+    const tree = execFileSync('git', ['write-tree'], { cwd: real, env, encoding: 'utf8' }).trim();
+    fs.rmSync(index, { force: true });
+    return tree;
+  })() });
+  assert.ok(ui.selected.includes('ui-catalog'), JSON.stringify(ui));
+  assert.ok(!ui.selected.includes('server'), JSON.stringify(ui));
+  assert.ok(!ui.selected.includes('protocol-service-placement-actions'), JSON.stringify(ui));
+});
