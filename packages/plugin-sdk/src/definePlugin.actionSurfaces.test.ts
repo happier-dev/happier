@@ -17,4 +17,18 @@ describe('authored Action surface admission', () => {
         });
         expect(manifest.contributes.actions[0]?.surfaces).toEqual(['cli']);
     });
+
+    it('projects an explicitly person-only UI Action without an agent surface', () => {
+        const { manifest } = definePlugin({
+            id: 'example.person-only', version: '0.0.0', displayName: 'Person-only',
+            actions: {
+                download: {
+                    title: 'Download', personOnly: true, surfaces: ['ui', 'cli'],
+                    placementBindings: [], run: () => null,
+                },
+            },
+        });
+        expect(manifest.contributes.actions[0]?.personOnly).toBe(true);
+        expect(manifest.contributes.actions[0]?.surfaces).toEqual(['ui', 'cli']);
+    });
 });

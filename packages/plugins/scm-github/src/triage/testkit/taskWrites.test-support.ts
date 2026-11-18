@@ -22,6 +22,7 @@ export async function createGithubTaskWriteTestkit(kind: 'refused' | 'uncertain'
     const transport = createStubGithubTransport({ respond(request) {
         if (request.method === 'PATCH') { title = 'Changed'; return { status: 200, body: {} }; }
         if (request.method === 'POST') return { status: 403, body: { message: 'Forbidden' } };
+        if (new URL(request.url).pathname === `/repos/${route}`) return { status: 200, body: GITHUB_REPOSITORY_RESPONSE };
         if (new URL(request.url).pathname === `/repos/${route}/issues/${issueNumber}`) return { status: 200, body: {
             ...GITHUB_ISSUE_RESPONSE, repository_url: `https://api.github.com/repos/${route}`, title, labels: [], assignees: [],
             state: kind === 'refused' ? 'closed' : 'open', state_reason: kind === 'refused' ? 'completed' : null,

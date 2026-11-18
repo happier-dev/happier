@@ -9575,6 +9575,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 bundled Action declarations optionally carry `personOnly: true`
+for a UI Action whose author omits agent access. The bundled parity test
+recognizes this exception. The declared surfaces continue to drive invocation
+admission. The Action envelope remains closed and matching development
+producers and readers load together under the unpublished direct cut. Earlier
+strict readers reject the added field.
+
 Unreleased 0.3 `ui.listExtensions` adds the `service` entity and optional column
 presentation to the existing closed field declaration. Its `number` value kind
 declares a unit and admits finite scalar values; it adds no filter operators.

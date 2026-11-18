@@ -36,7 +36,7 @@ export type DatabaseActionProducers = Readonly<{
 /** The existing plugin producer supplies handlers; the SDK owns input/result admission. */
 export function createDatabaseActions(producers: DatabaseActionProducers): Record<string, PluginActionDefinition> {
     const actions: Record<string, PluginActionDefinition> = {};
-    const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'] } as const;
+    const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin', 'agent'] } as const;
     const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
     const { agentDefault: _exportAgentDefault, ...exportMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
     actions[database.databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
@@ -49,6 +49,8 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const { agentDefault: _downloadAgentDefault, ...downloadMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1];
     actions[databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1)] = {
         ...common, ...downloadMetadata,
+        // The browser or filesystem destination needs a person. Agents use rows/export for the content.
+        surfaces: ['ui', 'cli', 'plugin'], personOnly: true,
         inputSchema: database.DatabaseSelectedRowsExportDownloadInputV1ProtocolSchema,
         resultSchema: FileDownloadResultV1ProtocolSchema,
         run: async (input: JsonValue, context: PluginInvocationContext) => {

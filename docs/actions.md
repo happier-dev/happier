@@ -6,6 +6,14 @@ tools, MCP, CLI, Machine RPC, the public HTTP API, and plugins. The point of the
 a new capability is added by declaring a row, not by writing a command, a tool, a route, a
 permission check and a confirmation dialog five times.
 
+In unreleased 0.3 source, bundled UI Actions explicitly declare `agent` and
+`plugin` so agents and plugin callers can invoke the same intent. A UI Action
+with a person-only requirement declares `personOnly: true` and omits `agent`.
+The database row download uses that exception because it needs a person-selected
+file destination. Agents can use `rows/export` to obtain the content.
+`definePlugin` preserves the authored surfaces. All callers go through the
+existing Action availability, settings and approval policy.
+
 In unreleased 0.3 source, `machines.scheduled.list` and
 `machines.scheduled.watch` read native cron, systemd timers, launchd schedules or
 Windows Task Scheduler through the Machine's existing inventory custody and

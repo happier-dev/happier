@@ -65,7 +65,7 @@ describe('producer-backed database Action declarations', () => {
             expect(declarations.filter(action => [DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
                 DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1]
                 .some(id => action.id === databaseActionLocalIdV1(id)))
-                .every(action => !action.surfaces.includes('agent') && !action.surfaces.includes('mcp'))).toBe(true);
+                .every(action => action.surfaces.includes('agent') && action.surfaces.includes('plugin'))).toBe(true);
         } finally {
             await testkit.dispose();
         }
@@ -143,8 +143,8 @@ describe('producer-backed database Action declarations', () => {
         }).manifest.contributes.actions?.map(action => PluginActionContributionV2Schema.parse(action)) ?? [];
         const connect = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_TARGETS_CONNECT_ACTION_ID_V1));
         const forget = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1));
-        expect(connect).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin'] });
-        expect(forget).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin'] });
+        expect(connect).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin', 'agent'] });
+        expect(forget).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin', 'agent'] });
         expect(forget?.confirmation).toBeDefined();
         expect(connect?.secretInputPaths ?? []).toEqual([]);
         expect(forget?.secretInputPaths ?? []).toEqual([]);

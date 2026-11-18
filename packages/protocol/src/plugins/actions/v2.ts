@@ -553,6 +553,8 @@ export type PluginActionApprovalScopeV2 = z.infer<typeof PluginActionApprovalSco
 export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
+  /** Explicit exception for a mounted UI Action that has a real person-only reason. */
+  personOnly: z.optional(z.literal(true)),
   confirmVerb: z.optional(PluginLocalizedStringV2Schema),
   irreversible: z.optional(z.literal(true)),
   description: z.optional(PluginLocalizedStringV2Schema),

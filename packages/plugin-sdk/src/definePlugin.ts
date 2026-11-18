@@ -235,6 +235,7 @@ export type ActionConfirmationWhen = InputPredicate | Readonly<{
 type ActionContribution = Readonly<{
     id: string;
     title: PluginLocalizedStringV2;
+    personOnly?: true;
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
     description?: PluginLocalizedStringV2;
@@ -302,6 +303,8 @@ export type PluginActionAuthorDefaults = Readonly<{
  */
 export type PluginActionDeclaration = Readonly<{
     title: PluginLocalizedStringV2;
+    /** Records why a UI Action's declared surfaces omit agent access. */
+    personOnly?: true;
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
     approvalScope?: PublicActionContribution['approvalScope'];
@@ -1349,6 +1352,7 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
     const {
         run: _run,
         observeRead: _observeRead,
+        personOnly,
         execution,
         scopes,
         surfaces,
@@ -1379,6 +1383,7 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
     );
     return Object.freeze({
         ...descriptor,
+        ...(personOnly === true ? { personOnly: true as const } : {}),
         execution: execution ?? { target: 'daemon' as const },
         ...(inputSchema === undefined ? {} : { inputSchema: projectProtocolSchema(inputSchema) }),
         ...(resultSchema === undefined ? {} : { resultSchema: projectProtocolSchema(resultSchema) }),
