@@ -41,6 +41,22 @@ export function formatHappierDataValue(value: HappierDataValue | null, locale?: 
   }
 }
 
+/**
+ * A duration (a request, a span, a p95) in the reader's locale, the same everywhere it is read: whole milliseconds
+ * under a second ("412 ms"), then seconds to three figures ("1.42 sec", "1.40 sec", "12.0 sec"), so a column of times
+ * keeps one precision. The unit word is the locale's own short form.
+ */
+export function formatHappierDuration(ms: number, locale?: string): string {
+  const locales = locale === undefined ? undefined : [locale];
+  if (Math.abs(ms) < 1000) {
+    return new Intl.NumberFormat(locales, { style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 })
+      .format(Math.round(ms));
+  }
+  return new Intl.NumberFormat(locales, {
+    style: 'unit', unit: 'second', unitDisplay: 'short', minimumSignificantDigits: 3, maximumSignificantDigits: 3,
+  }).format(ms / 1000);
+}
+
 /** Retain caller-owned units and wording alongside any precision its visible formatter hides. */
 export function formatHappierDataValueWithPrecision(exact: string, formatted: string): string {
   return formatted.includes(exact) ? formatted : `${exact} (${formatted})`;

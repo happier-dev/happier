@@ -22,8 +22,15 @@ export type CodeBlockViewFrameProps = Readonly<{
     headerRight?: React.ReactNode;
     scrollTestID?: string;
     containerStyle?: StyleProp<ViewStyle>;
+    /** 1-based lines drawn on a failure band behind the code; an unwrapped block keeps one line per row, so it can place them. */
+    markedLines?: readonly number[];
     children: React.ReactNode;
 }>;
+
+/** The code line height both code views set; marked bands sit on it. */
+export const CODE_BLOCK_LINE_HEIGHT = 20;
+/** The code's own horizontal padding inside the well. */
+const CODE_PADDING_HORIZONTAL = 12;
 
 /** Placement around the copy button; its hit area may take this much of the block's padding. */
 const COPY_BUTTON_OVERLAY_OFFSET = 8;
@@ -46,9 +53,19 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     headerRight,
     scrollTestID,
     containerStyle,
+    markedLines,
     children,
 }) => {
     const { theme } = useUnistyles();
+    // The bands stand behind the code, reaching across the code's padding, so the marked line reads as one strip.
+    const marked = !wrap && markedLines?.length ? (
+        <View pointerEvents="none" style={styles.markedLines}>
+            {markedLines.map((line) => (
+                <View key={line} testID={scrollTestID ? `${scrollTestID}-marked-${line}` : undefined}
+                    style={[styles.markedLine, { top: (line - 1) * CODE_BLOCK_LINE_HEIGHT, backgroundColor: theme.colors.state.danger.background }]} />
+            ))}
+        </View>
+    ) : null;
     const paint = resolveCodeBlockFramePaint(theme);
     const behavior = resolveHappierCodeBlockLayout({
         language,
@@ -124,7 +141,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                     style={[styles.scroll, besideOverlaidCopy, themeSurfaceStyles.surface({ surface: 'code-block', part: 'body', state: 'default' })]}
                     contentContainerStyle={contentPaddingStyle}
                 >
-                    {children}
+                    {marked ? <View>{marked}{children}</View> : children}
                 </HorizontalOverflowScrollView>
             )}
         </View>
@@ -132,6 +149,20 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
 });
 
 const styles = StyleSheet.create((theme) => ({
+    markedLines: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    // Across the code's horizontal padding (codePadding), so the band runs edge to edge of the well.
+    markedLine: {
+        position: 'absolute',
+        left: -CODE_PADDING_HORIZONTAL,
+        right: -CODE_PADDING_HORIZONTAL,
+        height: CODE_BLOCK_LINE_HEIGHT,
+    },
     container: {
         width: '100%',
         alignSelf: 'stretch',
@@ -180,11 +211,11 @@ const styles = StyleSheet.create((theme) => ({
         zIndex: 10,
     },
     codePadding: {
-        paddingHorizontal: 12,
+        paddingHorizontal: CODE_PADDING_HORIZONTAL,
         paddingVertical: 12,
     },
     codePaddingWithHeader: {
-        paddingHorizontal: 12,
+        paddingHorizontal: CODE_PADDING_HORIZONTAL,
         paddingTop: 4,
         paddingBottom: 12,
     },

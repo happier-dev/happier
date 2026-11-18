@@ -468,10 +468,11 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         // Plugin Markdown sits inside interface chrome (a detail step, a page section): the document scale.
         return <PluginUiMarkdown input={input} />;
     },
-    renderCodeBlock(input: Readonly<{ code: string; language?: string; selectable: boolean; testID?: string }>) {
+    renderCodeBlock(input: Readonly<{ code: string; language?: string; markedLines?: readonly number[]; selectable: boolean; testID?: string }>) {
         return (
             <CodeBlockView
                 code={input.code}
+                markedLines={input.markedLines}
                 language={normalizeHappierCodeLanguage(input.language) ?? null}
                 selectable={input.selectable}
                 showCopyButton={false}

@@ -517,6 +517,8 @@ export type PluginUiPresentationHost = Readonly<{
   renderCodeBlock(input: Readonly<{
     code: string;
     language?: string;
+    /** 1-based lines drawn on a failure band (the line that threw). */
+    markedLines?: readonly number[];
     selectable: boolean;
     testID?: string;
   }>): ReactNode;

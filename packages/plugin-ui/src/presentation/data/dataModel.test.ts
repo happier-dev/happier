@@ -9,6 +9,7 @@ import {
   formatHappierDataExactShare,
   formatHappierDataShare,
   formatHappierDataValue,
+  formatHappierDuration,
   resolveHappierDataShares,
   resolveHappierDataTableColumns,
   resolveHappierSeriesGeometry,
@@ -171,5 +172,15 @@ describe('smoothed series path', () => {
     const reversed = segments(buildHappierSeriesPath([...points].reverse(), 1));
     const forward = segments(buildHappierSeriesPath(points, 1));
     expect(reversed[0]!.slice(0, 2)).toEqual(forward.at(-1)!.slice(2, 4));
+  });
+});
+
+describe('one duration in every reader', () => {
+  it('reads whole milliseconds under a second and three figures of seconds above, trailing zeros kept', () => {
+    expect(formatHappierDuration(412, 'en')).toBe('412 ms');
+    expect(formatHappierDuration(3.4, 'en')).toBe('3 ms');
+    expect(formatHappierDuration(1420, 'en')).toBe('1.42 sec');
+    expect(formatHappierDuration(1400, 'en')).toBe('1.40 sec');
+    expect(formatHappierDuration(12_000, 'en')).toBe('12.0 sec');
   });
 });

@@ -43,6 +43,11 @@ export function Markdown({ value, selectable = true, testID, inlineReferences, i
 export type CodeBlockProps = Readonly<{
   code: string;
   language?: string;
+  /**
+   * 1-based lines of `code` drawn on a failure band: the line a stack frame threw at, inside its source excerpt.
+   * The code itself is unchanged; assistive technology reads it as written.
+   */
+  markedLines?: readonly number[];
   selectable?: boolean;
   copyLabel?: string;
   copiedLabel?: string;
@@ -166,6 +171,7 @@ export function DiffViewer({
 export function CodeBlock({
   code,
   language,
+  markedLines,
   selectable = true,
   copyLabel,
   copiedLabel,
@@ -183,7 +189,7 @@ export function CodeBlock({
   });
   const normalizedLanguage = behavior.language;
   const content = host
-    ? host.renderCodeBlock({ code, selectable, ...(normalizedLanguage ? { language: normalizedLanguage } : {}), ...(testID ? { testID } : {}) })
+    ? host.renderCodeBlock({ code, selectable, ...(normalizedLanguage ? { language: normalizedLanguage } : {}), ...(markedLines?.length ? { markedLines } : {}), ...(testID ? { testID } : {}) })
     : (
       <HappierScrollArea horizontal testID={testID}>
         <HappierText selectable={selectable} variant="code">{code}</HappierText>

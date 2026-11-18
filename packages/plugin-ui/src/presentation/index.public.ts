@@ -738,6 +738,7 @@ export {
   formatHappierDataExactShare,
   formatHappierDataShare,
   formatHappierDataValue,
+  formatHappierDuration,
   resolveHappierDataShares,
   resolveHappierDataTableColumns,
   type HappierDataColumn,

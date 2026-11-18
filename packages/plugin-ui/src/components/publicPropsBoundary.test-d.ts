@@ -207,6 +207,7 @@ type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
   | 'title'
   | 'subtitle'
   | 'detail'
+  | 'identifier'
   | 'titleNumberOfLines'
   | 'titleEllipsizeMode'
   | 'subtitleNumberOfLines'

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
@@ -292,6 +293,7 @@ describe('Slowest routes widget', () => {
     await vi.waitFor(async () => {
       await expect(page.getByText('5% errors')).resolves.toBeDefined();
     });
-    await expect(page.getByText('1.41 s')).resolves.toBeDefined();
+    // The mean time reads exactly as every other duration does (the one shared formatter, in the viewer's locale).
+    await expect(page.getByText(formatHappierDuration(1410, 'en-GB'))).resolves.toBeDefined();
   });
 });

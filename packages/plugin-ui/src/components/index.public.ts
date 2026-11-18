@@ -749,6 +749,7 @@ export {
   formatHappierDataBytesParts,
   formatHappierDataShare,
   formatHappierDataValue,
+  formatHappierDuration,
   mixHappierColorOverPaper,
   resolveHappierDataShares,
   resolveHappierDataTableColumns,

@@ -61,8 +61,8 @@ import {
   exceptionIssueTransitionResultSchema,
   type ExceptionDetailDataV1,
 } from '../exceptions/contracts.js';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/components';
-import { OccurrenceRequest, formatMilliseconds } from './occurrenceRequest.js';
+import { HAPPIER_PAGE_METRICS, formatHappierDuration } from '@happier-dev/plugin-ui/components';
+import { OccurrenceRequest } from './occurrenceRequest.js';
 import {
   EXCEPTION_TREND_BUCKET_MS,
   TELEMETRY_PLUGIN_ID,
@@ -94,7 +94,7 @@ type Translate = ReturnType<typeof usePluginTranslation>;
 function occurrenceRequestFacts(occurrence: ExceptionOccurrenceV1, locale: string): string | null {
   const facts = [
     typeof occurrence.httpStatusCode === 'number' ? String(occurrence.httpStatusCode) : null,
-    typeof occurrence.durationMs === 'number' ? formatMilliseconds(locale, occurrence.durationMs) : null,
+    typeof occurrence.durationMs === 'number' ? formatHappierDuration(occurrence.durationMs, locale) : null,
   ].filter((part): part is string => part !== null);
   return facts.length === 0 ? null : facts.join(' · ');
 }
@@ -513,21 +513,17 @@ function locationLine(location: string | null): number | null {
 }
 
 /**
- * The exporter's source excerpt under the frame that threw (lab p7Issues occurrence): mono lines on the sheet's row
- * insets, the throwing line in the failure ink when the excerpt numbers its lines. Shown exactly as supplied.
+ * The exporter's source excerpt under the frame that threw (lab p7Issues occurrence), in the shared code well with
+ * the throwing line on its failure band when the excerpt numbers its lines. Shown exactly as supplied.
  */
 function SourceContext({ excerpt, line }: Readonly<{ excerpt: string; line: number | null }>): React.ReactElement {
-  const lines = excerpt.split('\n');
+  const marked = line === null ? -1 : excerpt.split('\n').findIndex((sourceLine) => {
+    const numbered = /^\s*(\d+)\b/u.exec(sourceLine);
+    return numbered !== null && Number(numbered[1]) === line;
+  });
   return (
     <Stack gap="none" testID="telemetry.exception.source-context" style={SOURCE_CONTEXT_INSET}>
-      {lines.map((sourceLine, index) => {
-        const numbered = /^\s*(\d+)\b/u.exec(sourceLine);
-        const failing = line !== null && numbered !== null && Number(numbered[1]) === line;
-        return (
-          <Text key={index} variant="code" selectable numberOfLines={1} tone={failing ? 'danger' : 'secondary'}
-            value={sourceLine.length === 0 ? ' ' : sourceLine} />
-        );
-      })}
+      <CodeBlock code={excerpt} selectable {...(marked < 0 ? {} : { markedLines: [marked + 1] })} />
     </Stack>
   );
 }
@@ -541,6 +537,7 @@ function StackFrames({ stacktrace, sourceContext }: Readonly<{ stacktrace: strin
   const row = (frame: StackFrameV1, index: number) => (
     <Item
       key={`${index}:${frame.name}:${frame.location ?? ''}`}
+      identifier
       title={frame.name}
       titleNumberOfLines={1}
       {...(frame.location === null ? {} : { detail: frame.location })}

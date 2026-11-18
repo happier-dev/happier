@@ -5,7 +5,7 @@
  */
 
 import type { TelemetryMetricsReadInputV1, TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
-import type { HappierSeries } from '@happier-dev/plugin-ui';
+import { formatHappierDuration, type HappierSeries } from '@happier-dev/plugin-ui';
 
 export const TELEMETRY_PLUGIN_ID = 'happier.telemetry';
 
@@ -188,9 +188,8 @@ export function formatTelemetryMetric(
       ? `${number(1, megabytes / 1000)} GB`
       : `${number(0, megabytes)} MB`;
   }
-  return value >= 1000
-    ? `${number(2, value / 1000)} s`
-    : `${number(0, value)} ms`;
+  // Request times read as every other duration does (Home, check pages, the exception's request).
+  return formatHappierDuration(value, locale);
 }
 
 /** "billing-api · Production" from the Environment list's own names; null while either is unknown. */

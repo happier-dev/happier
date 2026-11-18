@@ -27,6 +27,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     scrollTestID,
     containerStyle,
     findRanges,
+    markedLines,
 }) => {
     const { theme } = useUnistyles();
     const normalizedLanguage = normalizeHappierCodeLanguage(language) ?? null;
@@ -102,6 +103,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             headerRight={headerRight}
             scrollTestID={scrollTestID}
             containerStyle={containerStyle}
+            markedLines={markedLines}
         >
             {content}
         </CodeBlockViewFrame>

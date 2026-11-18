@@ -96,6 +96,7 @@ import {
 import { ContextMenu } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
+import { HappierText } from '../presentation/text/Text.js';
 import { ListCollectionControlContext, ListItemDisclosedBodyContext } from './listCollectionControl.js';
 import { HappierRowOperationContext } from '../presentation/collection/rowOperation.js';
 import {
@@ -540,6 +541,11 @@ export type ItemProps = Readonly<{
   title?: string;
   subtitle?: string;
   detail?: string;
+  /**
+   * The title and detail name code (a stack frame's function and its `file:line`): set in the mono face at the
+   * row's own size and ink. Labels and descriptions stay in the interface face.
+   */
+  identifier?: boolean;
   /**
    * Optional line bounds for the three semantic text slots, off unless asked
    * for.
@@ -2356,6 +2362,12 @@ function ListSection(props: ListSectionProps): ReactElement {
   return <HappierListSection {...props} />;
 }
 
+/** A run of the row's text in the code face; the row's text around it keeps its size and ink. */
+function IdentifierRun(props: Readonly<{ text: string }>): ReactElement {
+  const fontFamily = usePluginTheme().typography.code.fontFamily;
+  return <HappierText style={fontFamily ? { fontFamily } : undefined}>{props.text}</HappierText>;
+}
+
 function renderListItem(
   props: ItemProps &
     Readonly<{
@@ -2378,8 +2390,13 @@ function renderListItem(
     onSecondaryAction,
     accessory,
     accessoryOutsidePressable,
+    identifier,
     ...item
   } = props;
+  const identifierContent = identifier === true ? {
+    ...(item.title ? { titleContent: <IdentifierRun text={item.title} /> } : {}),
+    ...(item.detail ? { detailContent: <IdentifierRun text={item.detail} /> } : {}),
+  } : null;
   const hasSecondaryActions =
     secondaryActions !== undefined &&
     secondaryActions.length > 0 &&
@@ -2446,6 +2463,7 @@ function renderListItem(
   return (
     <HappierListItem
       {...item}
+      {...identifierContent}
       onContextMenu={secondaryActionsControl?.onContextMenu}
       accessory={composedAccessory}
       accessoryHeld={secondaryActionsControl?.open === true}

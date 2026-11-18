@@ -14,4 +14,6 @@ export type CodeBlockViewProps = Readonly<{
     scrollTestID?: string;
     containerStyle?: StyleProp<ViewStyle>;
     findRanges?: readonly FindTextRange[];
+    /** 1-based lines drawn on a failure band (the line a stack frame threw at); unwrapped blocks only. */
+    markedLines?: readonly number[];
 }>;

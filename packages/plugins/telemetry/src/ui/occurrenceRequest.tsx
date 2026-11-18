@@ -20,7 +20,7 @@ import {
   usePluginTranslation,
   type PluginActionExecution,
 } from '@happier-dev/plugin-ui';
-import { HAPPIER_PAGE_METRICS, HappierPressable, IntervalTimeline } from '@happier-dev/plugin-ui/components';
+import { HAPPIER_PAGE_METRICS, HappierPressable, IntervalTimeline, formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureQueryGetResultV1Schema, DatabaseCaptureTraceGetResultV1Schema, type DatabaseCaptureSourceV1, type DatabaseCaptureSummaryV1, type DatabaseCaptureTraceGetResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
@@ -62,22 +62,6 @@ function failureCode(execution: PluginActionExecution<unknown>): string {
     : 'telemetry_trace_unreadable';
 }
 
-/** Milliseconds in the viewer's locale, as the waterfall's rows and the request line state them. */
-export function formatMilliseconds(locale: string, ms: number): string {
-  if (ms >= 1000)
-    return new Intl.NumberFormat(locale, {
-      style: 'unit',
-      unit: 'second',
-      unitDisplay: 'short',
-      maximumFractionDigits: ms < 10_000 ? 1 : 0,
-    }).format(ms / 1000);
-  return new Intl.NumberFormat(locale, {
-    style: 'unit',
-    unit: 'millisecond',
-    unitDisplay: 'short',
-    maximumFractionDigits: ms < 10 ? 1 : 0,
-  }).format(ms);
-}
 
 /** OpenTelemetry severity number ranges, named as the log record states its level. */
 function severityWord(severity: number | null | undefined): string {
@@ -179,7 +163,7 @@ function RequestWaterfall({
     root === null ? null : requestLabelOf(root),
     root?.durationMs === null || root?.durationMs === undefined
       ? null
-      : formatMilliseconds(locale, root.durationMs),
+      : formatHappierDuration(root.durationMs, locale),
     occurrence.serviceVersion ?? null,
   ].filter(
     (part): part is string => typeof part === 'string' && part.length > 0,
@@ -220,14 +204,14 @@ function RequestWaterfall({
                   ? theme.colors.info
                   : theme.colors.mutedText,
               // label | bar | duration, with the span that threw tagged once (lab p7Issues occurrence).
-              value: formatMilliseconds(locale, row.end - row.start),
+              value: formatHappierDuration(row.end - row.start, locale),
               ...(raised ? { flag: threw } : {}),
             };
           })}
           domain={waterfall.domain}
           size="full"
           formatValue={(value) =>
-            formatMilliseconds(locale, value - (waterfall.domain?.start ?? 0))
+            formatHappierDuration(value - (waterfall.domain?.start ?? 0), locale)
           }
         />
       )}
@@ -264,7 +248,16 @@ function RequestLogs({
     bodiesRef.current = { ...bodiesRef.current, [id]: next };
     setBodies(bodiesRef.current);
   };
+  // Which cut lines are open now. A second press closes a line; its body stays read for the next open.
+  const [openIds, setOpenIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const open = (id: string) => {
+    const wasOpen = openIds.has(id);
+    setOpenIds((current) => {
+      const next = new Set(current);
+      if (wasOpen) next.delete(id); else next.add(id);
+      return next;
+    });
+    if (wasOpen) return;
     const known = bodiesRef.current[id];
     if (known !== undefined && known.kind !== 'unavailable') return;
     settle(id, { kind: 'loading' });
@@ -302,27 +295,31 @@ function RequestLogs({
           its whole message through the detail read; a whole line has nothing more to open. */}
       <Stack gap="xsmall" testID="telemetry.exception.logs" style={LOG_LINES_INSET}>
         {logs.map((log) => {
-          const body = bodies[log.id];
           const severity = severityWord(log.severityNumber);
           const failing = severity === 'error' || severity === 'fatal';
           const prefix = log.bodyPrefix ?? null;
           const truncated = log.bodyPrefixTruncated === true;
           const clock = clockOf(locale, log.at);
-          const line = (
-            <Text variant="code" numberOfLines={1} tone={failing ? 'danger' : 'neutral'}>
-              <Text variant="code" tone="secondary" value={`${clock}  `} />
-              <Text variant="code" tone={failing ? 'danger' : 'secondary'} value={severity} />
-              {prefix === null ? null : <Text variant="code" tone={failing ? 'danger' : 'neutral'} value={`  ${prefix}${truncated ? '…' : ''}`} />}
-            </Text>
-          );
-          const opened =
+          const body = truncated && openIds.has(log.id) ? bodies[log.id] : undefined;
+          // An open line reads its whole message in place of the cut start; a reading or failed open says so instead.
+          const message =
             body === undefined
-              ? null
+              ? (prefix === null ? null : `${prefix}${truncated ? '…' : ''}`)
               : body.kind === 'loading'
-                ? text('plugins.telemetry.exceptions.readingLog', 'Reading this line…')
+                ? `${prefix ?? ''}…`
                 : body.kind === 'unavailable'
                   ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
                   : (body.body ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
+          // Lines wrap rather than cut: on a phone the clock leaves the message room, so no line is a dead end.
+          const line = (
+            <Text variant="code" selectable={!truncated} tone={failing ? 'danger' : 'neutral'}>
+              <Text variant="code" tone="secondary" value={`${clock}  `} />
+              <Text variant="code" tone={failing ? 'danger' : 'secondary'} value={severity} />
+              {message === null ? null : (
+                <Text variant="code" tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'} value={`  ${message}`} />
+              )}
+            </Text>
+          );
           return (
             <Stack key={log.id} gap="none" testID={`telemetry.exception.log.${log.id}`}>
               {truncated ? (
@@ -331,15 +328,13 @@ function RequestLogs({
                   accessibilityRole="button"
                   accessibilityLabel={`${clock} ${severity} ${prefix ?? ''}…`}
                   expanded={body !== undefined}
+                  busy={body?.kind === 'loading'}
                   onPress={() => open(log.id)}
                 >
                   {line}
                 </HappierPressable>
               ) : (
                 line
-              )}
-              {opened === null ? null : (
-                <Text variant="code" selectable tone={body?.kind === 'ready' ? (failing ? 'danger' : 'neutral') : 'secondary'} value={opened} />
               )}
             </Stack>
           );

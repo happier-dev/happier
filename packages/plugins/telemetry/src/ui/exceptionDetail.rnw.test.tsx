@@ -351,12 +351,24 @@ describe('the Happier exception detail', () => {
     await act(async () => {
       await page.press(errorLine!);
     });
-    await vi.waitFor(async () => {
-      await expect(page.getByText('body of log-2')).resolves.toBeDefined();
+    // Open, the line reads its whole message in place of the cut start, never both.
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('body of log-2');
     });
+    expect(document.body.textContent).not.toContain('TypeError: Cannot read properties of undefined…');
     expect(calls.filter((call) => call.localId === 'capture/query/get').map((call) => call.input)).toEqual([
       { source: TRACE.source, id: 'log-2' },
     ]);
+    // A second press closes it again, without another read.
+    const openLine = (await page.getAllByRole('button')).find((target) => target.name?.includes('error'));
+    await act(async () => {
+      await page.press(openLine!);
+    });
+    await vi.waitFor(() => {
+      expect(document.body.textContent).not.toContain('body of log-2');
+    });
+    expect(document.body.textContent).toContain('TypeError: Cannot read properties of undefined…');
+    expect(calls.filter((call) => call.localId === 'capture/query/get')).toHaveLength(1);
   });
 
   it('sends a Team-shared issue to its owner’s collector instead of reading', async () => {

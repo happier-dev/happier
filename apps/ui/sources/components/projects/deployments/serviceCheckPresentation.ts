@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/database-protocol';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { formatHappierDuration } from '@happier-dev/plugin-ui/presentation';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
@@ -530,9 +531,7 @@ export function formatServiceCheckUnit(value: number, name: 'millisecond' | 'sec
 }
 /** A response or request time: whole milliseconds under a second, else seconds to three figures ("1.42 sec", the p95 precision). */
 export function formatServiceCheckLatency(ms: number): string {
-  if (ms < 1000) return formatServiceCheckUnit(Math.round(ms), 'millisecond');
-  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'second', unitDisplay: 'short', minimumSignificantDigits: 3, maximumSignificantDigits: 3 })
-    .format(ms / 1000);
+  return formatHappierDuration(ms, getPreferredLanguage());
 }
 export function formatServiceCheckPeriod(ms: number): string {
   return ms % 3_600_000 === 0 ? formatServiceCheckUnit(ms / 3_600_000, 'hour')
