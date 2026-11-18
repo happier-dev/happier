@@ -36,6 +36,11 @@ export type AgentActionButtonProps = Readonly<{
   /** The chevron's menu opened or closed, for a caller that reads its destinations only while it is open. */
   onMenuOpenChange?: (open: boolean) => void;
   disabled?: boolean;
+  /**
+   * The launch is not ready yet (its actions are still loading): the face shows the button's quiet ring and reads busy
+   * to assistive technology, and neither press runs until it settles, so the control never looks dead.
+   */
+  pending?: boolean;
   /** A phone's band: the main face gives up width first and ends in "…". */
   compact?: boolean;
   /** `secondary` where the page already has a primary action (Deploy on an Environment); an action stays one control either way. */
@@ -113,6 +118,7 @@ export function AgentActionButton(
         joinedEdge="end"
         {...(props.compact === true ? { singleLine: true } : {})}
         disabled={props.disabled === true}
+        busy={props.pending === true}
         onPress={() => {
           props.onLaunch(props.launchMode);
         }}
@@ -145,7 +151,7 @@ export function AgentActionButton(
             color={face === 'primary' ? theme.colors.onAccent : theme.colors.text}
           />
         }
-        disabled={props.disabled === true}
+        disabled={props.disabled === true || props.pending === true}
         sheet={{ title: optionsLabel }}
         items={items}
         {...(props.groups === undefined || props.groups.length === 0

@@ -309,7 +309,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     ? localization?.translate('happier.plugin-ui.state.details', 'Details') ?? 'Details' : undefined);
   // Expanded, the toggle says what it now does; a caller that names the open label names the closed one too.
   const collapseLabel = props.valuesCollapseLabel ?? (props.valuesLabel === undefined
-    ? localization?.translate('happier.plugin-ui.state.collapseDetails', 'Collapse') ?? 'Collapse' : valuesLabel);
+    ? localization?.translate('happier.plugin-ui.state.collapseDetails', 'Collapse') ?? 'Collapse' : props.valuesLabel);
   const showAxis = props.showAxis ?? !inline;
   const showLegend = props.showLegend ?? (!inline && props.series.length > 1);
   // The values toggle is quiet meta: at the legend's trailing end when there is one, else on its own line

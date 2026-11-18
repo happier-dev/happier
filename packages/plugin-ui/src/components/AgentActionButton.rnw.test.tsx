@@ -56,6 +56,19 @@ describe('AgentActionButton (owner ruling 2026-11-07 "Agent actions: one shared 
     },
   );
 
+  // Triage ORCH 01:40Z: a split whose launch is not ready yet read as dead (disabled, no look, no reason).
+  it('reads busy while its launch is pending, and both presses wait', async () => {
+    const launches: AgentActionLaunchMode[] = [];
+    const fixture = await mount(() => (
+      <AgentActionButton title="Investigate" launchMode="review" pending onLaunch={(mode) => { launches.push(mode); }} />
+    ));
+    const face = await fixture.getByRole('button', { name: 'Investigate' });
+    expect(face.state).toMatchObject({ busy: true });
+    expect((await fixture.getByRole('button', { name: 'Investigate options' })).state).toMatchObject({ disabled: true });
+    await expect(fixture.press(face)).rejects.toThrow(/no longer pressable/);
+    expect(launches).toEqual([]);
+  });
+
   it('offers the other launch, and editing the action, on its chevron', async () => {
     const launches: AgentActionLaunchMode[] = [];
     let edits = 0;

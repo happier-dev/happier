@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import type { HappierPageTextStep } from '../layout/pageText.js';
+import { HAPPIER_TYPE_SCALE } from '../text/typeScale.js';
 
 /**
  * One transient-menu scale, independent of a collection's density preference. Rows run edge to edge (owner
  * 2026-11-08, restated 2026-11-16 for the composer popovers): a row's hover and selection fill spans the menu's
  * full width with no side inset and no rounded pill, and the surface's corner clips the first and last row. The
  * menu keeps `sectionPaddingVerticalPx` top and bottom so the first row is not glued to the top (owner 2026-11-11,
- * phone #03/#05). A row's words stay on `paddingHorizontalPx` from the menu's edge, like headings and footers.
+ * phone #03/#05). A row's words stay on `paddingHorizontalPx` from the menu's edge, like headings, section titles and
+ * footers: one text edge. Every menu row pads `paddingVerticalPx`, whatever its list's density, so a one-line row is
+ * `minHeightPx` and a described row is its two lines (the description directly under the name, LAB-P8 r2). A divider
+ * between a menu's sections runs edge to edge like the rows it parts (popovers are full-bleed).
  */
 export const HAPPIER_MENU_ROW_METRICS = {
   iconGlyphSizePx: 16,
@@ -23,7 +27,7 @@ export const HAPPIER_MENU_ROW_METRICS = {
   paddingVerticalPx: 8,
   paddingHorizontalPx: 12,
   sectionPaddingVerticalPx: 4,
-  subtitleGapPx: 2,
+  subtitleGapPx: 0,
 } as const;
 
 /** A menu row's highlight shape: edge to edge and square, with its words on the menu's text edge. */
@@ -39,7 +43,12 @@ export const HAPPIER_MENU_ROW_SHAPE = Object.freeze({
  */
 export const HAPPIER_MENU_ROW_TEXT = {
   label: { weight: 'regular', fontSize: Platform.OS === 'ios' ? 16 : 15, lineHeight: 20, letterSpacing: Platform.OS === 'ios' ? -0.2 : 0 },
-  subtitle: { weight: 'regular', fontSize: 13, lineHeight: 18 },
+  // A row's description is the type scale's meta step (LAB-P8 r2), never a menu-only size.
+  subtitle: {
+    weight: 'regular',
+    fontSize: Platform.OS === 'ios' ? HAPPIER_TYPE_SCALE.meta.ios.fontSize : HAPPIER_TYPE_SCALE.meta.fontSize,
+    lineHeight: HAPPIER_TYPE_SCALE.meta.lineHeight,
+  },
 } as const satisfies Readonly<Record<'label' | 'subtitle', HappierPageTextStep>>;
 
 /**

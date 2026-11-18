@@ -52,7 +52,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
       {...(action.startable ? {} : { startUnavailableReason: t('ui.pluginUi.agentActionStartNeedsTask') })}
       onLaunch={(mode) => { props.onLaunch(mode, action.actionId); }}
       {...(openEditor === null ? {} : { onEdit: () => { openEditor(action.actionId); } })}
-      disabled={props.pending}
+      pending={props.pending}
       compact={props.compact}
       emphasis={index === 0 ? props.emphasis : 'secondary'}
     />
