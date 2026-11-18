@@ -21,6 +21,9 @@ vi.mock('@/components/browser/surfaces/BrowserSurfaceHost', () => ({
     ) => primary ?? fallback,
 }));
 
+// Collect the real module once, outside per-test interaction deadlines.
+const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
+
 const externalTarget = {
     kind: 'externalUrl',
     targetId: 'external_docs',
@@ -99,7 +102,6 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
     }
 
     it('renders the launchpad browser-view resource through the reusable browser host (empty view)', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
         const input = launchpadInput();
 
@@ -116,7 +118,6 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
     });
 
     it('forwards browser product models through the reusable browser host', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const { LOCAL_BROWSER_PROFILE_ID } = await import('@/sync/domains/browser/profiles/localBrowserProfile');
         const browserContext = { state: { activeAnnotationByViewId: {} } } as unknown as NonNullable<BrowserSurfaceProductModels['browserContext']>;
         const productModels = {
@@ -141,7 +142,6 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
     });
 
     it('threads browser action projection and machine scope into the live host', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const pluginBrowserProjection = {
             generation: 14,
             targetsById: {},
@@ -168,7 +168,6 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
     });
 
     it('forwards onOpenTarget to the host ONLY as the external-surface new-tab seam (DV-NAV)', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const onOpenTarget = vi.fn();
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web', onOpenTarget });
 
@@ -184,7 +183,6 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
     });
 
     it('requests a durable tab replacement when the launchpad retargets to a browser view', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const replaceTab = vi.fn();
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
         const input = {
@@ -244,7 +242,6 @@ describe('browser-view details surface renderer — single view', () => {
     }
 
     it('canRender matches both single-view and launchpad browser-view resources', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
 
         expect(renderer.canRender(browserViewInput())).toBe(true);
@@ -260,7 +257,6 @@ describe('browser-view details surface renderer — single view', () => {
     });
 
     it('renders the single-view browser content for the resource viewId under its browserSessionId', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
 
         const screen = await renderScreen(<>{renderer.render(browserViewInput())}</>);
@@ -274,7 +270,6 @@ describe('browser-view details surface renderer — single view', () => {
     });
 
     it('seeds remounted browser content under the resource viewId when the resource target changes', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({
             platform: 'web',
             browserFeatureDecision: enabledBrowserDecision,
@@ -307,7 +302,6 @@ describe('browser-view details surface renderer — single view', () => {
     });
 
     it('requests a durable same-tab resource replacement when the active browser view retargets', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const replaceTab = vi.fn();
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
         const input = {
@@ -341,7 +335,6 @@ describe('browser-view details surface renderer — single view', () => {
     });
 
     it('closes this tab through the Details host closeTab owner, the same as the strip\'s ×', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const closeTab = vi.fn();
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
         const input = { ...browserViewInput(), callbacks: { closeTab } };
@@ -357,7 +350,6 @@ describe('browser-view details surface renderer — single view', () => {
         // DERIVED on mount from the tab resource's deterministic `target` via the one resolver — the
         // surface does not strand on the launchpad/"No view" empty state for an opened target. On web
         // the external URL selects the renderable iframe engine (B-RC4), not a dead `openExternalTab`.
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({
             platform: 'web',
             browserFeatureDecision: enabledBrowserDecision,
@@ -387,7 +379,6 @@ describe('browser-view details surface renderer — single view', () => {
     });
 
     it('opens desktop external URL views with policy and native WebView context', async () => {
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({
             platform: 'desktop',
             browserFeatureDecision: enabledBrowserDecision,
@@ -429,7 +420,6 @@ describe('browser-view details surface renderer — single view', () => {
         // hooks). Without a profile the policy previously denied with `profile_missing`, so the
         // view never materialized and the tab fell back to the launchpad empty-state. The host now
         // resolves a local (user-owned) default browser profile so an opened external URL mounts.
-        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const renderer = createBrowserViewDetailsSurfaceRenderer({
             platform: 'desktop',
             browserFeatureDecision: enabledBrowserDecision,

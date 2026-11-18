@@ -223,6 +223,7 @@ export function BrowserDetailsSurface(props: Readonly<{
         readBrowserPlatform(props.resource.platform) ?? props.platform,
     );
     const liveFeed = useBrowserSurfaceHostFeed({
+        accountLifetime: props.pluginAccountLifetime,
         machineId: props.machineId,
         serverId: props.serverId,
         sessionId: props.sessionId,

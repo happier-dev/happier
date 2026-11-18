@@ -37,6 +37,7 @@ export function ProjectRightPanelBrowserView(props: Readonly<{
     // Assemble the live workspace-ranked launchpad feed so the Project new-tab page shows
     // running services + recents, not only URL entry.
     const hostProps = useBrowserSurfaceHostProps({
+        accountLifetime: pluginProjection.accountLifetime,
         scope: 'workspaceDetails',
         workspaceRefId: props.workspaceRefId,
         workspaceRoot: selectedWorkspaceScope?.rootPath ?? null,

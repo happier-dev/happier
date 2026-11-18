@@ -1,3 +1,5 @@
+import { browserRecentsState } from '@/sync/domains/state/browserRecentsUiState';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type {
     BrowserTargetPolicyDecisionV1,
     BrowserViewTargetV1,
@@ -421,14 +423,12 @@ describe('openBrowserTargetInWorkspace', () => {
 
     it('opens the tab once with intent default and remembers the recent target', async () => {
         const openDetailsTab = vi.fn();
-        const remembered: BrowserViewTargetV1[] = [];
+        const recentKey = serverAccountScopeKeySuffix({ serverId: 'home_1', accountId: 'account_1' });
+        browserRecentsState.remove(recentKey);
         const { open: openBrowserViewTarget } = createBrowserWorkspaceOpeningFixture({
             openDetailsTab,
             scope: 'sessionDetails',
             platform: 'web',
-            onRememberRecentTarget: (target) => {
-                remembered.push(target);
-            },
         });
 
         await openBrowserViewTarget(localServicePreviewTarget);
@@ -438,7 +438,7 @@ describe('openBrowserTargetInWorkspace', () => {
         expect(tab.kind).toBe('browser-view');
         expect(readTabTarget(tab)).toEqual(localServicePreviewTarget);
         expect(options?.intent).toBe('default');
-        expect(remembered).toEqual([localServicePreviewTarget]);
+        expect(browserRecentsState.read(recentKey)?.map(entry => entry.target)).toEqual([localServicePreviewTarget]);
     });
 
     it('DV-OPEN-SEAM: the opened tab resource carries ONLY the deterministic inputs (target + identity), no state blob', async () => {
@@ -750,7 +750,8 @@ describe('openBrowserTargetInWorkspace', () => {
     it('R-3: hands an allowed external URL to the system browser instead of opening a dead tab where the desktop host cannot embed it', async () => {
         openExternalUrlMock.mockClear();
         const openDetailsTab = vi.fn();
-        const remembered: BrowserViewTargetV1[] = [];
+        const recentKey = serverAccountScopeKeySuffix({ serverId: 'home_1', accountId: 'account_1' });
+        browserRecentsState.remove(recentKey);
         const { open: openBrowserViewTarget } = createBrowserWorkspaceOpeningFixture({
             openDetailsTab,
             scope: 'sessionDetails',
@@ -759,9 +760,6 @@ describe('openBrowserTargetInWorkspace', () => {
             browserProfile: sessionBrowserProfile,
             allowExternalUrlBrowsing: true,
             desktopWebViewAvailability: unembeddableDesktopWebView,
-            onRememberRecentTarget: (target) => {
-                remembered.push(target);
-            },
         });
 
         expect(await openBrowserViewTarget(externalTarget)).toMatchObject({ ok: true,
@@ -770,7 +768,7 @@ describe('openBrowserTargetInWorkspace', () => {
         expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/');
         expect(openDetailsTab).not.toHaveBeenCalled();
         // An OS tab is not a workspace tab; it must not enter the recents rail as one.
-        expect(remembered).toEqual([]);
+        expect(browserRecentsState.read(recentKey)).toBeUndefined();
     });
 
     // The neighbouring case: a host that CAN embed still opens the in-app tab. Discriminates

@@ -1,3 +1,4 @@
+import { rememberOpenedBrowserTarget } from '@/sync/domains/state/browserRecentsUiState';
 import type {
     BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
 import type {
@@ -96,12 +97,6 @@ export type CreateOpenBrowserTargetInWorkspaceDeps = ResolveBrowserViewTargetOpe
     openDetailsTab: OpenDetailsTab;
     /** The pane column this caller sits in, read at open time; lent to the scope's opener. */
     readOpenerRegion?: () => BrowserWorkspaceOpenerRegion | null;
-    /**
-     * Records the opened target as a recent. Supplied by the caller because the recents store lives
-     * outside this owner (FP-BRW-LAUNCHER-1 wires it to the launchpad's recent section); fold the
-     * target via the canonical `rememberBrowserRecentTarget` reducer in `targets/recents.ts`.
-     */
-    onRememberRecentTarget?: (target: BrowserViewTargetV1) => void;
 }>;
 
 /**
@@ -427,7 +422,7 @@ export function createOpenBrowserTargetInWorkspace(
                 // The pane still owns the same logical page; daemon discovery owns its content identity.
                 deps.openDetailsTab({ ...streamTab, key: resolved.tab.key }, { intent: 'default',
                     ...(presentation.openerRegion ? { origin: presentation.openerRegion } : {}) });
-                deps.onRememberRecentTarget?.(target);
+                rememberOpenedBrowserTarget(deps.accountLifetime!.scope, target);
             } else {
                 const control = readRegisteredBrowserRuntimeControlAdapter(resolved.browserSessionId, resolved.viewId, deps.accountLifetime?.scope);
                 const view = control?.readState()?.viewsById[resolved.viewId];
@@ -468,7 +463,7 @@ export function createOpenBrowserTargetInWorkspace(
                 }
                 deps.openDetailsTab(resolved.tab, { intent: 'default',
                     ...(presentation?.openerRegion ? { origin: presentation.openerRegion } : {}) });
-                deps.onRememberRecentTarget?.(target);
+                rememberOpenedBrowserTarget(deps.accountLifetime!.scope, target);
             }
             return BrowserWorkspaceOpenResultV1Schema.parse({ v: 1, commandId: request.commandId,
                 status: 'dispatched', adapterKind: selection.adapterKind, events: [],

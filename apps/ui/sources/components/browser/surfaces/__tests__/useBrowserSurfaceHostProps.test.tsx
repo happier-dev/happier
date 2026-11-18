@@ -6,6 +6,8 @@ import type {
 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
+import { SessionViewerSourceAccountScopeProvider } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { act, renderHook } from '@/dev/testkit';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createPluginUiTranslationRuntime, PluginUiTranslationRuntimeProvider } from '@/sync/domains/plugins/ui/i18n';
@@ -160,6 +162,33 @@ describe('resolveBrowserSurfacePlatform', () => {
 });
 
 describe('useBrowserSurfaceHostProps', () => {
+    it('opens, displays and reopens a recent through the real opener and feed, without waking another Account', async () => {
+        const opened = vi.fn();
+        const owner = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab: opened,
+            accountLifetime: { scope: { serverId: 'recents-home', accountId: 'recents-account' }, isCurrent: () => true,
+                onRetire: () => ({ dispose() {} }) } });
+        const lifetime = owner.open.runtimeAdapter.accountLifetime!;
+        const wrapper = ({ children }: React.PropsWithChildren) => <SessionViewerSourceAccountScopeProvider accountLifetime={lifetime}>{children}</SessionViewerSourceAccountScopeProvider>;
+        const hook = await renderHook(() => useBrowserSurfaceHostProps({ scope: 'sessionDetails', sessionId: 'recents-session',
+            launcherState: null, localServicePreviewState: null }), { wrapper });
+        const otherLifetime = { ...lifetime, scope: { ...lifetime.scope, accountId: 'other-recents-account' } };
+        let otherRenders = 0;
+        const other = await renderHook(() => { otherRenders++; return useBrowserSurfaceHostProps({ scope: 'sessionDetails',
+            launcherState: null, localServicePreviewState: null }); }, { wrapper: ({ children }: React.PropsWithChildren) =>
+            <SessionViewerSourceAccountScopeProvider accountLifetime={otherLifetime}>{children}</SessionViewerSourceAccountScopeProvider> });
+        const baseline = otherRenders;
+        try {
+            await act(async () => { await owner.open(runningServiceTarget); });
+            const row = hook.getCurrent().launchpadRows.find(row => row.section === 'recent');
+            expect(row?.target).toEqual(runningServiceTarget);
+            await act(async () => { await owner.open(row!.target!); });
+            expect(opened).toHaveBeenCalledTimes(2);
+            expect(hook.getCurrent().launchpadRows.filter(row => row.section === 'recent')).toHaveLength(1);
+            expect(other.getCurrent().launchpadRows).toEqual([]);
+            expect(otherRenders - baseline).toBe(0);
+        } finally { await hook.unmount(); await other.unmount(); owner.dispose(); }
+    });
+
     it('keeps an access-only preview out of the Running launchpad', async () => {
         const registration = { ...runningLauncherSnapshot.targets[0], source: 'registered_preview',
             sourceClass: { kind: 'registered_preview', previewId: runningServiceTarget.targetId }, actions: ['open_preview'],

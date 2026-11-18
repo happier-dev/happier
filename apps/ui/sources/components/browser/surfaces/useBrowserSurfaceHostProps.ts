@@ -1,3 +1,6 @@
+import { useBrowserRecentTargets } from '@/sync/domains/state/browserRecentsUiState';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import type {
     BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
 import type {
@@ -66,6 +69,7 @@ export type BrowserSurfaceHostFeedAssembly = Readonly<{
 
 export type BrowserSurfaceHostPropsInput = Readonly<{
     scope: BrowserSurfaceScope;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     sessionId?: string | null;
     workspaceRefId?: string | null;
     workspaceRoot?: string | null;
@@ -199,6 +203,9 @@ export type BrowserSurfaceHostFeedInput = Omit<BrowserSurfaceHostPropsInput, 'sc
 export function useBrowserSurfaceHostFeed(
     input: BrowserSurfaceHostFeedInput,
 ): Pick<BrowserSurfaceHostPropsBundle, 'feed' | 'onRefreshLaunchpad' | 'localServicePreviewState' | 'localServicePreviewServerId'> {
+    const viewerLifetime = useSessionViewerSourceAccountLifetime();
+    const accountLifetime = input.accountLifetime === undefined ? viewerLifetime : input.accountLifetime;
+    const recents = useBrowserRecentTargets(input.enabled !== false ? accountLifetime?.scope ?? null : null);
     const platform = resolveBrowserSurfacePlatform(input.platform);
     const machineId = normalizeId(input.machineId);
     const serverId = normalizeId(input.serverId);
@@ -242,6 +249,7 @@ export function useBrowserSurfaceHostFeed(
     });
 
     const feed = React.useMemo<BrowserSurfaceHostFeedAssembly>(() => buildBrowserLaunchpadModel({
+        recents,
         launcherSnapshot: snapshotFromLocalServiceLauncherState(launcherState),
         launcherRefresh: { status: launcherRefreshStatus, error: launcherRefreshError },
         localServicePreviewState,
@@ -253,6 +261,7 @@ export function useBrowserSurfaceHostFeed(
         ),
         nowMs: input.nowMs?.(),
     }), [
+        recents,
         input.nowMs,
         input.pluginBrowserProjection,
         input.pluginBrowserPolicyContext,

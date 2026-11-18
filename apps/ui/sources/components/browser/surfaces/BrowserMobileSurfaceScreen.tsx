@@ -63,6 +63,7 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
     // services + recents (not only URL entry). The shared bootstrap also resolves the preview
     // state used to seed access URLs when a launchpad row is opened.
     const hostProps = useBrowserSurfaceHostProps({
+        accountLifetime: pluginProjection.accountLifetime,
         scope: 'sessionMobile',
         sessionId: props.sessionId,
         machineId,
