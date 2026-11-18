@@ -167,7 +167,7 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false, signinResponses = [] } = {}) {
   const controller = new AbortController();
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
@@ -193,6 +193,16 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'restore' && restored) {
           void observe({ restored: true }).then(({ result }) => this.message({ id, result: { result: { value: result } } }));
           return;
+        }
+        if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'restore') {
+          // The page's own sign-in requests, as CDP reports them while the form submits.
+          for (const [index, { origin = canonicalServerUrl, path, method: requestMethod = 'POST', status: responseStatus, failed: requestFailed, canceled }] of signinResponses.entries()) {
+            const requestId = `signin-${index}`;
+            const url = `${origin}${path}`;
+            this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: 'main', loaderId: 'document-1', request: { method: requestMethod, url } } });
+            if (responseStatus !== undefined) this.message({ method: 'Network.responseReceived', params: { requestId, frameId: 'main', loaderId: 'document-1', response: { url, status: responseStatus } } });
+            this.message({ method: requestFailed ? 'Network.loadingFailed' : 'Network.loadingFinished', params: { requestId, ...(requestFailed ? { canceled: canceled === true } : {}) } });
+          }
         }
         if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'account') {
           void observe({ step: 'account', accountReady: !accountPending,
@@ -287,6 +297,29 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
+
+test('names the Home sign-in response status behind a restore form error', async () => {
+  assert.deepEqual(await profileSignin({ restoreOutcome: 'restore_failed', signinResponses: [
+    { path: '/v1/auth/challenge', status: 200 },
+    { path: '/v1/auth', status: 503 },
+  ] }), { ok: false, reason: 'restore_failed', detail: 'home_http_status', status: 503 });
+});
+
+test('names a Home sign-in request that never answered behind a restore form error', async () => {
+  assert.deepEqual(await profileSignin({ restoreOutcome: 'restore_failed', signinResponses: [
+    { path: '/v1/auth', status: 200 },
+    { path: '/v1/account/encryption', method: 'GET', failed: true },
+  ] }), { ok: false, reason: 'restore_failed', detail: 'home_request_failed' });
+});
+
+test('adds no Home detail when the sign-in requests succeeded or belong elsewhere', async () => {
+  assert.deepEqual(await profileSignin({ restoreOutcome: 'restore_failed', signinResponses: [
+    { path: '/v1/auth', status: 200 },
+    { path: '/v1/features', method: 'GET', status: 503 },
+    { origin: 'https://other-home.invalid', path: '/v1/auth', status: 503 },
+    { path: '/v1/account/encryption', method: 'GET', failed: true, canceled: true },
+  ] }), { ok: false, reason: 'restore_failed' });
+});
 
 test('signs in through a pooled browser addressed below its gateway path', async () => {
   assert.deepEqual(await profileSignin({ cdpPath: '/browser/412ca381-13b2-431a-ad73-f71190c1c5ea' }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });

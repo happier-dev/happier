@@ -908,7 +908,11 @@ If the app requires a Home-address confirmation, the command returns `restore_en
 before filling the form. Review the Home connection in the browser and rerun the command.
 It reads the signed-in Account id from Account settings and returns the browser to Home.
 It leaves authentication and persistence to the app, and prints only a JSON success result with
-the Account id prefix, or a typed failure reason. It never saves credentials or browser state
+the Account id prefix, or a typed failure reason. When the key form shows an error, the command
+clears the key (and with it the form's message) and returns `restore_failed`. If the Home answered a
+key sign-in request with an error status, the result adds `detail: "home_http_status"` and the
+`status`; if a request never got an answer, it adds `detail: "home_request_failed"`. A 5xx or a
+failed request means the Home was unavailable: rerun the command once it answers. It never saves credentials or browser state
 outside the browser's normal storage. Interrupt a pending sign-in with Ctrl+C to receive the typed
 `cancelled` result. Keep the browser owner handle alive and close it after QA.
 

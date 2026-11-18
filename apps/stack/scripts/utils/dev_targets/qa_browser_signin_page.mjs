@@ -192,7 +192,18 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     let observingAccount = false;
     let profileLoaded;
     const profileRequests = new Map();
+    // The key form's error copy is cleared with the key, so the Home's answer to
+    // the key sign-in requests is the observable cause. Only path, status and
+    // failure are recorded; never request or response content.
+    let signinRequests = null;
     const expectedOrigin = new URL(urls.canonicalServerUrl).origin;
+    const isHomeSigninRequest = value => {
+      try {
+        const url = new URL(value);
+        return url.origin === expectedOrigin
+          && ['/v1/auth/challenge', '/v1/auth', '/v1/account/encryption'].includes(url.pathname);
+      } catch { return false; }
+    };
     const isHomeProfile = value => {
       try {
         const url = new URL(value);
@@ -232,6 +243,13 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       if (message.method === 'Runtime.executionContextsCleared') contexts.clear();
       if (message.method === 'Runtime.executionContextDestroyed') {
         for (const [frameId, id] of contexts) if (id === message.params.executionContextId) contexts.delete(frameId);
+      }
+      if (signinRequests) {
+        const params = message.params;
+        if (message.method === 'Network.requestWillBeSent' && isHomeSigninRequest(params.request.url)) signinRequests.set(params.requestId, {});
+        const request = signinRequests.get(params?.requestId);
+        if (request && message.method === 'Network.responseReceived') request.status = params.response.status;
+        if (request && message.method === 'Network.loadingFailed' && params.canceled !== true) request.failed = true;
       }
       if (observingAccount) {
         const params = message.params;
@@ -287,10 +305,14 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         if (result.exceptionDetails) throw failure('restore_failed');
         return result.result?.value;
       };
+      signinRequests = new Map();
       await navigate('/restore/manual');
       const submitted = step('restore', key);
       key = '';
       const outcome = await submitted;
+      const signinFailure = [...signinRequests.values()].find(request => request.failed
+        || (Number.isInteger(request.status) && (request.status < 200 || request.status >= 300)));
+      signinRequests = null;
       if (outcome?.reason === 'home_reachability_failed' || outcome?.reason === 'blocking_dialog') {
         throw Object.assign(failure(outcome.reason), { title: outcome.title });
       }
@@ -299,7 +321,12 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         throw Object.assign(failure(outcome.reason), revisions, { title: outcome.title, expectedOrigin,
           actualOrigin: confirmHomeAliasUrl ? new URL(confirmHomeAliasUrl).origin : null });
       }
-      if (outcome !== 'home') throw failure(['home_unavailable', 'restore_entry_unavailable', 'home_alias_confirmation_required'].includes(outcome) ? outcome : 'restore_failed');
+      if (outcome !== 'home' && ['home_unavailable', 'restore_entry_unavailable', 'home_alias_confirmation_required'].includes(outcome)) throw failure(outcome);
+      if (outcome !== 'home') {
+        if (signinFailure?.failed) throw failure('restore_failed', 'home_request_failed');
+        if (signinFailure) throw Object.assign(failure('restore_failed', 'home_http_status'), { status: signinFailure.status });
+        throw failure('restore_failed');
+      }
       observingAccount = true;
       profileLoaded = Promise.withResolvers();
       await navigate('/settings/account');
@@ -352,6 +379,10 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     if (result.reason === 'account_unavailable' && details.includes(error.detail)) {
       result.detail = error.detail;
       if (error.detail === 'profile_http_status' && Number.isInteger(error.status)) result.status = error.status;
+    }
+    if (result.reason === 'restore_failed' && ['home_http_status', 'home_request_failed'].includes(error.detail)) {
+      result.detail = error.detail;
+      if (error.detail === 'home_http_status' && Number.isInteger(error.status)) result.status = error.status;
     }
     return result;
   } finally { key = ''; client?.close(); }
