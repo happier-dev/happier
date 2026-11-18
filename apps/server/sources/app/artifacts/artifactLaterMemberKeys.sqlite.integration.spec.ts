@@ -59,7 +59,7 @@ describe('Artifact keys for later Team and Group members (real SQLite)', () => {
       return response.json();
     };
     const run = () => prepareOwedArtifactRecipientKeysV1({
-      ownerAccountId: owner.id, randomBytes: tweetnacl.randomBytes,
+      randomBytes: tweetnacl.randomBytes,
       readOwedPage: cursor => request('GET', `/v1/artifacts/access/recipients/owed${cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`),
       openKeys: async census => {
         const dataKey = census.dataEncryptionKey ? openEncryptedDataKeyEnvelopeV1({

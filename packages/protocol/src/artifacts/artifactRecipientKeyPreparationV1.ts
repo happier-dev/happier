@@ -76,10 +76,10 @@ export async function runArtifactRecipientKeyPreparationV1(params: Readonly<{
  * The owner's later-member Artifact repair on the Team-change wake. A Team or Group grant follows live
  * membership, so a member who joins later is owed an envelope only a keyholder can write. The server's
  * owed census pages only Artifacts that owe one; each runs the census → seal → fenced commit above on
- * that census, so nothing owed costs one request. Content is never opened.
+ * that census, so nothing owed costs one request. The server query decides ownership; the commit's
+ * expected-key fence stays the currentness check. Content is never opened.
  */
 export async function prepareOwedArtifactRecipientKeysV1(params: Readonly<{
-  ownerAccountId: string;
   readOwedPage: (cursor: string | null) => Promise<ArtifactOwedRecipientCensusPageV1>;
   openKeys: (census: ArtifactAccessRecipientCensusResponseV1) => Promise<Readonly<{ dataKey: Uint8Array; provenanceDataKey: Uint8Array | null }> | null>;
   randomBytes: (length: number) => Uint8Array;
@@ -88,7 +88,6 @@ export async function prepareOwedArtifactRecipientKeysV1(params: Readonly<{
 }>): Promise<void> {
   await prepareOwedResourceRecipientKeysV1({ readOwedPage: params.readOwedPage, signal: params.signal,
     prepare: async census => {
-      if (census.ownerAccountId !== params.ownerAccountId || census.access !== 'owner') return;
       const keys = await params.openKeys(census);
       if (!keys) return;
       await runArtifactRecipientKeyPreparationV1({ artifactId: census.artifactId, dataKey: keys.dataKey,

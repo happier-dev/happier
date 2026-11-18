@@ -1872,7 +1872,7 @@ class Sync {
                     const { prepareOwedTaskKeys } = await import('./domains/todos/taskResourceTransport');
                     await prepareOwedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId, isCurrent,
                     }).catch((error: unknown) => log.log(`Task key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                    await prepareOwedArtifactRecipientKeys({ credentials, accountId: scope.accountId, encryption,
+                    await prepareOwedArtifactRecipientKeys({ credentials, encryption,
                         artifactDataKeys: this.artifactDataKeys, request: createServerFetchForActiveServer(undefined, { credentials, isCurrent }),
                     }).catch((error: unknown) => log.log(`Artifact key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
                 }

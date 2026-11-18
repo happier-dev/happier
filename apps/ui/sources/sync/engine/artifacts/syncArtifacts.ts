@@ -1352,12 +1352,12 @@ async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
  * one request. Keys open through the same cache as every other Artifact read; content is never opened.
  */
 export async function prepareOwedArtifactRecipientKeys(params: Readonly<{
-    credentials: AuthCredentials; accountId: string; request?: ArtifactApiOptions['request'];
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request'];
     encryption: Encryption; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
 }>): Promise<void> {
     const { encryption, artifactDataKeys, signal } = params;
     const accessApi = createArtifactAccessApi(params.credentials, { request: params.request });
-    await prepareOwedArtifactRecipientKeysV1({ ownerAccountId: params.accountId, randomBytes: getRandomBytes, signal,
+    await prepareOwedArtifactRecipientKeysV1({ randomBytes: getRandomBytes, signal,
         readOwedPage: cursor => accessApi.readOwedRecipients(cursor, signal),
         openKeys: async census => {
             if (!census.dataEncryptionKey) return null;

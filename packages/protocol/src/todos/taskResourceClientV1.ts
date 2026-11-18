@@ -188,7 +188,8 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     readOwedPage: async cursor => TaskOwedRecipientCensusPageV1Schema.parse(await request('GET',
       cursor === null ? '/v1/tasks/recipients/owed' : `/v1/tasks/recipients/owed?cursor=${encodeURIComponent(cursor)}`)),
     prepare: async owed => {
-      if (owed.ownerAccountId !== options.accountId || owed.access !== 'owner' || !owed.dataEncryptionKey) return;
+      // The server query decides ownership; the commit's expected-key fence stays the currentness check.
+      if (!owed.dataEncryptionKey) return;
       const dataKey = await options.crypto.openKey(owed.dataEncryptionKey).catch(() => null);
       if (dataKey?.length !== ENCRYPTED_DATA_KEY_V1_BYTES) return;
       const address = { ownerAccountId: owed.ownerAccountId, taskId: owed.taskId };
