@@ -56,14 +56,21 @@ beforeEach(async () => {
 }, 0);
 
 afterEach(async () => {
-  try { await ui?.close(); } finally { ui = undefined; }
+  try {
+    console.info('Setup consent phase', { phase: 'ui_close_started' });
+    await ui?.close();
+    console.info('Setup consent phase', { phase: 'ui_close_completed' });
+  } finally { ui = undefined; }
 }, 0);
 afterAll(async () => { await fixture?.stop(); }, 0);
 
 async function executeAction(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
   if (!ui) throw new Error('Person Action connection unavailable');
-  return await ui.executePresented(id, input, { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
+  if (id === 'projects.open') console.info('Setup consent phase', { phase: 'ui_open_started' });
+  const result = await ui.executePresented(id, input, { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
     actionRequestId: randomUUID(), actionCaller: { kind: 'host' } });
+  if (id === 'projects.open') console.info('Setup consent phase', { phase: 'ui_open_completed' });
+  return result;
 }
 
 async function action(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
