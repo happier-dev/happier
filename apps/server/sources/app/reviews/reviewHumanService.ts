@@ -161,7 +161,7 @@ export async function submitAdmittedReviewVerdictInTx(tx: Tx, input: Readonly<{
     const revision = previous?.revision ?? 0;
     if (input.request.expectedRevision !== undefined && input.request.expectedRevision !== revision) throw Object.assign(new Error('review_verdict_revision_mismatch'), { code: 'review_verdict_revision_mismatch' });
     const content = input.request.content;
-    if (content && content.t !== input.access.encryptionMode) throw Object.assign(new Error('review_verdict_encryption_mode_mismatch'), { code: 'review_verdict_encryption_mode_mismatch' });
+    if (content && (content.t === 'encrypted' ? 'e2ee' : 'plain') !== input.access.encryptionMode) throw Object.assign(new Error('review_verdict_encryption_mode_mismatch'), { code: 'review_verdict_encryption_mode_mismatch' });
     if (content?.t === 'plain') {
         const opened = ReviewVerdictContentV1Schema.safeParse(content.v);
         if (!opened.success || opened.data.reviewId !== input.request.reviewId || opened.data.roundOrdinal !== input.request.roundOrdinal
