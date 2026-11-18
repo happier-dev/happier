@@ -38,6 +38,7 @@ import { startAccountPasswordEnrollmentExternalAuth, readAccountPasswordEnrollme
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,6 +50,7 @@ afterEach(async () => {
     resetRuntimeFetch();
     vi.unstubAllGlobals();
     resetOAuthHarness();
+    retirePresentationNotice();
 });
 
 async function startPasswordEnrollment() {
@@ -429,6 +431,11 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(replaceSpy).toHaveBeenCalledWith(
                 '/settings/account',
             );
+            expect(readPresentationNotice()).toMatchObject({
+                key: 'oauth-return',
+                severity: 'info',
+                message: t('errors.oauthCancelled'),
+            });
         });
     });
 
