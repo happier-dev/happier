@@ -178,6 +178,8 @@ const LAYERED_DEFINITION = ProjectEffectiveDefinitionV1Schema.parse({ effectiveM
 /** A shared setup the Project has and this checkout has not taken (lab L6 hint): counts only, from its owner. */
 const PENDING_SHARED = { source: { id: SHARED_BASIS.sourceId, name: 'Acme web setup' }, setup: SHARED_BASIS,
   summary: [{ kind: 'workspaceSetup' as const, count: 1 }, { kind: 'scripts' as const, count: 1 }, { kind: 'services' as const, count: 1 }] };
+const HINT_DEFINITION = ProjectEffectiveDefinitionV1Schema.parse({ effectiveManifest: MANIFEST, origins: [], pendingSharedSetup: PENDING_SHARED });
+const HINT_FIRST_DEFINITION = ProjectEffectiveDefinitionV1Schema.parse({ effectiveManifest: null, origins: [], pendingSharedSetup: PENDING_SHARED });
 /** The upstream change the update sheet reviews: seed orders 200 → 500, a redis service added, storybook removed. */
 function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot | null {
   if (state === 'checking') return { kind: 'initial', pending: true };
@@ -425,8 +427,8 @@ export function ScriptsSpecimen(
     importCandidates: [],
     ...(frame === 'NATIVE' ? { setupReadiness: { kind: 'needsReview' as const, code: 'setup_changed' } } : {}),
     ...(frame === 'LAYERS' ? { effectiveDefinition: LAYERED_DEFINITION } : {}),
-    ...(frame === 'HINT' ? { effectiveDefinition: { effectiveManifest: MANIFEST, origins: [], pendingSharedSetup: PENDING_SHARED } }
-      : frame === 'HINTFIRST' ? { effectiveDefinition: { effectiveManifest: null, origins: [], pendingSharedSetup: PENDING_SHARED } } : {}),
+    ...(frame === 'HINT' ? { effectiveDefinition: HINT_DEFINITION }
+      : frame === 'HINTFIRST' ? { effectiveDefinition: HINT_FIRST_DEFINITION } : {}),
   };
   const body =
     frame === 'OUTPUT' ? (
