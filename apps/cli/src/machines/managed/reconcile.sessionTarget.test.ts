@@ -36,6 +36,7 @@ import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli-common/machines/managed';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -307,7 +308,11 @@ describe('Session-target authority for managed provider channel roles', () => {
                     serverHttpBaseUrl: h.input.serverUrl }).observeRecordedApprovalExecution } : {}) };
             const hydrator = createManagedPresetHydrator(input);
             const opened = await hydrator.open(row, { content, recipients: [] });
-            const executor = createActionExecutor({ managedMachineAction: async ({ context }) => {
+            const executor = createActionExecutor({
+                // The Account automation index is a network boundary; retain real admission with an empty Home index.
+                actionAutomations: createActionAutomationPortV1({ accountId: 'owner',
+                    seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }),
+                managedMachineAction: async ({ context }) => {
                 const options = { requestId: 'first-use', acquisitionMode: 'resource-bound' as const, context, signal: context.signal };
                 await reconcileManagedMachine({ input, options, hydrator, machine: opened, action: 'machines.managed.acquire',
                     client: createManagedMachineControllerClient(input, options, 'machines.managed.acquire', hydrator) });
