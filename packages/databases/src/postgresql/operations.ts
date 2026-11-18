@@ -403,6 +403,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 try {
                     results.push(decodePostgresqlResult(await query({ text, values: statement.parameters.map(postgresqlParameter) })));
                 } catch (error) {
+                    if (error instanceof PostgresqlOperationError) throw error;
                     const cause = { ...postgresqlFailureCause(error), statementIndex };
                     throw new PostgresqlOperationError({ ok: false, status: 'failed',
                         code: cause.source === 'engine' ? 'database_engine_error' : 'database_transport_error', cause });
