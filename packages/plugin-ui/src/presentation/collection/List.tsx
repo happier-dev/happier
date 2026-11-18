@@ -974,10 +974,11 @@ export function HappierListItem({
             {icon}
           </View>
         ) : null}
+        <StackedTitleLine wrap={stackedTitleLine} gapPx={resolvedTheme.spacing.small}>
         <View
           style={pageSection ? {
             // A page row decides placement by measurement, not by wrapping.
-            ...(stackPageAccessory && includeAccessory && !icon ? { flexGrow: 0, flexShrink: 0 } : { flex: 1 }),
+            ...(stackPageAccessory && includeAccessory && !icon && !stackedTitleLine ? { flexGrow: 0, flexShrink: 0 } : { flex: 1 }),
             minWidth: 0,
             gap: 0,
           } : {
@@ -1064,6 +1065,7 @@ export function HappierListItem({
             {detailContent ?? detail}
           </HappierText>
         ) : null}
+        </StackedTitleLine>
         {includeAccessory
           ? (pageSection && accessory !== undefined && accessory !== null
             ? <View
@@ -1096,6 +1098,10 @@ export function HappierListItem({
   };
 
   const includeAccessory = behavior.accessoryPlacement === 'inside';
+  // A control stacked beneath the text keeps the row's trailing value on the title line, at its end, rather than on
+  // a line of its own across the row (a database value's type beside its name, over its formatted value).
+  const stackedTitleLine = pageSection !== null && stackPageAccessory && includeAccessory && !icon
+    && Boolean(detail) && !detailBeneath;
   const isGridRow = suppressListItemRole === true && accessibilityRole === 'button';
   // A grid card's actions sit at its title line's end; a precise pointer reveals them, touch always shows them.
   const cardCornerAccessory = isGridRow && cardCorner !== null && behavior.accessoryPlacement === 'outside' && accessory
@@ -1421,4 +1427,10 @@ function NavigationRowRule(props: Readonly<{ startPx: number; color: string; mul
   const hovered = useHappierListRowHovered();
   return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: props.selected, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
+}
+
+/** The title block and its trailing value on one line, when the row's control stacks beneath them. */
+function StackedTitleLine(props: Readonly<{ wrap: boolean; gapPx: number; children: ReactNode }>): ReactElement {
+  if (!props.wrap) return <>{props.children}</>;
+  return <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', gap: props.gapPx, minWidth: 0 }}>{props.children}</View>;
 }

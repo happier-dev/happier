@@ -24,7 +24,12 @@ type Page = ReturnType<typeof useRelationPage>;
  * same either way, and it says how complete it is. A whole-table export is a separate, later flow.
  */
 export function RowsExport(
-  props: Readonly<{ page: Page; selection: ListMultiSelectionStore }>,
+  props: Readonly<{
+    page: Page;
+    selection: ListMultiSelectionStore;
+    /** A filter narrows the rows: the estimate is then of the rows that match, not of the table. */
+    filtered: boolean;
+  }>,
 ) {
   const translate = usePluginTranslation();
   const [open, setOpen] = React.useState(false);
@@ -68,7 +73,9 @@ export function RowsExport(
     : exported?.completeness.complete
       ? translate('plugins.database.export.complete', '{count} rows · the whole result', { count })
       : total
-        ? translate('plugins.database.export.partialOf', '{count} loaded rows · not the whole table: ~{total} rows match', { count, total: countLabel(total) })
+        ? props.filtered
+          ? translate('plugins.database.export.partialOf', '{count} loaded rows · not the whole table: ~{total} rows match', { count, total: countLabel(total) })
+          : translate('plugins.database.export.partialOfTable', '{count} loaded rows · not the whole table of ~{total}', { count, total: countLabel(total) })
         : translate('plugins.database.export.partial', '{count} loaded rows · not the whole table', { count });
   return (
     <Popover open={open} onOpenChange={setOpen} trigger={label} triggerAccessibilityLabel={label} triggerAppearance="control" triggerSize="small">

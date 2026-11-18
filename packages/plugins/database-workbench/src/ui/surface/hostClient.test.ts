@@ -12,7 +12,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import type { PluginUiHostApi, ResourceContent } from '@happier-dev/plugin-sdk/ui';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import { createHostWorkbenchClient } from './hostClient.js';
-import { createWorkbenchInstance } from '../workbench.js';
+import { workbenchTargetKey, createWorkbenchInstance } from '../workbench.js';
 import { createDatabaseConnectionResourceRuntime } from '../../resources.js';
 import { openManualDatabaseConnection } from '../../connection.js';
 
@@ -138,7 +138,7 @@ it('retains each mounted target demand and refreshes both workbenches from produ
         return handle;
       },
     };
-    const targetKey = JSON.stringify(target);
+    const targetKey = workbenchTargetKey(target);
     const instance = createWorkbenchInstance({ client: createHostWorkbenchClient(host, { pageLocation: false }),
       scope: { ...target, kind: 'worktree' }, selectedTarget: descriptor,
       location: { targetKey, relation: { schema: 'main', name: 'first' }, mode: 'data', sort: [], columns: ['id', 'label'], page: { rows: 40, offset: 0 }, fkTrail: [] },
@@ -195,7 +195,7 @@ it.each([false, true])('protects staged changes through the host unsaved owner w
     },
   };
   const descriptor = createDatabaseDescriptorV1Fixture();
-  const targetKey = JSON.stringify(descriptor.target);
+  const targetKey = workbenchTargetKey(descriptor.target);
   const relation = { schema: 'public', name: 'items' };
   const instance = createWorkbenchInstance({
     client: createHostWorkbenchClient(host, { pageLocation }),

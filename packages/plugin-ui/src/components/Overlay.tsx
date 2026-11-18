@@ -311,6 +311,9 @@ function PopoverPresentation({
       );
   }, [children, contentAccessibilityLabel, isMenuPresentation, renderContent, sheet]);
 
+  // Words (or an identity block) with a caret read as text: they start on their column's edge, never centred across
+  // the column the way a bare control would be. Where the column aligns its content (an end-aligned header) it hugs.
+  const textDisclosure = triggerDisclosure && !iconOnly && !buttonFace && !fieldTrigger && !statusTrigger;
   return (
     <View ref={anchorRef} collapsable={false}>
       <HappierPressable
@@ -330,7 +333,7 @@ function PopoverPresentation({
         tabIndex={triggerTabIndex}
         testID={testID}
         style={(state) => buttonFace ? buttonFace.style(state) : ({
-          alignItems: 'center',
+          alignItems: textDisclosure ? 'flex-start' : 'center',
           justifyContent: 'center',
           // Like Happier's page field trigger: it hugs its choice beside a label, and under a label
           // on a narrow row it takes the row's width up to the field box's own maximum.

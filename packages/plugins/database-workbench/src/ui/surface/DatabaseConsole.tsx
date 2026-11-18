@@ -303,12 +303,22 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
         />
       </Row>
       <Stack grow>
-        {sql.error ? (
+        {sql.error?.code === 'database_cancelled' ? (
+          // Stopping is the person's own choice, not a failure: one quiet line.
+          <Text
+            tone="secondary"
+            value={translate('plugins.database.console.stopped', 'Stopped. Nothing was changed.')}
+          />
+        ) : sql.error ? (
+          // The database's own words lead; a read, or a write in its transaction, changed nothing. MySQL keeps the
+          // schema changes before a failed statement (D22), so it says nothing of the kind.
           <ErrorState
             layout="line"
             kind="error"
             title={sql.error.message}
-            {...(sql.error.code ? { details: sql.error.code } : {})}
+            {...(sql.mode === 'write' && engineIsMysql ? {} : {
+              description: translate('plugins.database.console.nothingChanged', 'Nothing was changed.'),
+            })}
           />
         ) : (
           <ConsoleResult result={sql.result} translate={translate} />

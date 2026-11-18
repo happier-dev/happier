@@ -127,6 +127,8 @@ import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/sc
 export type CollectionField<Item> = Readonly<{
   key: string;
   title: string;
+  /** A second header line under the title, quieter (a database column's type under its name). Table only. */
+  subtitle?: string;
   render: (item: Item) => ReactNode;
   /** The narrowest readable width at normal text size; it scales with the reader's text size. */
   minWidth: number;
@@ -328,8 +330,18 @@ export type CollectionAnatomy<Item> = Readonly<{
    * narrows below it.
    */
   titleMinWidth?: number;
+  /**
+   * `scroll`: a data grid (a query result). Every column stays at every width the table stands at: the title is a
+   * column like the others, at `titleMinWidth` (its first column's width, never the room left over), the room left
+   * beyond the columns is shared among them, and columns wider than the table scroll sideways together with their
+   * header while the footer stays put. Beside an open detail the rows keep their columns rather than becoming list
+   * rows. Omitted: columns drop by priority as the table narrows and the title takes the rest.
+   */
+  columnsOverflow?: 'scroll';
   /** Column titles for the table header, one per slot the anatomy declares. */
   columnTitles: Readonly<{ title: string; where?: string; reason?: string; signal?: string; agent?: string; age?: string; titleMeta?: string }>;
+  /** The title column's second header line (`CollectionField.subtitle`). */
+  titleSubtitle?: string;
 }>;
 
 /**
@@ -667,6 +679,8 @@ const TABLE = Object.freeze({
   titleMinWidth: 240,
   paddingY: 10,
   headerHeight: 32,
+  /** A second header line shares the bar's padding rather than adding a full line height. */
+  headerSubtitleOverlap: 4,
   footerHeight: 34,
   /** The glyph's corner badge: its plate, how far it hangs past the glyph, and the surface ring cutting it out. */
   glyphBadge: 15,
@@ -715,6 +729,8 @@ const TRAILING_SLOT_KEYS: ReadonlySet<SlotKey> = new Set(['titleMeta', 'age']);
 
 type ResolvedColumn<Item> = HappierCollectionTableColumn & Readonly<{
   title: string;
+  /** The header's second line (`CollectionField.subtitle`). */
+  subtitle?: string;
   align: 'start' | 'end';
   render: ((item: Item) => ReactNode) | null;
   /** The field key a sortable column sorts by, and the key its summary cell is read under. */
@@ -912,6 +928,7 @@ function resolveColumns<Item>(
   const declared: ResolvedColumn<Item>[] = [{
     key: 'title',
     title: anatomy.columnTitles.title,
+    ...(anatomy.titleSubtitle === undefined ? {} : { subtitle: anatomy.titleSubtitle }),
     minWidth: (anatomy.titleMinWidth ?? TABLE.titleMinWidth) * textScale,
     priority: Number.POSITIVE_INFINITY,
     flex: true,
@@ -923,6 +940,7 @@ function resolveColumns<Item>(
   const fieldColumn = (field: CollectionField<Item>): ResolvedColumn<Item> => ({
     key: `field:${field.key}`,
     title: field.title,
+    ...(field.subtitle === undefined ? {} : { subtitle: field.subtitle }),
     minWidth: field.minWidth * textScale,
     ...(field.maxWidth === undefined ? {} : { maxWidth: field.maxWidth * textScale }),
     priority: field.priority,
@@ -955,8 +973,23 @@ function resolveColumns<Item>(
   for (const slot of SLOT_KEYS) if (!TRAILING_SLOT_KEYS.has(slot)) slotColumn(slot);
   for (const field of fields) if (field.leading !== true) declared.push(fieldColumn(field));
   for (const slot of SLOT_KEYS) if (TRAILING_SLOT_KEYS.has(slot)) slotColumn(slot);
-  const available = width - TABLE.insetStart - TABLE.insetEnd - TABLE.glyphWidth - TABLE.gap - rowAccessoryWidth - leadingWidth;
-  return resolveHappierCollectionTableColumns({ columns: declared, availableWidth: available, gap: TABLE.gap });
+  const available = width - TABLE.insetStart - TABLE.insetEnd - tableGlyphWidth(anatomy) - rowAccessoryWidth - leadingWidth;
+  return resolveHappierCollectionTableColumns({
+    columns: declared, availableWidth: available, gap: TABLE.gap,
+    ...(anatomy.columnsOverflow === undefined ? {} : { overflow: anatomy.columnsOverflow }),
+  });
+}
+
+/** A kind whose rows draw no glyph (`loadingGlyph: false`) reserves no glyph column in the table either. */
+function tableGlyphWidth(anatomy: Pick<CollectionAnatomy<unknown>, 'loadingGlyph'>): number {
+  return anatomy.loadingGlyph === false ? 0 : TABLE.glyphWidth + TABLE.gap;
+}
+
+/** The columns' full width in a row, insets and gaps included: a data grid wider than its room scrolls to it. */
+function tableContentWidth<Item>(anatomy: CollectionAnatomy<Item>, columns: readonly ResolvedColumn<Item>[],
+  rowAccessoryWidth: number, leadingWidth: number): number {
+  return TABLE.insetStart + TABLE.insetEnd + tableGlyphWidth(anatomy) + rowAccessoryWidth + leadingWidth
+    + columns.reduce((sum, column) => sum + column.minWidth, 0) + TABLE.gap * Math.max(0, columns.length - 1);
 }
 
 /** The add's key: a bare `c`, as the lab's key line says it ("C new task"). */
@@ -1304,7 +1337,7 @@ function TableCells<Item>(props: Readonly<{
       )}
       {leadingControl !== null ? (
         <View pointerEvents={layer?.control} style={glyphStyle}>{leadingControl}</View>
-      ) : (
+      ) : anatomy.loadingGlyph === false ? null : (
         <View pointerEvents={layer?.leaf} style={glyphStyle}>{item === null || !props.withTitle ? null : anatomy.glyph(item)}</View>
       )}
       {renderTableRowCells(item, props.columns, (column, spanWidth) => (
@@ -2187,6 +2220,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }, [chosenAnatomy, ringMarksChoice, singleChoice?.unavailableReason, singleChoice === undefined]);
   const translate = usePluginTranslation();
   const accessibility = useHappierUiAccessibility();
+  const typography = useOptionalHappierUiTypography();
   const platform = useOptionalHappierUiPlatform();
   const driver = useMotionDriver();
   const rowRole = resolveHappierCollectionRowRole({ rowRole: anatomy.rowRole, hasDescription: anatomy.description !== undefined });
@@ -2326,7 +2360,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     const closing = target === 'table'
       && (current.composition === 'split' || (current.composition === 'list' && wasBesidePane));
     const anchorKey = opening ? openKey : lastOpenKeyRef.current;
-    if ((!opening && !closing) || anchorKey === null || size === null) {
+    // A data grid keeps its geometry beside the detail, so nothing travels: it lands at once.
+    if ((!opening && !closing) || anchorKey === null || size === null || anatomy.columnsOverflow === 'scroll') {
       // Any other change (a resize across the split minimum, the first measurement, a view switch) lands at once.
       progress.cancel();
       progress.set(besideDetail ? 1 : 0);
@@ -2402,7 +2437,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const composition = view.composition;
   const transition = view.transition;
   const cards = presentation === 'board' || presentation === 'grid';
-  const rowGeometry: 'table' | 'list' = transition?.kind === 'travel' || composition !== 'table' ? 'list' : 'table';
+  // A data grid keeps its columns beside an open detail (lab dbBrowse fk): its rows never become list rows there.
+  const gridScroll = anatomy.columnsOverflow === 'scroll' && presentation === 'table';
+  const gridBesideDetail = gridScroll && (composition === 'split' || (composition === 'list' && pane && openKey !== null));
+  const rowGeometry: 'table' | 'list' = transition?.kind === 'travel' || (composition !== 'table' && !gridBesideDetail) ? 'list' : 'table';
   const layoutMode = resolveHappierCollectionLayoutState(geometry).mode;
   const publishedComposition: HappierCollectionComposition = rowGeometry === 'table' ? 'table' : composition === 'table' ? 'list' : composition;
   const detailBeside = publishedComposition === 'split';
@@ -2644,11 +2682,17 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }, [expanded]);
 
   // ---- columns, by measured width ----
-  const tableWidth = size?.width ?? 0;
+  // A data grid shares its spare room by the width its rows actually stand in (the list beside a detail).
+  const [gridViewportWidth, setGridViewportWidth] = useState(0);
+  const tableWidth = gridScroll && gridViewportWidth > 0 ? gridViewportWidth : size?.width ?? 0;
   const columns = useMemo(
     () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth),
     [accessibility.textScale, anatomy, rowAccessoryWidth, tableWidth, treeLeadingWidth],
   );
+  // A data grid's rows stand at their columns' full width (scrolling sideways past their room), list rows at the room.
+  const gridRowsWidth = !gridScroll ? 0 : rowGeometry === 'table'
+    ? Math.max(tableContentWidth(anatomy, columns, rowAccessoryWidth, treeLeadingWidth), tableWidth)
+    : tableWidth;
   // Which of the chosen fields the width admits, once per change: the Columns menu marks the rest too narrow.
   const fittedFieldKeys = size === null ? undefined
     : rowGeometry === 'table' ? columns.flatMap((column) => (column.fieldKey === null ? [] : [column.fieldKey])).join('\u0000')
@@ -3032,19 +3076,24 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // never moves its rows.
   const headerBar = (hasRows || loadingFirstWindow || namedOrderHeader) && wide && presentation === 'table';
   const sortableHeader = props.sort !== undefined && (namedOrderHeader || columns.some((column) => column.sortable));
+  // Columns with a second header line (a type under a name) stand in a taller bar.
+  const headerHeight = columns.some((column) => column.subtitle !== undefined)
+    ? TABLE.headerHeight + readCollectionLineHeight('meta', theme, typography, accessibility.textScale) - TABLE.headerSubtitleOverlap
+    : TABLE.headerHeight;
+  const headerGlyph = anatomy.loadingGlyph === false ? null : <View style={glyphStyle} />;
   const columnHeader = !headerBar ? null : rowGeometry === 'list' && transition === null ? (
-    <View style={[tableRowContentStyle, { height: TABLE.headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }]}>
-      <View style={glyphStyle} />
+    <View style={[tableRowContentStyle, { height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }]}>
+      {headerGlyph}
     </View>
   ) : (
-    <driver.AnimatedView value={progress} tracks={transitionTracks} style={{ height: TABLE.headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
+    <driver.AnimatedView value={progress} tracks={transitionTracks} style={{ height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
       <View
         // Titles are read from the rows' own names; only sort buttons are controls a reader reaches here.
         {...(sortableHeader ? {} : { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const })}
-        style={[tableRowContentStyle, { height: TABLE.headerHeight - 1, paddingRight: TABLE.insetEnd + rowAccessoryWidth + 1 }]}
+        style={[tableRowContentStyle, { height: headerHeight - 1, paddingRight: TABLE.insetEnd + rowAccessoryWidth + 1 }]}
       >
         {treeStage === null ? null : <View style={{ width: TABLE.treeIndent }} />}
-        <View style={glyphStyle} />
+        {headerGlyph}
         {columns.map((column) => (
           column.key === 'title' && namedOrderHeader && props.sort !== undefined ? (
             <CollectionOrderHeader
@@ -3076,6 +3125,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               <HappierText variant="meta" tone={column.key === 'title' ? 'neutral' : 'muted'} numberOfLines={1}>
                 {column.title}
               </HappierText>
+              <ColumnSubtitle column={column as ResolvedColumn<unknown>} />
             </View>
           )
         ))}
@@ -3380,6 +3430,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                   {footerLine}
                 </>
               ) : (
+              <CollectionGridScroll enabled={gridScroll} width={gridRowsWidth} onViewportWidth={setGridViewportWidth}
+                footer={gridScroll && (props.footer !== undefined || footerLine !== null) ? <>{props.footer}{footerLine}</> : null}>
               <CollectionStageContext.Provider value={stage as CollectionStage<unknown>}>
                 <ListCollectionControlContext.Provider value={control}>
                   <List<CollectionCell<Item>>
@@ -3412,16 +3464,17 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                       // the way to the page's text edge (WAVE-ACCEPT-1117C: it sat a whole text inset further in).
                       <HappierColumnEdgeContext.Provider value={pageColumnEdgePx + pageSheetInsetPx}>{props.empty}</HappierColumnEdgeContext.Provider>
                     ) : props.empty}
-                    footer={(pageSections || props.footer === undefined) && footerLine === null && summaryRows === null ? undefined : (
+                    footer={(pageSections || gridScroll || props.footer === undefined) && (gridScroll || footerLine === null) && summaryRows === null ? undefined : (
                       <>
                         {summaryRows}
-                        {pageSections ? null : props.footer}
-                        {footerLine}
+                        {pageSections || gridScroll ? null : props.footer}
+                        {gridScroll ? null : footerLine}
                       </>
                     )}
                   />
                 </ListCollectionControlContext.Provider>
               </CollectionStageContext.Provider>
+              </CollectionGridScroll>
               )}
             </View>
             {composition === 'split' && !overlayDetail && railResize.canResize ? <HappierResizeHandle
@@ -3559,8 +3612,47 @@ function CollectionSortHeader(props: Readonly<{
           <CollectionSortArrow sort={props.sort} testID={props.testID} />
         ) : null}
       </HappierPressable>
+      <ColumnSubtitle column={props.column} />
     </View>
   );
+}
+
+/**
+ * A data grid's sideways scroll (`CollectionAnatomy.columnsOverflow`): the header and rows move together, the
+ * footer (the window line, paging, key hints) stays under them. Off, it adds nothing around its rows.
+ */
+function CollectionGridScroll(props: Readonly<{
+  enabled: boolean;
+  /** The rows' width; wider than the viewport, they scroll. 0 before the first measurement fills the viewport. */
+  width: number;
+  onViewportWidth: (width: number) => void;
+  footer: ReactNode;
+  children: ReactNode;
+}>): ReactElement {
+  const { onViewportWidth } = props;
+  const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    onViewportWidth(Math.round(event.nativeEvent.layout.width));
+  }, [onViewportWidth]);
+  if (!props.enabled) return <>{props.children}</>;
+  return (
+    <>
+      <ScrollView horizontal style={gridScrollStyle} contentContainerStyle={gridScrollContentStyle} onLayout={onLayout}
+        showsHorizontalScrollIndicator>
+        <View style={props.width > 0 ? [gridRowsStyle, { width: props.width }] : gridRowsFillStyle}>{props.children}</View>
+      </ScrollView>
+      {props.footer}
+    </>
+  );
+}
+const gridScrollStyle: HappierPortableStyle = { flex: 1, minHeight: 0 };
+const gridScrollContentStyle: HappierPortableStyle = { flexGrow: 1 };
+const gridRowsStyle: HappierPortableStyle = { flexDirection: 'column', alignSelf: 'stretch' };
+const gridRowsFillStyle: HappierPortableStyle = { flex: 1, alignSelf: 'stretch' };
+
+/** A column's second header line: quiet, in the code face (a type is an identifier), on one line. */
+function ColumnSubtitle(props: Readonly<{ column: ResolvedColumn<unknown> }>): ReactElement | null {
+  if (props.column.subtitle === undefined) return null;
+  return <HappierText variant="code" tone="muted" numberOfLines={1}>{props.column.subtitle}</HappierText>;
 }
 
 function CollectionSortArrow(props: Readonly<{ sort: CollectionSort; testID?: string | undefined }>): ReactElement {

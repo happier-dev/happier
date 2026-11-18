@@ -52,6 +52,11 @@ export type NavigationListFooter = Readonly<{
 export type NavigationListProps<Item = unknown> = Readonly<{
   /** The column's title, beside its count. */
   title?: string;
+  /**
+   * The column is named by one thing rather than titled (a database: its name, facts and access): that identity
+   * stands in the title's place, on the header's edge, with the header action beside it.
+   */
+  titleControl?: ReactNode;
   titleKey?: string;
   /** A quiet, tabular count beside the title; omit it while unknown. */
   count?: number | null;
@@ -93,6 +98,12 @@ export type NavigationListGroupProps = Readonly<{
   mark?: ReactNode;
   /** A state that concerns every row of the group, said once here instead of on each row. */
   status?: NavigationListStatus;
+  /**
+   * The group folds its rows (a schema's tables): its label is a disclosure whose caret turns with the state, and the
+   * caller mounts the rows only while it is open. Omitted, the label is a plain heading.
+   */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   /** A quiet fact after the title on the label's line (the machine a group's rows run on). */
   detail?: string;
   /**
@@ -205,7 +216,13 @@ const NAVIGATION_LIST_HOST: HappierCollectionListHost = Object.freeze({
   Scroller: NavigationListScroller,
   SearchField: NavigationListSearchField,
   surfaceStyle: null,
+  // A foldable group's caret, in the quiet glyph ink its rows' icons take.
+  useGroupGlyphColor: useNavigationListGlyphColor,
 });
+
+function useNavigationListGlyphColor(): string {
+  return usePluginTheme().colors.mutedText;
+}
 
 const virtualizedListStyle = { flex: 1, minHeight: 0 };
 const virtualizedListContentStyle = { paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.endSpacing };
@@ -216,7 +233,7 @@ function NavigationListRoot<Item>(props: NavigationListProps<Item>): ReactElemen
   return (
     <HappierCollectionList
       host={NAVIGATION_LIST_HOST}
-      title={title}
+      {...(props.titleControl === undefined ? { title } : { titleControl: props.titleControl })}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
       {...(props.count === undefined ? {} : { count: props.count })}
       {...(props.headerAction === undefined ? {} : { headerAction: props.headerAction })}
@@ -308,6 +325,9 @@ function NavigationListGroup(props: NavigationListGroupProps): ReactElement {
           {...(props.detail === undefined ? {} : { detail: props.detail })}
           {...(props.detailEnd === undefined ? {} : { detailEnd: props.detailEnd })}
           {...(props.status === undefined ? {} : { trailing: <NavigationListGroupStatus status={props.status} /> })}
+          {...(props.expanded === undefined || props.onExpandedChange === undefined ? {} : {
+            disclosure: { expanded: props.expanded, onToggle: () => props.onExpandedChange?.(!props.expanded) },
+          })}
         />
       ) : null}
       {props.children}

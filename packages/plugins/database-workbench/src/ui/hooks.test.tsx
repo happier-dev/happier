@@ -4,13 +4,13 @@ import { createRoot } from 'react-dom/client';
 import { expect, it } from 'vitest';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { WorkbenchChange, WorkbenchClient, WorkbenchLocation } from './models.js';
-import { createWorkbenchInstance } from './workbench.js';
+import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';
 import { useDatabaseRelations, useDatabaseSchemaRelations, useWorkbenchDraft, WorkbenchProvider } from './hooks.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const descriptor = createDatabaseDescriptorV1Fixture();
-const targetKey = JSON.stringify(descriptor.target);
+const targetKey = workbenchTargetKey(descriptor.target);
 const relation = { schema: 'public', name: 'items' };
 const location: WorkbenchLocation = { targetKey, relation, mode: 'data', sort: [], columns: [], page: { rows: 40, offset: 0 }, fkTrail: [] };
 function workbench(operation?: WorkbenchClient['operation']) {

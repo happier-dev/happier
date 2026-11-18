@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ErrorState, Row, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ErrorState, Icon, Row, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import {
   Collection,
   useHappierCollection,
@@ -115,8 +115,8 @@ function SchemaDirectory(
       ),
     });
     return {
-      glyph: () => null,
-      loadingGlyph: false,
+      // Every relation here is a table (views have no size of their own): each row carries the table mark.
+      glyph: () => <Icon name="table" tone="secondary" />,
       title: (row) => row.name,
       titleIdentifier: true,
       // Narrow (phone): the figures drop, so the row says its estimate and total under the name (lab directoryp).

@@ -2,10 +2,10 @@ import { expect, it } from 'vitest';
 import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@happier-dev/database-protocol';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { WorkbenchClient, WorkbenchLocation } from './models.js';
-import { createWorkbenchInstance } from './workbench.js';
+import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';
 
 const descriptor = createDatabaseDescriptorV1Fixture();
-const targetKey = JSON.stringify(descriptor.target);
+const targetKey = workbenchTargetKey(descriptor.target);
 
 it('reads only demanded catalogue pages, retains held row identity, and scopes own-write invalidation', async () => {
     const relation = { schema: 'public', name: 'items' };

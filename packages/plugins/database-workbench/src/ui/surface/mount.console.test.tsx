@@ -6,13 +6,14 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { WorkbenchInstance } from '../workbench.js';
+import { workbenchTargetKey } from '../workbench.js';
 import { useWorkbenchMount } from './mount.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 it.each(['postgresql', 'mysql', 'sqlite'] as const)('runs the caret statement through the mounted %s lexer', async engine => {
     const descriptor = { ...createDatabaseDescriptorV1Fixture(), engine };
-    const targetKey = JSON.stringify(descriptor.target);
+    const targetKey = workbenchTargetKey(descriptor.target);
     const scope = { kind: 'worktree' as const, accountId: 'account', installationId: 'installation', projectKey: 'project',
         workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/repo' } };
     let mounted: WorkbenchInstance | null = null;

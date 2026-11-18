@@ -2,23 +2,13 @@
  * Display wording for statement statistics. Counters stay decimal strings from the producer; this only
  * turns them into readable numbers. It decides nothing about what is slow or unhealthy (P4 §9).
  */
-const grouped = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
-const compact = new Intl.NumberFormat(undefined, {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
 const percent = new Intl.NumberFormat(undefined, {
   style: 'percent',
   maximumFractionDigits: 1,
 });
 
-/** Up to 100,000 in full; above that, compact ("1.4M"). */
-export function formatCount(value: string | number | undefined): string | null {
-  if (value === undefined) return null;
-  const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  return number < 100_000 ? grouped.format(number) : compact.format(number);
-}
+/** Counts read as the whole workbench reads them (`sizes.ts#formatCount`). */
+export { formatCount } from '../sizes.js';
 
 /** Milliseconds as the shortest honest unit: 0.21 ms, 41.2 ms, 1.2 s, 12 min 39 s. */
 export function formatDuration(ms: number | null | undefined): string | null {

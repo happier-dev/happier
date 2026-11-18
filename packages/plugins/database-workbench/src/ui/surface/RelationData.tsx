@@ -9,6 +9,7 @@ import {
   Button,
   CodeBlock,
   ErrorState,
+  Heading,
   IconButton,
   Icon,
   Item,
@@ -36,9 +37,10 @@ import {
 import type { WorkbenchChange, WorkbenchLocation } from '../models.js';
 import { CellText, presentCell } from './cells.js';
 import { isIdentifierColumn, useGridAnatomy } from './grid.js';
+import { RelationHeader } from './RelationHeader.js';
 import { RowFilters } from './RowFilters.js';
 import { RowsExport } from './RowsExport.js';
-import { countLabel } from './sizes.js';
+import { formatCount } from './sizes.js';
 
 type PageColumn = ReturnType<typeof useRelationPage>['columns'][number];
 type PageRow = ReturnType<typeof useRelationPage>['rows'][number];
@@ -110,6 +112,8 @@ function RowDetail(
     editable: boolean;
     reason?: string;
     tools: ValueTools;
+    /** Beside the table the pane draws its own identity and Close; pushed or in the host pane the band does. */
+    inlineHeader: Readonly<{ onClose: () => void }> | null;
   }>,
 ) {
   const translate = usePluginTranslation();
@@ -192,8 +196,22 @@ function RowDetail(
     props.relation,
     props.row.rowKey,
   ]);
+  const identityLine = rowIdentity(props.row, props.columns, props.relation, translate);
   return (
     <Stack gap="medium">
+      {props.inlineHeader ? (
+        <Row gap="small" align="center">
+          <Stack grow gap="xsmall">
+            <Heading level={2} value={identityLine.title} />
+            <Text variant="meta" tone="secondary" value={identityLine.subtitle} numberOfLines={1} />
+          </Stack>
+          <IconButton
+            accessibilityLabel={translate('plugins.database.row.close', 'Close row')}
+            icon={<Icon name="close" tone="secondary" />}
+            onPress={props.inlineHeader.onClose}
+          />
+        </Row>
+      ) : null}
       <ItemGroup surface="sheet">
         {props.columns.map((column, index) => (
           <RowField
@@ -248,46 +266,54 @@ type ValueTools = Readonly<{
 }>;
 type JsonCellInspection = Awaited<ReturnType<NonNullable<ReturnType<typeof useRelationPage>['inspectJson']>>>;
 
-/** A JSON value, read whole on request and shown formatted; a value the database cut is read to its end first. */
+/**
+ * A JSON value, shown once and formatted: the pane reads the whole value as it opens (a value the database cut is read
+ * to its end first) and shows the loaded text in the same block until then (D27 #7).
+ */
 function JsonValue(
-  props: Readonly<{ rowKey: string; column: string; tools: ValueTools; translate: PluginTranslate }>,
+  props: Readonly<{ rowKey: string; column: string; loaded: string; tools: ValueTools; translate: PluginTranslate }>,
 ) {
-  const [shown, setShown] = React.useState<JsonCellInspection | 'reading' | null>(null);
-  if (shown === null || shown === 'reading') {
-    return (
-      <Button
-        variant="secondary"
-        size="small"
-        busy={shown === 'reading'}
-        title={props.translate('plugins.database.row.formatJson', 'Show formatted')}
-        onPress={() => {
-          setShown('reading');
-          props.tools.inspectJson(props.rowKey, props.column).then(setShown, () =>
-            setShown({ status: 'unavailable', reason: 'not_json' }),
-          );
-        }}
-      />
+  const { inspectJson } = props.tools;
+  const [shown, setShown] = React.useState<JsonCellInspection | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    inspectJson(props.rowKey, props.column).then(
+      (result) => { if (live) setShown(result); },
+      () => { if (live) setShown({ status: 'unavailable', reason: 'not_json' }); },
     );
-  }
-  if (shown.status === 'complete')
-    return (
+    return () => { live = false; };
+  }, [inspectJson, props.rowKey, props.column]);
+  const note = shown === null || shown.status === 'complete' ? null
+    : shown.status === 'incomplete'
+      ? props.translate('plugins.database.row.jsonIncomplete', 'The whole value couldn’t be read, so it isn’t formatted.')
+      : props.translate('plugins.database.row.jsonInvalid', 'This value isn’t valid JSON.');
+  return (
+    <Stack gap="xsmall">
       <CodeBlock
-        code={shown.formatted}
+        code={shown?.status === 'complete' ? shown.formatted : props.loaded}
         language="json"
         copyLabel={props.translate('plugins.database.row.copyValue', 'Copy value')}
       />
-    );
-  return (
-    <Text
-      tone="secondary"
-      variant="meta"
-      value={
-        shown.status === 'incomplete'
-          ? props.translate('plugins.database.row.jsonIncomplete', 'The whole value couldn’t be read, so it isn’t formatted.')
-          : props.translate('plugins.database.row.jsonInvalid', 'This value isn’t valid JSON.')
-      }
-    />
+      {note ? <Text tone="secondary" variant="meta" value={note} /> : null}
+    </Stack>
   );
+}
+
+/** A value this long, or on several lines, reads beneath its name rather than beside it. */
+const INLINE_VALUE_MAX_CHARACTERS = 40;
+
+/** What the pane names the open row by: its first worded value, then where it lives and its key (lab longValue). */
+function rowIdentity(
+  row: PageRow,
+  columns: readonly PageColumn[],
+  relation: DatabaseRelationV1,
+  translate: PluginTranslate,
+): Readonly<{ title: string; subtitle: string }> {
+  const key = row.identity?.key.map((cell) => `${cell.column} ${presentCell(cell.value, translate, { identifier: true }).text}`).join(' · ');
+  const named = columns.findIndex((column) => column.kind === 'text' && !isIdentifierColumn(column)
+    && row.cells[columns.indexOf(column)]?.type === 'text');
+  const title = named >= 0 ? presentCell(row.cells[named], translate).text : key ?? row.rowKey;
+  return { title, subtitle: [relation.name, named >= 0 ? key : null].filter(Boolean).join(' · ') };
 }
 
 function RowField(
@@ -313,47 +339,64 @@ function RowField(
   const [value, setValue] = React.useState(
     props.cell?.type === 'text' ? props.cell.value : '',
   );
-  const title = props.column.primaryKey
-    ? `${props.column.name} · ${props.translate('plugins.database.column.key', 'key')}`
-    : props.column.name;
+  // The name leads; its type (and whether it is the key, or where it points) is the quiet line under it, the value
+  // stands beside it or, when long, beneath (lab dbBrowse/longValue).
   const reference = props.foreignKey && props.cell?.type !== 'null' ? props.foreignKey : undefined;
-  const referenceAction = reference ? (
-    // A quiet jump beside the value, not a second call to action in the row (lab dbBrowse/longValue).
-    <Button
-      variant="plain"
-      size="small"
-      title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference.table })}
-      onPress={() => props.tools.openReference(props.rowKey, reference.name)}
-    />
-  ) : null;
+  const typeLine = [
+    props.column.typeLabel,
+    props.column.primaryKey ? props.translate('plugins.database.column.key', 'key') : null,
+  ].filter(Boolean).join(' · ') + (reference ? ` → ${reference.table}` : '');
+  const text = shown.incomplete ? `${shown.text}…` : shown.text;
   if (!textual || props.column.primaryKey) {
     const json = props.column.kind === 'json' && props.cell?.type !== 'null';
+    if (reference) {
+      return (
+        <Item
+          title={props.column.name}
+          subtitle={typeLine}
+          accessory={
+            // The value is the way to the row it names (D27 #3).
+            <Button
+              variant="plain"
+              size="small"
+              title={text}
+              accessibilityLabel={props.translate('plugins.database.row.openReferenceValue', 'Open {value} in {table}', { value: text, table: reference.table })}
+              onPress={() => props.tools.openReference(props.rowKey, reference.name)}
+            />
+          }
+        />
+      );
+    }
+    const long = json || text.length > INLINE_VALUE_MAX_CHARACTERS || text.includes('\n');
+    if (long) {
+      return (
+        <Item
+          title={props.column.name}
+          subtitle={typeLine}
+          {...(json ? {} : {
+            detail: props.translate('plugins.database.row.characters', '{count} characters', { count: String(text.length) }),
+          })}
+          accessoryBelow
+          accessory={json ? (
+            <JsonValue rowKey={props.rowKey} column={props.column.name} loaded={text} tools={props.tools} translate={props.translate} />
+          ) : <Text value={text} />}
+        />
+      );
+    }
     return (
       <Item
-        title={title}
-        subtitle={shown.incomplete ? `${shown.text}…` : shown.text}
-        detail={props.column.typeLabel}
-        subtitleNumberOfLines={4}
-        {...(json || reference
-          ? {
-              accessoryBelow: true,
-              accessory: json ? (
-                <JsonValue rowKey={props.rowKey} column={props.column.name} tools={props.tools} translate={props.translate} />
-              ) : referenceAction,
-            }
-          : {})}
+        title={props.column.name}
+        subtitle={typeLine}
+        detail={text}
+        detailTone={shown.tone === 'muted' ? 'muted' : 'neutral'}
       />
     );
   }
   return (
     <Item
-      title={title}
-      detail={
-        state.kind === 'edited'
-          ? props.translate('plugins.database.cell.edited', 'Edited')
-          : props.column.typeLabel
-      }
-      detailTone={state.kind === 'edited' ? 'attention' : undefined}
+      title={props.column.name}
+      subtitle={typeLine}
+      {...(state.kind === 'edited' ? { detail: props.translate('plugins.database.cell.edited', 'Edited'), detailTone: 'attention' as const } : {})}
       accessoryBelow
       accessory={
         <Stack gap="small">
@@ -373,7 +416,14 @@ function RowField(
               )
             }
           />
-          {referenceAction}
+          {reference ? (
+            <Button
+              variant="plain"
+              size="small"
+              title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference.table })}
+              onPress={() => props.tools.openReference(props.rowKey, reference.name)}
+            />
+          ) : null}
         </Stack>
       }
     />
@@ -459,7 +509,9 @@ export function RelationData(
   }, [location, previous]);
   if (page.status === 'unavailable') {
     return (
-      <ErrorState
+      <Stack gap="medium">
+        <RelationHeader targetKey={location.targetKey} />
+        <ErrorState
         kind="unavailable"
         title={translate(
           'plugins.database.rows.failed',
@@ -468,12 +520,19 @@ export function RelationData(
         details={page.error instanceof Error ? page.error.message : undefined}
         onRetry={page.refresh}
         retryLabel={translate('plugins.database.retry', 'Try again')}
-      />
+        />
+      </Stack>
     );
   }
   const open = openKey
     ? page.rows.find((row) => row.rowKey === openKey)
     : undefined;
+  const closeRow = () => setOpenKey(null);
+  // Pushed (a phone) or in the host pane, the band names the row; beside the table the pane names it itself.
+  const detailHeader = (key: string) => {
+    const row = page.rows.find((candidate) => candidate.rowKey === key);
+    return row ? rowIdentity(row, page.columns, props.relation, translate) : { title: key };
+  };
   const first = location.page.offset + 1;
   const shownTo = location.page.offset + page.rows.length;
   const total = page.page.approxTotal;
@@ -485,11 +544,13 @@ export function RelationData(
         value={
           page.rows.length === 0
             ? ''
-            : total
+            : total === '1'
+              ? translate('plugins.database.rows.rangeOne', '1 row')
+              : total
               ? translate(
                   'plugins.database.rows.range',
-                  '~{total} rows · showing {from}–{to}',
-                  { total: countLabel(total), from: String(first), to: String(shownTo) },
+                  '{total} rows · showing {from}–{to}',
+                  { total: formatCount(total, { approximate: true, full: true }) ?? total, from: String(first), to: String(shownTo) },
                 )
               : translate(
                   'plugins.database.rows.rangeOpen',
@@ -539,23 +600,27 @@ export function RelationData(
         />
       }
       header={
-        <Row gap="small" align="center" justify="space-between" wrap>
-          <RowFilters
-            columns={page.columns}
-            conditions={location.conditions}
-            onChange={(conditions) => {
-              setPrevious([]);
-              void location.navigate({ conditions, page: { rows: location.page.rows, offset: 0 } });
-            }}
-          />
-          <RowsExport page={page} selection={selection} />
-        </Row>
+        <RelationHeader
+          targetKey={location.targetKey}
+          filters={
+            <RowFilters
+              columns={page.columns}
+              conditions={location.conditions}
+              onChange={(conditions) => {
+                setPrevious([]);
+                void location.navigate({ conditions, page: { rows: location.page.rows, offset: 0 } });
+              }}
+            />
+          }
+          trailing={<RowsExport page={page} selection={selection} filtered={location.conditions !== undefined} />}
+        />
       }
       footer={footer}
       minListWidth={360}
       minDetailWidth={320}
       preferredListRatio={0.66}
-      renderDetail={() =>
+      detailHeader={detailHeader}
+      renderDetail={(_key, detailContext) =>
         open ? (
           <WorkbenchProvider instance={instance}>
             <RowDetail
@@ -563,6 +628,7 @@ export function RelationData(
               columns={page.columns}
               relation={props.relation}
               tools={tools}
+              inlineHeader={detailContext.headerHosted ? null : { onClose: closeRow }}
               editable={page.capabilities.edit}
               {...(page.capabilities.reason
                 ? { reason: page.capabilities.reason }

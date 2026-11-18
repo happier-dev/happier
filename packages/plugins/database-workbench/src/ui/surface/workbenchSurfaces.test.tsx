@@ -244,7 +244,22 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(await fixture.getByText('~48.2K rows · 31 MB')).toBeTruthy();
+      expect(await fixture.getByText('~48K rows · 31 MB')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
+  it('heads the Overview with where the database is, not the engine the rail already says', async () => {
+    const located = { ...descriptor, endpointLabel: 'localhost:5432' };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'page-overview-facts', mountNonce: 'page-overview-facts' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: located }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([located]), replacePageLocation: async ({ subPath }) => subPath },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('localhost:5432')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 
@@ -397,7 +412,7 @@ describe('Database workbench surfaces', () => {
       // D27 #1: the producer's byte figures, never a row read; D27 #2: the estimate is marked approximate.
       // The test host lays out narrow, so each table reads as its name over its estimate and total.
       expect(await fixture.getByText('invoices')).toBeTruthy();
-      expect(await fixture.getByText('~48.2K rows · 31 MB')).toBeTruthy();
+      expect(await fixture.getByText('~48K rows · 31 MB')).toBeTruthy();
       expect(await fixture.getByText('~12K rows · 4.2 MB')).toBeTruthy();
       expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(false);
     } finally {

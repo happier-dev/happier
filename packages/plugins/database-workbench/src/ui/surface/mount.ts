@@ -15,6 +15,7 @@ import {
 import { createConsoleDeviceStorage } from '../consoleDeviceStorage.js';
 import type { WorkbenchLocation } from '../models.js';
 import { createHostWorkbenchClient } from './hostClient.js';
+import { workbenchTargetKey } from '../workbench.js';
 
 /**
  * One display window of rows or relations. Paging continues past it through the producer's
@@ -55,7 +56,7 @@ export function readWorkbenchLaunchInput(context: Pick<RenderContext, 'launchInp
 
 export function databaseTargetKey(descriptor: DatabaseDescriptorV1): string {
   // The instance keys targets by their canonical JSON; the page and the panel share that owner.
-  return JSON.stringify(descriptor.target);
+  return workbenchTargetKey(descriptor.target);
 }
 
 /** The physical mount owns one workbench instance until it unmounts. */

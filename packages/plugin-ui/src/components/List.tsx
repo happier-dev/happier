@@ -80,6 +80,7 @@ import {
   HappierItemGroupBehavior,
 } from '../presentation/collection/ItemGroup.js';
 import { HappierItemOverflow } from '../presentation/collection/ItemOverflow.js';
+import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import {
   ListMultiSelectionProvider,
@@ -559,6 +560,11 @@ export type ItemProps = Readonly<{
   titleEllipsizeMode?: 'middle';
   icon?: ReactNode;
   accessory?: ReactNode;
+  /**
+   * The row opens another page (a destination, not a preference): it ends with the navigation chevron, in the
+   * quiet glyph ink. Ignored when the row has its own `accessory`.
+   */
+  showChevron?: boolean;
   /**
    * Keep an independently interactive accessory beside, rather than inside,
    * the row's primary Pressable. Use this for buttons, toggles, and compound
@@ -2546,7 +2552,8 @@ function ListItemRow(props: ListItemProps): ReactElement {
     LIST_MORE_ACTIONS_TRANSLATION_KEY,
     'More actions',
   );
-  const { accessibilityLabelKey, accessibilityHintKey, ...authorProps } = props;
+  const { accessibilityLabelKey, accessibilityHintKey, showChevron, ...authorProps } = props;
+  const theme = usePluginTheme();
   const canSelectRow =
     selection?.activatable === true && selection.multiSelectable;
   const selectActionId = 'selection.select';
@@ -2566,6 +2573,9 @@ function ListItemRow(props: ListItemProps): ReactElement {
   };
   const resolvedProps = {
     ...authorProps,
+    ...(showChevron === true && (props.accessory === undefined || props.accessory === null)
+      ? { accessory: <HappierChevron direction="right" color={theme.colors.mutedText} /> }
+      : {}),
     secondaryActions: rowProps.secondaryActions,
     onSecondaryAction: rowProps.onSecondaryAction,
     accessibilityLabel: resolveAuthorText(

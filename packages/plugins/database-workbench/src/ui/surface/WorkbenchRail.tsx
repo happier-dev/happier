@@ -6,14 +6,11 @@ import type {
 import {
   ErrorState,
   Icon,
-  Item,
-  ItemGroup,
   LoadingState,
   Popover,
-  ScrollArea,
+  Row,
   Stack,
   Text,
-  TextField,
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
@@ -27,6 +24,7 @@ import { sameRelation } from '../location.js';
 import { approxRowsLabel } from './sizes.js';
 import { databaseEngineName } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
+import { NavigationList } from '@happier-dev/plugin-ui/components';
 
 
 /** What a rail press asks for; the page navigates in place, the Session rail opens a details tab. */
@@ -103,7 +101,10 @@ export function DatabaseIdentity(
   const translate = usePluginTranslation();
   const access = props.descriptor.access;
   return (
-    <Stack gap="xsmall">
+    <Row gap="small" align="start">
+      {/* The database's mark leads its name; the facts and access stand under the name (lab dbRail). */}
+      <Icon name="database" tone="secondary" />
+      <Stack gap="xsmall" grow>
       <Text
         variant="heading"
         value={props.descriptor.label}
@@ -130,40 +131,8 @@ export function DatabaseIdentity(
       ) : (
         <AccessWord descriptor={props.descriptor} />
       )}
-    </Stack>
-  );
-}
-
-function SchemaGroup(
-  props: Readonly<{
-    targetKey: string;
-    schema: string;
-    query: string;
-    expanded: boolean;
-    onToggle: (schema: string) => void;
-    selected: DatabaseRelationV1 | undefined;
-    onOpen: (intent: RailIntent) => void;
-    structure: boolean;
-  }>,
-) {
-  const translate = usePluginTranslation();
-  return (
-    <>
-      <Item
-        title={props.schema}
-        density="compact"
-        accessibilityExpanded={props.expanded}
-        onPress={() => props.onToggle(props.schema)}
-        accessibilityHint={
-          props.expanded
-            ? translate('plugins.database.rail.collapse', 'Hide tables')
-            : translate('plugins.database.rail.expand', 'Show tables')
-        }
-      />
-      {props.expanded ? (
-        <SchemaRelations {...props} translate={translate} />
-      ) : null}
-    </>
+      </Stack>
+    </Row>
   );
 }
 
@@ -216,25 +185,19 @@ function SchemaRelations(
           schema: props.schema,
           name: relation.name,
         };
-        const kind =
-          relation.kind === 'table'
-            ? null
-            : relation.kind === 'view'
-              ? props.translate('plugins.database.rail.view', 'view')
-              : props.translate(
-                  'plugins.database.rail.matview',
-                  'materialized view',
-                );
         const rows = approxRowsLabel(relation.approxRows);
-        // One line per relation (a compact index): the estimate when there is one, else what kind of relation it is.
-        const detail = rows ?? kind;
         return (
-          <Item
+          <NavigationList.Row
             key={relation.name}
             title={relation.name}
-            density="compact"
+            // A table or view says what it is by its mark; the estimate is the row's one quiet fact.
+            icon={relation.kind === 'table' ? 'table' : 'view'}
             selected={sameRelation(props.selected, value)}
-            {...(detail ? { detail } : {})}
+            {...(rows ? { detail: rows } : {})}
+            accessibilityLabel={relation.kind === 'table' ? relation.name : `${relation.name}, ${
+              relation.kind === 'view'
+                ? props.translate('plugins.database.rail.view', 'view')
+                : props.translate('plugins.database.rail.matview', 'materialized view')}`}
             onPress={() =>
               props.onOpen({
                 relation: value,
@@ -250,12 +213,15 @@ function SchemaRelations(
 }
 
 /**
- * The workbench list column: Find a table, the database's own pages, then its schemas. The page and the Session
- * rail mount this one list; only what a press opens differs.
+ * The workbench list column: the database's identity (`header`), Find a table, the database's own pages, then its
+ * schemas, each folding its tables. The page and the Session rail mount this one column (the shell's navigation
+ * column anatomy); only what a press opens differs.
  */
 export function WorkbenchRailList(
   props: Readonly<{
     targetKey: string;
+    /** What names the column: the database's identity, or the Session rail's picker. */
+    header: React.ReactNode;
     /** What is open now; nothing is selected when nothing is open. */
     selected: Readonly<{
       mode: RailIntent['mode'];
@@ -280,54 +246,51 @@ export function WorkbenchRailList(
     if (firstSchema)
       setExpanded((held) => (held.size === 0 ? new Set([firstSchema]) : held));
   }, [firstSchema]);
-  const toggle = React.useCallback(
-    (schema: string) =>
+  const setSchemaOpen = React.useCallback(
+    (schema: string, open: boolean) =>
       setExpanded((held) => {
         const next = new Set(held);
-        if (next.has(schema)) next.delete(schema);
-        else next.add(schema);
+        if (open) next.add(schema);
+        else next.delete(schema);
         return next;
       }),
     [],
   );
   const mode = props.selected?.mode;
+  const searching = query.trim().length > 0;
   return (
-    <Stack gap="medium">
-      <TextField
-        label={translate('plugins.database.rail.find', 'Find a table')}
-        placeholder={translate('plugins.database.rail.find', 'Find a table')}
-        value={query}
-        onChange={setQuery}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-      <ItemGroup surface="none">
+    <NavigationList
+      titleControl={props.header}
+      search={{
+        value: query,
+        onValueChange: setQuery,
+        label: translate('plugins.database.rail.find', 'Find a table'),
+      }}
+    >
+      <NavigationList.Group first>
         {props.showOverview ? (
-          <Item
+          <NavigationList.Row
             title={translate('plugins.database.rail.overview', 'Overview')}
-            icon={<Icon name="file" />}
-            density="compact"
+            icon="file"
             selected={mode === 'overview'}
             onPress={() => props.onOpen({ mode: 'overview' })}
           />
         ) : null}
-        <Item
+        <NavigationList.Row
           title={translate('plugins.database.rail.console', 'Console')}
-          icon={<Icon name="terminal" />}
-          density="compact"
+          icon="terminal"
           selected={mode === 'console'}
           onPress={() => props.onOpen({ mode: 'console' })}
         />
         {props.showOverview ? (
-          <Item
+          <NavigationList.Row
             title={translate('plugins.database.rail.insights', 'Insights')}
-            icon={<Icon name="chart" />}
-            density="compact"
+            icon="chart"
             selected={mode === 'insights'}
             onPress={() => props.onOpen({ mode: 'insights' })}
           />
         ) : null}
-      </ItemGroup>
+      </NavigationList.Group>
       {status === 'loading' && schemas.length === 0 ? (
         <LoadingState layout="line" rows={6} rowShape="compact" />
       ) : null}
@@ -354,23 +317,31 @@ export function WorkbenchRailList(
           )}
         />
       ) : null}
-      <ItemGroup surface="none">
-        {schemas.map((schema) => (
-          <SchemaGroup
+      {schemas.map((schema) => {
+        const open = expanded.has(schema.name) || searching;
+        return (
+          <NavigationList.Group
             key={schema.name}
-            targetKey={props.targetKey}
-            schema={schema.name}
-            query={query}
-            expanded={expanded.has(schema.name) || query.trim().length > 0}
-            onToggle={toggle}
-            selected={props.selected?.relation}
-            onOpen={props.onOpen}
-            structure={mode === 'structure'}
-          />
-        ))}
-      </ItemGroup>
+            title={schema.name}
+            expanded={open}
+            onExpandedChange={(next) => setSchemaOpen(schema.name, next)}
+          >
+            {open ? (
+              <SchemaRelations
+                targetKey={props.targetKey}
+                schema={schema.name}
+                query={query}
+                translate={translate}
+                selected={props.selected?.relation}
+                onOpen={props.onOpen}
+                structure={mode === 'structure'}
+              />
+            ) : null}
+          </NavigationList.Group>
+        );
+      })}
       <CataloguePagination kind="schemas" nextPage={nextPage} previousPage={previousPage} />
-    </Stack>
+    </NavigationList>
   );
 }
 
@@ -399,16 +370,12 @@ export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
     [location.mode, location.relation],
   );
   return (
-    <ScrollArea>
-      <Stack gap="medium">
-        <DatabaseIdentity descriptor={descriptor} />
-        <WorkbenchRailList
-          targetKey={props.targetKey}
-          selected={selected}
-          onOpen={open}
-          showOverview
-        />
-      </Stack>
-    </ScrollArea>
+    <WorkbenchRailList
+      targetKey={props.targetKey}
+      header={<DatabaseIdentity descriptor={descriptor} />}
+      selected={selected}
+      onOpen={open}
+      showOverview
+    />
   );
 }

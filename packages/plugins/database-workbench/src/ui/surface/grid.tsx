@@ -22,27 +22,37 @@ const KIND_MIN_WIDTH: Readonly<Record<GridColumn['kind'], number>> = {
 /** How many values a narrow row says under its lead: enough to tell rows apart on one line. */
 const BYLINE_VALUES = 3;
 
-export function gridColumnTitle(column: GridColumn): string {
-    // The type line belongs under the name (lab dbBrowse/grid); until the table header takes a second line it
-    // rides in the title so every column still says what it holds.
-    return `${column.name} · ${column.typeLabel}`;
+/**
+ * A column is never narrower than its header: the name over its type, at about one en per character of the header's
+ * text plus the sort arrow's room (lab dbBrowse/grid shows every header whole).
+ */
+const HEADER_CHARACTER_WIDTH = 7.5;
+const HEADER_SORT_ROOM = 20;
+function gridColumnMinWidth(column: GridColumn): number {
+    const header = Math.max(column.name.length, column.typeLabel.length) * HEADER_CHARACTER_WIDTH + HEADER_SORT_ROOM;
+    return Math.ceil(Math.max(KIND_MIN_WIDTH[column.kind], header));
 }
 
 /**
- * One anatomy for every database result table (browse and Console): the first column leads as the row's
- * identity, every other column is a field that drops last-first when the table is narrow.
+ * One anatomy for every database result table (browse and Console): a data grid. Every column stays, each as wide as
+ * its kind of value and its header need (the first, the row's identity, no wider), the type under each name, and a
+ * table wider than its room scrolls sideways. A phone's rows say the first values under their lead instead.
  */
 export function useGridAnatomy<Row extends GridRow, Column extends GridColumn = GridColumn>(columns: readonly Column[], translate: PluginTranslate,
     renderCell: (row: Row, column: Column, index: number) => React.ReactNode, sortable: boolean): CollectionAnatomy<Row> {
     return React.useMemo(() => {
         const [lead, ...rest] = columns;
         const fields: CollectionField<Row>[] = rest.map((column, index) => ({
-            key: column.name, title: gridColumnTitle(column), minWidth: KIND_MIN_WIDTH[column.kind], priority: rest.length - index,
+            key: column.name, title: column.name, subtitle: column.typeLabel, minWidth: gridColumnMinWidth(column), priority: rest.length - index,
             align: column.kind === 'number' ? 'end' as const : 'start' as const, sortable,
             render: (row: Row) => renderCell(row, column, index + 1),
         }));
         return {
+            // A result row has no mark: the grid reserves no glyph column for it.
             glyph: () => null,
+            loadingGlyph: false,
+            columnsOverflow: 'scroll',
+            ...(lead ? { titleMinWidth: gridColumnMinWidth(lead), titleSubtitle: lead.typeLabel } : {}),
             title: row => presentCell(row.cells[0], translate, { identifier: isIdentifierColumn(lead) }).text,
             // Narrow (phone), the fields drop: the first few values that are not keys say what the row is
             // under its lead (lab dbBrowse/gridp).
@@ -55,7 +65,7 @@ export function useGridAnatomy<Row extends GridRow, Column extends GridColumn = 
             titleIdentifier: true,
             fields,
             accessibilityLabel: row => presentCell(row.cells[0], translate, { identifier: isIdentifierColumn(lead) }).text,
-            columnTitles: { title: lead ? gridColumnTitle(lead) : '' },
+            columnTitles: { title: lead ? lead.name : '' },
         } satisfies CollectionAnatomy<Row>;
     }, [columns, translate, renderCell, sortable]);
 }

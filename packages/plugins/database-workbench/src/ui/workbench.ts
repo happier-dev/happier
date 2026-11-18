@@ -3,6 +3,8 @@ import type {
     DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1,
     DatabaseStatsReadV1, DatabaseStatsObservationV1,
 } from '@happier-dev/database-protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { inspectJsonCell } from './cellInspection.js';
 import { createConsoleState } from './consoleState.js';
 import { createConsole, type WorkbenchConsole } from './console.js';
@@ -28,6 +30,13 @@ function success<O extends Extract<DatabaseOperationResultV1, { ok: true }>['ope
     return result as Extract<DatabaseOperationResultV1, { ok: true; operation: O }>;
 }
 const key = (value: unknown): string => JSON.stringify(value);
+/**
+ * A database target's one identity in the workbench: its canonical JSON, so the same target names the same key
+ * whichever producer delivered it (a launch input keeps the host's field order, a target list the parser's).
+ */
+export function workbenchTargetKey(target: DatabaseDescriptorV1['target']): string {
+    return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(target));
+}
 const draftKey = (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => key([change.targetKey, change.relation, change.rowKey]);
 
 /** A physical workbench occurrence owns this object until close/Account retirement. */
@@ -44,7 +53,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
     const consoleStores = new Map<string, ReturnType<typeof createConsoleState>>();
     const consoles = new Map<string, WorkbenchConsole>();
     let closed = false;
-    if (options.selectedTarget) targets.set(key(options.selectedTarget.target), options.selectedTarget);
+    if (options.selectedTarget) targets.set(workbenchTargetKey(options.selectedTarget.target), options.selectedTarget);
     function resource<T>(resourceKey: string, load: () => Promise<T>, targetKey?: string, relation?: DatabaseRelationV1): WorkbenchResource<T> {
         if (closed) throw new Error('Workbench instance is closed');
         const held = resources.get(resourceKey);
@@ -66,7 +75,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             held.resource.invalidate();
         }
     }
-    const unsubscribe = client.subscribeOwnWrites(change => invalidate(key(change.target), change.relation));
+    const unsubscribe = client.subscribeOwnWrites(change => invalidate(workbenchTargetKey(change.target), change.relation));
     const draftOff = drafts.subscribe(() => { void client.setUnsavedChanges(drafts.changes().length > 0); });
     function structure(targetKey: string, relation: DatabaseRelationV1) {
         return resource(key(['structure', targetKey, relation]), async () => success(await client.operation({ operation: 'relation.structure', target: target(targetKey).target, relation }, reads.signal), 'relation.structure').structure, targetKey, relation);
@@ -151,7 +160,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             return resource<DatabaseTargets>(key(['targets', scope]), async () => {
                 const result = await client.targets({ scope }, reads.signal);
                 return { targets: await Promise.all(result.targets.map(async descriptor => {
-                    const targetKey = key(descriptor.target);
+                    const targetKey = workbenchTargetKey(descriptor.target);
                     targets.set(targetKey, descriptor);
                     const source = descriptor.target.kind === 'worktree' ? descriptor.target.source : undefined;
                     const machine = await client.machineDisplayName?.({ serverId: descriptor.placement.serverId,

@@ -3,11 +3,10 @@ import {
   Button,
   IconButton,
   Icon,
-  ItemGroup,
-  Item,
   Row,
   Select,
   Stack,
+  Text,
   TextField,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
@@ -53,7 +52,7 @@ export function ConsoleParameters(
     );
   const add = (
     <Button
-      variant="secondary"
+      variant="plain"
       size="small"
       title={translate(
         'plugins.database.console.addParameter',
@@ -65,84 +64,85 @@ export function ConsoleParameters(
     />
   );
   if (props.inputs.length === 0) return <Row>{add}</Row>;
+  // One wrapping line of compact typed fields, each named by its placeholder (lab p7AddNow/params); what they are
+  // for is said once under them.
   return (
-    <Stack gap="small">
-    <ItemGroup
-      title={translate('plugins.database.console.parameters', 'Parameters')}
-      description={translate(
-        'plugins.database.console.parametersLine',
-        'Sent separately from the statement, never pasted into it.',
-      )}
-    >
-      {props.inputs.map((input, index) => {
-        const invalid =
-          input.type !== 'null' &&
-          input.text !== '' &&
-          readConsoleParameter(input) === undefined;
-        return (
-          <Item
-            key={index}
-            title={placeholder(index)}
-            {...(invalid
-              ? {
-                  detail: translate(
+    <Stack gap="xsmall">
+      <Row gap="medium" align="center" wrap>
+        {props.inputs.map((input, index) => {
+          const invalid =
+            input.type !== 'null' &&
+            input.text !== '' &&
+            readConsoleParameter(input) === undefined;
+          return (
+            // A narrow pane wraps a parameter's value under its type rather than past the edge.
+            <Row key={index} gap="xsmall" align="center" wrap>
+              <Text variant="code" tone="secondary" value={placeholder(index)} />
+              <Select
+                label={translate(
+                  'plugins.database.console.parameterType',
+                  'Type of {placeholder}',
+                  { placeholder: placeholder(index) },
+                )}
+                presentation="field"
+                options={typeOptions}
+                value={input.type}
+                onChange={(next) => {
+                  const type = TYPES.find((candidate) => candidate === next);
+                  if (type) replace(index, { ...input, type });
+                }}
+              />
+              {input.type === 'null' ? null : (
+                <TextField
+                  label={translate(
+                    'plugins.database.console.parameterValue',
+                    'Value of {placeholder}',
+                    { placeholder: placeholder(index) },
+                  )}
+                  placeholder={translate('plugins.database.console.parameterPlaceholder', 'Value')}
+                  value={input.text}
+                  onChange={(text) => replace(index, { ...input, text })}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+              )}
+              <IconButton
+                accessibilityLabel={translate(
+                  'plugins.database.console.removeParameter',
+                  'Remove {placeholder}',
+                  { placeholder: placeholder(index) },
+                )}
+                icon={<Icon name="close" tone="secondary" />}
+                onPress={() =>
+                  props.onChange(
+                    props.inputs.filter((_input, at) => at !== index),
+                  )
+                }
+              />
+              {invalid ? (
+                <Text
+                  variant="meta"
+                  tone="danger"
+                  value={translate(
                     'plugins.database.console.parameterInvalid',
                     'Not a valid {type}',
                     { type: input.type },
-                  ),
-                  detailTone: 'danger' as const,
-                }
-              : {})}
-            accessoryBelow
-            accessory={
-              <Row gap="small" align="center">
-                <Select
-                  label={translate(
-                    'plugins.database.console.parameterType',
-                    'Type of {placeholder}',
-                    { placeholder: placeholder(index) },
                   )}
-                  presentation="field"
-                  options={typeOptions}
-                  value={input.type}
-                  onChange={(next) => {
-                    const type = TYPES.find((candidate) => candidate === next);
-                    if (type) replace(index, { ...input, type });
-                  }}
                 />
-                {input.type === 'null' ? null : (
-                  <TextField
-                    label={translate(
-                      'plugins.database.console.parameterValue',
-                      'Value of {placeholder}',
-                      { placeholder: placeholder(index) },
-                    )}
-                    value={input.text}
-                    onChange={(text) => replace(index, { ...input, text })}
-                    autoCorrect={false}
-                    autoCapitalize="none"
-                  />
-                )}
-                <IconButton
-                  accessibilityLabel={translate(
-                    'plugins.database.console.removeParameter',
-                    'Remove {placeholder}',
-                    { placeholder: placeholder(index) },
-                  )}
-                  icon={<Icon name="close" />}
-                  onPress={() =>
-                    props.onChange(
-                      props.inputs.filter((_input, at) => at !== index),
-                    )
-                  }
-                />
-              </Row>
-            }
-          />
-        );
-      })}
-    </ItemGroup>
-      <Row>{add}</Row>
+              ) : null}
+            </Row>
+          );
+        })}
+        {add}
+      </Row>
+      <Text
+        variant="meta"
+        tone="secondary"
+        value={translate(
+          'plugins.database.console.parametersLine',
+          'Sent separately from the statement, never pasted into it.',
+        )}
+      />
     </Stack>
   );
 }
