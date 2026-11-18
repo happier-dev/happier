@@ -99,6 +99,51 @@ export type ReviewWalkthroughTranslations = {
         includeTranscript: string;
         includeTranscriptLine: string;
     };
+    detail: {
+        tabFindings: string;
+        tabChanges: string;
+        tabRuns: string;
+        tabActivity: string;
+        round: (params: Readonly<{ round: number }>) => string;
+        rounds: string;
+        failedTitle: string;
+        unreadable: string;
+        reviewersCount: (params: Count) => string;
+        people: string;
+        you: string;
+        verdictApproved: string;
+        verdictChangesRequested: string;
+        verdictCommented: string;
+        requestedFromYou: string;
+        waitingForYou: string;
+        required: string;
+        optional: string;
+        glanceRunning: string;
+        glanceFailed: string;
+        glanceToDecide: (params: Count) => string;
+        glanceAllDecided: string;
+        glanceNoFindings: string;
+        findingsCount: (params: Count) => string;
+        startedAt: (params: Readonly<{ time: string }>) => string;
+        submitReview: string;
+        submitTitle: string;
+        approve: string;
+        requestChanges: string;
+        comment: string;
+        summaryPlaceholder: string;
+        newRound: string;
+        newRoundDescription: string;
+        newRoundNote: (params: Readonly<{ round: number }>) => string;
+        startRound: string;
+        continuesSession: string;
+        startsFresh: string;
+        askedAgain: string;
+        noRuns: string;
+        workflowRun: string;
+        reviewerRun: (params: Count) => string;
+        noMachineTitle: string;
+        noMachineReason: string;
+    };
     generated: {
         continues: (params: Readonly<{ model: string }>) => string;
         seeded: (params: Readonly<{ model: string }>) => string;
@@ -227,6 +272,51 @@ export const en: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Billed to your ${engine} account, not to Happier.`,
         includeTranscript: 'Include the session’s transcript',
         includeTranscriptLine: 'Review engines in this step read the conversation as well as the changes.',
+    },
+    detail: {
+        tabFindings: 'Findings',
+        tabChanges: 'Changes',
+        tabRuns: 'Runs',
+        tabActivity: 'Activity',
+        round: ({ round }) => `Round ${round}`,
+        rounds: 'Rounds',
+        failedTitle: 'This review didn’t open',
+        unreadable: 'This review’s record can’t be read on this device.',
+        reviewersCount: ({ count }) => count === 1 ? '1 reviewer' : `${count} reviewers`,
+        people: 'People',
+        you: 'You',
+        verdictApproved: 'Approved',
+        verdictChangesRequested: 'Changes requested',
+        verdictCommented: 'Commented',
+        requestedFromYou: 'Review requested from you',
+        waitingForYou: 'Waiting for you',
+        required: 'Required',
+        optional: 'Optional',
+        glanceRunning: 'Reviewing…',
+        glanceFailed: 'The review couldn’t finish',
+        glanceToDecide: ({ count }) => count === 1 ? '1 finding to decide' : `${count} findings to decide`,
+        glanceAllDecided: 'Every finding is decided',
+        glanceNoFindings: 'Nothing to fix',
+        findingsCount: ({ count }) => count === 1 ? '1 finding' : `${count} findings`,
+        startedAt: ({ time }) => `Started ${time}`,
+        submitReview: 'Submit review',
+        submitTitle: 'Submit your review',
+        approve: 'Approve',
+        requestChanges: 'Request changes',
+        comment: 'Comment',
+        summaryPlaceholder: 'Add a summary (optional)',
+        newRound: 'New round',
+        newRoundDescription: 'The same reviewers read the updated code in this review.',
+        newRoundNote: ({ round }) => `Round ${round} verdicts stay visible, marked round ${round}, and no longer count. Findings are matched exactly against round ${round}: new, still there or not found. You decide what is fixed.`,
+        startRound: 'Start round',
+        continuesSession: 'continues its session',
+        startsFresh: 'starts fresh',
+        askedAgain: 'asked again',
+        noRuns: 'No runs in this round yet',
+        workflowRun: 'Workflow run',
+        reviewerRun: ({ count }) => `Reviewer ${count}`,
+        noMachineTitle: 'Open the full changes on a Machine you can use',
+        noMachineReason: 'Each finding keeps its code excerpt on the Findings tab.',
     },
     generated: {
         continues: ({ model }) => `${model} · continues the review`,

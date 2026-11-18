@@ -35,7 +35,8 @@ export const REVIEW_FINDING_DECISIONS: readonly ReviewFindingDecision[] = ['acce
  */
 export type ReviewFindingRowDensity = 'page' | 'card';
 
-function decisionLabel(decision: ReviewFindingDecision | 'undecided'): string {
+/** The shipped decision words (Pending, Implement fix, Ignore, Decide later), one owner for every surface. */
+export function reviewFindingDecisionLabel(decision: ReviewFindingDecision | 'undecided'): string {
     switch (decision) {
         case 'undecided': return t('session.reviewFindings.status.untriaged');
         case 'accept': return t('session.reviewFindings.status.accept');
@@ -52,7 +53,7 @@ export const ReviewFindingDecisionControl = React.memo(function ReviewFindingDec
     onDecide: (decision: ReviewFindingDecision) => void;
 }>) {
     const language = usePreferredLanguage();
-    const tabs = React.useMemo(() => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: decisionLabel(decision) })), [language]);
+    const tabs = React.useMemo(() => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: reviewFindingDecisionLabel(decision) })), [language]);
     return (
         <SegmentedTabBar<ReviewFindingDecision>
             role="radiogroup"
@@ -242,7 +243,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
     const location = formatReviewFindingLocation(finding);
     const ignored = props.decision === 'reject';
     const expanded = props.expanded;
-    const decisionWord = props.decision === null ? null : decisionLabel(props.decision);
+    const decisionWord = props.decision === null ? null : reviewFindingDecisionLabel(props.decision);
     const followUp = props.followUp;
 
     const conversation = followUp !== null && followUp.available ? (

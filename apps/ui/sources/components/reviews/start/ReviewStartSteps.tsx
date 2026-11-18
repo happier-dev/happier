@@ -21,7 +21,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { ReviewStartLabel } from './ReviewStartLabel';
+import { ReviewLabel } from '../ReviewLabel';
 
 /** How the host shows one chosen reviewer: its list row's own mark and name, and a typed readiness warning. */
 export type ReviewStartReviewerPresentation = Readonly<{
@@ -339,12 +339,12 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
           {...headerProps}
           testID={`${testID}:header`}
           title={
-            <ReviewStartLabel>
+            <ReviewLabel>
               {t('reviewWalkthrough.start.step', {
                 n: index + 1,
                 title: stepTitle(step),
               })}
-            </ReviewStartLabel>
+            </ReviewLabel>
           }
           titleQualifier={
             props.isNew ? t('reviewWalkthrough.start.stepNew') : null
@@ -367,9 +367,9 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
     >
       {props.renderWho(index)}
       <View style={styles.field}>
-        <ReviewStartLabel>
+        <ReviewLabel>
           {t('reviewWalkthrough.start.focus')}
-        </ReviewStartLabel>
+        </ReviewLabel>
         <FieldTextInput
           testID={`${testID}:focus`}
           value={step.instructions}

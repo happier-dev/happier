@@ -430,6 +430,21 @@ describe('Artifact composed view reads', () => {
         expect(screen.findByTestId('artifact:history') !== null).toBe(true);
         await screen.unmount();
     });
+    it('opens a Review as its Review page, never its stored rounds as a document', async () => {
+        const rounds = [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0', 's0:r1'],
+            runs: [{ kind: 'execution', runId: 'run-claude', machineId: 'machine-1', sessionId: 'session-1' }] }];
+        const row: DecryptedArtifact = { id: 'review-1', title: 'Fix settings modal remount', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId: 'review-1', title: 'Fix settings modal remount' },
+            body: JSON.stringify({ v: 1, rounds }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        expect(screen.findByTestId('review-detail')).not.toBeNull();
+        expect(screen.findByTestId('artifact:body') === null).toBe(true);
+        expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.title).toBe('Fix settings modal remount');
+        // The round's run opens its own result, where its findings are decided.
+        expect(screen.findByTestId('review-detail:run:run-claude')).not.toBeNull();
+        await screen.unmount();
+    });
     it.each([{ kind: 'image', warm: false }, { kind: 'html', warm: false }, { kind: 'image', warm: true }, { kind: 'html', warm: true }] as const)(
         'opens $kind (warm=$warm) through one authenticated head and renders its private preview', async ({ kind, warm }) => {
         const { served } = await setup(kind, undefined, warm);

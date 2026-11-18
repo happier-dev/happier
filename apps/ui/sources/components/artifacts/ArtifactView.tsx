@@ -37,6 +37,7 @@ import { ArtifactBodyActionsProvider, useArtifactBodyActionsHost, type ArtifactB
 import { ArtifactBody } from './ArtifactBody';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDocCollaboration, type DocCollaboration } from './useDocCollaboration';
+import { isReviewArtifact, ReviewDetailHost } from '@/components/reviews/detail/ReviewDetailHost';
 import { ArtifactPassageThreadCardPlaceholder } from './ArtifactPassageThreadCard';
 import { clearDocReturn, peekDocReturn, trackDocScroll } from './docThreadReturn';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -63,11 +64,26 @@ export function ArtifactView(props: Readonly<{
     if (props.artifact && !opensInArtifactView(props.artifact)) {
         return <Redirect href={resolveArtifactOpenRoute(props.artifact) as Href} />;
     }
-    return <ArtifactDocumentView {...props} />;
+    return <ArtifactKindView {...props} />;
 }
 
-function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>): React.ReactElement {
+/**
+ * One opened body read for every kind, then the kind's reader: a Review is its own page (plan 04 U4);
+ * every other kind reads as a Document.
+ */
+function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): React.ReactElement {
     const body = useArtifactBody(props.artifactId, props.artifact);
+    const artifact = body.result?.artifact ?? props.artifact;
+    if (artifact && artifact.isDecrypted !== false && isReviewArtifact(artifact)) {
+        return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry} />;
+    }
+    return <ArtifactDocumentView {...props} body={body} />;
+}
+
+function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> & Readonly<{
+    body: ReturnType<typeof useArtifactBody>;
+}>): React.ReactElement {
+    const { body } = props;
     const artifact = body.result?.artifact ?? props.artifact;
     const router = useRouter();
     const [bodyActions, publishBodyActions] = useArtifactBodyActionsHost();

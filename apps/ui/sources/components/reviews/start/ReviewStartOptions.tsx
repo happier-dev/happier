@@ -9,7 +9,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { t } from '@/text';
 
-import { ReviewStartLabel } from './ReviewStartLabel';
+import { ReviewLabel } from '../ReviewLabel';
 
 /**
  * A paid engine's own estimate (P01's engine contract) as the start's consent: the row binds the shipped
@@ -56,9 +56,9 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
         testID="review-start-then"
         testIDPrefix="review-start-then"
         title={
-          <ReviewStartLabel>
+          <ReviewLabel>
             {t('reviewWalkthrough.start.then')}
-          </ReviewStartLabel>
+          </ReviewLabel>
         }
         accessibilityLabel={t('reviewWalkthrough.start.then')}
         options={thenOptions}
@@ -70,9 +70,9 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
       <Item
         testID="review-start-walkthrough"
         title={
-          <ReviewStartLabel>
+          <ReviewLabel>
             {t('reviewWalkthrough.start.walkMeThrough')}
-          </ReviewStartLabel>
+          </ReviewLabel>
         }
         accessibilityLabel={t('reviewWalkthrough.start.walkMeThrough')}
         subtitle={t('reviewWalkthrough.start.walkMeThroughLine')}
@@ -100,9 +100,9 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
             {...headerProps}
             testID="review-start-advanced:header"
             title={
-              <ReviewStartLabel>
+              <ReviewLabel>
                 {t('reviewWalkthrough.start.advanced')}
-              </ReviewStartLabel>
+              </ReviewLabel>
             }
             accessibilityLabel={t('reviewWalkthrough.start.advanced')}
             detail={

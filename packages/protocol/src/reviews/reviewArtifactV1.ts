@@ -58,7 +58,8 @@ export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   summary?: string; signal?: AbortSignal }>;
 export type ReviewRecordPortV1 = ReturnType<typeof createReviewRecordPortV1>;
 
-function open(row: Opened): ReviewArtifactV1 {
+/** Opens one Review Artifact row (header + sealed body) into its record; every reader uses this one decoder. */
+export function openReviewArtifactV1(row: Omit<Opened, 'revision'>): ReviewArtifactV1 {
   const header = ReviewArtifactHeaderV1Schema.parse(row.header);
   if (header.reviewId !== row.artifactId || typeof row.body !== 'string') refused('artifact_content_unavailable');
   return { ...header, ...ReviewArtifactBodyV1Schema.parse(JSON.parse(row.body)) };
@@ -76,12 +77,12 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
   return {
     async read(reviewId: string, signal?: AbortSignal): Promise<ReviewArtifactV1 | null> {
       const row = await transport.read(reviewId, { signal });
-      return row ? open(row) : null;
+      return row ? openReviewArtifactV1(row) : null;
     },
     async start(input: ReviewRoundStartV1): Promise<ReviewRoundBindingV1> {
       input.signal?.throwIfAborted();
       const row = await transport.read(input.reviewId, { signal: input.signal });
-      const previous = row ? open(row) : null;
+      const previous = row ? openReviewArtifactV1(row) : null;
       const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
       if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
       const ordinal = lastOrdinal + 1;
@@ -103,7 +104,7 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       input.signal?.throwIfAborted();
       const row = await transport.read(input.reviewId, { signal: input.signal });
       if (!row) refused('artifact_not_found');
-      const current = open(row);
+      const current = openReviewArtifactV1(row);
       const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
       if (!round) refused('invalid-params');
       if (round.state !== 'running') return;
