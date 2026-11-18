@@ -21,6 +21,7 @@ import { readRetainedReviewFindings } from '../../../reviews/normalize/readRetai
 import { presentScmDiffSummaryModelContext } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
 import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import { bindScmExecutionRunProfileAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
+import { buildNativeReviewOutputSchema } from '../../../reviews/normalize/nativeReviewOutputSchema';
 
 function requestsWalkthrough(input: unknown) {
   const outputs = readScmDiffSummaryIntent(input).outputs;
@@ -38,6 +39,8 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
   supportsDetached: true,
   transcriptMaterialization: 'full',
   emitFinalSidechainMessageWhenStreamed: true,
+  buildNativeOutputSchema: ({ intentInput }) => readReviewNarration(intentInput)
+    ? undefined : buildNativeReviewOutputSchema(intentInput),
   prepareStartParams: async ({ request, cwd, sessionId, contextWindowTokens, resolveReviewScmScope: resolveScope = resolveReviewScmScope }) => {
     const existing = readIntentInputRecord(request.intentInput);
     delete existing.scmContextWindowTokens;
@@ -48,13 +51,14 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
     delete existing.metadata;
     delete existing.resultGenerator;
     delete existing.resultBaseRevision;
-    const scmReviewScope = await resolveScope({
-      cwd,
-      intentInput: existing,
-    });
     // The comparison identity is the sole caller selector; reread its machine evidence.
     const captured = typeof existing.comparisonId === 'string'
       ? await readCapturedScmComparison({ cwd, comparisonId: existing.comparisonId, ...(sessionId ? { sessionId } : {}) }) : null;
+    const scmReviewScope = await resolveScope({ cwd,
+      intentInput: { ...existing, ...(captured ? { comparison: captured.comparison } : {}) } });
+    const selectedPaths = new Set(scmReviewScope.selectedPaths);
+    const comparison = captured ? { ...captured.comparison, inventory: { ...captured.comparison.inventory,
+      files: captured.comparison.inventory.files.filter(file => selectedPaths.has(file.path)) } } : undefined;
     if (requestsWalkthrough(existing) && !captured) throw new Error('Review narration requires a captured comparison');
     const analysis = requestsWalkthrough(existing) && captured ? await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId,
       contextWindowTokens,
@@ -64,9 +68,10 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
     return {
       intentInput: {
         ...existing,
-        ...(captured ? { comparisonId: captured.comparison.id, comparison: captured.comparison,
+        ...(captured ? { comparisonId: captured.comparison.id,
           metadata: captured.metadata, cwd, source: captured.comparison.source } : {}),
         ...(analysis ? readScmDiffSummaryIntent(analysis.intentInput) : {}),
+        ...(comparison ? { comparison } : {}),
         ...(contextWindowTokens ? { scmContextWindowTokens: contextWindowTokens } : {}),
         [REVIEW_SCM_SCOPE_INPUT_KEY]: scmReviewScope,
       },

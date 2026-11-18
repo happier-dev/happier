@@ -82,6 +82,7 @@ export type RuntimeTurnPromptMeta = Readonly<{
   localIds?: readonly string[];
   /** Raw Composer attachments have been resolved away before a runtime sees this envelope. */
   structuredInput?: AgentSessionInput['structuredInput'];
+  outputSchema?: AgentSessionInput['outputSchema'];
   modelId?: string | null;
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];

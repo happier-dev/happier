@@ -1,5 +1,8 @@
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { hasConflictingReviewScope, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSchema, ScmRevisionRangeV1Schema } from '@happier-dev/protocol/scm/comparison';
+import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
+import { ScmEntryKindSchema } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { ReviewBase, ReviewChangeType, ReviewScmScopeBaseRefV1, ReviewScmScopeDiagnosticCodeV1, ReviewScmScopeDiagnosticV1, ReviewScmScopePathV1, ReviewScmScopeV1, ScmWorkingEntry, ScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
@@ -22,12 +25,6 @@ function isRecord(value: unknown): value is ReviewInputRecord {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readStringArray(value: unknown): readonly string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string')
-    : [];
 }
 
 function unsupportedScope(input: Readonly<{
@@ -94,11 +91,19 @@ function uniqueSafePaths(paths: readonly string[]): readonly string[] {
   return out;
 }
 
-function explicitSelectedPaths(record: ReviewInputRecord): readonly string[] {
-  return uniqueSafePaths([
-    ...readStringArray(record.selectedPaths),
-    ...readStringArray(record.selectedFiles),
-  ]);
+function explicitSelectedPaths(record: ReviewInputRecord): readonly string[] | null {
+  const selected = new Set<string>();
+  for (const key of ['selectedPaths', 'selectedFiles'] as const) {
+    const paths = record[key];
+    if (paths === undefined) continue;
+    if (!Array.isArray(paths)) return null;
+    for (const path of paths) {
+      const normalized = typeof path === 'string' ? normalizeRepoRootRelativePath(path) : null;
+      if (!normalized?.ok) return null;
+      selected.add(normalized.relativePath);
+    }
+  }
+  return [...selected];
 }
 
 function resolveBaseRef(input: Readonly<{
@@ -189,6 +194,64 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     });
   }
 
+  const record = isRecord(input.intentInput) ? input.intentInput : {};
+  if (hasConflictingReviewScope(record)) {
+    return unsupportedScope({ code: 'scm_status_unavailable', message: 'Repository review scope conflicts with the selected comparison or pull request.' });
+  }
+  const requestedPaths = explicitSelectedPaths(record);
+  if (!requestedPaths) {
+    return unsupportedScope({ code: 'invalid_path', message: 'Selected review paths must be repository-relative paths.' });
+  }
+  const pullRequest = resolveScmPullRequestReviewScope(record);
+  if (pullRequest.status === 'scope_malformed') {
+    return unsupportedScope({ code: 'scm_status_unavailable', message: 'The selected pull request scope is unreadable.' });
+  }
+  if (record.comparison !== undefined || record.comparisonId !== undefined) {
+    const captured = ScmComparisonSchema.safeParse(record.comparison);
+    if (!captured.success || captured.data.id !== record.comparisonId) {
+      return unsupportedScope({ code: 'scm_status_unavailable', message: 'The selected captured comparison is unavailable.' });
+    }
+    const comparison = captured.data;
+    const filesByPath = new Map(comparison.inventory.files.map(file => [file.path, file]));
+    if (requestedPaths.some(path => !filesByPath.has(path))) {
+      return unsupportedScope({ code: 'invalid_path', message: 'A selected review path is outside the captured comparison.' });
+    }
+    const selectedPaths = [...new Set(requestedPaths.length ? requestedPaths : filesByPath.keys())];
+    const workingTree = comparison.source.kind === 'workingTree';
+    const changedPaths = selectedPaths.map(path => {
+      const file = filesByPath.get(path)!;
+      const available = file.evidence.state === 'available' && file.binary === false;
+      const kind = ScmEntryKindSchema.safeParse(file.changeKind);
+      return { path, previousPath: file.previousPath ?? null, kind: kind.success ? kind.data : 'modified' as const,
+        hasCommittedDelta: !workingTree, hasUncommittedDelta: workingTree,
+        diff: { committedAvailable: !workingTree && available, uncommittedAvailable: workingTree && available,
+          isBinary: file.binary === true } };
+    });
+    return ReviewScmScopeV1Schema.parse({ kind: 'review_scm_scope.v1', scope: 'changes', status: 'supported',
+      scmBackendId: 'git', scmMode: '.git', repositoryRoot: comparison.repository.rootPath,
+      worktreeRoot: comparison.repository.rootPath,
+      baseRef: { source: comparison.endpoints.before ? 'explicit' : 'unavailable', ref: comparison.endpoints.before ?? null },
+      comparison: { id: comparison.id, source: comparison.source, endpoints: comparison.endpoints },
+      selectedPaths, changedPaths, committedPaths: changedPaths.filter(path => path.hasCommittedDelta),
+      uncommittedPaths: changedPaths.filter(path => path.hasUncommittedDelta),
+      diff: { committedAvailable: changedPaths.some(path => path.diff.committedAvailable),
+        uncommittedAvailable: changedPaths.some(path => path.diff.uncommittedAvailable) }, diagnostics: [] });
+  }
+
+  if (pullRequest.status === 'scope_present') {
+    const observed = pullRequest.scope.observed;
+    const range = ScmRevisionRangeV1Schema.safeParse({ kind: 'revisionRange',
+      baseOid: observed.baseSha, headOid: observed.headSha });
+    if (!range.success) {
+      return unsupportedScope({ code: 'scm_status_unavailable', message: 'The selected pull request has no supported revision range.' });
+    }
+    return ReviewScmScopeV1Schema.parse({ kind: 'review_scm_scope.v1', scope: 'changes', status: 'supported',
+      scmBackendId: 'git', scmMode: '.git', repositoryRoot: resolvedCwd.cwd, worktreeRoot: resolvedCwd.cwd,
+      baseRef: { source: 'explicit', ref: range.data.baseOid }, revisionRange: range.data,
+      selectedPaths: requestedPaths, changedPaths: [], committedPaths: [], uncommittedPaths: [],
+      diff: { committedAvailable: true, uncommittedAvailable: false }, diagnostics: [] });
+  }
+
   return runWithScmBackendRegistryLease(input.registry, async (registry) => {
     const selected = await resolveScmSelection({
       workingDirectory,
@@ -220,7 +283,7 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     }));
     const committedPaths = changedPaths.filter((entry) => entry.hasCommittedDelta);
     const uncommittedPaths = changedPaths.filter((entry) => entry.hasUncommittedDelta);
-    const explicitPaths = explicitSelectedPaths(reviewInput.record);
+    const explicitPaths = requestedPaths;
     const scope = reviewInput.record.scope === 'repository' ? 'repository' : 'changes';
     const selectedPaths = scope === 'repository' ? [] : uniqueSafePaths(selectPathsForChangeType({
       explicitPaths,

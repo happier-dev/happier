@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   createScmCapabilities,
+  ScmComparisonSchema,
   type ScmStatusSnapshotResponse,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
@@ -97,6 +98,41 @@ function createGitBackend(snapshot: ScmStatusSnapshotResponse['snapshot']): ScmB
 }
 
 describe('resolveReviewScmScope', () => {
+  it('uses selected PR source endpoints without asking ambient Git for a base or head', async () => {
+    const baseOid = '1'.repeat(40);
+    const headOid = '2'.repeat(40);
+    const scope = await resolveReviewScmScope({ cwd: '/prepared-pr', registry: createScmBackendRegistry([]),
+      intentInput: { scmPullRequestReviewScope: { kind: 'scm_pull_request_review_scope.v1',
+        account: { service: { pluginId: 'happier.scm-github', localId: 'github' }, accountId: 'selected-account' },
+        pullRequest: { number: 42 }, observed: { baseSha: baseOid, headSha: headOid, nativeRevision: 'selected', observedAtMs: 1 } } } });
+    expect(scope).toMatchObject({ status: 'supported', repositoryRoot: '/prepared-pr',
+      baseRef: { source: 'explicit', ref: baseOid }, revisionRange: { kind: 'revisionRange', baseOid, headOid } });
+    await expect(resolveReviewScmScope({ cwd: '/prepared-pr', registry: createScmBackendRegistry([]),
+      intentInput: { scmPullRequestReviewScope: { kind: 'scm_pull_request_review_scope.v1',
+        nativeService: { pluginId: 'happier.scm-github', localId: 'github' }, pullRequest: { number: 42 },
+        observed: { baseSha: baseOid, headSha: headOid, nativeRevision: 'selected', observedAtMs: 1 } },
+      selectedPaths: ['../outside.ts'] } })).resolves.toMatchObject({ status: 'unsupported' });
+  });
+  it('resolves captured endpoints and selected files without reading the ambient checkout', async () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'selected-turn', source: { kind: 'turnCheckpoint', sessionId: 'session', turnId: 'turn' },
+      repository: { rootPath: '/captured-repo' }, endpoints: { before: 'captured-base', after: 'captured-head' },
+      inventory: { state: 'complete', reasons: [], files: ['selected.ts', 'other-selected.ts'].map(path => ({
+        path, changeKind: 'modified', binary: false, generated: false, lockfile: false,
+        evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [],
+      })) } });
+    const registry = createScmBackendRegistry([]);
+    const resolve = (selectedPaths?: string[]) => resolveReviewScmScope({ cwd: '/ambient-repo', registry,
+      intentInput: { comparisonId: comparison.id, comparison, ...(selectedPaths ? { selectedPaths } : {}) } });
+    await expect(resolve()).resolves.toMatchObject({ status: 'supported', repositoryRoot: '/captured-repo',
+      baseRef: { source: 'explicit', ref: 'captured-base' }, comparison: { id: comparison.id,
+        source: comparison.source, endpoints: comparison.endpoints },
+      selectedPaths: ['selected.ts', 'other-selected.ts'] });
+    await expect(resolve(['selected.ts'])).resolves.toMatchObject({ status: 'supported', selectedPaths: ['selected.ts'] });
+    await expect(resolve(['unrelated.ts'])).resolves.toMatchObject({ status: 'unsupported' });
+    await expect(resolve(['../unrelated.ts'])).resolves.toMatchObject({ status: 'unsupported' });
+    await expect(resolveReviewScmScope({ cwd: '/ambient-repo', registry,
+      intentInput: { comparisonId: 'different-comparison', comparison } })).resolves.toMatchObject({ status: 'unsupported' });
+  });
   it('uses the async SCM backend registry resolver when no registry is injected', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-scope-default-registry-'));
     try {

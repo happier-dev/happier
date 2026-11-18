@@ -3779,6 +3779,7 @@ export function createNativeAgentSessionOperations(
                         input: {
                             text: prompt,
                             ...(structuredInput === undefined ? {} : { structuredInput }),
+                            ...(meta?.outputSchema === undefined ? {} : { outputSchema: meta.outputSchema }),
                         },
                         delivery: correlation.deliveryKind === 'steer'
                             ? { kind: 'steer', turnId: correlation.turnId }
@@ -3908,6 +3909,7 @@ export function createNativeAgentSessionOperations(
                     input: {
                         text: message,
                         ...(structuredInput === undefined ? {} : { structuredInput }),
+                        ...(meta?.outputSchema === undefined ? {} : { outputSchema: meta.outputSchema }),
                     },
                     delivery: { kind: 'steer', turnId: activeTurnId },
                     ...(correlation.causalPermissionAuthority

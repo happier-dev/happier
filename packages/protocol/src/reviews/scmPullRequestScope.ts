@@ -14,13 +14,11 @@ import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 }
  * The selected pull-request review scope, and the top-level `review.start`
  * input key it travels under.
  *
- * The incumbent `scmReviewScope` describes a local worktree and is re-derived
- * from the run's own directory on every start. A review of one selected pull
- * request is a different fact: it names the exact connected account the source
- * was authorized as, the canonical pull request, and the one base/head pair
- * that was actually observed. The two are not alternatives and are never
- * merged — an implementation that packed this into `scmReviewScope` would have
- * its value silently overwritten by the profile's re-derivation.
+ * The host projects adapter-facing `scmReviewScope` from the admitted captured
+ * comparison or this observation. This selected-PR source authority remains a
+ * separate fact: the connected account (or native service), canonical pull
+ * request, and base/head pair actually observed. Projection never reconstructs
+ * this authority from a local checkout or an adapter's range selection.
  */
 export const SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY = 'scmPullRequestReviewScope';
 

@@ -14,6 +14,7 @@ import type {
 } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
+import { createReviewScopeAttribution } from './scopeAttribution';
 
 function stripOptionalModelNulls(value: unknown, shape: Readonly<Record<string, {
   safeParse(value: unknown): Readonly<{ success: boolean }>;
@@ -62,6 +63,7 @@ export function normalizeParsedReviewContent(params: Readonly<{
   const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
     ? params.intentInput as Record<string, unknown> : {};
   const admittedComparison = readAdmittedReviewComparison(input);
+  const scopeAttribution = createReviewScopeAttribution(admittedComparison);
 
   if (!parsedRecord || typeof summaryRaw !== 'string' || summaryRaw.trim().length === 0 || !Array.isArray(findingsRaw)) {
     return null;
@@ -73,7 +75,7 @@ export function normalizeParsedReviewContent(params: Readonly<{
     if (!parsedFinding.success) {
       return null;
     }
-    findings.push(parsedFinding.data);
+    findings.push({ ...parsedFinding.data, scopeAttribution: scopeAttribution(parsedFinding.data) });
   }
 
   const questions = Array.isArray(questionsRaw)
@@ -156,6 +158,10 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   const assumptionsRaw = parsedRecord ? parsedRecord.assumptions : null;
   const followUpIntent = ReviewFollowUpIntentInputSchema.safeParse(params.intentInput);
   if (followUpIntent.success) {
+    const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
+      ? params.intentInput as Record<string, unknown> : {};
+    const admittedComparison = readAdmittedReviewComparison(input);
+    const scopeAttribution = createReviewScopeAttribution(admittedComparison);
     if (typeof answerMarkdownRaw !== 'string' || answerMarkdownRaw.trim().length === 0) {
       const summary = 'Invalid review output (expected strict JSON).';
       return {
@@ -179,7 +185,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     const updatedFindings = Array.isArray(updatedFindingsRaw)
       ? updatedFindingsRaw.flatMap((item) => {
         const parsedFinding = parseModelFinding(item);
-        return parsedFinding.success ? [parsedFinding.data] : [];
+        return parsedFinding.success ? [{ ...parsedFinding.data, scopeAttribution: scopeAttribution(parsedFinding.data) }] : [];
       })
       : undefined;
     const questions = Array.isArray(questionsRaw)

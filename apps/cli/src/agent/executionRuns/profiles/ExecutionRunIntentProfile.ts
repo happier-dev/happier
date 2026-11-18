@@ -20,6 +20,8 @@ import type { CaptureScmComparisonInput } from '@/scm/comparisons/captureScmComp
 export const EXECUTION_RUN_TASK_RESULT_MAX_CODE_UNITS = 512 * 1_024;
 
 export type ExecutionRunProfileStartParams = Readonly<{
+  /** Source evidence for the live provider input only, never retained with Run input. */
+  reviewTranscriptEvidence?: import('@happier-dev/protocol/reviews/reviewStart').ReviewTranscriptEvidence;
   /** Host-only original admission, excluded from provider inputs and retained state. */
   executionAuthorization?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1;
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
@@ -160,6 +162,9 @@ export type ExecutionRunIntentProfile = Readonly<{
    */
   supportsDetached?: boolean;
   buildPrompt: (params: ExecutionRunProfileStartParams) => string;
+  /** Optional native response shaping; the ordinary prompt/repair contract still applies. */
+  buildNativeOutputSchema?: (params: Pick<ExecutionRunProfileStartParams, 'intentInput'>) =>
+    import('@happier-dev/protocol/plugins/contributions/jsonSchema').PluginJsonSchemaV2 | undefined;
   prepareStartParams?: (
     params: ExecutionRunProfilePrepareStartParams,
   ) => Promise<Readonly<Record<string, unknown>> | undefined> | Readonly<Record<string, unknown>> | undefined;

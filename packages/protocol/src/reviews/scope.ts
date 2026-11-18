@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { ScmBackendIdSchema } from '../scm/backendIdentity.js';
+import { ScmComparisonSchema, ScmRevisionRangeV1Schema } from '../scm/comparison.js';
 import { ScmEntryKindSchema, ScmRepoModeSchema } from '../scm/workingSnapshot.js';
 
 export const ReviewScopeSchema = lazyZodSchema(() => z.enum(['changes', 'repository']));
@@ -68,6 +69,10 @@ export const ReviewScmScopeV1Schema = lazyZodSchema(() => z.looseObject({
   repositoryRoot: z.nullable(z.string().check(z.minLength(1))),
   worktreeRoot: z.nullable(z.string().check(z.minLength(1))),
   baseRef: ReviewScmScopeBaseRefV1Schema,
+  // Bodies remain in the admitted comparison input; adapters consume its captured identity/endpoints.
+  comparison: z.optional(z.strictObject({ id: ScmComparisonSchema.shape.id,
+    source: ScmComparisonSchema.shape.source, endpoints: ScmComparisonSchema.shape.endpoints })),
+  revisionRange: z.optional(ScmRevisionRangeV1Schema),
   selectedPaths: z.array(z.string().check(z.minLength(1))),
   committedPaths: z.array(ReviewScmScopePathV1Schema),
   uncommittedPaths: z.array(ReviewScmScopePathV1Schema),

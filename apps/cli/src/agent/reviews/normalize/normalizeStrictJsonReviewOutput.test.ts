@@ -2,9 +2,92 @@ import { describe, expect, it } from 'vitest';
 
 import { ScmComparisonSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import { normalizeStrictJsonReviewOutput } from './normalizeStrictJsonReviewOutput';
+import { normalizeParsedReviewContent, normalizeStrictJsonReviewOutput } from './normalizeStrictJsonReviewOutput';
+
+describe('normalizeParsedReviewContent', () => {
+  it('normalizes Session content without trusting native run identity or host-owned materialization', () => {
+    const content = normalizeParsedReviewContent({ generatedAtMs: 42, intentInput: { comparisonId: 'captured' }, value: {
+      summary: 'Reviewed.', reviewOutcome: 'complete', generatedAtMs: 999, comparisonId: 'spoofed',
+      runRef: { runId: 'spoofed', callId: 'spoofed', backendId: 'spoofed' }, fileCount: 999,
+      triage: {}, publication: {}, commentIds: ['spoofed'], materialization: 'spoofed',
+      materializationFailures: [], perEngineOutcome: [], reviewedFingerprint: 'spoofed', engineId: 'spoofed',
+      findings: [{ id: 'f1', title: 'Issue', severity: 'high', category: 'correctness', summary: 'Fix it.',
+        filePath: null, patch: '', comment: { id: 'spoofed' }, scopeAttribution: 'in_selected_changes' }],
+    } });
+    expect(content).toEqual({
+      summary: 'Reviewed.', overviewMarkdown: 'Reviewed.', reviewOutcome: 'complete', generatedAtMs: 42,
+      comparisonId: 'captured', questions: [], assumptions: [],
+      findings: [{ id: 'f1', title: 'Issue', severity: 'high', category: 'correctness', summary: 'Fix it.', scopeAttribution: 'unknown' }],
+    });
+  });
+
+  it.each([null, {}, { summary: 'Reviewed.', findings: [null] }, { summary: 'Reviewed.', findings: [], proposedComments: {} }])(
+    'returns invalid content without fabricating a native run for %j', (value) => {
+      expect(normalizeParsedReviewContent({ value, generatedAtMs: 1 })).toBeNull();
+    },
+  );
+});
 
 describe('normalizeStrictJsonReviewOutput', () => {
+  it('preserves opaque plugin evidence and suggested fixes but rejects malformed extension namespaces', () => {
+    const finding = { id: 'f1', title: 'Issue', severity: 'high', category: 'correctness', summary: 'Check this.',
+      suggestion: 'Use the owner.', patch: '+fixed', extensions: { 'acme.review': { evidence: ['slice-1'], nested: { score: 0.8 } } } };
+    const normalize = (value: unknown) => normalizeStrictJsonReviewOutput({
+      runId: 'review', callId: 'review-call', sidechainId: 'review-sidechain', backendId: 'reviewer',
+      backendTarget: { kind: 'builtInAgent', agentId: 'reviewer' }, startedAtMs: 1, finishedAtMs: 2,
+      rawText: JSON.stringify({ summary: 'Reviewed.', reviewOutcome: 'complete', findings: [value] }),
+    });
+    expect(normalize(finding).structuredMeta).toMatchObject({ kind: 'review_findings.v2', payload: { findings: [finding] } });
+    expect(normalize({ ...finding, extensions: { arbitrary: { decision: 'approved' } } })).toMatchObject({
+      status: 'failed', toolResultOutput: { error: { code: 'invalid_output' } },
+    });
+  });
+
+  it('derives scope attribution from captured locations and ignores model classifications', () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'captured', source: { kind: 'branch', base: 'base', head: 'selected-head' },
+      repository: { rootPath: '/repo' }, endpoints: { before: 'before', after: 'after' },
+      inventory: { state: 'complete', reasons: [], files: [{ path: 'renamed.ts', previousPath: 'original.ts',
+        changeKind: 'renamed', binary: false, generated: false, lockfile: false,
+        beforeBlobId: 'old-blob', afterBlobId: 'new-blob',
+        evidence: { state: 'available', unifiedDiff: '@@ -1,3 +1,4 @@\n oldIssue();\n safe();\n-oldCall();\n+newIssue();\n+oldCall();\n' },
+        occurrences: [{ id: 'occurrence', alias: 'c1', path: 'renamed.ts', previousPath: 'original.ts',
+          beforeBlobId: 'old-blob', afterBlobId: 'new-blob', before: { startLine: 1, lineCount: 3 },
+          after: { startLine: 1, lineCount: 4 }, position: 0, evidence: { state: 'available' } }],
+      }] } });
+    const base = { title: 'Issue', severity: 'high', category: 'correctness', summary: 'Check this.' };
+    const findings = [
+      { ...base, id: 'old', filePath: 'renamed.ts', startLine: 1, scopeAttribution: 'in_selected_changes' },
+      { ...base, id: 'new', filePath: '/repo/renamed.ts', startLine: 3, scopeAttribution: 'pre_existing' },
+      { ...base, id: 'repeated', filePath: 'renamed.ts', startLine: 4 },
+      { ...base, id: 'unresolved', filePath: 'renamed.ts', startLine: 100 },
+      { ...base, id: 'transcript', scopeAttribution: 'pre_existing' },
+      { ...base, id: 'mixed', filePath: 'renamed.ts', startLine: 1, endLine: 3 },
+      { ...base, id: 'outside', filePath: 'outside.ts', startLine: 1 },
+    ];
+    const normalize = (intentInput: unknown) => normalizeStrictJsonReviewOutput({
+      runId: 'review', callId: 'call', sidechainId: 'sidechain', backendId: 'agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'agent' }, startedAtMs: 1, finishedAtMs: 2,
+      rawText: JSON.stringify({ summary: 'Reviewed', reviewOutcome: 'complete', findings }), intentInput,
+    }).structuredMeta?.payload;
+    expect(normalize({ comparisonId: comparison.id, comparison })).toMatchObject({ findings: [
+      { id: 'old', scopeAttribution: 'pre_existing' }, { id: 'new', scopeAttribution: 'in_selected_changes' },
+      ...['repeated', 'unresolved', 'transcript', 'mixed', 'outside'].map(id => ({ id, scopeAttribution: 'unknown' })),
+    ] });
+    const capturedFile = comparison.inventory.files[0]!;
+    const occurrence = capturedFile.occurrences[0]!;
+    for (const input of [{}, { comparisonId: 'mismatch', comparison }, { comparisonId: comparison.id,
+      comparison: { ...comparison, inventory: { ...comparison.inventory, state: 'incomplete', reasons: ['Missing evidence'] } } },
+      ...[
+        { ...capturedFile, evidence: { state: 'unavailable', reason: 'Missing evidence' } },
+        { ...capturedFile, occurrences: [{ ...occurrence, beforeBlobId: 'conflicting-blob' }] },
+        { ...capturedFile, evidence: { state: 'available', unifiedDiff: '@@ -1,3 +1,4 @@\n oldIssue();\n' } },
+      ].map(file => ({ comparisonId: comparison.id,
+        comparison: { ...comparison, inventory: { ...comparison.inventory, files: [file] } } })),
+    ]) {
+      const payload = normalize(input) as { findings: Array<{ scopeAttribution?: unknown }> };
+      expect(payload.findings.map(finding => finding.scopeAttribution)).toEqual(findings.map(() => 'unknown'));
+    }
+  });
   it.each([
     ['## Authorization change\n\nThe **grant** now checks `scope` before [dispatch](https://example.test).\n\nLater detail.',
       'The grant now checks scope before dispatch.'],
@@ -76,7 +159,7 @@ describe('normalizeStrictJsonReviewOutput', () => {
     expect(res.status).toBe('succeeded');
     const payload = res.structuredMeta?.payload as Record<string, unknown> | undefined;
     const findings = payload?.[followUp ? 'updatedFindings' : 'findings'];
-    expect(findings).toEqual([finding, retainedFinding]);
+    expect(findings).toEqual([finding, retainedFinding].map(value => ({ ...value, scopeAttribution: 'unknown' })));
   });
 
   it('keeps required finding fields and non-null optional values strict', () => {

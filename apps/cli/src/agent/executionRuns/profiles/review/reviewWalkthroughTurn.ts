@@ -36,7 +36,10 @@ export async function prepareReviewWalkthroughTurn(params: Readonly<{
     } } });
   const input = readScmDiffSummaryIntent(patch?.intentInput);
   const preparedStart: ExecutionRunProfileStartParams = { ...params.start, intentInput: {
-    ...original, ...input, reviewNarration: { ...readScmDiffSummaryIntent(original.reviewNarration),
+    ...original, ...input,
+    ...(original.comparisonId === params.comparisonId && original.comparison !== undefined
+      ? { comparison: original.comparison } : {}),
+    reviewNarration: { ...readScmDiffSummaryIntent(original.reviewNarration),
       phase: 'writing', provenance: params.provenance },
   } };
   return prepareSavedReviewWalkthroughInput(preparedStart, params.provenance, params.findingsContext);

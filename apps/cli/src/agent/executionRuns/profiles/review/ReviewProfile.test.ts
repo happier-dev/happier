@@ -1,7 +1,8 @@
 import { runWithScmAccountScope } from '@/scm/accountScope';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import type { ExecutionRunStartRequest } from '@happier-dev/protocol';
 import type { ExecutionRunProfileStartParams } from '../ExecutionRunIntentProfile';
@@ -10,6 +11,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ReviewProfile } from './ReviewProfile';
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
+import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
+import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 
 /**
  * The daemon-applied plugin runtime registry is a different process, and this
@@ -32,6 +35,64 @@ vi.mock('@/scm/scmBackendCatalog', () => ({
 }));
 
 describe('ReviewProfile', () => {
+  it('retains native questions and assumptions whose absent optional finding references are null', () => {
+    const completed = ReviewProfile.onBoundedComplete({ start: { sessionId: null, runId: 'native', callId: 'native',
+      sidechainId: 'native', intent: 'review', backendId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+      ioMode: 'request_response', startedAtMs: 1 }, finishedAtMs: 2, rawText: JSON.stringify({
+      reviewOutcome: 'complete', summary: 'Review', overviewMarkdown: 'Review', findings: [],
+      questions: [{ id: 'question', text: 'Which invariant applies?', status: 'open', findingIds: null }],
+      assumptions: [{ id: 'assumption', text: 'The external contract is current.', findingIds: null }],
+    }) });
+    expect(completed.structuredMeta?.payload).toMatchObject({
+      questions: [{ id: 'question' }], assumptions: [{ id: 'assumption' }],
+    });
+  });
+  it('prepares scope from the retained selected comparison even after checkout HEAD moves', async () => runWithScmAccountScope('review-captured-scope', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-captured-scope-' });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+    let comparisonId: string | undefined;
+    try {
+      await writeFile(join(fixture.rootPath, 'selected.ts'), 'selectedIssue();\n');
+      await writeFile(join(fixture.rootPath, 'other-selected.ts'), 'otherIssue();\n');
+      git('add', 'selected.ts', 'other-selected.ts'); git('commit', '-m', 'Selected head');
+      const head = git('rev-parse', 'HEAD');
+      const captured = await captureScmComparison({ cwd: fixture.rootPath,
+        source: { kind: 'revisionRange', baseOid: fixture.headCommit, headOid: head } });
+      comparisonId = captured.comparison.id;
+      expect(captured.comparison.inventory.state).toBe('complete');
+      await writeFile(join(fixture.rootPath, 'unrelated.ts'), 'ambientIssue();\n');
+      git('add', 'unrelated.ts'); git('commit', '-m', 'Unrelated later head');
+      const patch = await ReviewProfile.prepareStartParams!({ cwd: fixture.rootPath, request: {
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review',
+        permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
+        intentInput: { comparisonId, engineIds: ['claude'], instructions: 'Review', changeType: 'uncommitted', base: { kind: 'none' },
+          selectedPaths: ['selected.ts'], comparison: { forged: true }, scmReviewScope: { forged: true } },
+      } });
+      expect(patch?.intentInput).toMatchObject({ comparison: { ...captured.comparison,
+        inventory: { ...captured.comparison.inventory, files: captured.comparison.inventory.files.filter(file => file.path === 'selected.ts') } },
+        scmReviewScope: { status: 'supported', selectedPaths: ['selected.ts'],
+          baseRef: { source: 'explicit', ref: fixture.headCommit }, comparison: { endpoints: { after: head } } } });
+      const prompt = ReviewProfile.buildPrompt({ sessionId: null, runId: 'captured', callId: 'captured', sidechainId: 'captured',
+        intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+        startedAtMs: 1, instructions: 'Review the selected file.', intentInput: patch?.intentInput });
+      expect(prompt).toContain('selectedIssue();');
+      expect(prompt).not.toContain('otherIssue();');
+      expect(prompt).not.toContain('ambientIssue();');
+      expect(prompt).not.toContain('infer the repository');
+      expect(prompt).not.toContain('current uncommitted');
+      const contradictory = await ReviewProfile.prepareStartParams!({ cwd: fixture.rootPath, request: {
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review the repository.',
+        permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
+        intentInput: { scope: 'repository', comparisonId },
+      } });
+      expect(contradictory?.intentInput).toMatchObject({ scmReviewScope: { status: 'unsupported' } });
+    } finally {
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
   it('does not demand native budget for findings-only review', async () => {
     return runWithScmAccountScope('account', async () => {
     let budgetDemands = 0;
@@ -131,7 +192,7 @@ describe('ReviewProfile', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review the captured changes.',
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
       intentInput: { cwd, comparison, comparisonId: comparison.id, sourceKey: comparison.id, metadata: { source: comparison.source, sourceKey: comparison.id },
-        outputs: ['walkthrough'], source: comparison.source } };
+        outputs: ['walkthrough'], source: comparison.source, reviewRound: { reviewId: 'review-with-walkthrough', roundOrdinal: 1 } } };
     try {
       const started = await ReviewProfile.onStarted?.({ start, rawText: '', finishedAtMs: 1 });
       const pending = ScmDiffSummaryGenerateOutputSchema.parse(started?.toolResultOutput);
@@ -166,7 +227,7 @@ describe('ReviewProfile', () => {
         producer: { kind: 'review', runId: start.runId, modelId: 'selected-review-model', narrationMode: 'continued_review' } });
       expect(output.resultId).toBeTruthy();
       expect(ReviewProfile.listAvailableActionIds?.({ start: writingStart, structuredMeta: second?.structuredMeta })).toEqual(
-        expect.arrayContaining(['review.triage', 'review.walkthrough', 'review.explain_findings']));
+        expect.arrayContaining(['review.triage', 'review.walkthrough', 'review.explain_findings', 'review.new_round']));
       const saved = await scmDiffSummaryResultStore.read({ cwd, sessionId: start.sessionId!, resultId: output.resultId! });
       expect(saved.success && saved.result.output).toEqual(output);
     } finally { await rm(cwd, { recursive: true, force: true }); }
@@ -308,22 +369,24 @@ describe('ReviewProfile', () => {
       }
       const intentInput = patch.intentInput as Record<string, unknown>;
 
-      // The design depends on exactly this asymmetry: the worktree scope is
-      // re-derived from the run's own directory, and every sibling key — the
-      // selected pull request among them — survives untouched. A
-      // prepareStartParams that builds a fresh object instead of spreading
-      // drops the pull request silently and the review simply stops being
-      // about it.
+      // The selected source remains the authority for pinned PR endpoints.
+      // U7 consumes those facts without ambient checkout inference.
       expect(intentInput.scmPullRequestReviewScope).toEqual(scmPullRequestReviewScope);
       expect(intentInput.scmReviewScope).toMatchObject({
         kind: 'review_scm_scope.v1',
-        status: 'unsupported',
+        status: 'supported',
+        revisionRange: { kind: 'revisionRange', baseOid: scmPullRequestReviewScope.observed.baseSha,
+          headOid: scmPullRequestReviewScope.observed.headSha },
       });
       expect(intentInput.engineIds).toEqual(['coderabbit']);
       expect(resolveScmPullRequestReviewScope(intentInput)).toEqual({
         status: 'scope_present',
         scope: scmPullRequestReviewScope,
       });
+      const contradictory = await ReviewProfile.prepareStartParams!({ cwd, request: {
+        ...request, intentInput: { ...request.intentInput, scope: 'repository' },
+      } });
+      expect(contradictory?.intentInput).toMatchObject({ scmReviewScope: { status: 'unsupported' } });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

@@ -145,6 +145,12 @@ export function reviewStartDeferredFieldsV1(fields: ReadonlySet<string>): Readon
   return fields.has('engineIds') ? new Set([...fields, 'reviewers']) : fields;
 }
 
+/** Shared by public start validation and direct execution-run scope admission. */
+export function hasConflictingReviewScope(input: Readonly<Record<string, unknown>>): boolean {
+  return input.scope === 'repository'
+    && Boolean(input.comparisonId || input[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]);
+}
+
 export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     launchProfileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -190,7 +196,7 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     teamCredentialModel: zMini.optional(TeamCredentialProviderModelSelectionV1Schema),
     teamCredentialSessionBindingConsent: zMini.optional(ExecutionRunTeamCredentialSessionBindingConsentV1Schema),
   }).check(z.superRefine((value, ctx) => {
-    if (value.scope === 'repository' && (value.comparisonId || value[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY])) {
+    if (hasConflictingReviewScope(value)) {
       ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Repository reviews cannot be restricted to a captured comparison or pull request' });
     }
     if (!value.sourceSession && [...value.reviewers, ...(value.steps?.flatMap(step => step.reviewers) ?? [])]
