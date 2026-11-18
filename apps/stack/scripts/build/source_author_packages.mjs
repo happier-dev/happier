@@ -25,7 +25,9 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
   // Where each author package's external dependencies resolve (per package: an
   // installation nests a workspace's own versions under that workspace), and the root
   // their physical copies may come from. Default: the runtime's own flat installation.
-  authorDependencies = { resolveFromPackageJsonPath: () => join(runtimeDir, 'package.json'), dereferenceRootDir: runtimeDir } }) {
+  // `toolRootDir` holds the compiler and bundler later author commands load.
+  authorDependencies = { resolveFromPackageJsonPath: () => join(runtimeDir, 'package.json'), dereferenceRootDir: runtimeDir,
+    toolRootDir: sourceRepoDir } }) {
   const started = performance.now();
   const workDir = await mkdtemp(join(runtimeDir, '.author-emission-'));
   try {
@@ -211,8 +213,8 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
     // Explicit author commands resolve their compiler and physical bundler
     // dynamically, outside the emitted module import inventory.
     const runtimeImports = [
-      { path: '@typescript/native', resolveFrom: join(sourceRepoDir, 'package.json') },
-      { path: 'esbuild', resolveFrom: join(sourceRepoDir, 'apps/cli/package.json') },
+      { path: '@typescript/native', resolveFrom: join(authorDependencies.toolRootDir ?? sourceRepoDir, 'package.json') },
+      { path: 'esbuild', resolveFrom: join(authorDependencies.toolRootDir ?? sourceRepoDir, 'apps/cli/package.json') },
     ];
     return { codeFiles, inputIdentities: settled ? inputIdentities : undefined, runtimeImports };
   } finally {

@@ -1757,6 +1757,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
         // externals come from the installation its runtime dependencies are captured from.
         ...(captureDependencies ? { authorDependencies: {
           resolveFromPackageJsonPath: bundle => join(dependencyRootDir, relative(repoDir, bundle.srcDir), 'package.json'),
+          toolRootDir: dependencyRootDir,
           dereferenceRootDir: dependencyRootDir } } : {})});
       // Author closures can exceed the engine's function-argument limit.
       for (const path of author.codeFiles) retainedCodeFiles.push(path);

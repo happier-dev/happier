@@ -127,11 +127,13 @@ test('source author runtime emits the 18-package closure without native declarat
   // root holds another one that does not satisfy the SDK's declared range.
   await cp(join(installation, 'node_modules/author-external'), join(installation, 'packages/plugin-sdk/node_modules/author-external'), { recursive: true });
   await writeFile(join(installation, 'node_modules/author-external/package.json'), JSON.stringify({ name: 'author-external', version: '0.9.0', main: './index.js' }));
-  await emitSourceAuthorPackages({ repoDir, sourceRepoDir: repoDir, projectDir, runtimeDir: revisionRuntime,
+  const revisionResult = await emitSourceAuthorPackages({ repoDir, sourceRepoDir: repoDir, projectDir, runtimeDir: revisionRuntime,
     workspacePackages: await readWorkspacePackages(repoDir), build, sourceInputDigests: {},
     readSourceInput: path => readFile(path), env: process.env,
     authorDependencies: { resolveFromPackageJsonPath: bundle => join(installation, relative(repoDir, bundle.srcDir), 'package.json'),
-      dereferenceRootDir: installation } });
+      dereferenceRootDir: installation, toolRootDir: installation } });
+  // Its deferred compiler and bundler are captured from that installation too.
+  assert.ok(revisionResult.runtimeImports.every(item => item.resolveFrom.startsWith(installation)));
   assert.equal(await readFile(join(revisionRuntime, 'authoring/node_modules/@happier-dev/plugin-sdk/node_modules/author-external/index.js'), 'utf8'),
     'export const external = "captured-external";\n');
   assert.match(await readFile(join(sdk, 'dist/.happier-source/src/index.ts'), 'utf8'), /author-16/);
