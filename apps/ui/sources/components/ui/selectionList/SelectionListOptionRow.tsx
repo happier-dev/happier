@@ -70,9 +70,13 @@ import { SelectionListPointerFocusContext } from './SelectionListPointerFocusCon
 import { SelectionListExplicitRowFocusContext } from './SelectionListOptionStateContext';
 import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
 import { selectionListTestId } from './_shared';
-import type { SectionRenderPlan } from './SelectionListRenderPlan';
+import { sectionReservesLeadingSlot, type SectionRenderPlan } from './SelectionListRenderPlan';
 import type { SelectionListOption, SelectionListStep } from './_types';
 import { SelectionListOptionStateContext } from './SelectionListOptionStateContext';
+
+const leadingSlotStyles = StyleSheet.create(() => ({
+  slot: { width: ICON_SIZE.sm, height: ICON_SIZE.sm },
+}));
 
 const selectedMarkStyles = StyleSheet.create(() => ({
   mark: {
@@ -212,6 +216,8 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
      * markup it has always emitted.
      */
     cellPlacement?: SelectionListGridCellPlacement | null;
+    /** Its section holds the leading mark column (`sectionReservesLeadingSlot`): a row without a mark keeps it empty. */
+    reservesLeadingSlot?: boolean;
   }>,
 ): React.ReactElement {
   // Current by the list's selection, or because the option's owner says so (one choice per group).
@@ -244,7 +250,8 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   const titleAccessory = renderSelectionListAccessory(
     props.option.titleAccessory,
   );
-  const icon = renderSelectionListAccessory(props.option.icon);
+  const icon = renderSelectionListAccessory(props.option.icon)
+    ?? (props.reservesLeadingSlot === true ? <View style={leadingSlotStyles.slot} /> : undefined);
   const visualState = { selected: isSelected };
   const rightAccessory = renderSelectionListAccessory(
     props.option.rightAccessory,
@@ -786,6 +793,7 @@ export function PlanSuccessRows(
   props: RenderPlanRowsProps,
 ): React.ReactElement {
   const options = props.plan.options;
+  const reservesLeadingSlot = sectionReservesLeadingSlot(options);
   const renderOption = (
     option: SelectionListOption,
     index: number,
@@ -804,6 +812,7 @@ export function PlanSuccessRows(
       positionInSet={props.optionPositionById?.get(option.id) ?? index + 1}
       setSize={props.optionSetSize ?? options.length}
       measureMode={props.measureMode}
+      reservesLeadingSlot={reservesLeadingSlot}
       {...(cellPlacement === undefined ? {} : { cellPlacement })}
       {...(rowIndex === undefined ? {} : { rowIndex })}
     />

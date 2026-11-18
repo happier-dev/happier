@@ -243,7 +243,7 @@ import TextIcon from '@hugeicons/core-free-icons/TextIcon';
 import TextItalicIcon from '@hugeicons/core-free-icons/TextItalicIcon';
 import TextStrikethroughIcon from '@hugeicons/core-free-icons/TextStrikethroughIcon';
 import TextUnderlineIcon from '@hugeicons/core-free-icons/TextUnderlineIcon';
-import Tick01Icon from '@hugeicons/core-free-icons/Tick01Icon';
+import Tick02Icon from '@hugeicons/core-free-icons/Tick02Icon';
 import TickDouble01Icon from '@hugeicons/core-free-icons/TickDouble01Icon';
 import Timer01Icon from '@hugeicons/core-free-icons/Timer01Icon';
 import ToggleOnIcon from '@hugeicons/core-free-icons/ToggleOnIcon';
@@ -324,7 +324,7 @@ export const HUGE_ICON_REGISTRY = {
     'chat-circle-dots': Comment01Icon,
     'chat-dots': BubbleChatIcon,
     'chats-circle': Chatting01Icon,
-    'check': Tick01Icon,
+    'check': Tick02Icon,
     'check-circle': CheckmarkCircle01Icon,
     'check-square': CheckmarkSquare01Icon,
     'checks': TickDouble01Icon,

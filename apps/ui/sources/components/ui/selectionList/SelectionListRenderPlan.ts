@@ -30,6 +30,15 @@ import type { DynamicSectionState } from './useSelectionListDynamicSections';
 
 const EMPTY_OPTIONS: readonly SelectionListOption[] = Object.freeze([]);
 
+/**
+ * Whether a section's rows hold the leading mark column (owner 2026-11-10, as `SelectableMenuResults` does): when only
+ * some rows carry a mark the others keep the same empty column, so every title starts on one edge; a section with no
+ * marks starts at the text edge.
+ */
+export function sectionReservesLeadingSlot(options: ReadonlyArray<SelectionListOption>): boolean {
+    return options.some((option) => option.icon !== undefined);
+}
+
 export type SectionRenderPlan = Readonly<{
     id: string;
     title?: string;

@@ -56,7 +56,7 @@ import {
     maybeWarnAboutMultipleVirtualizedSections,
 } from './selectionListVirtualizationPolicy';
 import { selectionListTestId } from './_shared';
-import type { SectionRenderPlan } from './SelectionListRenderPlan';
+import { sectionReservesLeadingSlot, type SectionRenderPlan } from './SelectionListRenderPlan';
 import type {
     SelectionListOption,
     SelectionListLazyVisual,
@@ -115,6 +115,8 @@ export type SelectionListBodyVirtualizedOptionItem = Readonly<{
     sectionId: string;
     option: SelectionListOption;
     isStale: boolean;
+    /** The section holds the leading mark column (`sectionReservesLeadingSlot`), decided once per section. */
+    reservesLeadingSlot: boolean;
 }>;
 
 export type SelectionListBodyVirtualizedItem =
@@ -191,6 +193,7 @@ export function flattenRenderPlanForVirtualizedList(
 ): ReadonlyArray<SelectionListBodyVirtualizedItem> {
     const rows: SelectionListBodyVirtualizedItem[] = [];
     for (const sectionPlan of plan) {
+        const reservesLeadingSlot = sectionReservesLeadingSlot(sectionPlan.options);
         // Empty-hint sections with no hint render NOTHING in the per-section
         // renderer; preserve that behavior so the flat path is visually
         // identical.
@@ -248,6 +251,7 @@ export function flattenRenderPlanForVirtualizedList(
                         sectionId: sectionPlan.id,
                         option,
                         isStale: false,
+                        reservesLeadingSlot,
                     });
                 }
             }
@@ -273,6 +277,7 @@ export function flattenRenderPlanForVirtualizedList(
                         sectionId: sectionPlan.id,
                         option,
                         isStale: true,
+                        reservesLeadingSlot,
                     });
                 }
             }
@@ -310,6 +315,7 @@ export function flattenRenderPlanForVirtualizedList(
                 sectionId: sectionPlan.id,
                 option,
                 isStale,
+                reservesLeadingSlot,
             });
         }
         if (sectionPlan.resultHint !== undefined && sectionPlan.resultHint.length > 0) {
@@ -478,6 +484,7 @@ function renderVirtualizedOptionCell(
             onPushStep={ctx.onPushStep}
             positionInSet={1}
             measureMode={ctx.measureMode === true}
+            reservesLeadingSlot={item.reservesLeadingSlot}
             {...(cellPlacement === undefined ? {} : { cellPlacement })}
             {...(rowIndex === undefined ? {} : { rowIndex })}
         />

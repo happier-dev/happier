@@ -5,6 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SessionFollowUnavailableNotice } from '@/components/sessions/follow/SessionFollowUnavailableNotice';
 import type { SessionTranscriptActions } from '@/components/sessions/transcript/source/types';
 import { PermissionAnswerUnconfirmedNotice } from '@/components/tools/shell/permissions/PermissionAnswerUnconfirmedNotice';
+import { ValueFieldSelect, type ValueFieldSelectItem } from '@/components/ui/forms/ValueFieldSelect';
+import { Icon } from '@/components/ui/icons/Icon';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -46,6 +49,48 @@ const NO_READ_SOURCE: SessionTranscriptActions = {
     submitMessage: resolved,
 };
 
+/** The Isolation "Where sessions run" shape: a field-wide select, one row with a mark and a line under it, then a titled group without marks. */
+const WHERE_IT_RUNS: readonly ValueFieldSelectItem[] = [
+    { id: 'directly', title: 'Directly', subtitle: 'On this machine itself', icon: <Icon name="desktop" size={15} /> },
+    { id: 'box-a', title: 'Docker · default', category: 'Sandboxes' },
+    { id: 'box-b', title: 'Lima · build', category: 'Sandboxes' },
+];
+
+function FieldSelectFrame(props: Readonly<{ fill: boolean }>) {
+    const [selectedId, setSelectedId] = React.useState('directly');
+    return (
+        <ValueFieldSelect
+            fill={props.fill}
+            testID={props.fill ? 'specimen-field-select-fill' : 'specimen-field-select'}
+            label="Where sessions run"
+            items={WHERE_IT_RUNS}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+        />
+    );
+}
+
+/** The Artifacts Kind shape: a chip's one-tap list where only one row has a mark, its current choice checked. */
+const KINDS = [
+    { id: 'files', label: 'Documents & files' },
+    { id: 'all', label: 'All kinds' },
+    { id: 'documents', label: 'Documents', icon: <Icon name="file-text" size={16} /> },
+] as const;
+
+function FilterChipFrame() {
+    const [selectedId, setSelectedId] = React.useState<string>('files');
+    return (
+        <SelectionListFilterChip filter={{
+            id: 'specimen-kind',
+            testID: 'specimen-kind',
+            label: 'Kind',
+            options: KINDS,
+            selectedId,
+            onChange: setSelectedId,
+        }} />
+    );
+}
+
 const FRAMES: readonly Readonly<{ title: string; kind: 'footer' | 'page'; render: () => React.ReactNode }>[] = [
     { title: 'Answer unconfirmed · Check again', kind: 'footer', render: () => (
         <PermissionAnswerUnconfirmedNotice requestKey="specimen:a" requestId="a" actions={UNREADABLE_SOURCE} testIDPrefix="specimen-permission" />
@@ -53,6 +98,9 @@ const FRAMES: readonly Readonly<{ title: string; kind: 'footer' | 'page'; render
     { title: 'Answer unconfirmed · no reader', kind: 'footer', render: () => (
         <PermissionAnswerUnconfirmedNotice requestKey="specimen:b" requestId="b" actions={NO_READ_SOURCE} testIDPrefix="specimen-permission-no-read" />
     ) },
+    { title: 'Menu · field-wide select with marks', kind: 'footer', render: () => <FieldSelectFrame fill /> },
+    { title: 'Menu · select with marks', kind: 'footer', render: () => <FieldSelectFrame fill={false} /> },
+    { title: 'Menu · filter chip with one mark', kind: 'footer', render: () => <FilterChipFrame /> },
     { title: 'Follow · not offered by this Home', kind: 'page', render: () => <SessionFollowUnavailableNotice onBack={noop} /> },
     { title: 'Follow · Home unreachable', kind: 'page', render: () => (
         <SessionFollowUnavailableNotice reason="unreachable" onBack={noop} onRetry={noop} />
