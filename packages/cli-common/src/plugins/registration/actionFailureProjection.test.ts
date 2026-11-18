@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { readPluginActionError, type PluginActionInvocationResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectTargetActionFailure } from './actionFailureProjection.js';
 import { redactPluginInvocationResultData } from './actionResultRedaction.js';
 
@@ -17,7 +17,7 @@ it('carries an Action failure cause through the target failure projection', () =
 it('projects a typed leaf whose confidential echo was redacted as a schema-valid text value', () => {
   const secret = '9007199254740993';
   const redact = (value: string) => value.replaceAll(secret, '[REDACTED]');
-  const result = { status: 'executed' as const, value: { ok: true, results: [{ rows: [{ cells: [
+  const result: PluginActionInvocationResult = { status: 'executed', value: { ok: true, results: [{ rows: [{ cells: [
     { type: 'text', value: `marker-${secret}` },
     { type: 'integer', value: secret },
     { type: 'integer', value: '42' },

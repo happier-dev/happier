@@ -52,7 +52,7 @@ describe('reviewed builtin Tailscale membership through the native interpreter',
         const f = machine(false, 'NeedsLogin', wantRunning);
         const reviewed = await checkMachineSetupEffectPlan({
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 },
-            steps: tailscaleMembershipPrograms.leave.steps, backend: f.backend,
+            steps: tailscaleMembershipPrograms.leave.steps.map(step => resolveMachineRecipeStepInputsV1(step, {})), backend: f.backend,
         });
         expect(await applyMachineSetupEffectPlan({ plan: reviewed, backend: f.backend })).toMatchObject({ status: 'applied' });
         expect(f.nativeEffects).toEqual(wantRunning ? [['down']] : []);
