@@ -1,5 +1,5 @@
 import { authChallenge, authChallengeV2 } from './challenge';
-import { createAuthenticationFailure } from './authenticationFailure';
+import { createAuthenticationFailure, createHomeIdentityMismatchFailure } from './authenticationFailure';
 import { confirmAlternateIssuedHomeAddress } from './homeAddressTrust';
 import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -74,13 +74,6 @@ function readObservedServerIdentityId(
     ).trim() || null;
 }
 
-function throwEndpointIdentityMismatch(): never {
-    throw new HappyError(
-        'Authentication failed: selected server identity does not match the endpoint.',
-        false,
-        { kind: 'auth' },
-    );
-}
 
 function readNestedBoolean(
     value: unknown,
@@ -141,7 +134,9 @@ async function authGetTokenCore(params: AuthTokenCoreParams): Promise<AuthCreden
             params.expectedServerIdentityId
             && observedServerIdentityId !== params.expectedServerIdentityId
         ) {
-            throwEndpointIdentityMismatch();
+            // The address now answers as another Home (for example a reset server): the same
+            // refusal as a challenge from another identity, so sign-in names it instead of failing bare.
+            throw createHomeIdentityMismatchFailure();
         }
 
         // Newer servers advertise this gate under the feature payload. Older

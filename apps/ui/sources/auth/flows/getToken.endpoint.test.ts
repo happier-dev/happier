@@ -525,6 +525,9 @@ describe('explicit endpoint authentication foundations', () => {
             name: 'HappyError',
             kind: 'auth',
             canTryAgain: false,
+            // The same refusal as a challenge from another identity, so the person is told
+            // this address now answers as a different Home instead of a bare failure.
+            code: HOME_IDENTITY_MISMATCH_AUTH_CODE,
         });
 
         const requestedUrls = runtimeFetchMock.mock.calls.map((call) => String(call[0]));
