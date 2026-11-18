@@ -43,7 +43,6 @@ vi.mock('expo-constants', async original => {
         expoConfig: { ...module.default.expoConfig, extra: { app: { identityVariant: 'publicdev', variant: 'preview' } } },
     } };
 });
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: native.fetch }));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 // Packaged assets and the native HTTP SDK are platform boundaries. The public

@@ -13,7 +13,7 @@ async function resolveDefaultRuntimeFetch(input: RequestInfo | URL): Promise<Rea
     fetch: RuntimeFetch;
     host: 'browser' | 'native';
 }>> {
-    // A static import: the adapter is tiny and loads its Tauri plugin lazily itself. On web an
+    // A static import: the desktop transport is tiny and loads nothing on web. On web an
     // `import()` here was a separate chunk fetched before the first request of every load.
     const tauriRuntimeFetch = await resolveTauriRuntimeFetch(input);
     if (tauriRuntimeFetch) {

@@ -84,8 +84,9 @@ Implemented for real:
   lifecycle through `@happier-dev/iroh-native/node`, loaded only in the main process; the
   endpoint identity key lives at `<userData>/iroh/endpoint.key` and never crosses the bridge
 - `plugin:event|listen`, `|unlisten`, `|emit`, `|emit_to`
-- `plugin:http|fetch`, `|fetch_send`, `|fetch_read_body`, `|fetch_cancel` — every `http(s)` request
-  the app makes on desktop is routed through this plugin, so it is part of the boot path
+- `desktop_http_fetch`, `desktop_http_read_body`, `desktop_http_cancel` — every `http(s)` request
+  the app makes on desktop goes through this transport, so it is part of the boot path. One fetch
+  invoke answers status, headers and any body the server declared small; other bodies stream
 
 Everything else in `src/main/commands/inventory.ts` — the tray, activity and pet overlays, the
 embedded browser, hosted artifacts, and the updater — rejects with

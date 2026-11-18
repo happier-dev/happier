@@ -242,24 +242,3 @@ test('apps/ui pins tauri plugin-http to one exact version across package, Cargo.
   assert.equal(cargoTomlVersion, `=${jsVersion}`);
   assert.equal(jsVersion, cargoLockVersion);
 });
-
-test('apps/ui default Tauri capability uses URL patterns that match loopback and arbitrary ports', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const packageRoot = dirname(scriptsDir);
-
-  const capability = JSON.parse(await readFile(join(packageRoot, 'src-tauri', 'capabilities', 'default.json'), 'utf-8'));
-  const permissions = Array.isArray(capability?.permissions) ? capability.permissions : [];
-  const httpPermission = permissions.find((permission) => permission?.identifier === 'http:default');
-
-  assert.ok(httpPermission);
-  const allowUrls = Array.isArray(httpPermission.allow)
-    ? httpPermission.allow.map((entry) => entry?.url).filter((value) => typeof value === 'string')
-    : [];
-
-  assert.equal(allowUrls.includes('http://**'), false);
-  assert.equal(allowUrls.includes('https://**'), false);
-  assert.equal(allowUrls.includes('http://*'), true);
-  assert.equal(allowUrls.includes('http://*:*'), true);
-  assert.equal(allowUrls.includes('https://*'), true);
-  assert.equal(allowUrls.includes('https://*:*'), true);
-});

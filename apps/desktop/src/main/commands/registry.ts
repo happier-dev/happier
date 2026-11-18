@@ -4,7 +4,7 @@ import type { DesktopQuitLifecycle } from '../quitLifecycle';
 import { readDesktopWindowState } from '../windowState';
 import type { DesktopWindowChrome } from '../windowChrome';
 import { readStackBootCredentials } from './bootCredentials';
-import { HttpPluginState, registerHttpPluginCommands } from './httpPlugin';
+import { HttpTransportState, registerHttpTransportCommands } from './httpTransport';
 import { EVENT_PLUGIN_COMMANDS, isKnownTauriDesktopCommand } from './inventory';
 import type { CommandArgs, CommandContext, CommandHandler, CommandRegistry } from './types';
 
@@ -90,9 +90,9 @@ export function createCommandRegistry(dependencies: RegistryDependencies): Comma
 
     registry.set('plugin:app|version', () => dependencies.getAppVersion());
 
-    // Every http(s) request the app makes on desktop goes through this plugin, so it is part of
+    // Every http(s) request the app makes on desktop goes through this transport, so it is part of
     // the boot path rather than an optional capability.
-    registerHttpPluginCommands(registry, new HttpPluginState());
+    registerHttpTransportCommands(registry, new HttpTransportState());
 
     registry.set(EVENT_PLUGIN_COMMANDS.listen, (args, context) => {
         const eventName = readString(args, 'event');

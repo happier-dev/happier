@@ -74,6 +74,9 @@ mod iroh;
 mod secure_storage;
 
 #[cfg(any(desktop, test))]
+mod desktop_http;
+
+#[cfg(any(desktop, test))]
 mod desktop_downloads;
 
 #[cfg(any(desktop, test))]
@@ -137,7 +140,6 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
     let mut builder = builder
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
@@ -200,6 +202,7 @@ pub fn run() {
             .manage(desktop_notifications::DesktopNotificationState::default())
             .manage(hosted_artifact_desktop::DesktopHostedArtifactState::default())
             .manage(secure_storage::DesktopSecureStorage::for_build(&context.config().identifier))
+            .manage(desktop_http::DesktopHttp::default())
             .invoke_handler(with_desktop_commands!(desktop_invoke_handler));
     }
 

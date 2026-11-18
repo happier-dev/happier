@@ -19,7 +19,6 @@ import { log } from '@/log';
 const vendorHttp = vi.hoisted(() => vi.fn<typeof fetch>());
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vendorHttp }));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 // Only packaged inventory and asset IO are replaced; compilation, public

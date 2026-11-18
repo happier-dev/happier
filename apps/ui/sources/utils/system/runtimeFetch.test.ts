@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
+import { answerDesktopHttpFetch, createDesktopHostInternals, desktopHttpFrame } from '@/dev/testkit/harness/desktopHttpHost';
+
 const TAURI_INTERNALS_KEY = '__TAURI_INTERNALS__';
 
 function setTauriInternals(value: unknown): void {
@@ -17,7 +19,6 @@ afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
     vi.clearAllMocks();
-    vi.doUnmock('@tauri-apps/plugin-http');
     vi.doUnmock('expo/fetch');
     vi.doUnmock('react-native');
 });
@@ -25,7 +26,10 @@ afterEach(() => {
 describe('runtimeFetch', () => {
     it.each(['ready', 'cancelled'] as const)('acknowledges server issuance only when the selected runtime fetch is invoked (%s)', async (outcome) => {
         vi.resetModules();
-        vi.doMock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+        vi.doMock('react-native', async () => {
+            const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+            return await createReactNativeNativeMock({ platformOS: 'ios' });
+        });
         let releaseAdapter!: () => void;
         let adapterStarted!: () => void;
         const adapterGate = new Promise<void>(resolve => { releaseAdapter = resolve; });
@@ -36,12 +40,11 @@ describe('runtimeFetch', () => {
         const nativeFetch = vi.fn(() => { events.push('fetch'); return response; });
         // The native SDK is the external adapter boundary. Its module may load
         // asynchronously before the runtime can invoke the selected fetch.
-        vi.doMock('@tauri-apps/plugin-http', async () => {
+        vi.doMock('expo/fetch', async () => {
             adapterStarted();
             await adapterGate;
             return { fetch: nativeFetch };
         });
-        setTauriInternals({ invoke: () => null });
         const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
         const request = createServerFetchAtEndpoint({ endpointUrl: 'https://api.example.test', credentials: null });
         const controller = new AbortController();
@@ -161,8 +164,9 @@ describe('runtimeFetch', () => {
             return nativeFetch(new URL(location, String(input)), init);
         };
         vi.doMock('expo/fetch', () => ({ fetch: nativeFetch }));
-        vi.doMock('@tauri-apps/plugin-http', () => ({ fetch: nativeFetch }));
-        if (platformOS === 'tauri') setTauriInternals({ invoke: () => null });
+        if (platformOS === 'tauri') {
+            setTauriInternals(createDesktopHostInternals(call => answerDesktopHttpFetch(call, nativeFetch)).internals);
+        }
         try {
             const address = server.address();
             if (!address || typeof address === 'string') {
@@ -282,16 +286,17 @@ describe('runtimeFetch', () => {
     });
 
     it('returns a manual desktop response with native redirect control', async () => {
-        const tauriFetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null,
-            { status: 307, headers: { location: 'https://other.example.test/auth' } }));
-        vi.doMock('@tauri-apps/plugin-http', () => ({ fetch: tauriFetchMock }));
-        setTauriInternals({ invoke: () => null });
+        const host = createDesktopHostInternals(() => desktopHttpFrame({
+            status: 307, statusText: 'Temporary Redirect', url: 'https://api.example.test/v1/auth',
+            headers: [['location', 'https://other.example.test/auth']], streamed: false,
+        }));
+        setTauriInternals(host.internals);
         const { runtimeFetch, readRuntimeFetchHost } = await import('./runtimeFetch');
         expect(await readRuntimeFetchHost('https://api.example.test/v1/auth')).toBe('native');
         expect((await runtimeFetch('https://api.example.test/v1/auth', {
             method: 'POST', body: 'synthetic-approval-body', redirect: 'manual',
         })).status).toBe(307);
-        expect(tauriFetchMock.mock.calls[0]?.[1]).toMatchObject({ maxRedirections: 0 });
+        expect(host.calls[0]?.args.clientConfig).toMatchObject({ maxRedirections: 0 });
     });
 
     it.each(['ios', 'android'] as const)('returns manual native responses on %s', async (platformOS) => {
@@ -406,69 +411,36 @@ describe('runtimeFetch', () => {
         expect(init?.credentials).toBe('omit');
     });
 
-    it('uses tauri-plugin-http fetch when running in Tauri desktop', async () => {
-        const tauriFetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('tauri-ok', { status: 200 }));
+    it('sends absolute http requests through the desktop host transport in Tauri desktop', async () => {
         const globalFetchMock = vi.fn(async () => new Response('global-ok', { status: 200 }));
         vi.stubGlobal('fetch', globalFetchMock as unknown as typeof fetch);
-        vi.doMock('@tauri-apps/plugin-http', () => ({
-            fetch: tauriFetchMock,
-        }));
-        setTauriInternals({ invoke: () => null });
+        const host = createDesktopHostInternals(() => desktopHttpFrame({
+            status: 200, statusText: 'OK', url: 'https://api.example.test/v1/features', headers: [], streamed: false,
+        }, 'tauri-ok'));
+        setTauriInternals(host.internals);
 
         const { runtimeFetch } = await import('./runtimeFetch');
-        await runtimeFetch('https://api.example.test/v1/features', { headers: { 'x-test': '1' } });
+        const response = await runtimeFetch('https://api.example.test/v1/features', { headers: { 'x-test': '1' } });
 
-        expect(tauriFetchMock).toHaveBeenCalledTimes(1);
+        expect(await response.text()).toBe('tauri-ok');
+        expect(host.calls.map(call => call.command)).toEqual(['desktop_http_fetch']);
+        expect(host.calls[0]?.args.clientConfig).toHaveProperty('headers', expect.arrayContaining([['x-test', '1']]));
         expect(globalFetchMock).not.toHaveBeenCalled();
-        const init = tauriFetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
-        expect(init?.credentials).toBe('same-origin');
     });
 
-    it('falls back to global fetch for relative URLs in Tauri desktop', async () => {
-        const tauriFetchMock = vi.fn(async () => new Response('tauri-ok', { status: 200 }));
+    it.each([
+        ['relative URLs', '/v1/features'],
+        ['non-http schemes', new URL('file:///tmp/happier-transfer.bin')],
+    ] as const)('falls back to global fetch for %s in Tauri desktop', async (_label, target) => {
         const globalFetchMock = vi.fn(async () => new Response('global-ok', { status: 200 }));
         vi.stubGlobal('fetch', globalFetchMock as unknown as typeof fetch);
-        vi.doMock('@tauri-apps/plugin-http', () => ({
-            fetch: tauriFetchMock,
-        }));
-        setTauriInternals({ invoke: () => null });
+        const host = createDesktopHostInternals(() => { throw new Error('unexpected desktop IPC'); });
+        setTauriInternals(host.internals);
 
         const { runtimeFetch } = await import('./runtimeFetch');
-        await runtimeFetch('/v1/features');
+        await runtimeFetch(target);
 
         expect(globalFetchMock).toHaveBeenCalledTimes(1);
-        expect(tauriFetchMock).not.toHaveBeenCalled();
-    });
-
-    it('falls back to global fetch for non-http schemes in Tauri desktop', async () => {
-        const tauriFetchMock = vi.fn(async () => new Response('tauri-ok', { status: 200 }));
-        const globalFetchMock = vi.fn(async () => new Response('global-ok', { status: 200 }));
-        vi.stubGlobal('fetch', globalFetchMock as unknown as typeof fetch);
-        vi.doMock('@tauri-apps/plugin-http', () => ({
-            fetch: tauriFetchMock,
-        }));
-        setTauriInternals({ invoke: () => null });
-
-        const { runtimeFetch } = await import('./runtimeFetch');
-        await runtimeFetch(new URL('file:///tmp/happier-transfer.bin'));
-
-        expect(globalFetchMock).toHaveBeenCalledTimes(1);
-        expect(tauriFetchMock).not.toHaveBeenCalled();
-    });
-
-    it('falls back to global fetch when tauri-plugin-http cannot be loaded', async () => {
-        vi.doMock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
-        const globalFetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('global-ok', { status: 200 }));
-        vi.stubGlobal('fetch', globalFetchMock as unknown as typeof fetch);
-        vi.doMock('@tauri-apps/plugin-http', () => {
-            throw new Error('plugin unavailable');
-        });
-        setTauriInternals({ invoke: () => null });
-
-        const { runtimeFetch, readRuntimeFetchHost } = await import('./runtimeFetch');
-        expect(await readRuntimeFetchHost('https://api.example.test/v1/features')).toBe('browser');
-        await runtimeFetch('https://api.example.test/v1/features');
-
-        expect(globalFetchMock).toHaveBeenCalledTimes(1);
+        expect(host.calls).toEqual([]);
     });
 });

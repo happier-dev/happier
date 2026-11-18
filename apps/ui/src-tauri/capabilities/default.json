@@ -11,7 +11,6 @@
     "allow-desktop-capture",
     "allow-desktop-recording-trim",
     "deep-link:default",
-    "http:default",
     "notification:default",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-badge-label",
@@ -71,6 +70,9 @@
     "allow-desktop-secure-storage-read",
     "allow-desktop-secure-storage-write",
     "allow-desktop-secure-storage-remove",
+    "allow-desktop-http-fetch",
+    "allow-desktop-http-read-body",
+    "allow-desktop-http-cancel",
     "allow-desktop-browser-get-availability",
     "allow-desktop-browser-apply-login-cookies",
     "allow-desktop-browser-get-native-passkey-availability",
@@ -127,23 +129,6 @@
     "allow-iroh-start-machine-tunnel",
     "allow-iroh-start-machine-http-tunnel",
     "allow-iroh-stop-machine-tunnel",
-    "allow-iroh-wait-machine-tunnel-closed",
-    {
-      "identifier": "http:default",
-      "allow": [
-        {
-          "url": "https://*"
-        },
-        {
-          "url": "https://*:*"
-        },
-        {
-          "url": "http://*"
-        },
-        {
-          "url": "http://*:*"
-        }
-      ]
-    }
+    "allow-iroh-wait-machine-tunnel-closed"
   ]
 }
