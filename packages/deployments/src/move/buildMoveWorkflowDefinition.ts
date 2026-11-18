@@ -1,7 +1,23 @@
 import { createDeploymentMoveWorkflowV1, createDeploymentDataMoveWorkflowV1,
     type StatefulDeploymentMoveWorkflowInputV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, DeploymentOwnServerContentV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+
+/** The exact serving source and the service used to verify destination health. */
+export function resolveStatelessDeploymentMoveSourceV1(receipt: DeploymentReceiptDetailV1, selectedService: string | null = null): Readonly<{
+    sourceIntent: Extract<DeploymentOwnServerContentV1['sourceIntent'], { kind: 'repository' }>;
+    services: readonly string[];
+    primaryService: string | null;
+}> | null {
+    const content = receipt.content;
+    if (content.platform !== undefined || content.sourceIntent.kind !== 'repository') return null;
+    // These are the effective services captured by native review, rather than the wizard's optional selectors.
+    const services = [...new Set(content.ownServer?.approvedInputBasis?.services ?? [])];
+    if (!services.length) return null;
+    const primaryService = selectedService && services.includes(selectedService) ? selectedService
+        : services.length === 1 ? services[0]! : null;
+    return { sourceIntent: content.sourceIntent, services, primaryService };
+}
 
 export type StatelessDeploymentMoveWorkflowInput = Readonly<{
     kind?: 'stateless';

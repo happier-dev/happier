@@ -1,11 +1,33 @@
-import { buildMoveWorkflowDefinition } from './buildMoveWorkflowDefinition';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { buildMoveWorkflowDefinition, resolveStatelessDeploymentMoveSourceV1 } from './buildMoveWorkflowDefinition';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { StatefulDeploymentMoveWorkflowInputV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
 
 describe('Machine Move Workflow authoring', () => {
+    it.each([
+        { services: ['web'], selected: null, expected: 'web' },
+        { services: ['web', 'worker'], selected: null, expected: null },
+        { services: ['web', 'worker'], selected: 'worker', expected: 'worker' },
+        { services: ['web', 'worker'], selected: 'unknown', expected: null },
+    ])('resolves the deployed service for destination health: $services / $selected', ({ services, selected, expected }) => {
+        const original = createDeploymentReceiptDetailV1();
+        const sourceIntent = { kind: 'repository' as const, projectSourceId: 'source-app', sourceRevision: 1,
+            sha: 'a'.repeat(40), compose: { path: 'compose.yaml', profiles: [], services: [] } };
+        const receipt = createDeploymentReceiptDetailV1({ content: { ...original.content, sourceIntent,
+            ownServer: { approvedInputBasis: { v: 1, environmentId: original.deployment.environmentId, environmentRevision: 1,
+                targetLinkId: original.deployment.targetLinkId, targetLinkRevision: 1, sourceIntent,
+                manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+                services, profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+                bindings: [], images: original.content.images } } } });
+        expect(resolveStatelessDeploymentMoveSourceV1(receipt, selected)).toEqual({ sourceIntent, services, primaryService: expected });
+        expect(receipt.content.sourceIntent).toEqual(sourceIntent);
+        expect(receipt.content.sourceIntent).not.toHaveProperty('compose.primaryService');
+    });
+    it('does not guess a deployed service from an unobserved source selector', () => {
+        expect(resolveStatelessDeploymentMoveSourceV1(createDeploymentReceiptDetailV1(), null)).toBeNull();
+    });
     it('authors the same stateful starter with the exact reviewed operands and stable deploy request key', () => {
         const reviewed: StatefulDeploymentMoveWorkflowInputV1 = {
             kind: 'stateful', serverId: 'home', requestId: 'data-move', writers: [{ machineId: 'source', serviceId: 'app', expectedGeneration: 'generation' }],

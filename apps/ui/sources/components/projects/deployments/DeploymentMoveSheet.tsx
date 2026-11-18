@@ -2,11 +2,13 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import { resolveStatelessDeploymentMoveSourceV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -37,24 +39,27 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
     const [destinationId, setDestinationId] = React.useState<string | null>(null);
     const [stateless, setStateless] = React.useState(false);
     const [starting, setStarting] = React.useState(false);
+    const [selectedService, setSelectedService] = React.useState<string | null>(null);
+    const [serviceMenuOpen, setServiceMenuOpen] = React.useState(false);
     const destinations = machines.filter((machine): machine is typeof machine & { installationId: string } =>
         Boolean(machine.installationId) && !sourceLink.machines.includes(machine.id));
     const members = machines.filter(machine => sourceLink.members.some(member => member.machineId === machine.id));
     const destination = destinations.find(machine => machine.id === destinationId) ?? null;
-    const sourceIntent = 'sourceIntent' in receipt.content ? receipt.content.sourceIntent : null;
-    const primaryService = sourceIntent?.kind === 'repository' ? sourceIntent.compose?.primaryService : null;
+    const moveSource = resolveStatelessDeploymentMoveSourceV1(receipt, selectedService);
+    const sourceIntent = moveSource?.sourceIntent;
+    const primaryService = moveSource?.primaryService;
     const controllerMachineId = detail.environment.controllerMachineId;
     const supported = sourceLink.targetKind === 'ownServer' && sourceLink.source.kind === 'host'
-        && sourceIntent?.kind === 'repository' && Boolean(primaryService) && Boolean(controllerMachineId);
+        && Boolean(moveSource) && Boolean(controllerMachineId);
     const busy = starting || move.pending;
     const confirm = async () => {
         if (busy || !stateless || !sourceId || !destination || sourceLink.source.kind !== 'host'
-            || sourceIntent?.kind !== 'repository' || !sourceIntent.compose || !primaryService || !controllerMachineId) return;
+            || !sourceIntent || !primaryService || !controllerMachineId) return;
         setStarting(true);
         try {
             const accepted = await move.run({ serverId: lifetime.scope.serverId, environment: detail,
                 sourceLink: { ...sourceLink, source: sourceLink.source }, sourceDeploymentId: receipt.deployment.id,
-                sourceIntent: { ...sourceIntent, compose: sourceIntent.compose }, primaryService, sourceMachineId: sourceId,
+                sourceIntent, primaryService, sourceMachineId: sourceId,
                 destination: { machineId: destination.id, installationId: destination.installationId },
             }, `${detail.content.name} · ${t('projects.deployments.move.title')}`, controllerMachineId);
             if (accepted) {
@@ -66,7 +71,7 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
     const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy,
         testID: 'project-deployments.move.cancel' }}>
         <RoundButton testID="project-deployments.move.confirm" size="normal" title={t('projects.deployments.move.run')}
-            loading={busy} disabled={busy || !supported || !stateless || !sourceId || !destination}
+            loading={busy} disabled={busy || !supported || !primaryService || !stateless || !sourceId || !destination}
             onPress={() => { void confirm(); }} />
     </ModalCardFooterActions>;
     React.useEffect(() => { props.setChrome?.({ kind: 'card', footer }); });
@@ -82,6 +87,11 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
                 : <SurfaceStateCard testID="project-deployments.move.scope" size="line" kind="unavailable"
                     title={t('projects.deployments.move.restriction')} />}
             {supported ? <ItemGroup header="none">
+                {moveSource && moveSource.services.length > 1 ? <DropdownMenu
+                    testID="project-deployments.move.service" open={serviceMenuOpen} onOpenChange={setServiceMenuOpen}
+                    items={moveSource.services.map(service => ({ id: service, title: service }))}
+                    selectedId={primaryService ?? undefined} onSelect={setSelectedService}
+                    itemTrigger={{ title: t('projects.setup.service'), itemProps: { disabled: busy } }} /> : null}
                 {/* The link's own Machines, then the ones it can move to, both in New Session's Machine picker. */}
                 <SessionMachineField testID="project-deployments.move.source" serverId={lifetime.scope.serverId}
                     machines={members} machineId={sourceId} machineName={sourceId ? name(sourceId) : null}

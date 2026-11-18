@@ -41,7 +41,7 @@ export { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1, environmentSecretBindingInstallati
     type EnvironmentSecretRequiredUsesProjectionV1 } from './secrets/projectEnvironmentSecretBindingRequiredUsesV1.js';
 export * from './secrets/sealMachineSecretGrantEnvelopeV1.js';
 
-export { buildMoveWorkflowDefinition } from './move/buildMoveWorkflowDefinition.js';
+export { buildMoveWorkflowDefinition, resolveStatelessDeploymentMoveSourceV1 } from './move/buildMoveWorkflowDefinition.js';
 export { buildDeploymentFleetWorkflowDefinition, type DeploymentFleetWorkflowInput } from './fleet/buildDeploymentFleetWorkflowDefinition.js';
 
 export { resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from './targets/resolvePublishTargetRecommendation.js';

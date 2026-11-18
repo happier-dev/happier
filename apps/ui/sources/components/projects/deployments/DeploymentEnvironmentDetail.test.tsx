@@ -537,8 +537,15 @@ function controllerFor(
   const servingId = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
   const servingBase = createDeploymentReceiptDetailV1();
   if (servingBase.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+  const servingIntent = { ...servingBase.content.sourceIntent, sha: 'f'.repeat(40) };
   const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId ?? 'not-serving' }),
-    content: { ...servingBase.content, sourceIntent: { ...servingBase.content.sourceIntent, sha: 'f'.repeat(40) } } });
+    content: { ...servingBase.content, sourceIntent: servingIntent, ownServer: { approvedInputBasis: {
+      v: 1, environmentId: detail.environment.id, environmentRevision: detail.environment.revision,
+      targetLinkId: servingBase.deployment.targetLinkId, targetLinkRevision: 1, sourceIntent: servingIntent,
+      manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+      services: ['app'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+      bindings: [], images: servingBase.content.images,
+    } } } });
   const transport: DeploymentReadTransportV1 = {
     listDomains: input.listDomains ?? (async () => ({ ok: true, value: { items: [], nextCursor: null } })),
     listEnvironments: input.listEnvironments ?? (async () => { input.onListEnvironments?.(); return ({
@@ -723,14 +730,28 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('opens Move from the serving Environment and requires an explicit stateless choice before admission', async () => {
+  it.each(['explicit primary', 'wizard repository', 'wizard multiple services', 'wizard missing services'] as const)('opens Move from the serving %s Environment and requires an explicit stateless choice before admission', async origin => {
     const { ModalProvider } = await import('@/modal');
     const { storage } = await import('@/sync/domains/state/storage');
     const { createMachineFixture } = await import('@/dev/testkit');
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const { Switch } = await import('@/components/ui/forms/Switch');
     const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
-    const { controller, detail } = controllerFor({});
+    const environment = environmentDetailForHome();
+    const original = createDeploymentReceiptDetailV1();
+    const sourceIntent = { kind: 'repository' as const, projectSourceId: environment.environment.projectSourceId,
+      sourceRevision: 1, sha: 'a'.repeat(40), compose: { path: 'compose.yaml', profiles: [], services: [],
+        ...(origin === 'explicit primary' ? { primaryService: 'web' } : {}) } };
+    const wizardDetail = { ...environment, content: { ...environment.content,
+      definition: { kind: 'repository' as const, ref: 'main', compose: sourceIntent.compose } } };
+    const wizardReceipt = createDeploymentReceiptDetailV1({ deployment: { ...original.deployment,
+      id: environment.targetLinks[0]!.targetLink.activeDeploymentId! }, content: { ...original.content, sourceIntent,
+      ownServer: origin === 'wizard missing services' ? undefined : { approvedInputBasis: { v: 1, environmentId: environment.environment.id, environmentRevision: 1,
+        targetLinkId: original.deployment.targetLinkId, targetLinkRevision: 1, sourceIntent,
+        manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+        services: origin === 'wizard multiple services' ? ['web', 'worker'] : ['web'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+        bindings: [], images: original.content.images } } } });
+    const { controller, detail } = controllerFor({ detail: wizardDetail, receipt: wizardReceipt });
     storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
     storage.getState().applyMachines([createMachineFixture({ id: 'destination', installationId: 'destination-install' })], true,
       { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
@@ -749,10 +770,22 @@ describe('Project deployments page', () => {
       expect(confirm().props.disabled).toBe(true);
       const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
       const picker = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.move.destination')!;
+      if (origin === 'wizard missing services') {
+        expect(picker).toBeUndefined();
+        expect(screen.findByTestId('project-deployments.move.scope')).not.toBeNull();
+        return;
+      }
+      expect(picker, 'the deployed service set makes a wizard repository movable').toBeDefined();
       await act(async () => { picker.props.onSelectMachine(picker.props.machines.find((machine: { id: string }) => machine.id === 'destination')); });
       expect(confirm().props.disabled).toBe(true);
       const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
       await act(async () => { choice.props.onValueChange(true); });
+      if (origin === 'wizard multiple services') {
+        expect(confirm().props.disabled).toBe(true);
+        const service = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.move.service')!;
+        expect(service.props.items.map((item: { id: string }) => item.id)).toEqual(['web', 'worker']);
+        await act(async () => { service.props.onSelect('worker'); });
+      }
       expect(confirm().props.disabled).toBe(false);
       await screen.pressByTestIdAsync('project-deployments.move.cancel');
       expect(screen.findByTestId('project-deployments.move')).toBeNull();
