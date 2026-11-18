@@ -264,6 +264,32 @@ function createClaudeAccountFixture(modeId: 'oauth' | 'native-import' | 'setup-t
 }
 
 describe('activate', () => {
+  it.each([
+    { route: 'Gateway', audit: false },
+    { route: 'Gateway', audit: true },
+    { route: 'Claude subscription', audit: false },
+    { route: 'Claude subscription', audit: true },
+  ])('keeps the admitted model on the $route route (audit=$audit)', async ({ route, audit }) => {
+    const claude = route === 'Claude subscription' ? createClaudeAccountFixture('oauth') : null;
+    const fixture = createRuntimeContext({ connectedAccounts: claude?.connectedAccounts });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(audit ? {
+      profileLocalId: 'repository-security-audit', includeExplicitMode: false, confirmedCostWarning: true,
+    } : {}),
+      modelSelection: { agentTargetKey: 'agent:happier.review.deepsec/deepsec', providerConnectionId: null, modelId: 'selected/nondefault-model' },
+      launchEnvironment: { values: route === 'Gateway' ? { AI_GATEWAY_API_KEY: 'fixture-gateway' } : {}, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete' });
+    const investigations = fixture.run.mock.calls.filter(([request]) => request.args?.[0] === 'process');
+    expect(investigations).toHaveLength(1);
+    expect(investigations[0]?.[0].args).toEqual(expect.arrayContaining(['--model', 'selected/nondefault-model']));
+    expect(fixture.run.mock.calls.filter(([request]) => request.args?.[0] !== 'process')
+      .every(([request]) => !request.args?.includes('--model'))).toBe(true);
+  });
+
   it.each(['oauth', 'native-import', 'setup-token'] as const)('runs both audit stages with a real %s Claude materializer and no Gateway key', async modeId => {
     const claude = createClaudeAccountFixture(modeId);
     const fixture = createRuntimeContext({ connectedAccounts: claude.connectedAccounts });

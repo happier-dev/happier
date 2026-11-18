@@ -23,6 +23,7 @@ export type DeepSecCommandInput = Readonly<{
   provider?: DeepSecProviderRoute;
   claudeSubscription?: boolean;
   gateway?: boolean;
+  model?: string;
   thinkingLevel?: DeepSecThinkingLevel;
   agentCli?: 'claude' | 'codex';
   rootPath?: string;
@@ -38,7 +39,9 @@ function requirePath(value: string | undefined, label: string): string {
 export function buildDeepSecCommand(input: DeepSecCommandInput): readonly string[] {
   if (input.mode === 'repository_security_audit_export') return ['export', '--format', 'json', '--out', requirePath(input.exportPath, 'exportPath')];
   if (input.mode === 'repository_security_audit') return ['scan', ...(input.rootPath ? ['--root', input.rootPath] : [])];
-  const args = [...buildProcessCommand(input), ...(input.thinkingLevel ? ['--thinking-level', input.thinkingLevel] : [])];
+  const model = input.provider?.model ?? input.model;
+  const args = [...buildProcessCommand(input), ...(model ? ['--model', model] : []),
+    ...(input.thinkingLevel ? ['--thinking-level', input.thinkingLevel] : [])];
   if (input.claudeSubscription) {
     // An explicit endpoint prevents a persisted DeepSec model route replacing
     // the access-only native Claude environment selected for this finite Run.
@@ -52,7 +55,7 @@ export function buildDeepSecCommand(input: DeepSecCommandInput): readonly string
   if (!input.provider) return input.agentCli ? [...args, '--agent', input.agentCli] : args;
   // The explicit base flag also prevents DeepSec from reapplying a persisted
   // model route. The Codex harness consumes the matching child environment.
-  return [...args, '--agent', input.provider.agent, '--model', input.provider.model,
+  return [...args, '--agent', input.provider.agent,
     '--ai-provider', input.provider.provider, '--ai-base-url', input.provider.baseUrl];
 }
 

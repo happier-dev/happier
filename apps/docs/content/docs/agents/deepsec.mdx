@@ -65,6 +65,10 @@ Gateway Runs use an available Claude or Codex harness and keep the selected
 Gateway route for that Run. Saved DeepSec model configuration cannot replace it
 with a native local login.
 
+The selected Run model is passed to DeepSec's investigation on Provider,
+Gateway, Claude subscription and admitted Machine-login routes. Without an
+explicit model selection, the native harness keeps its own default.
+
 The per-engine `thinkingLevel` option selects DeepSec's reasoning effort. Its
 cost warning is qualitative; Happier does not calculate a dollar estimate.
 Repository audits and large review scopes require acceptance before DeepSec

@@ -93,6 +93,7 @@ export type RunDeepSecReviewParams = Readonly<{
   provider?: DeepSecProviderRoute;
   claudeSubscription?: boolean;
   gateway?: boolean;
+  model?: string;
   thinkingLevel?: DeepSecThinkingLevel;
   agentCli?: 'claude' | 'codex';
   readiness?: Readonly<{
@@ -273,6 +274,7 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       provider: params.provider,
       claudeSubscription: params.claudeSubscription,
       gateway: params.gateway,
+      model: params.model,
       thinkingLevel: params.thinkingLevel,
       agentCli: params.agentCli,
       rootPath: params.cwd,
@@ -299,6 +301,7 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
         provider: params.provider,
         claudeSubscription: params.claudeSubscription,
         gateway: params.gateway,
+        model: params.model,
         thinkingLevel: params.thinkingLevel,
         agentCli: params.agentCli,
         rootPath: params.cwd,

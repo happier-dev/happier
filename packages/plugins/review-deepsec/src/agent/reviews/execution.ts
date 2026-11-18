@@ -520,6 +520,7 @@ function createRuntime(
         provider: modelAccess.provider,
         claudeSubscription: modelAccess.claudeSubscription,
         gateway: modelAccess.gateway,
+        model: request.modelSelection?.modelId,
         readiness: {
           agentCli,
         },
