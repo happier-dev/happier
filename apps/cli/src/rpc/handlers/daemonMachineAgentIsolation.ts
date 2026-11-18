@@ -10,7 +10,7 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import type { AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
-import { prepareAgentIsolationEffectsResult, projectAgentIsolationPendingNativeStatus, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
+import { prepareAgentIsolationEffectsResult, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
   type PreparedAgentIsolationEffects } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { compareMachineSetupEffectPlansV1 } from '@happier-dev/cli-common/machineSetup';
@@ -128,9 +128,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           ? prepared.preview : prepared ?? unavailable());
         // Reinstall withdraws runtime proof, not native setup. An explicit CHECK
         // can qualify that unknown shared identity without repeating APPLY.
-        const pendingStatus = preview.kind === 'ready' && preview.plan.requiresAdmin && preview.status.kind === 'unavailable'
-          && preview.status.prerequisite?.reason === 'native_effect_pending'
-          && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy) ? preview.status : undefined;
+        const pendingStatus = prepared && 'preview' in prepared && agentIsolationMetadataFieldV1.equal(prepared.preview.policy, desiredPolicy)
+          ? prepared.pendingStatus : undefined;
         const status = pendingStatus ?? (preview.kind === 'ready' && preview.status.kind === 'unavailable'
           && preview.status.code === 'provisioning_unavailable'
           && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy)
@@ -300,7 +299,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           const ready = observed;
           if (ready.preview.plan.requiresAdmin && ready.preview.plan.planDigest !== prepared.preview.plan.planDigest)
             return await parkForReview('post_apply_check', ready);
-          const pendingStatus = projectAgentIsolationPendingNativeStatus(ready.setupPlan);
+          const pendingStatus = ready.pendingStatus;
           if (pendingStatus) {
             status = pendingStatus;
             logger.warnLocalFile('[agent-isolation] Applied setup is not ready', { operationId, stage: 'post_apply_check',

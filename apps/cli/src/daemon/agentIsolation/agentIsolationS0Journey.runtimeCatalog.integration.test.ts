@@ -393,7 +393,7 @@ describe('S0 Agent isolation Action to target daemon', () => {
       expect(await executor.execute('machines.agentIsolation.set', lostInput, lostContext))
         .toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
       expect(publications).toBe(2); expect(launches).toHaveLength(3);
-      // Refresh can replace its own daemon. The old receipt remains unknown:
+      // The native reply was lost. The old receipt remains unknown:
       // the successor CHECKs the real native state, never reconstructs success
       // or relies on process-local de-duplication to prevent another effect.
       const predecessor = operations;

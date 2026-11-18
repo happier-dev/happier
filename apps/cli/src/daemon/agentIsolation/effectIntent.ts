@@ -2,7 +2,6 @@ import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import type { AgentIsolationEffectPlanV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
 import { buildAgentIsolationProvisioningSteps, type AgentIsolationMemberRequester } from './provisioning';
 import { readAgentIsolationMemberBindings } from './memberBindings';
 import { buildAgentIsolationBootstrapRetirementObservations, buildUnobservedAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
@@ -76,7 +75,6 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
     ...ancestorAcls.map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
     ...roots.map(root => ({ id: `workspace-${root.rootId}`, kind: 'workspaceAccess' as const, path: root.path,
       group: 'happier-workspace', agentUsername: 'happier-agent' })),
-    buildUserManagerGroupRefreshStep({ uid: daemon.daemonUid, username: daemon.daemonUsername }),
   ];
   return { kind: 'ready' as const, intent: { roots, ancestorAcls, sessionsToReplace, steps, daemonObservation: daemon } };
 }

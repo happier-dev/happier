@@ -61,9 +61,9 @@ export async function readMachineSetupSessionRefreshRequirement(
   return { ...base, scope: 'loginSession', requiresAdministrator: false };
 }
 
-export function describeMachineSetupSessionRefresh(step: MachineSetupSessionRefreshV1): string {
+export function describeMachineSetupSessionRefresh(step: MachineSetupSessionRefreshV1, reviewAfterReconnect = 'Review a new Software Plan after reconnecting.'): string {
   if (step.scope === 'loginSession') return `Group membership changed. Start the daemon from a fresh login session for ${step.username}.`;
   const command = [step.command!.executable, ...step.command!.args].join(' ');
   return `Group membership changed. An administrator must run ${command}. ${step.scope === 'userServices'
-    ? 'This restarts all services in the user manager, including the daemon.' : 'This restarts the daemon service.'} Review a new Software Plan after reconnecting.`;
+    ? 'This restarts all services in the user manager, including the daemon.' : 'This restarts the daemon service.'} ${reviewAfterReconnect}`;
 }

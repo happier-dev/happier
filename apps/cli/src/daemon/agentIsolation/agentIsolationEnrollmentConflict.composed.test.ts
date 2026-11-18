@@ -30,32 +30,29 @@ it.skipIf(process.platform !== 'linux').each(['unrelated', 'desired', 'desired-n
                 version: payload.expectedVersion + 1, metadata: payload.metadata }) },
         }, input),
     };
-    let sessionsToReplace = 0, previews = 0, confirmations = 0, managerInstalledObservations = 0;
+    let sessionsToReplace = 0, previews = 0, confirmations = 0, workspaceInstalledObservations = 0;
     let applyResult: unknown;
     const desiredPublication = publication === 'desired' || publication === 'desired-native-observations'
         || publication === 'root-native-observations' || postApplyPublication;
     const installed = new Set<string>();
-    // The OS can report a new manager PID/tree snapshot while retaining the
-    // same account, target groups and workspace access. CHECK/APPLY stays real.
+    // Workspace convergence can change the tree observation without changing
+    // the reviewed workspace, agent UID or group target.
     const backend: MachineSetupBackend = {
         async observe(step) {
-            const manager = step.kind === 'command' && step.check.kind === 'userManagerGroups';
-            // The first installed observation verifies APPLY; the next is the
-            // daemon's post-Apply CHECK, where systemd can still be settling.
-            const postApply = manager && installed.has(step.id) && ++managerInstalledObservations > 1;
+            const workspace = step.kind === 'workspaceAccess';
+            // Observe one successful APPLY verification before the next CHECK
+            // reports drift, an unavailable observation, or a replaced group.
+            const postApply = workspace && installed.has(step.id) && ++workspaceInstalledObservations > 1;
             const changed = publication === 'desired-native-observations' ? machine.metadataVersion >= 102
                 : machine.daemonState?.agentIsolation?.kind === 'applying';
             return { stepId: step.id, status: publication === 'post-apply-unavailable' && postApply ? 'unavailable'
                 : postApplyPublication && postApply ? 'drifted'
-                : step.kind === 'workspaceAccess' || installed.has(step.id) ? 'satisfied' : 'drifted',
+                : workspace && !postApplyPublication || installed.has(step.id) ? 'satisfied' : 'drifted',
                 facts: step.kind === 'user' ? { present: true, username: step.username, uid: 1002, gid: 1002,
                     home: step.home ?? '/home/member', locked: installed.has(step.id) }
                     : step.kind === 'group' && postApplyPublication ? { present: true, gid: 1002 }
-                    : step.kind === 'command' ? { pid: changed ? 2719288 : 2702756,
-                        ...(postApplyPublication ? { uid: publication === 'post-apply-target' && postApply ? 1003 : 1002, gid: 1002 } : {}),
-                        expectedGroupIds: [1001, 1002], actualGroupIds: [1001, 1002],
-                        ...(postApplyPublication && postApply ? { requiredFact: 'userManagerGroups', pendingReason: 'user_manager_starting' } : {}) }
-                    : step.kind === 'workspaceAccess' ? { treeDigest: (changed ? 'b' : 'a').repeat(64), agentUid: 1002, groupId: 1002 }
+                    : workspace ? { treeDigest: (changed ? 'b' : 'a').repeat(64), agentUid: 1002,
+                        groupId: publication === 'post-apply-target' && postApply ? 1003 : 1002 }
                     : { present: installed.has(step.id) } };
         },
         async apply(step) { installed.add(step.id); },
@@ -132,7 +129,7 @@ it.skipIf(process.platform !== 'linux').each(['unrelated', 'desired', 'desired-n
         if (publication === 'post-apply-pending') {
             expect(applyResult).toMatchObject({ kind: 'accepted', metadataVersion: 110,
                 status: { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
-                    reason: 'native_effect_pending', requiredFact: 'userManagerGroups', detail: 'user_manager_starting',
+                    reason: 'native_effect_pending', requiredFact: 'workspaceAccess',
                     remedy: 'machines.agentIsolation.preview',
                 } } });
             expect(machine.daemonState?.agentIsolation).toEqual((applyResult as { status: unknown }).status);

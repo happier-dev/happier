@@ -78,7 +78,7 @@ describe.runIf(process.platform !== 'win32')('isolation provisioning daemon iden
     expect(disabled?.setupPlan.planDigest).not.toBe(enabled?.setupPlan.planDigest);
   });
 
-  it('uses the observed existing-user daemon for RunAs, workspace membership and user-manager refresh', async () => {
+  it('uses the observed existing-user daemon for RunAs and workspace membership without restarting its user manager', async () => {
     vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(1001);
     const { effects } = createAgentIsolationEffectsBoundary({ installationId: 'installation',
       installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
@@ -96,8 +96,7 @@ describe.runIf(process.platform !== 'win32')('isolation provisioning daemon iden
     const rule = intent?.steps.find(step => step.kind === 'file');
     expect(rule).toMatchObject({ content: { kind: 'literal', value: expect.stringContaining('alice ALL=(happier-agent)') } });
     const refresh = intent?.steps.find(step => step.kind === 'command' && step.executable === 'systemctl');
-    expect(refresh).toMatchObject({ args: ['restart', '--', 'user@2002.service'],
-      check: { kind: 'userManagerGroups', username: 'alice' } });
+    expect(refresh).toBeUndefined();
     expect(JSON.stringify(intent?.steps)).not.toContain('happier ALL=');
   });
 

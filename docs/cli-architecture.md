@@ -2844,6 +2844,9 @@ and retains the existing cancellation signal. A policy conflict or changed plan 
 current review; an unavailable or uncertain outcome is not permission to replay
 host effects. Desired enablement and accepted work do not establish effective
 isolation while replacement or native observation remains incomplete.
+Apply finishes before a daemon group refresh. If the running daemon still has
+stale groups, Agent isolation reports the host refresh prerequisite and the
+operator can review it again after reconnecting.
 For member provisioning, preview and Repair consume the requester's retained
 binding qualification used by launch. A missing native user returns the typed
 `agent_user_missing` status, even when shared-user setup is already satisfied;

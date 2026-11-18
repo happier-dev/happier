@@ -6,6 +6,7 @@ import {
   MachineAgentIsolationPreviewResultV1Schema,
   MachineAgentIsolationSetResultV1Schema,
   type MachineAgentIsolationPreviewResultV1,
+  type MachineAgentIsolationStatusV1,
 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectWorkspaceForgetOutputV1Schema } from '@happier-dev/protocol/projects/projectWorkspaceActionsV1';
@@ -40,6 +41,13 @@ function setupFailureMessage(setup: MachineElevatedNotAppliedResultV1 | undefine
   if (setup?.reasonCode === 'not_preauthorized') return t('machines.sharing.fallback.adminCheckRequired');
   if (setup?.reasonCode === 'managed_cli_unavailable') return t('machines.sharing.fallback.managedCliRequired');
   return setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode, failure: setup.failure }, fallback) : fallback;
+}
+
+function daemonGroupRefreshMessage(status: MachineAgentIsolationStatusV1): string | undefined {
+  const prerequisite = status.kind === 'unavailable' ? status.prerequisite : undefined;
+  if (prerequisite?.reason === 'native_effect_pending' && prerequisite.requiredFact === 'daemon_group_refresh') {
+    return prerequisite.detail;
+  }
 }
 
 type Phase = Readonly<
@@ -165,13 +173,15 @@ export function useSeparateUsersChange(
       }
       const value = settled.data;
       // Each typed result keeps its own recovery: a changed plan is reviewed again, never re-applied blind.
-      if ((value.kind === 'accepted' || value.kind === 'unchanged') && value.status.kind === 'unavailable')
+      if ((value.kind === 'accepted' || value.kind === 'unchanged') && value.status.kind === 'unavailable') {
+        const message = daemonGroupRefreshMessage(value.status);
         setPhase({
           kind: 'settled',
           tone: 'unavailable',
-          message: t(`machines.sharing.fallback.prerequisites.${value.status.code}`),
+          message: message ?? t(`machines.sharing.fallback.prerequisites.${value.status.code}`),
+          ...(message ? { reviewAgain: true } : {}),
         });
-      else if (value.kind === 'accepted')
+      } else if (value.kind === 'accepted')
         setPhase({
           kind: 'settled',
           tone: 'loading',

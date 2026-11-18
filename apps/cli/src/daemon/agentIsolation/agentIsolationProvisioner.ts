@@ -15,6 +15,7 @@ import { projectAgentIsolationBootstrapRetirement } from './bootstrapRetirement'
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { describeMachineSetupSessionRefresh, readMachineSetupSessionRefreshRequirement } from '@/daemon/service/userManagerGroups';
 export { ensureAgentIsolationMember, type EnsureAgentIsolationMemberInput,
   type EnsureAgentIsolationMemberResult } from './ensureAgentIsolationMember';
 export { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, readAgentIsolationMemberLaunchIdentity,
@@ -42,6 +43,7 @@ export type AgentIsolationEffectDependencies = Readonly<{
 export type PreparedAgentIsolationEffects = Readonly<{
   preview: Extract<MachineAgentIsolationPreviewResultV1, { kind: 'ready' }>;
   setupPlan: MachineSetupEffectPlanV1;
+  pendingStatus?: Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
   daemonObservation?: AgentIsolationDaemonObservation;
 }>;
 
@@ -60,7 +62,7 @@ export async function prepareAgentIsolationEffects(input: Parameters<typeof prep
 
 /** Native CHECK owns the pending fact. Publication and reviewed recovery carry
  * its single result; paths come only from the validated reviewed declaration. */
-export function projectAgentIsolationPendingNativeStatus(plan: MachineSetupEffectPlanV1): Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }> | null {
+function projectAgentIsolationPendingNativeStatus(plan: MachineSetupEffectPlanV1): Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }> | null {
   const pending = plan.nativeFacts.find(fact => fact.status !== 'satisfied');
   if (!pending) return null;
   const step = plan.steps.find(candidate => candidate.id === pending.stepId);
@@ -129,10 +131,23 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
       ? ['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'] : [] })), ancestorAcls, sessionsToReplace,
     requiresAdmin: setupPlan.nativeFacts.some(fact => fact.status !== 'satisfied'), planDigest: setupPlan.planDigest,
     ...(retirement ? { retirement } : {}) };
-  return { setupPlan, ...('daemonObservation' in intent ? { daemonObservation: intent.daemonObservation } : {}),
+  let pendingStatus: PreparedAgentIsolationEffects['pendingStatus'];
+  if (input.enabled && policy.policy.enabled) {
+    pendingStatus = projectAgentIsolationPendingNativeStatus(setupPlan) ?? undefined;
+    if (!pendingStatus) {
+      // Refreshing the user manager inline can terminate the daemon before Apply settles.
+      const refresh = await readMachineSetupSessionRefreshRequirement([setupPlan]);
+      if (refresh) pendingStatus = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+        reason: 'native_effect_pending', requiredFact: 'daemon_group_refresh',
+        detail: describeMachineSetupSessionRefresh(refresh, 'Review Agent isolation again after reconnecting.'),
+        remedy: 'machines.agentIsolation.preview',
+      } };
+    }
+  }
+  return { setupPlan, ...(pendingStatus ? { pendingStatus } : {}),
+    ...('daemonObservation' in intent ? { daemonObservation: intent.daemonObservation } : {}),
     preview: { kind: 'ready', plan, policy: policy.policy,
-    metadataVersion: snapshot.metadataVersion, status: input.enabled && policy.policy.enabled
-      ? projectAgentIsolationPendingNativeStatus(setupPlan) ?? input.status : input.status } };
+      metadataVersion: snapshot.metadataVersion, status: pendingStatus ?? input.status } };
 }
 
 export type ApplyAgentIsolationMemberEffectsInput = Readonly<{

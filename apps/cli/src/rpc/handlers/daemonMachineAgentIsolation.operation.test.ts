@@ -10,7 +10,7 @@ import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/age
 import { registerDaemonMachineAgentIsolationRpcHandlers } from './daemonMachineAgentIsolation';
 import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { readActionOperationTerminalResultV1, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
@@ -78,14 +78,31 @@ it.skipIf(process.platform !== 'linux')('retains a missing ACL tool repair throu
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-it('preserves a reviewed member policy across its desired publication and elevated APPLY', async () => {
+it.each([false, true])('settles reviewed member isolation without restarting its own daemon (group refresh required: %s)', async requiresRefresh => {
   const target = { serverId: 'home', machineId: 'guest', installationId: 'installation', custodianAccountId: 'owner' };
   let policy: MachineAgentIsolationPolicyV1 = { enabled: false };
   let status: MachineAgentIsolationStatusV1 = { kind: 'disabled' };
   let metadataVersion = 1, publications = 0;
-  const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
+  const os = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
     installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
     publishStatus: async value => { status = value; } });
+  const daemonUsername = userInfo().username;
+  const native = createAgentIsolationEffectsBoundary({ ...os.effects, installationId: target.installationId,
+    backend: {
+      async observe(step) {
+        const fact = await os.effects.backend!.observe(step);
+        if (requiresRefresh && step.kind === 'group' && step.members.includes(daemonUsername))
+          return { ...fact, facts: { ...fact.facts, gid: 2_000_000_000 } };
+        return fact;
+      },
+      async apply(step) {
+        if (step.id === 'daemon-user-manager') throw new Error('The user-manager restart terminates its invoking daemon');
+        await os.effects.backend!.apply(step);
+      },
+    } });
+  const elevation = { ...native.effects.elevation, observe: async () => ({
+    ...await native.effects.elevation.observe(), daemonUsername,
+  }) };
   const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
     transportRequestId: 'member-apply', machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner',
       machineId: target.machineId, installationId: target.installationId, role: 'manage', encryptionMode: 'plain' },
@@ -93,7 +110,7 @@ it('preserves a reviewed member policy across its desired publication and elevat
   const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
     encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
   registerDaemonMachineAgentIsolationRpcHandlers(rpc, { target: () => target,
-    read: () => ({ ...policy, status }), effects: { ...native.effects, backend: undefined },
+    read: () => ({ ...policy, status }), effects: { ...native.effects, elevation, backend: undefined },
     runActionOperation: createHostActionOperationRuntime({ serverId: target.serverId, machineId: target.machineId,
       resolveAccountId: async () => target.custodianAccountId }).runActionOperation,
     captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadataVersion, metadata: { agentIsolation: policy } }),
@@ -110,7 +127,14 @@ it('preserves a reviewed member policy across its desired publication and elevat
   const applied = await rpc.invokeLocal('machines.agentIsolation.set', { ...desired,
     expectedMetadataVersion: preview.metadataVersion, expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest },
   { rpcContext: context, localActionContext: { actionRequestId: 'member-apply' } });
-  expect(applied).toMatchObject({ kind: 'accepted', status: { kind: 'applying', phase: 'runtime_replacement' } });
+  // This OS fixture applies the policy but supplies no native-readiness probe.
+  // With no Sessions to replace, the finite check must settle that missing fact.
+  expect(applied).toMatchObject({ kind: 'accepted', status: { kind: 'unavailable',
+    code: 'provisioning_unavailable', prerequisite: requiresRefresh
+      ? { requiredFact: 'daemon_group_refresh', detail: expect.stringContaining('Group membership changed') }
+      : { requiredFact: 'native_readiness' } } });
+  expect(native.mutations).not.toContain('daemon-user-manager');
+  expect(policy).toEqual({ enabled: true, memberProvisioning: 'linuxUsersV1' });
   expect(publications).toBe(1);
   expect(native.mutations.length).toBeGreaterThan(0);
 });

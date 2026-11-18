@@ -88,7 +88,16 @@ describe('separate users reviewed setup', () => {
             expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
-    it.each(['unchanged', 'accepted'] as const)('shows the identity owners typed refusal after an otherwise $0 Repair', async kind => {
+    const groupRefreshDetail = 'Group membership changed. Start the daemon from a fresh login session for alice.';
+    const groupRefreshStatus = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+        reason: 'native_effect_pending', requiredFact: 'daemon_group_refresh', detail: groupRefreshDetail,
+        remedy: 'machines.agentIsolation.preview',
+    } } as const;
+    it.each([
+        { kind: 'unchanged' as const, status: { kind: 'unavailable', code: 'agent_user_missing' } as const,
+            message: () => t('machines.sharing.fallback.prerequisites.agent_user_missing') },
+        { kind: 'accepted' as const, status: groupRefreshStatus, message: () => groupRefreshDetail },
+    ])('shows the typed prerequisite after an otherwise $kind Repair', async ({ kind, status, message }) => {
         const preview = { kind: 'ready', policy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
             metadataVersion: 1, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
             plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'reviewed' } } as const satisfies MachineAgentIsolationPreviewResultV1;
@@ -96,7 +105,7 @@ describe('separate users reviewed setup', () => {
         const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
             machineAgentIsolationAction: async ({ actionId }) => actionId === 'machines.agentIsolation.preview' ? preview
                 : { kind, metadataVersion: 1, ...(kind === 'accepted' ? { operationId: 'repair' } : {}),
-                    status: { kind: 'unavailable', code: 'agent_user_missing' } } }));
+                    status } }));
         let change!: ReturnType<typeof useSeparateUsersChange>;
         function Surface() {
             const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
@@ -109,7 +118,7 @@ describe('separate users reviewed setup', () => {
             await act(async () => { await change.review(); });
             await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
             expect(change.phase).toMatchObject({ kind: 'settled', tone: 'unavailable' });
-            expect(screen.getTextContent()).toContain(t('machines.sharing.fallback.prerequisites.agent_user_missing'));
+            expect(screen.getTextContent()).toContain(message());
             expect(screen.getTextContent()).not.toContain(t('machines.sharing.fallback.alreadyOn'));
         } finally { await screen.unmount(); }
     });
