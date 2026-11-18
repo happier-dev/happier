@@ -958,7 +958,10 @@ mounted `respondToSessionPermission` method.
 A Session publishes its review findings as Review comments. To read them for a
 linked Session, call the `reviews.comments.list` host Action with that
 `sessionId`, or use `useReviewCommentProposalsForEntry` for proposed comments
-linked to one entry. Tests can install `readSession`, `watchSession` and
+linked to one entry. This reader fetches one candidate page per linked Session;
+render its optional `loadMore` callback as an explicit continuation (or retry
+after `status: 'failed'`). A page can contain no matching proposals and still
+offer continuation. Tests can install `readSession`, `watchSession` and
 `respondToSessionPermission` handlers in `@happier-dev/plugin-sdk/testing`, and
 emit a watch signal with `invalidateSession`.
 

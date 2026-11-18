@@ -1011,6 +1011,12 @@ function PullRequestReviewerWrites({
   );
 }
 
+function ReviewProposalContinuation({ read }: Readonly<{ read: ReviewCommentProposalReadV1 }>): React.ReactElement | null {
+  return read.loadMore === undefined ? null : <Button title="Load more comments"
+    titleKey="plugins.github.ui.loadMoreComments" variant="secondary"
+    busy={read.status === 'loading'} onPress={read.loadMore} />;
+}
+
 /**
  * Publishes exactly one already-canonical Review Comment. This is intentionally
  * fed by the one detail-mounted public proposal reader: issue and thread writes
@@ -1018,22 +1024,21 @@ function PullRequestReviewerWrites({
  */
 function SingleProposalPublicationWrite({
   input,
-  proposals,
-  proposalRead,
+  publicationProposals,
   kind,
   threadId,
   onObserved,
   capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
-  proposals: readonly ReviewCommentV1[];
-  proposalRead: ReviewCommentProposalReadV1['status'];
+  publicationProposals: ReviewCommentProposalReadV1;
   kind: 'issue-comment' | 'thread-reply';
   threadId?: string;
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { proposals, status: proposalRead } = publicationProposals;
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (proposalRead !== 'ready') return;
@@ -1119,6 +1124,7 @@ function SingleProposalPublicationWrite({
           />
         )
         : null}
+      <ReviewProposalContinuation read={publicationProposals} />
       <ExactWrite
         localId={localId}
         payload={payload}
@@ -1289,6 +1295,7 @@ function PullRequestReviewPublicationWrite({
           }}
         />
       ) : null}
+      <ReviewProposalContinuation read={publicationProposals} />
       <Form.TextField
         label={text('plugins.github.ui.mutations.review.summary', 'Review summary')}
         value={verdictBody}
@@ -1363,8 +1370,7 @@ function IssueWrites({
       <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} capabilities={capabilities} />
       <SingleProposalPublicationWrite
         input={input}
-        proposals={publicationProposals.proposals}
-        proposalRead={publicationProposals.status}
+        publicationProposals={publicationProposals}
         kind="issue-comment"
         onObserved={onObserved}
         capabilities={capabilities}
@@ -3999,8 +4005,7 @@ function ThreadFeedbackFinding({
           suggestions={visibleReplies.flatMap((reply) => reply.suggestions ?? [])} />
         <SingleProposalPublicationWrite
           input={input}
-          proposals={publicationProposals.proposals}
-          proposalRead={publicationProposals.status}
+          publicationProposals={publicationProposals}
           kind="thread-reply"
           threadId={finding.id}
           onObserved={onObserved}

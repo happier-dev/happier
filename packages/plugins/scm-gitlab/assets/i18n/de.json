@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Keine Entscheidung",
   "plugins.gitlab.ui.publication.verdict.comment": "Kommentieren",
   "plugins.gitlab.ui.publication.verdict.approve": "Freigeben",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Änderungen anfordern",
   "plugins.gitlab.ui.publication.summary": "Review-Zusammenfassung",
   "plugins.gitlab.ui.publication.summaryRequired": "Füge vor der Veröffentlichung dieser Entscheidung eine Zusammenfassung hinzu.",
   "plugins.gitlab.ui.publication.submit": "Review absenden",

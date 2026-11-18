@@ -191,7 +191,13 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.at(-1)).toMatchObject({ method: 'GET', url: ITEM_URL });
   });
 
-  it.each([false, true])('confirms inline DiscussionNotes and submits the verdict last (lost publish answer: %s)', async (losePublishAnswer) => {
+  it.each([
+    { verdict: 'approve', losePublishAnswer: false, verdictResult: 'published' },
+    { verdict: 'approve', losePublishAnswer: true, verdictResult: 'published' },
+    { verdict: 'requestChanges', losePublishAnswer: false, verdictResult: 'published' },
+    { verdict: 'requestChanges', losePublishAnswer: false, verdictResult: 'failed' },
+    { verdict: 'requestChanges', losePublishAnswer: false, verdictResult: 'uncertain' },
+  ] as const)('confirms inline DiscussionNotes and submits $verdict last ($verdictResult, lost publish answer: $losePublishAnswer)', async ({ verdict, losePublishAnswer, verdictResult }) => {
     let draftCreates = 0;
     const pending = new Map<number, Record<string, unknown>>();
     const published: Array<{ id: number; body: string; type: 'DiscussionNote' | null }> = [];
@@ -223,17 +229,24 @@ describe('gitlab/merge-request/submit-review', () => {
         return { status: 204, bodyText: '' };
       }
       if (request.method === 'POST' && request.url === `${ITEM_URL}/approve`) return { status: 201, body: { approved: true } };
+      if (request.method === 'POST' && request.url === 'https://gitlab.com/api/graphql') {
+        expect(bodyOf(request)).toMatchObject({ variables: { projectPath: ROUTING_TOKEN, iid: '7' } });
+        expect(bodyOf(request).query).toEqual(expect.stringContaining('mergeRequestRequestChanges'));
+        if (verdictResult === 'failed') return { status: 200, body: { data: { mergeRequestRequestChanges: { errors: ['Cannot request changes'], mergeRequest: null } } } };
+        if (verdictResult === 'uncertain') return { status: 200, body: { data: { mergeRequestRequestChanges: { errors: [], mergeRequest: null } } } };
+        return { status: 200, body: { data: { mergeRequestRequestChanges: { errors: [], mergeRequest: { id: 'gid://gitlab/MergeRequest/7' } } } } };
+      }
       return undefined;
     });
 
-    const result = await publishGitlabMergeRequestReview(actionInput(), transport.context);
+    const result = await publishGitlabMergeRequestReview(actionInput({ publicationPlan: plan({ verdict: { kind: verdict, body: 'Ready.' } }) }), transport.context);
 
     expect(result).toMatchObject({
       kind: 'settled',
       publication: {
         publicationPlanId: PLAN_ID,
         entries: [{ outcome: { kind: 'published', externalRef: '91' } }],
-        verdict: { outcome: { kind: 'published', externalRef: '92' } },
+        verdict: { outcome: { kind: verdictResult, externalRef: '92' } },
       },
     });
     expect(transport.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
@@ -246,7 +259,7 @@ describe('gitlab/merge-request/submit-review', () => {
       `POST ${DRAFTS_URL}`,
       `PUT ${DRAFTS_URL}/82/publish`,
       `GET ${NOTES_LIST_URL}`,
-      `POST ${ITEM_URL}/approve`,
+      verdict === 'approve' ? `POST ${ITEM_URL}/approve` : 'POST https://gitlab.com/api/graphql',
       `GET ${ITEM_URL}`,
     ]);
     expect(transport.claimCount()).toBe(2);
@@ -266,7 +279,7 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.some((request) => request.url.includes('bulk_publish'))).toBe(false);
   });
 
-  it('reports every preexisting draft before claim and rejects unadvertised requestChanges at admission', async () => {
+  it('reports every preexisting draft before claim', async () => {
     const drafts = createTransport((request) => {
       if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
       if (request.method === 'GET' && request.url === DRAFTS_LIST_URL) {
@@ -281,14 +294,6 @@ describe('gitlab/merge-request/submit-review', () => {
     });
     expect(drafts.claimCount()).toBe(0);
     expect(drafts.requests.some((request) => request.method !== 'GET')).toBe(false);
-
-    const unsupported = createTransport(() => undefined);
-    const result = await publishGitlabMergeRequestReview(actionInput({
-      publicationPlan: plan({ verdict: { kind: 'requestChanges', body: 'Please revise.' } }),
-    }), unsupported.context);
-    expect(result).toMatchObject({ kind: 'rejected', reason: 'invalid_input' });
-    expect(unsupported.claimCount()).toBe(0);
-    expect(unsupported.requests).toHaveLength(0);
   });
 
   it('reconciles an inline entry and ordinary summary across discussion pages without any provider write', async () => {

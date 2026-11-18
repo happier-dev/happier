@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Aucun verdict",
   "plugins.gitlab.ui.publication.verdict.comment": "Commentaire",
   "plugins.gitlab.ui.publication.verdict.approve": "Approuver",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Demander des modifications",
   "plugins.gitlab.ui.publication.summary": "Résumé de la revue",
   "plugins.gitlab.ui.publication.summaryRequired": "Ajoute un résumé avant de publier ce verdict.",
   "plugins.gitlab.ui.publication.submit": "Envoyer la revue",

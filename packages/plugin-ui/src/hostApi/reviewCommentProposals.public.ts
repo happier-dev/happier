@@ -14,6 +14,8 @@ export type ReviewCommentProposalWithBodyV1 = Omit<ReviewCommentV1, 'body' | 'sn
 export type ReviewCommentProposalReadV1 = Readonly<{
   status: 'loading' | 'ready' | 'failed';
   proposals: readonly ReviewCommentProposalWithBodyV1[];
+  /** Requests one more candidate page from each linked Session that has a continuation. */
+  loadMore?: () => void;
 }>;
 
 export type ReviewCommentProposalQueryV1 = Readonly<{
@@ -36,10 +38,11 @@ function hasPublishableContent(
 /**
  * Reads proposed canonical Review comments linked to one exact provider entry.
  *
- * The Reviews Action remains the sole data owner. This hook only owns one mounted read: it follows
- * the canonical cursor to exhaustion, deduplicates the same comment linked through several Sessions,
+ * The Reviews Action remains the sole data owner. This hook only owns one mounted read: it requests
+ * one candidate page per linked Session, deduplicates the same comment linked through several Sessions,
  * aborts on unmount/query replacement, and persists nothing. Provider surfaces then build only their
- * provider-specific frozen publication plans from the returned canonical comments.
+ * provider-specific frozen publication plans from the returned canonical comments. Continuation is
+ * explicit even when a page has no matching comments for this entry.
  */
 export function useReviewCommentProposalsForEntry(
   query: ReviewCommentProposalQueryV1,
@@ -58,11 +61,13 @@ export function useReviewCommentProposalsForEntry(
     const linkedSessionIds = JSON.parse(linkedSessionIdsKey) as string[];
     const entry = JSON.parse(entryKey) as ReviewCommentProposalQueryV1['entry'];
 
-    void (async () => {
-      // A retained proposal belongs to the prior exact query. Keeping it while an entry or linked
-      // Session changes would let a provider build a new target plan around an old comment.
-      setState({ status: 'loading', proposals: [] });
-      const byId = new Map<string, ReviewCommentProposalWithBodyV1>();
+    const byId = new Map<string, ReviewCommentProposalWithBodyV1>();
+    const cursors = new Map(linkedSessionIds.map(sessionId => [sessionId, undefined as string | undefined]));
+    let pending = false;
+    const readNext = async () => {
+      if (!current || pending || cursors.size === 0) return;
+      pending = true;
+      setState(previous => ({ ...previous, status: 'loading' }));
       try {
         // Pull-request links are canonically matched by their provider URL. If this projection has
         // no URL, there is no exact identity to query against; returning an honest empty read avoids
@@ -71,41 +76,45 @@ export function useReviewCommentProposalsForEntry(
           if (current) setState({ status: 'ready', proposals: [] });
           return;
         }
-        for (const sessionId of linkedSessionIds) {
-          let cursor: string | undefined;
-          const seenCursors = new Set<string>();
-          do {
-            const page = await host.executeAction('reviews.comments.list', {
-              sessionId,
-              states: ['proposed'],
-              taxonomyIds: [],
-              includeHistory: false,
-              // The canonical Reviews request schema admits at most 200 rows per page.
-              limit: 200,
-              ...(cursor === undefined ? {} : { cursor }),
-            }, { signal: cancellation.signal });
-            for (const proposal of page.items) {
-              if (hasPublishableContent(proposal) && proposal.linkedRefs?.some((ref) => (
-                entry.kind === 'pullRequest'
-                  ? ref.kind === 'pullRequest' && ref.url === entry.url
-                  : ref.kind === 'issue' && ref.id === entry.id
-              ))) byId.set(proposal.id, proposal);
+        for (const [sessionId, cursor] of cursors) {
+          const page = await host.executeAction('reviews.comments.list', {
+            sessionId,
+            states: ['proposed'],
+            taxonomyIds: [],
+            includeHistory: false,
+            // The canonical Reviews request schema admits at most 200 rows per page.
+            limit: 200,
+            ...(cursor === undefined ? {} : { cursor }),
+          }, { signal: cancellation.signal });
+          if (!current) return;
+          for (const proposal of page.items) {
+            if (hasPublishableContent(proposal) && proposal.linkedRefs?.some((ref) => (
+              entry.kind === 'pullRequest'
+                ? ref.kind === 'pullRequest' && ref.url === entry.url
+                : ref.kind === 'issue' && ref.id === entry.id
+            ))) {
+              byId.set(proposal.id, proposal);
             }
-            const next = page.cursor ?? undefined;
-            if (next === undefined || seenCursors.has(next)) cursor = undefined;
-            else {
-              seenCursors.add(next);
-              cursor = next;
-            }
-          } while (cursor !== undefined);
+          }
+          const next = page.cursor ?? undefined;
+          if (next === undefined || next === cursor) cursors.delete(sessionId);
+          else cursors.set(sessionId, next);
         }
         if (current) {
-          setState({ status: 'ready', proposals: Object.freeze([...byId.values()]) });
+          setState({ status: 'ready', proposals: Object.freeze([...byId.values()]),
+            ...(cursors.size === 0 ? {} : { loadMore }) });
         }
       } catch {
-        if (current) setState({ status: 'failed', proposals: [] });
+        if (current) setState({ status: 'failed', proposals: Object.freeze([...byId.values()]), loadMore });
+      } finally {
+        pending = false;
       }
-    })();
+    };
+    const loadMore = () => { void readNext(); };
+    // A retained proposal belongs to the prior exact query. Never attach it to a new entry.
+    setState({ status: 'loading', proposals: [] });
+    if (cursors.size === 0) setState({ status: 'ready', proposals: [] });
+    else loadMore();
 
     return () => {
       current = false;

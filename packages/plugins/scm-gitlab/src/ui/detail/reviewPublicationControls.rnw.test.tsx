@@ -341,10 +341,9 @@ describe('mounted GitLab Review publication controls', () => {
     expect(completed).toBe(2);
   });
 
-  it('offers only GitLab-safe verdicts and requires a summary for comment or approve', async () => {
+  it('offers Request changes and requires a summary before publishing a verdict', async () => {
     const detail = await mountControl('merge-request');
-    await expect(detail.queryByRole('radio', { name: 'Request changes' })).resolves.toBeUndefined();
-    await act(async () => detail.press(await detail.getByRole('radio', { name: 'Approve' })));
+    await act(async () => detail.press(await detail.getByRole('radio', { name: 'Request changes' })));
     await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toMatchObject({
       disabled: true,
     });

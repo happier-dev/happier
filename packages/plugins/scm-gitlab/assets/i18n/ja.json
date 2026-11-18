@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "判定なし",
   "plugins.gitlab.ui.publication.verdict.comment": "コメント",
   "plugins.gitlab.ui.publication.verdict.approve": "承認",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "変更をリクエスト",
   "plugins.gitlab.ui.publication.summary": "レビューの概要",
   "plugins.gitlab.ui.publication.summaryRequired": "この判定を公開する前に概要を追加してください。",
   "plugins.gitlab.ui.publication.submit": "レビューを送信",

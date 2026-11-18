@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Nessun verdetto",
   "plugins.gitlab.ui.publication.verdict.comment": "Commento",
   "plugins.gitlab.ui.publication.verdict.approve": "Approva",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Richiedi modifiche",
   "plugins.gitlab.ui.publication.summary": "Riepilogo della revisione",
   "plugins.gitlab.ui.publication.summaryRequired": "Aggiungi un riepilogo prima di pubblicare questo verdetto.",
   "plugins.gitlab.ui.publication.submit": "Invia revisione",

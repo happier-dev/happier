@@ -21,6 +21,7 @@ import { GITLAB_PLUGIN_ID } from '../contribution.js';
 import { buildGitlabItemUrl } from '../detail/routes.js';
 import {
   GITLAB_REST_MAX_PAGE_SIZE,
+  buildGitlabGraphqlUrl,
   requestGitlabJson,
   type GitlabRequestResult,
 } from '../http/gitlabClient.js';
@@ -44,6 +45,7 @@ import {
   GITLAB_MUTATION_INPUT_INVALID_FAILURE,
   type GitlabMutationPreflight,
 } from './preflight.js';
+import { readGitlabGraphqlMutationErrors } from './graphqlDelta.js';
 
 type RecordValue = Readonly<Record<string, unknown>>;
 type PublicationPreflight = Extract<
@@ -888,10 +890,16 @@ export async function publishGitlabMergeRequestReview(
             outcome: { kind: 'published', externalRef: summary.externalRef },
           };
         } else {
+          // GitLab exposes Request changes through GraphQL, with the same configured-origin
+          // invocation as REST. The summary and inline comments still publish before the verdict.
           const approval = await sendJson(current, {
-            url: `${buildGitlabItemUrl(current.route)}/approve`,
+            url: plan.verdict.kind === 'approve' ? `${buildGitlabItemUrl(current.route)}/approve`
+              : buildGitlabGraphqlUrl(current.route.origin),
             method: 'POST',
-            body: { sha: plan.headRevision },
+            body: plan.verdict.kind === 'approve' ? { sha: plan.headRevision } : {
+              query: 'mutation RequestReviewChanges($projectPath: ID!, $iid: String!) { mergeRequestRequestChanges(input: { projectPath: $projectPath, iid: $iid }) { errors mergeRequest { id } } }',
+              variables: { projectPath: current.route.repositoryKey, iid: current.route.iid },
+            },
           });
           if (approval.kind === 'failed') {
             const failed = outcomeFailure(approval);
@@ -901,9 +909,21 @@ export async function publishGitlabMergeRequestReview(
               outcome: { ...failed.outcome, externalRef: summary.externalRef },
             };
           } else {
+            const messages = plan.verdict.kind === 'requestChanges'
+              ? readGitlabGraphqlMutationErrors(approval.response.body, 'mergeRequestRequestChanges') : [];
+            const payload = record(record(record(approval.response.body)?.data)?.mergeRequestRequestChanges);
+            const unconfirmed = plan.verdict.kind === 'requestChanges'
+              && externalId(record(payload?.mergeRequest)?.id) === null;
+            if (messages.length > 0) {
+              terminalFailure = { class: 'unsupportedContract', code: 'gitlab-request-changes-rejected', detail: messages.join('\n') };
+            } else if (unconfirmed) {
+              terminalFailure = { class: 'unsupportedContract', code: 'gitlab-request-changes-unconfirmed' };
+            }
             verdictOutcome = {
               publicationCorrelationId: claim.verdict.publicationCorrelationId,
-              outcome: { kind: 'published', externalRef: summary.externalRef },
+              outcome: messages.length > 0
+                ? { kind: 'failed', code: terminalFailure!.code, message: terminalFailure!.detail, externalRef: summary.externalRef }
+                : { kind: unconfirmed ? 'uncertain' : 'published', externalRef: summary.externalRef },
             };
           }
         }

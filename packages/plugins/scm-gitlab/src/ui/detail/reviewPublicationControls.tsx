@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import {
   Banner,
+  Button,
   Form,
   MarkdownEditor,
   Row,
@@ -334,21 +335,20 @@ function ProposalReadState({ read }: Readonly<{
   read: GitlabReviewProposalReadV1;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (read.status === 'loading') {
-    return <Status tone="muted" label={text('plugins.gitlab.ui.publication.loading', 'Reading proposed review comments…')} />;
-  }
-  if (read.status === 'failed') {
-    return (
-      <Banner
-        tone="danger"
-        title={text('plugins.gitlab.ui.publication.proposalsFailed', 'Proposed review comments are unavailable')}
-      />
-    );
-  }
-  if (read.proposals.length === 0) {
-    return <Status tone="muted" label={text('plugins.gitlab.ui.publication.empty', 'No proposed review comment is linked to this entry yet.')} />;
-  }
-  return null;
+  return <Stack gap="small">
+    {read.status === 'loading'
+      ? <Status tone="muted" label={text('plugins.gitlab.ui.publication.loading', 'Reading proposed review comments…')} />
+      : read.status === 'failed' ? (
+        <Banner
+          tone="danger"
+          title={text('plugins.gitlab.ui.publication.proposalsFailed', 'Proposed review comments are unavailable')}
+        />
+      ) : read.proposals.length === 0
+      ? <Status tone="muted" label={text('plugins.gitlab.ui.publication.empty', 'No proposed review comment is linked to this entry yet.')} />
+      : null}
+    {read.loadMore === undefined ? null : <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
+      variant="secondary" busy={read.status === 'loading'} onPress={read.loadMore} />}
+  </Stack>;
 }
 
 const GITLAB_VERDICT_CHOICES = Object.freeze([
@@ -477,7 +477,9 @@ export function GitlabMergeRequestPublicationControls({
             ? text('plugins.gitlab.ui.publication.verdict.none', 'No verdict')
             : value === 'approve'
               ? text('plugins.gitlab.ui.publication.verdict.approve', 'Approve')
-              : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
+              : value === 'requestChanges'
+                ? text('plugins.gitlab.ui.publication.verdict.requestChanges', 'Request changes')
+                : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
         }))}
         value={verdict}
         onChange={(value) => {

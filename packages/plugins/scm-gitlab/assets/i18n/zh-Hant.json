@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "無結論",
   "plugins.gitlab.ui.publication.verdict.comment": "留言",
   "plugins.gitlab.ui.publication.verdict.approve": "核准",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "要求變更",
   "plugins.gitlab.ui.publication.summary": "審查摘要",
   "plugins.gitlab.ui.publication.summaryRequired": "發布此結論前請先新增摘要。",
   "plugins.gitlab.ui.publication.submit": "送出審查",

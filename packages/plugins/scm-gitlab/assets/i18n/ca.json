@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Cap veredicte",
   "plugins.gitlab.ui.publication.verdict.comment": "Comentari",
   "plugins.gitlab.ui.publication.verdict.approve": "Aprova",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Demana canvis",
   "plugins.gitlab.ui.publication.summary": "Resum de la revisió",
   "plugins.gitlab.ui.publication.summaryRequired": "Afegeix un resum abans de publicar aquest veredicte.",
   "plugins.gitlab.ui.publication.submit": "Envia la revisió",

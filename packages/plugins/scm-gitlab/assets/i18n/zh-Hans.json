@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "无结论",
   "plugins.gitlab.ui.publication.verdict.comment": "评论",
   "plugins.gitlab.ui.publication.verdict.approve": "批准",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "请求更改",
   "plugins.gitlab.ui.publication.summary": "评审摘要",
   "plugins.gitlab.ui.publication.summaryRequired": "发布此结论前请先添加摘要。",
   "plugins.gitlab.ui.publication.submit": "提交评审",

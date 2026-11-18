@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Brak werdyktu",
   "plugins.gitlab.ui.publication.verdict.comment": "Komentarz",
   "plugins.gitlab.ui.publication.verdict.approve": "Zatwierdź",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Poproś o zmiany",
   "plugins.gitlab.ui.publication.summary": "Podsumowanie przeglądu",
   "plugins.gitlab.ui.publication.summaryRequired": "Dodaj podsumowanie przed opublikowaniem tego werdyktu.",
   "plugins.gitlab.ui.publication.submit": "Wyślij przegląd",

@@ -4,7 +4,7 @@ import renderer from 'react-test-renderer';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { PluginHostApiProvider } from '../advanced/index.js';
+import { PluginHostApiProvider } from './context.js';
 import {
   useReviewCommentProposalsForEntry,
   type ReviewCommentProposalReadV1,
@@ -39,13 +39,12 @@ const ISSUE_ID = createReviewCommentLinkedIssueIdV1({
 });
 
 describe('useReviewCommentProposalsForEntry', () => {
-  it('pages every linked Session, filters the exact provider entry, and deduplicates canonical ids', async () => {
+  it('reads one candidate page per linked Session and continues only on explicit demand', async () => {
     const executeAction = vi.fn(async (_action: unknown, input: unknown) => {
       const request = input as Readonly<{ sessionId: string; cursor?: string }>;
       if (request.cursor === undefined) {
         return {
           items: [
-            PROPOSAL,
             { ...PROPOSAL, id: `wrong-${request.sessionId}`, linkedRefs: [{ kind: 'issue', id: ISSUE_ID, url: 'https://gitlab.com/group/project/-/issues/42' }] },
           ],
           cursor: 'next-page',
@@ -76,9 +75,14 @@ describe('useReviewCommentProposalsForEntry', () => {
       );
     });
     await vi.waitFor(() => {
-      expect(reads.at(-1)).toMatchObject({ status: 'ready', proposals: [{ id: 'comment-1' }] });
+      expect(reads.at(-1)).toMatchObject({ status: 'ready', proposals: [] });
     });
-    expect(executeAction).toHaveBeenCalledTimes(4);
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    expect(reads.at(-1)?.loadMore).toEqual(expect.any(Function));
+    await act(async () => { reads.at(-1)?.loadMore?.(); });
+    await vi.waitFor(() => expect(executeAction).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(reads.at(-1)?.loadMore).toBeUndefined());
+    expect(reads.at(-1)?.proposals.map(proposal => proposal.id)).toEqual(['comment-1']);
     expect(executeAction).toHaveBeenCalledWith(
       'reviews.comments.list',
       expect.objectContaining({ sessionId: 'session-1', limit: 200 }),
@@ -87,9 +91,10 @@ describe('useReviewCommentProposalsForEntry', () => {
     act(() => tree?.unmount());
   });
 
-  it('publishes a failed state instead of retaining stale proposals after a failed replacement read', async () => {
+  it('exposes a failed read and recovers only after an explicit retry', async () => {
     const hostApi = {
-      executeAction: vi.fn(async () => { throw new Error('reviews unavailable'); }),
+      executeAction: vi.fn().mockRejectedValueOnce(new Error('reviews unavailable'))
+        .mockResolvedValue({ items: [PROPOSAL], cursor: null }),
       readResource: vi.fn(async () => { throw new Error('not used'); }),
     } as unknown as PluginUiHostApi;
     const reads: ReviewCommentProposalReadV1[] = [];
@@ -104,7 +109,10 @@ describe('useReviewCommentProposalsForEntry', () => {
     await act(async () => {
       tree = renderer.create(<PluginHostApiProvider hostApi={hostApi}><Probe /></PluginHostApiProvider>);
     });
-    await vi.waitFor(() => expect(reads.at(-1)).toEqual({ status: 'failed', proposals: [] }));
+    await vi.waitFor(() => expect(reads.at(-1)).toMatchObject({ status: 'failed', proposals: [], loadMore: expect.any(Function) }));
+    expect(hostApi.executeAction).toHaveBeenCalledTimes(1);
+    await act(async () => { reads.at(-1)?.loadMore?.(); });
+    await vi.waitFor(() => expect(reads.at(-1)).toMatchObject({ status: 'ready', proposals: [{ id: 'comment-1' }] }));
     act(() => tree?.unmount());
   });
 

@@ -267,6 +267,7 @@
   "plugins.gitlab.ui.publication.verdict.none": "Без вердикта",
   "plugins.gitlab.ui.publication.verdict.comment": "Комментарий",
   "plugins.gitlab.ui.publication.verdict.approve": "Одобрить",
+  "plugins.gitlab.ui.publication.verdict.requestChanges": "Запросить изменения",
   "plugins.gitlab.ui.publication.summary": "Итог ревью",
   "plugins.gitlab.ui.publication.summaryRequired": "Добавьте итог перед публикацией этого вердикта.",
   "plugins.gitlab.ui.publication.submit": "Отправить ревью",
