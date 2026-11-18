@@ -459,8 +459,11 @@ export type TriageRouteWriteQueueV1 = Readonly<{
   ) => void;
   /** Retire pending intent on external navigation; true for an older self-publication. */
   adoptHostLocation: (subPath: string) => boolean;
-  /** No write is in flight or queued, so the host's last settled location is also where it is heading. */
-  idle: () => boolean;
+  /**
+   * Another of this mount's choices is still heading to the host: queued, or in flight and not retired by an outside
+   * move. A choice equal to the settled location must then still be written, or the older one lands last (QB-82).
+   */
+  headingElsewhere: (subPath: string) => boolean;
   /** Test/coordination seam: resolves once the in-flight write and latest queued intent settle. */
   whenSettled: () => Promise<void>;
   dispose: () => void;
@@ -490,12 +493,24 @@ type PendingTriageRouteWriteV1 = Readonly<{
  */
 export function createTriageRouteWriteQueueV1(
   hostApi: PluginUiHostApi,
+  /** The location the host showed when this queue was made; a write of it publishes no change to echo. */
+  hostSubPath?: string,
 ): TriageRouteWriteQueueV1 {
   let pending: PendingTriageRouteWriteV1 | null = null;
   let running = false;
   let disposed = false;
   let activeWrite: Readonly<{ controller: AbortController; lens: TriageRouteLensV1 }> | null = null;
+  /** The in-flight write an outside move overtook; it finishes, but no longer speaks for this mount. */
+  let retiredWrite: typeof activeWrite = null;
   let settlers: Array<() => void> = [];
+  /**
+   * The locations this queue asked the host for, oldest first, since the host last moved on its own. The host can
+   * publish one after its write has finished, so an active-write check alone mistakes a late echo of an older
+   * choice for an outside move (QB-82). Each echo trims the list to itself.
+   */
+  let issued: string[] = [];
+  /** Where the host is, as far as this queue last heard: a write of it publishes nothing to echo. */
+  let hostAt = hostSubPath;
 
   const settleWaiters = () => {
     if (running || pending !== null) return;
@@ -520,7 +535,10 @@ export function createTriageRouteWriteQueueV1(
         pending = null;
         const controller = new AbortController();
         activeWrite = { controller, lens: intent.lens };
+        const issuedSubPath = buildTriageRouteSubPathV1(intent.lens);
+        if (issuedSubPath !== hostAt && issued.at(-1) !== issuedSubPath) issued.push(issuedSubPath);
         const result = await writeTriageRouteLensV1(hostApi, intent.lens, { signal: controller.signal });
+        if (result.kind === 'settled') hostAt = result.subPath;
         if (activeWrite?.controller === controller) activeWrite = null;
         if (!disposed) {
           intent.onSettled?.({
@@ -544,15 +562,23 @@ export function createTriageRouteWriteQueueV1(
       void drain();
     },
     adoptHostLocation(subPath) {
-      if (activeWrite !== null && buildTriageRouteSubPathV1(activeWrite.lens) === subPath) {
-        return pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath;
+      hostAt = subPath;
+      const echo = issued.lastIndexOf(subPath);
+      if (echo !== -1) {
+        // This queue's own write: stale while a newer one was issued or is still waiting to be.
+        const newerIssued = echo < issued.length - 1;
+        issued = issued.slice(echo);
+        return newerIssued || (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath);
       }
+      issued = [];
       // Back/navigation has superseded the local successor, not queued a new
       // host write. Let the issued operation finish without draining old intent.
+      retiredWrite = activeWrite;
       supersedePending(null);
       return false;
     },
-    idle: () => !running && pending === null,
+    headingElsewhere: (subPath) => (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath)
+      || (activeWrite !== null && activeWrite !== retiredWrite && buildTriageRouteSubPathV1(activeWrite.lens) !== subPath),
     whenSettled() {
       if (!running && pending === null) return Promise.resolve();
       return new Promise<void>((resolve) => { settlers.push(resolve); });

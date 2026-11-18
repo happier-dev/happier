@@ -517,7 +517,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Retain the qualified candidate while the host publishes its identity-only
   // location, which can arrive before the replacement acknowledgement.
   const latestRouteIntent = React.useRef(settledRoute.current);
-  const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi), [hostApi]);
+  // Seeded with the location at mount; later host moves reach the queue as adoptions.
+  const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi, settledRoute.current.subPath), [hostApi]);
   React.useEffect(() => {
     // Publish the opening view through the same writer, retaining any entry
     // the route names before the window can qualify the reducer's selection.
@@ -3149,7 +3150,7 @@ function useTriageRouteBinding(input: Readonly<{
     if (requestedSubPath !== latestRouteIntent.current.subPath) return undefined;
     // Back on the settled location needs no write only while nothing else is heading to the host: with another
     // choice still in flight or queued, this one must be written after it or the older choice lands last (QB-82).
-    if (requestedSubPath === settledRoute.current.subPath && queue.idle()) {
+    if (requestedSubPath === settledRoute.current.subPath && !queue.headingElsewhere(requestedSubPath)) {
       settledRoute.current = { subPath: requestedSubPath, state: surface };
       return undefined;
     }

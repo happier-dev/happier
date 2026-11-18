@@ -162,6 +162,21 @@ describe('PRs & Issues route owner', () => {
     queue.dispose();
   });
 
+  it('knows a late echo of its own older write after that write finished (QB-82)', async () => {
+    // Live c3e5a241bcda: Tasks, PRs & Issues pressed quickly. The host published the Tasks location after both
+    // writes had settled; read as an outside move, it repainted Tasks over the newer PRs & Issues choice.
+    const queue = createTriageRouteWriteQueueV1(hostApiWith({ methods: ['replacePageLocation'] }));
+    queue.write(lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine' } }));
+    await queue.whenSettled();
+    queue.write(lens());
+    await queue.whenSettled();
+    expect(queue.adoptHostLocation('tasks,mine')).toBe(true);
+    // The newest write's own echo is current, and a location this mount never wrote is the host's own move.
+    expect(queue.adoptHostLocation('')).toBe(false);
+    expect(queue.adoptHostLocation('q,elsewhere')).toBe(false);
+    queue.dispose();
+  });
+
   it('round-trips a complete lens through one canonical location', () => {
     const value = lens({
       order: 'oldest',
