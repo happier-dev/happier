@@ -27,6 +27,10 @@ import { describeMachinePresenceLine, projectMachineManagedPresence } from '@/ut
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { isOpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
+import { describeMachineRowIsolation, readMachineRowIsolation } from '@/components/sessions/new/placement/machineRowIsolation';
 import {
     resolveMachinePoolRowUnavailableReason,
     resolveMachineDestinationPurposeEligibility,
@@ -214,9 +218,45 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     includeSelectedUnavailableMachineId?: string | null;
     searchPlaceholder?: string;
     emptyStateLabel?: string;
+    /**
+     * The work a Session started here is (New Session: `sessions`): each reachable Machine row then ends with what
+     * that work does there ("runs directly", lab machine-sandboxes-1115 scene 2). Hosts that start no Session omit it.
+     */
+    isolationWorkKind?: MachineIsolationWorkKind;
     sectionTitles?: Readonly<Partial<Record<MachineSelectionBucketId, string>>>;
 }>;
 
+
+const NO_PRESET_SERVERS: readonly string[] = Object.freeze([]);
+const NO_OUTCOME_CLAUSE = (): string | null => null;
+
+/**
+ * Each row's outcome clause from the isolation owner's synced policy. The preset names come from one read of the
+ * Account's presets for the Homes that propose a sandbox, never one per row; no host clause, no read at all.
+ */
+function useMachineRowOutcomeClauses(groups: ReadonlyArray<ServerScopedMachineGroup<ScopedSelectionMachine<MachineDisplayRenderable>>>,
+    workKind: MachineIsolationWorkKind | undefined): (serverId: string, machineId: string) => string | null {
+    const rows = React.useMemo(() => workKind ? new Map(groups.flatMap(group => group.machines.map(machine =>
+        [`${group.serverId}\u0000${machine.id}`, { serverId: group.serverId, row: readMachineRowIsolation(machine, workKind) }] as const))) : null,
+    [groups, workKind]);
+    const presetServerIds = React.useMemo(() => {
+        if (!rows) return NO_PRESET_SERVERS;
+        const ids = [...new Set([...rows.values()].flatMap(entry => entry.row && entry.row.kind !== 'directly' ? [entry.serverId] : []))];
+        return ids.length > 0 ? ids : NO_PRESET_SERVERS;
+    }, [rows]);
+    const presets = useMachinePresets(presetServerIds);
+    const language = usePreferredLanguage();
+    return React.useMemo(() => {
+        if (!rows) return NO_OUTCOME_CLAUSE;
+        const clauses = new Map([...rows].map(([key, { serverId, row }]) => {
+            if (!row) return [key, null] as const;
+            const preset = row.kind === 'directly' ? undefined
+                : presets.presetsByServerId[serverId]?.find(entry => entry.id === row.presetId);
+            return [key, describeMachineRowIsolation(row, preset && isOpenedManagedMachinePresetV1(preset) ? preset.name : undefined)] as const;
+        }));
+        return (serverId: string, machineId: string) => clauses.get(`${serverId}\u0000${machineId}`) ?? null;
+    }, [rows, presets.presetsByServerId, language]);
+}
 
 /** The host, when there is one; a machine's id is never its subtitle. */
 function machineSubtitle(machine: MachineDisplayRenderable): string | undefined {
@@ -228,7 +268,7 @@ function machineSubtitle(machine: MachineDisplayRenderable): string | undefined 
  * 4 days ago"), then the row's own fact when it has one (a domain's reason, the Home's detail).
  */
 function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReachabilityScope | null | undefined, detail: string | undefined, managedMachine?: ManagedMachineV1,
-    ownerNamedByGroup = false): string {
+    ownerNamedByGroup = false, outcome?: string | null): string {
     const presence = describeMachinePresenceLine(machine, undefined, projectMachineManagedPresence(machine, managedMachine), scope);
     // An online machine says what it is ("Online · Linux", lab m-pick); an offline one keeps its
     // last-seen time as its only fact, so the line stays short.
@@ -236,7 +276,8 @@ function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReac
     // Under a group that already names the owner, the row reads like one of your own (FIN-DESIGN-REVIEW L5).
     const ownership = ownerNamedByGroup ? null : describeMachineSharedOwnership(machine);
     const platform = presence.online && !ownership ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
-    return [presence.label, ownership, platform, detail].filter(Boolean).join(' · ');
+    // What Send does there ends a reachable row (lab scene 2); an away one keeps its last-seen time alone.
+    return [presence.label, ownership, platform, detail, presence.online ? outcome : null].filter(Boolean).join(' · ');
 }
 
 function buildOptionTestID(testIdPrefix: string | undefined, machine: MachineDisplayRenderable): string | undefined {
@@ -454,6 +495,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     const presenceTargets = React.useMemo(() => params.groups.map(group => ({ serverId: group.serverId,
         machineIds: group.machines.map(machine => machine.id) })), [params.groups]);
     const presenceKey = useMachinePresenceSnapshot(readPresenceMachines, readPresence, presenceTargets);
+    const outcomeClauseFor = useMachineRowOutcomeClauses(params.groups, params.isolationWorkKind);
 
     // The row handlers are BEHAVIOUR, not data, so they are held in a ref and
     // invoked through stable wrappers instead of being memo dependencies.
@@ -1015,6 +1057,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
                         machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared', isFavorite,
                         params.showCliGlyphs, params.autoDetectCliGlyphs, params.showFavorites, favoriteToggle, params.testIdPrefix, scopeForServer(group.serverId),
+                        outcomeClauseFor(group.serverId, machine.id),
                     ], () => ({
                         id: machine.id,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
@@ -1023,7 +1066,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         ...(!presentation?.title && isMachineDisplayNamePending(machine) ? { labelContent: MACHINE_NAME_PENDING_TITLE } : {}),
                         labelEllipsizeMode: 'middle',
                         subtitle: machineStatusLine(machine, scopeForServer(group.serverId), availability.reason ?? presentation?.subtitle,
-                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared'),
+                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared',
+                            outcomeClauseFor(group.serverId, machine.id)),
                         subtitleLeading: (
                             <MachinePresenceDot
                                 machine={machine}
@@ -1122,6 +1166,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         machine, group.serverId, presentation?.title, presentation?.subtitle, machineNames.get(machine.id),
                         availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
                         machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], params.testIdPrefix, scopeForServer(group.serverId),
+                        outcomeClauseFor(group.serverId, machine.id),
                     ], () => ({
                         id: `${group.serverId}::${machine.id}`,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
@@ -1136,6 +1181,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                             machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id],
                             // Any shared machine splits this Home's rows into groups named by owner.
                             machine.isShared === true,
+                            outcomeClauseFor(group.serverId, machine.id),
                         ),
                         subtitleLeading: (
                             <MachinePresenceDot
@@ -1277,6 +1323,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         theme.colors.text.secondary,
         scopeForServer,
         language,
+        outcomeClauseFor,
     ]);
     const managedWakeByServerId = React.useMemo(() => Object.fromEntries(params.groups.map(group => [group.serverId,
         Object.fromEntries(group.machines.flatMap(machine => {

@@ -304,7 +304,123 @@ describe('mounted managed configurator', () => {
     expect(isManagedPoolUnavailableAtReview({ availability: { state: 'known', connectedCount: 0, enabledCount: 1 } }, false)).toBe(false);
   });
 
-  it.each([undefined, 'isolation'] as const)('asks Who can use it only where the preset is not one machine\'s own (presetFor=%s)', async presetFor => {
+  it('authors and saves Docker Sandboxes template and name without native discovery', async () => {
+    const { DOCKER_SANDBOXES_PLUGIN } = await import('../../../../../../../packages/plugins/machine-docker-sandboxes/src/manifest');
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(DOCKER_SANDBOXES_PLUGIN.manifest);
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+      packageName: '@happier-dev/plugins-machine-docker-sandboxes', displayName: manifest.displayName, hasMachineProvisioners: true,
+      entriesById: {}, normalizedManifest: manifest }]));
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://docker-preset-author.example.test',
+      serverIdentityId: 'srv_docker_preset_author', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
+    const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+    if (declarations.kind !== 'available') throw new Error('Expected the bundled Docker declaration');
+    const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.localId === 'docker-sandboxes');
+    if (!selected) throw new Error('Expected the real local Docker descriptor');
+    const { ManagedMachinePresetCreateInputV1Schema, PresetMutationResultV1Schema } =
+      await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    harness.answer(serverId, '/v1/machines/presets/create', { select: value => ({
+      body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: {
+        ...ManagedMachinePresetCreateInputV1Schema.parse(value), revision: 1,
+      } }),
+    }) });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:templateId'), screen.getTextContent()).not.toBeNull());
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      await act(async () => screen.changeTextByTestId('managed-config.field:templateId', 'docker.io/example/template:1'));
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      await act(async () => screen.changeTextByTestId('managed-config.field:name', 'team-sandbox'));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+      const saved = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
+      if (saved.content.t !== 'plain') throw new Error('Expected plain preset content');
+      expect(ManagedMachinePresetContentV1Schema.parse(saved.content.v).launch).toMatchObject({ provider: selected.contribution,
+        choices: { templateId: 'docker.io/example/template:1', name: 'team-sandbox' } });
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+      expect(nativeBoundary.rpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it.each(['launch', 'credential', 'metadata-only'] as const)('authors a complete Agent37 preset launch without executable or native discovery (%s)', async mode => {
+    const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/machine-agent37/src/manifest');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://agent37-preset-author.example.test',
+      serverIdentityId: 'srv_agent37_preset_author', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    await publishPresetEditorDeclaration(serverId, manifest);
+    const { ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-agent37/src/account');
+    const account = { service: { pluginId: manifest.id, localId: ACCOUNT_ID }, accountId: 'agent37-preset-account' };
+    const { QualifiedConnectedAccountListResponseV4Schema } = await import('@happier-dev/protocol/connect/qualified-connected-account-projections');
+    harness.answer(serverId, '/v4/connect/qualified/accounts', { body: QualifiedConnectedAccountListResponseV4Schema.parse({ service: account.service, accounts: [{
+      ref: account, status: 'connected', authenticationModeId: 'token', configurationReady: true,
+      configurationRevision: 'selected-config', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+    }] }) });
+    const { ManagedMachinePresetCreateInputV1Schema, PresetMutationResultV1Schema } =
+      await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    harness.answer(serverId, '/v1/machines/presets/create', { select: value => ({
+      body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: {
+        ...ManagedMachinePresetCreateInputV1Schema.parse(value), revision: 1,
+      } }),
+    }) });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: 'agent37' })} presetOnly
+      {...(mode === 'credential' ? { initialOptionsSelectors: { kind: 'default', size: '2-4', region: 'us' } } : {})} />);
+    try {
+      if (mode === 'metadata-only') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.prepare.switch')).not.toBeNull());
+        expect(screen.findByTestId('managed-config.connect:cloud-api')).toBeNull();
+        expect(nativeBoundary.rpc).not.toHaveBeenCalled();
+        return;
+      }
+      await waitForHomeGovernance(() => expect(harness.requests.filter(request =>
+        new URL(request.path, request.serverUrl).pathname === '/v4/connect/qualified/accounts').length).toBeGreaterThan(0));
+      const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+      const readPicker = () => screen.tree.findAllByType(ActionInputFields).find(node => node.props.fields.some(
+        (field: { path: string }) => node.props.resolveFieldTestID?.(field) === 'managed-config.credential:cloud-api'));
+      await waitForHomeGovernance(() => expect(readPicker(), screen.getTextContent()).toBeDefined());
+      const picker = readPicker();
+      if (!picker) throw new Error('Expected the existing Account selector');
+      await act(async () => picker.props.onPatch({ '0': account }));
+      if (mode === 'launch') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:kind'), screen.getTextContent()).not.toBeNull());
+        for (const [path, value] of Object.entries({ kind: 'default', size: '2-4', region: 'us' })) {
+          await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, JSON.stringify(value)));
+        }
+      }
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+      const saved = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
+      if (saved.content.t !== 'plain') throw new Error('Expected plain preset content');
+      expect(ManagedMachinePresetContentV1Schema.parse(saved.content.v).launch).toMatchObject({
+        provider: { pluginId: manifest.id, localId: 'agent37' }, choices: { kind: 'default', size: '2-4', region: 'us' },
+        credentials: [{ purpose: { consumer: { pluginId: manifest.id, localId: 'agent37' }, purpose: 'cloud-api' }, account }],
+      });
+      expect(harness.requestsFor('/v4/connect/qualified/credential')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+      expect(nativeBoundary.rpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it.each([undefined, 'isolation'] as const)('asks Who can use it and Running at once only where the preset is not one machine\'s own (presetFor=%s)', async presetFor => {
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
     const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
@@ -342,6 +458,9 @@ describe('mounted managed configurator', () => {
       // The add-sandbox sheet makes this machine's own preset (lab decision 3); Machines' New preset asks who can use it.
       if (presetFor === 'isolation') expect(audience).toBeUndefined();
       else expect(audience).toBeDefined();
+      // Nor how many run at once: one machine's own sandbox preset leaves that to its Isolation, as its preset page does.
+      if (presetFor === 'isolation') expect(screen.findByTestId('managed-config.limit')).toBeNull();
+      else expect(screen.findByTestId('managed-config.limit')).not.toBeNull();
     } finally { await screen.unmount(); }
   });
 

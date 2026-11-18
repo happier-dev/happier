@@ -16,7 +16,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { machinePresetEditDraftUpdatePatch } from '@/sync/domains/machines/presets/machinePresetEditDraft';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
@@ -82,7 +82,10 @@ function MachinePresetPrepareSection(props: Readonly<{
         || operation !== null && !isActionOperationTerminal(operation.snapshot.state));
     const retry = preparation.interrupted || preparation.reportedStatus === 'failed' || preparation.reportedStatus === 'cancelled'
         || operation?.snapshot.state === 'failed' || operation?.snapshot.state === 'cancelled';
+    // A settled build whose image is reported ready says so (lab scene 5 "Image ready"), not its operation's generic word.
+    const settledReady = preparation.reportedStatus === 'ready' && !active && !retry;
     const status = preparation.error ? t('ui.pluginUi.actionFailed') : preparation.interrupted ? t('voiceAssistant.interrupted')
+        : settledReady ? t('machinePresets.prepareReady')
         : operation
             ? describeActionOperationStatusLabel(resolveActionOperationStatus(operation.snapshot, operation.observation).label)
             : preparation.awaitingOperation ? t('inbox.actionOperations.status.accepted')
@@ -92,11 +95,11 @@ function MachinePresetPrepareSection(props: Readonly<{
                             : t('machinePresets.prepareNotBuilt');
     const disabled = !props.canManage || props.busy || preparation.pending;
     const built = preparation.reportedStatus === 'ready';
-    const action = preparation.canCancel ? <RoundButton testID="machine-preset.preparation.stop" size="small" display="secondary"
+    // The row's operations are quiet section actions that keep to their label's line (lab scene 5 "a quiet Rebuild").
+    const action = preparation.canCancel ? <SectionActionButton testID="machine-preset.preparation.stop"
             title={t('common.stop')} disabled={disabled || preparation.stopControl.pending || preparation.stopControl.stopRequested}
             loading={preparation.stopControl.pending} onPress={preparation.stopControl.requestStop} />
-        : !active ? <RoundButton testID={retry ? 'machine-preset.preparation.retry' : 'machine-preset.preparation.prepare'}
-            size="small" display="secondary"
+        : !active ? <SectionActionButton testID={retry ? 'machine-preset.preparation.retry' : 'machine-preset.preparation.prepare'}
             title={retry || preparation.error ? t('common.retry') : built ? t('machinePresets.prepareRebuild') : t('machinePresets.prepareBuild')}
             disabled={disabled || machineId === null} loading={preparation.pending}
             onPress={() => fireAndForget(preparation.prepare(), { tag: 'MachinePresetView.prepare' })} /> : null;
@@ -122,7 +125,7 @@ function MachinePresetPrepareSection(props: Readonly<{
         {showsImage ? <Item testID="machine-preset.preparation" title={building ? t('machinePresets.prepareBuilding') : status}
             {...(statusLine ? { subtitle: statusLine } : {})}
             subtitleLines={0} mode="info" showChevron={false}
-            loading={active && steps.length === 0} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
+            loading={active && steps.length === 0} rightElement={action ?? undefined} /> : null}
         {showsImage && steps.length > 0 ? <SectionContentRow testID="machine-preset.preparation.steps" continuesRow>
             <SetupSteps variant="compact" steps={steps} testID="machine-preset.preparation.step" />
         </SectionContentRow> : null}

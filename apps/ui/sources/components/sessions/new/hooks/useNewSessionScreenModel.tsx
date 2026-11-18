@@ -3124,7 +3124,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [draftActions.setDirectory]);
     // No folder is a machine target's choice; a Temporary computer's endpoint chooses its folder.
     const offersNoFolder = executionTarget?.kind === 'machine' && !directoryIntentFixed;
+    // The work this draft starts, for the isolation owner: the picker rows and the outcome line read the same kind.
+    const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
+    const isolationWorkKind = isBotDraft ? 'botsChannels' : 'sessions';
     const { pathPopover: composerPathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
+        isolationWorkKind,
         managedPlacementPreset,
         managedPlacementSourceLabel: managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource, inheritedSourceNames) : null,
         machineInventory: useEnhancedSessionWizard ? undefined : {
@@ -4416,9 +4420,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // A docked card has no page around it: with nothing to report, its status row names it (the folded pill's
     // name), so the draft actions beside it read as the card's header row, as a Session's status row does.
     const dockedComposer = embeddedHost?.kind === 'docked';
-    const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
     const proposedIsolationOutcome = useMachineIsolationProposedOutcome(isolationSnapshot,
-        isBotDraft ? 'botsChannels' : 'sessions', isolationOverride);
+        isolationWorkKind, isolationOverride);
     const composerConnectionStatus = React.useMemo(() => {
         if (!connectionStatus && !launchStatus.line && dockedComposer) {
             return { text: isBotDraft ? t('bots.new') : t('sessionDrafts.new.action'), color: theme.colors.text.secondary,

@@ -5,6 +5,7 @@ import { SelectionList, resolvePopoverSelectionListHeightBehavior, type Selectio
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
 
 import type { ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import {
@@ -91,6 +92,8 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
      * marked while it holds, as the folder picker's "No folder".
      */
     defaultOption?: MachineSelectionDefaultOption;
+    /** The work a Session started from this list is; each reachable row then says what it does there (lab scene 2). */
+    isolationWorkKind?: MachineIsolationWorkKind;
 }>;
 
 export type MachineSelectionDefaultOption = Readonly<{
@@ -150,6 +153,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
         favoriteGroupPlacement: 'afterRecent',
         testIdPrefix: props.testIdPrefix,
+        isolationWorkKind: props.isolationWorkKind,
     });
 
     const defaultOption = props.defaultOption;

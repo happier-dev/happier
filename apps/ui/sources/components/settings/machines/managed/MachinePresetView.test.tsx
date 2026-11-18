@@ -3097,6 +3097,16 @@ describe('reachable preset detail', () => {
       const text = screen.getTextContent();
       expect(text).toContain(formatAsOfTime(builtAt));
       expect(text).toMatch(/\b7\b/);
+      // Once the build's own operation is read back settled, the row still says the image is ready (lab
+      // "Image ready"), not the operation's generic word.
+      const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+      const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), snapshots: [{
+        version: 1, operationId: 'dated-image-build', revision: 3, actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, state: 'succeeded',
+        scope: { accountId: 'owner', machineId: 'original-builder' }, title: 'Prepare preset', createdAt: 1, startedAt: 2, settledAt: 3,
+        cancellation: 'supported', progress: { kind: 'indeterminate', steps: [] } }] }));
+      await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'machine-preset.preparation' && typeof node.props.title === 'string')[0]?.props.title)
+        .toBe(t('machinePresets.prepareReady')));
     } finally { await screen.unmount(); }
   });
 

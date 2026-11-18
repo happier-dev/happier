@@ -38,6 +38,7 @@ import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/
 import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { RunnerArtifactTarget } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
 
 /**
  * Where a Session runs, as New Session asks it: the Machine popover and the folder popover. They are
@@ -207,6 +208,8 @@ export type SessionMachineChoiceParams = Readonly<{
   awayMachinesChoosable?: boolean;
   /** The host's choice that is no particular Machine, listed first ("Your usual Machine"). */
   defaultChoice?: Omit<MachineSelectionDefaultOption, 'onSelect'> & Readonly<{ onChoose: () => void }>;
+  /** The work a Session started here is; each reachable Machine row then says what it does there. */
+  isolationWorkKind?: MachineIsolationWorkKind;
 }>;
 
 /** The Machine popover New Session's Machine chip opens; any host's Machine chip opens the same. */
@@ -277,6 +280,7 @@ export function useSessionMachineChoicePopover(
     currentUiContextCommandScope: params.currentUiContextCommandScope,
     awayMachinesChoosable: params.awayMachinesChoosable === true,
     defaultChoice: params.defaultChoice,
+    isolationWorkKind: params.isolationWorkKind,
   });
 
   const machinePopoverSignature = React.useMemo(
@@ -295,6 +299,7 @@ export function useSessionMachineChoicePopover(
         managedPlacementPreset: params.managedPlacementPreset,
         useMachinePickerSearch: params.useMachinePickerSearch === true,
         awayMachinesChoosable: params.awayMachinesChoosable === true,
+        isolationWorkKind: params.isolationWorkKind ?? null,
         defaultChoice: params.defaultChoice ? { title: params.defaultChoice.title, subtitle: params.defaultChoice.subtitle, selected: params.defaultChoice.selected } : null,
         temporaryComputerTargets:
           params.temporaryComputers?.availability.status === 'available'
@@ -323,6 +328,7 @@ export function useSessionMachineChoicePopover(
       params.temporaryComputers?.availability,
       params.useMachinePickerSearch,
       params.awayMachinesChoosable,
+      params.isolationWorkKind,
       params.defaultChoice?.title,
       params.defaultChoice?.subtitle,
       params.defaultChoice?.selected,
@@ -408,6 +414,7 @@ export function useSessionMachineChoicePopover(
             recentMachines={renderParams.recentMachines}
             favoriteMachines={renderParams.favoriteMachineItems}
             serverId={renderParams.selectedServerId}
+            isolationWorkKind={renderParams.isolationWorkKind}
             onSelectMachine={(machine) => {
               renderParams.machinePoolSelection.cancelPendingSelection();
               renderParams.selectMachineTarget(

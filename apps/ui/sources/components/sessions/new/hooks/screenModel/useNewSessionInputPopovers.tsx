@@ -24,6 +24,7 @@ import { type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer, t
 import type { SessionPlacementCandidateRow } from '@/components/sessions/new/serverStartDraftCandidateSelection';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { NewSessionMachinePickerInventory } from './useNewSessionMachinePickerInventory';
+import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
 
 type ExternalSessionBrowseLockContext = Parameters<typeof resolveExternalSessionBrowseLockedSource>[0];
 
@@ -96,6 +97,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
     onOpenMachinePresets?: () => void;
     /** Existing Add a machine route, the machine list's last row. */
     onOpenAddMachine?: () => void;
+    /** The work this draft starts; each reachable Machine row says what it does there. */
+    isolationWorkKind?: MachineIsolationWorkKind;
     targetServerId: string | null;
     externalSessionsFeatureEnabled: boolean;
     resumeSessionId: string;
@@ -160,6 +163,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         temporaryComputers,
         onOpenMachinePresets: params.onOpenMachinePresets,
         onOpenAddMachine: params.onOpenAddMachine,
+        isolationWorkKind: params.isolationWorkKind,
     });
 
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {

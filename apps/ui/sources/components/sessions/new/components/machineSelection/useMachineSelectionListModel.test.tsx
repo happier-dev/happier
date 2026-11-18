@@ -387,6 +387,37 @@ describe('useMachineSelectionListModel', () => {
         } finally { await rendered.unmount(); vi.useRealTimers(); }
     });
 
+    it('ends each reachable Machine row with what a new session does there, from the isolation owner (lab scene 2)', async () => {
+        const policy = { configuredSandboxes: { node: { provisioner: { pluginId: 'example.sandbox', localId: 'docker' }, presetId: 'preset-node' } },
+            workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'node', lifecycle: 'fresh' },
+                botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } as const;
+        const sandboxed: Machine = { ...createMachine('sandboxed'), metadata: { ...createMachine('sandboxed').metadata!, isolationPolicyV1: policy } };
+        const direct = createMachine('direct');
+        const away: Machine = { ...createMachine('away'), active: false, activeAt: 1, metadata: { ...createMachine('away').metadata!, isolationPolicyV1: policy } };
+        const group = { serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false,
+            machines: [sandboxed, direct, away].map(createScopedMachine) };
+        const params = (isolationWorkKind?: 'sessions'): BuildMachineSelectionListModelParams => ({
+            groups: [group], selectedMachine: null, selectedServerId: 'server-a', recentMachines: [], favoriteMachines: [],
+            showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+            onSelectMachine: vi.fn(), onSelectScopedMachine: vi.fn(), ...(isolationWorkKind ? { isolationWorkKind } : {}),
+        });
+        const subtitles = (model: ReturnType<typeof UseMachineSelectionListModel>) => new Map(model.rootStep.sections
+            .flatMap(section => section.kind === 'static' ? section.options : []).map(option => [option.id.split('::').pop(), option.subtitle]));
+        const picker = await renderHook(() => useMachineSelectionListModel(params('sessions')));
+        try {
+            const rows = subtitles(picker.getCurrent());
+            expect(rows.get('sandboxed')).toContain('machineDetailPage.isolation.outcome.rowFresh');
+            expect(rows.get('direct')).toContain('machineDetailPage.isolation.outcome.rowDirectly');
+            // An away Machine keeps its last-seen time as its only fact.
+            expect(rows.get('away')).not.toContain('machineDetailPage.isolation.outcome');
+        } finally { await picker.unmount(); }
+        // A host that starts no Session (a settings scope chip) asks for no clause.
+        const scope = await renderHook(() => useMachineSelectionListModel(params()));
+        try {
+            expect([...subtitles(scope.getCurrent()).values()].join('\n')).not.toContain('machineDetailPage.isolation.outcome');
+        } finally { await scope.unmount(); }
+    });
+
     it.each(['all', 'recent', 'favorites', 'shared'] as const)('agrees on %s row admission, pinned buckets and the automatic shortcut after request failure/recovery', async placement => {
         const machine: Machine = { ...createMachine('reachable-machine'), ...(placement === 'shared' ? {
             isShared: true, access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,

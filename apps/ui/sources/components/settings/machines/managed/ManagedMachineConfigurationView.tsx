@@ -113,8 +113,10 @@ const MORE_TEAMS = '__more-teams';
 
 export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
-    /** A preset authored for one machine's Isolation (the add-sandbox sheet) is that machine's own: no Who can use it. */
+    /** A preset authored for one machine's Isolation (the add-sandbox sheet) is that machine's own: no Who can use it or Running at once. */
     presetFor?: 'isolation';
+    /** Isolation asks the selected launch's canonical declaration for local hosting. */
+    sessionPlacement?: 'controller-local';
     /** Exact caller-supplied native query; never inferred from the viewing device's filesystem. */
     initialOptionsSelectors?: Readonly<Record<string, unknown>>;
     initialEnrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
@@ -1303,7 +1305,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {draft && props.presetOnly ? <MachineSetupSection testID="managed-config.setup" setup={draft.setup} name={draft.name}
             editable={!!catalogProvisioner && catalogPlacementAvailable && !busy} scope={activeBinding?.scope ?? null}
             onChange={setup => setDraft(current => current ? { ...current, setup } : current)} /> : null}
-        {draft && props.presetOnly ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={presentation.billing?.location === 'local' ? undefined : t('machinePresets.limitHelp')}>
+        {draft && props.presetOnly && catalogProvisioner?.descriptor.preparation ? <ItemGroup
+            testID="managed-config.prepare" description={t('machinePresets.prepareAheadHelp')}>
+            <Item testID="managed-config.prepare.row" title={t('machinePresets.prepareAhead')} showChevron={false}
+                rightElement={<Switch testID="managed-config.prepare.switch" accessibilityLabel={t('machinePresets.prepareAhead')}
+                    value={draft.preparation?.enabled === true} disabled={busy || !teamWritable}
+                    onValueChange={enabled => setDraft(current => current ? { ...current, preparation: { ...current.preparation, enabled } } : current)} />} />
+        </ItemGroup> : null}
+        {draft && props.presetOnly && props.presetFor !== 'isolation' ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={presentation.billing?.location === 'local' ? undefined : t('machinePresets.limitHelp')}>
             <ManagedFieldRow testID="managed-config.limit" row={managedPresetLimitRow({ limit, disabled: busy,
                 onChange: next => { if (activeBinding?.isCurrent()) setLimit(next); } })} />
         </ItemGroup> : null}
