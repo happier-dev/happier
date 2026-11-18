@@ -30,7 +30,7 @@ import {
 } from "@/app/kv/accountScopedKv";
 import { ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE } from "@/app/encryption/accountEncryptionTransitionCoordinator";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { backfillPluginCollectionUsageTotalsInTx } from "./collections/usageTotals";
 import { assertPluginCollectionUsageTotalsMatchRows } from "./collections/usageTotals.testkit";
 import { observePrismaReads } from "@/testkit/observePrismaReads";
@@ -432,6 +432,83 @@ describe("plugin Account data erasure", () => {
         expect(await deleteAccountForErasure({ accountId: custodianId })).toEqual({ status: 'already-deleted' });
         expect(machineWakes()).toEqual([]);
         await db.team.deleteMany({ where: { id: { in: [team.id, grantedTeam.id] } } });
+    });
+
+    it('reads erased resource audiences and socket bindings as sets and keeps a foreign Machine binding', async () => {
+        const { deleteAccountForErasure } = await import('./accountDataErase');
+        const [target, requester] = ['batch-binding-target', 'batch-binding-requester'];
+        await createPlainAccount(target);
+        await createPlainAccount(requester);
+        const session = await db.session.create({ data: {
+            accountId: requester, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
+        } });
+        const machineIds = Array.from({ length: 8 }, () => crypto.randomUUID());
+        const retained = crypto.randomUUID();
+        await db.machine.createMany({ data: [...machineIds, retained].map(id => ({
+            id, accountId: id === retained ? requester : target, metadata: '{}',
+        })) });
+        await db.accessKey.createMany({ data: [...machineIds, retained].map(machineId => ({
+            machineId, accountId: requester, sessionId: session.id, data: 'fixture',
+        })) });
+        const discussionIds = Array.from({ length: 8 }, () => crypto.randomUUID());
+        await db.discussion.createMany({ data: discussionIds.map(id => ({
+            id, ownerAccountId: target, createdByAccountId: target, creationLocalId: id,
+            encryptionMode: 'plain', dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
+            titleContent: { t: 'plain', v: { v: 1, title: 'Erasure audience' } }, lastMessageAt: new Date(),
+            creationEqualityEvidenceV1: { kind: 'plainDigest', digest: 'A'.repeat(43) },
+        })) });
+
+        const disconnect = vi.spyOn(eventRouter, 'disconnectMachineAndSessionSockets');
+        const original = db.$transaction;
+        const reads: string[] = [];
+        let machineAudienceReads = 0;
+        let discussionAudienceReads = 0;
+        db.$transaction = new Proxy(original, { apply(fn, receiver, args) {
+            const [callback, options] = args;
+            if (typeof callback !== 'function') return Reflect.apply(fn, receiver, args);
+            return Reflect.apply(fn, receiver, [(tx: Tx) => {
+                const observed = observePrismaReads(tx, ['accessKey']);
+                const traced = new Proxy(observed.tx, { get(target, property, receiver) {
+                    const value = Reflect.get(target, property, receiver);
+                    if (property === '$queryRawUnsafe') {
+                        return (...args: unknown[]) => {
+                            if (typeof args[0] === 'string' && args[0].includes('FROM selected s LEFT JOIN audience')) {
+                                machineAudienceReads += 1;
+                            }
+                            return Reflect.apply(value, target, args);
+                        };
+                    }
+                    if (property !== 'discussion') return value;
+                    return new Proxy(tx.discussion, { get(delegate, method, receiver) {
+                        const query = Reflect.get(delegate, method, receiver);
+                        if (method !== 'findMany') return query;
+                        return (args: Prisma.DiscussionFindManyArgs) => {
+                            if (args.select?.grants && args.select?.ownerAccount) discussionAudienceReads += 1;
+                            return Reflect.apply(query, delegate, [args]);
+                        };
+                    } });
+                } });
+                return Promise.resolve(callback(traced)).finally(() => reads.push(...observed.reads));
+            }, options]);
+        } });
+        try {
+            expect(await deleteAccountForErasure({ accountId: target })).toEqual({ status: 'deleted' });
+            expect(await db.accessKey.findMany({ where: { sessionId: session.id }, select: { machineId: true } }))
+                .toEqual([{ machineId: retained }]);
+            expect(await db.discussion.count({ where: { id: { in: discussionIds } } })).toBe(0);
+            const disconnected = new Map(disconnect.mock.calls.map(([input]) => [input.machineId, input.sessionBindings]));
+            expect(disconnected).toEqual(new Map(machineIds.map(id => [id, [
+                { accountId: requester, sessionId: session.id },
+            ]])));
+            expect({
+                socketBindingReads: reads.filter(read => read === 'accessKey.findMany').length,
+                machineAudienceUsesSetReads: machineAudienceReads > 0 && machineAudienceReads < machineIds.length,
+                discussionAudienceUsesSetReads: discussionAudienceReads > 0 && discussionAudienceReads < discussionIds.length,
+            }).toEqual({ socketBindingReads: 1, machineAudienceUsesSetReads: true, discussionAudienceUsesSetReads: true });
+        } finally {
+            db.$transaction = original;
+            disconnect.mockRestore();
+        }
     });
 
     it('publishes authored Machine-grant withdrawal before the erased grant creator cascades away', async () => {

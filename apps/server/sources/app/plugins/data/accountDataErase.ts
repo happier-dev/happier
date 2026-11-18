@@ -8,8 +8,8 @@ import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './c
 
 import { acquireAccountChangePublicationLocksInTx, enqueueAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { withdrawPublicProfileInTx } from '@/app/account/profile/publicProfileWithdrawal';
-import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
-import { resolveCurrentMachineRecipientAccountIdsInTx } from "@/app/machines/machineAccess";
+import { readMachineAccessKeySessionBindingsByMachineInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { readMachineAudienceAccountIdsForMachinesInTx } from "@/app/machines/machineRecipientWork";
 import { applyMachineAccessImpactsInTx, captureMachineAccessImpactsInTx, readMachineAccessGrantsForAccountErasureInTx } from "@/app/machines/machineAccessEffects";
 import { eventRouter } from "@/app/events/eventRouter";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
@@ -29,7 +29,7 @@ import { SessionDeleteConditionLostError } from "@/app/session/delete/deleteSess
 import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { eraseSessionAccessGrantsForAccountInTx, readSessionAccessGrantsForAccountErasureInTx } from "@/app/session/access/sessionAccessGrantService";
 import { eraseDiscussionAccessGrantsForAccountInTx, readDiscussionAccessGrantsForAccountErasureInTx } from "@/app/discussions/accessService";
-import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
+import { resolveDiscussionAudiencesInTx } from "@/app/discussions/access";
 import { assertTeamOwnershipAllowsAccountErasureInTx } from "@/app/teams/memberships/erasurePrecondition";
 import { purgeRetiredAccountDeploymentGraphInTx } from "@/app/deployments/deploymentAccountPurge";
 import { publishAccountTeamMembershipsChangedInTx } from "@/app/teams/teamChanges";
@@ -657,8 +657,8 @@ async function readAccountErasureScopeInTx(tx: Tx, accountId: string) {
     // Admit their current audience before lifecycle locks, even when a foreign
     // grant creator no longer has access to the Machine it once shared.
     const machineIds = machines.sort();
-    const machineAccountIds = [...new Set((await Promise.all(machineIds.map(machineId =>
-        resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)))).flat())].sort();
+    const machineAudiences = await readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds);
+    const machineAccountIds = [...new Set([...machineAudiences.values()].flat())].sort();
     const ownedSessionIds = ownedSessions.map(session => session.id);
     // Deleting an owned Session retires its scoped Automations through their
     // real owner, including review, Run, Follow and managed-wake projections.
@@ -667,7 +667,7 @@ async function readAccountErasureScopeInTx(tx: Tx, accountId: string) {
     }, select: { id: true } });
     const automationIds = scopedAutomations.map(automation => automation.id);
     const [discussionAudiences, workflowAudience, runners] = await Promise.all([
-        Promise.all(discussions.map(discussion => resolveDiscussionAudienceInTx(tx, discussion.id))),
+        resolveDiscussionAudiencesInTx(tx, discussions.map(discussion => discussion.id)),
         getWorkflowPublicationAudienceInTx(tx, { accountId, automationIds,
             runWhere: { accountId, automationId: { in: automationIds } } }),
         tx.ephemeralRunnerActivation.findMany({ where: {
@@ -685,7 +685,7 @@ async function readAccountErasureScopeInTx(tx: Tx, accountId: string) {
             ...responsibilitySessionIds, ...workflowAudience.sessionIds,
             ...runnerAudiences.flatMap(audience => audience.sessionIds)])].sort(),
         discussionIds: discussions.map(discussion => discussion.id).sort(),
-        accountIds: [...new Set([accountId, ...machineAccountIds, ...discussionAudiences.flat(), ...workflowAudience.accountIds,
+        accountIds: [...new Set([accountId, ...machineAccountIds, ...[...discussionAudiences.values()].flat(), ...workflowAudience.accountIds,
             ...runners.map(runner => runner.creatorAccountId), ...runnerAudiences.flatMap(audience => audience.accountIds)])].sort(),
     };
 }
@@ -939,13 +939,10 @@ export async function deleteAccountForErasure(input: Readonly<{
             machineIds: erasureScope.machineIds,
             accountIds: erasureScope.machineAccountIds.filter(accountId => accountId !== input.accountId),
         });
-        const erasedMachineBindings = await Promise.all(machines.map(async (machine) => ({
-            machineId: machine.id,
-            sessionBindings: await readMachineAccessKeySessionBindingsInTx(tx, {
-                accountId: input.accountId,
-                machineId: machine.id,
-            }),
-        })));
+        const erasedMachineBindings = await readMachineAccessKeySessionBindingsByMachineInTx(tx, {
+            accountId: input.accountId,
+            machineIds: machines.map(machine => machine.id),
+        });
         const sessions = await tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true }, orderBy: { id: "asc" } });
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await eraseSessionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
@@ -997,10 +994,11 @@ export async function deleteAccountForErasure(input: Readonly<{
             grantRosterChanged: removedMachineGrants.count > 0,
         });
         afterTx(tx, () => {
-            for (const binding of erasedMachineBindings) {
+            for (const machine of machines) {
                 eventRouter.disconnectMachineAndSessionSockets({
                     accountId: input.accountId,
-                    ...binding,
+                    machineId: machine.id,
+                    sessionBindings: erasedMachineBindings.get(machine.id) ?? [],
                 });
             }
         });

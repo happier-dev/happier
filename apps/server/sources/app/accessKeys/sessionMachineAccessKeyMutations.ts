@@ -1,6 +1,7 @@
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx, type MachineAdmissionFacts } from "@/app/machines/machineAccess";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { isPrismaErrorCode } from "@/storage/db";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
@@ -134,13 +135,29 @@ export async function readMachineAccessKeySessionBindingsInTx(
     tx: Tx,
     binding: Readonly<{ accountId: string; machineId: string }>,
 ): Promise<Readonly<{ accountId: string; sessionId: string }>[]> {
-    return tx.accessKey.findMany({
-        where: {
-            machineId: binding.machineId,
-            machine: { accountId: binding.accountId },
-        },
-        select: { accountId: true, sessionId: true },
+    const bindings = await readMachineAccessKeySessionBindingsByMachineInTx(tx, {
+        accountId: binding.accountId, machineIds: [binding.machineId],
     });
+    return bindings.get(binding.machineId) ?? [];
+}
+
+export async function readMachineAccessKeySessionBindingsByMachineInTx(
+    tx: Tx,
+    input: Readonly<{ accountId: string; machineIds: readonly string[] }>,
+): Promise<ReadonlyMap<string, Readonly<{ accountId: string; sessionId: string }>[]>> {
+    const bindings = new Map<string, Readonly<{ accountId: string; sessionId: string }>[]>();
+    for (const machineIds of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.accessKey.findMany({
+            where: { machineId: { in: [...machineIds] }, machine: { accountId: input.accountId } },
+            select: { machineId: true, accountId: true, sessionId: true },
+        });
+        for (const { machineId, ...binding } of rows) {
+            const machineBindings = bindings.get(machineId);
+            if (machineBindings) machineBindings.push(binding);
+            else bindings.set(machineId, [binding]);
+        }
+    }
+    return bindings;
 }
 
 export async function createSessionMachineAccessKeyInTx(

@@ -32,11 +32,11 @@ import { applyResourceRecipientKeyEnvelopesInTx, mayManageResourceGrants, projec
     type ResourceRecipientEnvelopeStorageAdapter } from "@/app/teams/resourceGrantAccess";
 import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
-import { acquireDiscussionMutationAccountsInTx, discussionContextStorageAdapter, discussionGrantStorageAdapter, isDiscussionAccountCredentialAdmittedInTx, resolveDiscussionAudienceInTx,
+import { acquireDiscussionMutationAccountsInTx, discussionContextStorageAdapter, discussionGrantStorageAdapter, isDiscussionAccountCredentialAdmittedInTx, resolveDiscussionAudienceInTx, resolveDiscussionAudiencesInTx,
     resolveDiscussionContextInTx, type DiscussionStorageMode } from "./access";
 import { discussionFailure, discussionSuccess, type DiscussionResult } from "./serviceTypes";
 import { initializeDiscussionCursorsOnGrantEntryInTx } from "./trackingEntry";
-import { markDiscussionReadersChangedInTx, scheduleDiscussionBadgeRefreshInTx } from "./changes";
+import { markDiscussionAudiencesChangedInTx, markDiscussionReadersChangedInTx, scheduleDiscussionBadgeRefreshInTx } from "./changes";
 import { attachDiscussionFollowSourceInTx, detachDiscussionFollowSourceInTx } from "@/app/session/follow/sessionFollowEdgeService";
 import { withdrawDiscussionInputRepliesInTx } from "@/app/session/messages/sessionMessageReply";
 import { admitDiscussionSecondOpinionSourceInTx, admitDiscussionSecondOpinionGrantInTx } from './secondOpinion';
@@ -662,13 +662,15 @@ export async function reconcileDiscussionGrantAudienceForTeamsInTx(tx: Tx, input
 /** Account erasure preserves other people's grants while retiring its own authority and private state. */
 export async function eraseDiscussionAccessGrantsForAccountInTx(tx: Tx, input: Readonly<{ accountId: string }>): Promise<void> {
     const rows = await readDiscussionAccessGrantsForAccountErasureInTx(tx, input.accountId);
+    const owned = await resolveDiscussionAudiencesInTx(tx,
+        rows.filter(row => row.ownerAccountId === input.accountId).map(row => row.id));
+    await markDiscussionAudiencesChangedInTx(tx, owned, true);
+    for (const accountIds of owned.values()) {
+        scheduleDiscussionBadgeRefreshInTx({ tx, accountIds: accountIds.filter(accountId => accountId !== input.accountId) });
+    }
     for (const row of rows) {
+        if (row.ownerAccountId === input.accountId) continue;
         const previousAudience = await resolveDiscussionAudienceInTx(tx, row.id);
-        if (row.ownerAccountId === input.accountId) {
-            await markDiscussionReadersChangedInTx({ tx, discussionId: row.id, additionalAccountIds: previousAudience.filter(accountId => accountId !== input.accountId), accessChanged: true });
-            scheduleDiscussionBadgeRefreshInTx({ tx, accountIds: previousAudience.filter(accountId => accountId !== input.accountId) });
-            continue;
-        }
         const where = { discussionId: row.id, createdByAccountId: input.accountId };
         const data = { createdByAccountId: row.ownerAccountId };
         await tx.discussionGrant.updateMany({ where, data });
