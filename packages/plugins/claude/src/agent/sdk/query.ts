@@ -601,6 +601,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         const materializedMcpConfig = materializeClaudeMcpConfigArgsForSpawn(
             buildClaudeArgs(this.config.prompt, options),
             this.ctx.reportArtifactCleanupFailure,
+            ['--mcp-config', '--settings'],
         );
         let startup: ReturnType<typeof materializeClaudeStartupInstructions> | undefined;
         try {

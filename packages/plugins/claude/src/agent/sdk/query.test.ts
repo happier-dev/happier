@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -95,6 +96,9 @@ async function* prompt() {
         message: { role: 'user', content: 'hello' },
     } satisfies SDKMessage;
 }
+
+/** The merged `--settings` Claude receives: SDK launches pass it through a private file. */
+const readSettingsArg = (args: readonly string[]): unknown => JSON.parse(readFileSync(args[args.indexOf('--settings') + 1] ?? '', 'utf8'));
 
 describe('Claude plugin SDK query', () => {
     it('accepts the exact native started receipt before generation or a replayed user message', async () => {
@@ -254,7 +258,7 @@ describe('Claude plugin SDK query', () => {
         const args = spawnClient.mock.calls[0]?.[0].launch.args ?? [];
         expect(args.filter(arg => arg === '/session/happier')).toHaveLength(1);
         expect(args.filter(arg => arg === '/session/hooks')).toHaveLength(1);
-        expect(JSON.parse(args[args.indexOf('--settings') + 1])).toMatchObject({ skillOverrides: { retained: 'on', blocked: 'off' } });
+        expect(readSettingsArg(args)).toMatchObject({ skillOverrides: { retained: 'on', blocked: 'off' } });
         await running.dispose();
     });
 
@@ -360,7 +364,7 @@ describe('Claude plugin SDK query', () => {
         expect(args).not.toContain('--allowed-tools');
         expect(args).not.toContain('--permission-mode=bypassPermissions');
         expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
-        expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '')).toMatchObject({ permissions: {
+        expect(readSettingsArg(args)).toMatchObject({ permissions: {
             allow: [], defaultMode: 'dontAsk', disableBypassPermissionsMode: 'disable',
         } });
         await running.dispose();
@@ -469,7 +473,7 @@ describe('Claude plugin SDK query', () => {
         });
 
         const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
-        const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+        const settings = readSettingsArg(args) as Record<string, unknown>;
         expect(settings.ultracode).toBe(true);
         if (pool) expect(settings.autoContinueAtUsageLimit).toBe(false);
         else expect(settings).not.toHaveProperty('autoContinueAtUsageLimit');
@@ -523,6 +527,31 @@ describe('Claude plugin SDK query', () => {
             await unlink(unexpected).catch(() => undefined);
             await rmdir(dirname(configPath)).catch(() => undefined);
         }
+    });
+
+    // Merged hook and permission settings measured 30,091 characters with 1,470 quotes on a native
+    // Windows Agent SDK turn: inline, the spawn failed with ENAMETOOLONG (32,767-character limit).
+    it('passes the merged launch settings through a private file removed at exit', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+        const sdkQuery = query(ctx, {
+            prompt: prompt(),
+            options: { settingsJson: JSON.stringify({ ultracode: true }) },
+        });
+        await spawnClient.mock.results[0]?.value;
+
+        const launch = spawnClient.mock.calls[0]?.[0].launch;
+        const args = launch?.args as string[];
+        expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+        const settingsPath = args[args.indexOf('--settings') + 1]!;
+        expect(settingsPath.trim().startsWith('{')).toBe(false);
+        expect(launch?.requiredFiles).toContain(settingsPath);
+        expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toMatchObject({ ultracode: true });
+
+        const completion = sdkQuery.next();
+        await stream.exitWith({ exitCode: 0, signal: null });
+        await expect(completion).resolves.toEqual({ done: true, value: undefined });
+        await expect(stat(settingsPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await rmdir(dirname(settingsPath)).catch(() => undefined);
     });
 
     it('removes a materialized MCP config when the query is disposed before process exit', async () => {
@@ -585,9 +614,8 @@ describe('Claude plugin SDK query', () => {
         expect(args.filter(arg => arg === '--permission-mode')).toHaveLength(1);
         expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
         expect(args.filter(arg => arg === '--permission-prompt-tool')).toHaveLength(1);
-        const settingsIndex = args.indexOf('--settings');
-        expect(settingsIndex).toBeGreaterThanOrEqual(0);
-        expect(JSON.parse(args[settingsIndex + 1] ?? '')).toEqual({
+        expect(args.indexOf('--settings')).toBeGreaterThanOrEqual(0);
+        expect(readSettingsArg(args)).toEqual({
             ultracode: true,
             sandbox: { enabled: true },
         });

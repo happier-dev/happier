@@ -55,8 +55,8 @@ const MATERIALIZED_JSON_FLAG_PREFIXES = {
  *
  * Claude accepts JSON or a file path for both flags. Existing file paths remain untouched; only
  * inline JSON is materialized, so secret-bearing MCP configuration never reaches process argv.
- * Terminal launches also materialize `--settings`: their merged settings exceed Windows'
- * command-line limit.
+ * Claude launches (terminal and Agent SDK) also materialize `--settings`: their merged settings
+ * exceed Windows' command-line limit.
  */
 export function materializeClaudeMcpConfigArgsForSpawn(
     inputArgs: readonly string[],
