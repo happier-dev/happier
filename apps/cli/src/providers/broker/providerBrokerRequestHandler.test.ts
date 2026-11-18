@@ -106,19 +106,14 @@ describe('createProviderBrokerRequestHandler', () => {
         } })).resolves.toMatchObject({ ok: false, reasonCode: 'broker_unavailable', failureCause });
     });
 
-    it('reports the managed carrier size refusal as an observable HTTP 413', async () => {
+    it('retains the managed carrier size refusal for the broker HTTP writer', async () => {
         const handle = createProviderBrokerRequestHandler({ ...handlerSecurity,
             admit: async () => ({ ok: true, access: { endpointUrl: () => 'http://127.0.0.1:1234',
                 request: async () => { throw new PluginError({ code: 'plugin_managed_service_request_too_large',
                     details: { resource: 'body_bytes', limit: 16 * 1024 * 1024, actual: 16 * 1024 * 1024 + 1 } }); } } }),
         });
         const result = await handle({ context, request });
-        expect(result).toMatchObject({ ok: true, response: { status: 413,
-            headers: { 'x-happier-provider-broker-error-code': 'request_too_large' } } });
-        if (!result.ok) throw new Error('expected transport size response');
-        expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).json()).toMatchObject({ error: {
-            code: 'request_too_large', type: 'invalid_request_error',
-        } });
+        expect(result).toEqual({ ok: false, reasonCode: 'request_too_large' });
     });
 
     it('authorizes model-list metadata against current Home facts without request admission or provider access', async () => {

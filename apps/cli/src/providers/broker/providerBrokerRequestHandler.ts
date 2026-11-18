@@ -43,7 +43,7 @@ async function requestProviderAccess(
     } catch (error) {
         if (error instanceof ProviderBrokerApplicationFailureError) return error.failure;
         const failure = readProviderBrokerTransportFailure(error);
-        if (failure) return { ok: true, response: failure };
+        if (failure) return failure;
         throw error;
     }
 }

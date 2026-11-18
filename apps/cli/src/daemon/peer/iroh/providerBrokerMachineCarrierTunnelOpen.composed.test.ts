@@ -32,7 +32,10 @@ import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessi
 import { createProviderBrokerRouteGrantSigningInputV2, PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
   type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
-import { writeProviderBrokerApplicationFailure } from '@/providers/broker/providerBrokerApplicationServer';
+import { startProviderBrokerApplicationServer, writeProviderBrokerApplicationFailure } from '@/providers/broker/providerBrokerApplicationServer';
+import { PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS } from '@/providers/broker/providerBrokerApplicationFailure';
+import { requestThroughApplicationTarget } from '@/providers/broker/providerBroker.testkit';
+import { dispatchWithUpstreamResponse } from '../../../../../server/sources/app/api/routes/providers/externalProviderBrokerDispatcher.testkit';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -98,6 +101,44 @@ function brokerOpen(
 }
 
 describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
+  it.each([
+    [403, 'source_unavailable'],
+    [429, 'team_credential_usage_limit'],
+  ] as const)('preserves provider %i with colliding control headers through daemon HTTP and Home', async (status, reasonCode) => {
+    const body = JSON.stringify({ error: { type: 'provider_refusal', code: 'provider-owned' } });
+    const server = await startProviderBrokerApplicationServer({ handler: async () => ({ ok: true,
+      response: { ok: false, status, statusText: 'Provider Refusal',
+        headers: { 'content-type': 'application/json', 'retry-after': '120',
+          ...Object.fromEntries(PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS.map(name => [status === 429 ? name.toUpperCase() : name, 'provider-owned'])),
+          [status === 429 ? PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER.toUpperCase() : PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]: reasonCode,
+        }, body: new Response(body).body },
+    }) });
+    try {
+      const signed = authority();
+      const target = await server.createStreamTarget({ authenticatedRemoteEndpointId: signed.payload.initiator.endpointId,
+        authority: signed, expected: signed.payload });
+      const wire = await requestThroughApplicationTarget(target);
+      for (const name of PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS) expect(wire.toLowerCase()).not.toContain(`${name}:`);
+      const { result } = await dispatchWithUpstreamResponse(Buffer.from(wire));
+      expect(result).toMatchObject({ ok: true, statusCode: status, headers: { 'retry-after': '120' } });
+      if (!result.ok) throw new Error('Expected provider response');
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of result.body) chunks.push(chunk);
+      expect(Buffer.concat(chunks).toString('utf8')).toBe(body);
+    } finally { await server.close(); }
+  });
+
+  it('preserves a real typed broker refusal through daemon HTTP and Home', async () => {
+    const server = await startProviderBrokerApplicationServer({ handler: async () => ({ ok: false, reasonCode: 'source_unavailable' }) });
+    try {
+      const signed = authority();
+      const target = await server.createStreamTarget({ authenticatedRemoteEndpointId: signed.payload.initiator.endpointId,
+        authority: signed, expected: signed.payload });
+      const { result } = await dispatchWithUpstreamResponse(Buffer.from(await requestThroughApplicationTarget(target)));
+      expect(result).toMatchObject({ ok: false, error: 'upstream_unavailable' });
+    } finally { await server.close(); }
+  });
+
   it('attributes actual application HTTP refusals to each request turn after Home refresh succeeds', async () => {
     let turnId = 'first';
     const evidence = createSessionBrokerApplicationEvidence({ sessionId: 'session-1', pid: 123,

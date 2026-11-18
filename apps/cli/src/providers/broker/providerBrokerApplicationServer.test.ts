@@ -32,6 +32,7 @@ import { logger } from '@/ui/logger';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { requestThroughApplicationTarget } from './providerBroker.testkit';
 
 const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
 const payload: ProviderBrokerRouteGrantPayloadV1 = {
@@ -88,48 +89,6 @@ function signedAuthority(grantId = payload.grantId): SignedProviderBrokerRouteGr
       )).toString('base64url'),
     },
   };
-}
-
-async function requestThroughApplicationTarget(input: Readonly<{
-  port: number;
-  localCapability: string;
-  /** An Agent-supplied bearer. The target must never treat it as authority. */
-  authority?: SignedProviderBrokerRouteGrantV1;
-  /** Overrides the default small JSON body; used to probe the ingress limit. */
-  body?: string;
-  path?: string;
-  onData?: (chunk: Buffer) => void;
-}>): Promise<string> {
-  const body = input.body ?? JSON.stringify({ model: 'gpt-5', messages: [{ role: 'user', content: 'hello' }] });
-  const request = [
-    `POST ${input.path ?? '/v1/chat/completions'} HTTP/1.1`,
-    'Host: 127.0.0.1',
-    ...(input.authority ? [`Authorization: Bearer ${encodeProviderBrokerAuthorityV1(input.authority)}`] : []),
-    'X-Provider-Request: retained',
-    'X-Remove: connection-scoped',
-    'Connection: close, X-Remove',
-    'Content-Type: application/json',
-    `Content-Length: ${Buffer.byteLength(body)}`,
-    '',
-    body,
-  ].join('\r\n');
-
-  return await new Promise<string>((resolve, reject) => {
-    const socket = connect({ host: '127.0.0.1', port: input.port });
-    const chunks: Buffer[] = [];
-    socket.once('connect', () => {
-      socket.write(input.localCapability, 'ascii');
-      // Keep the response half open. The client requested `Connection: close`,
-      // so the application owns closing only after the streamed result lands.
-      socket.write(request, 'utf8');
-    });
-    socket.on('data', (chunk: Buffer) => {
-      chunks.push(chunk);
-      input.onData?.(chunk);
-    });
-    socket.once('error', reject);
-    socket.once('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
-  });
 }
 
 async function closeApplicationTarget(input: Readonly<{
@@ -191,19 +150,17 @@ describe('Provider broker target application integration', () => {
     } finally { await server.close(); }
   });
 
-  it('rewrites a gateway request-auth refusal through the canonical broker body writer', async () => {
+  it('writes a typed local access refusal through the canonical broker body writer', async () => {
     const server = await startProviderBrokerApplicationServer({
       handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
-      localConsumer: { authorize: () => true, request: async () => ({ ok: true,
-        response: { ok: false, status: 503, statusText: 'Service Unavailable',
-          headers: { [PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]: 'broker_unavailable' },
-          body: new Response('vendor-specific refusal body').body } }) },
+      localConsumer: { authorize: () => true, request: async () => {
+        throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'broker_unavailable' });
+      } },
     });
     try {
       const response = await server.app.inject({ method: 'GET', url: '/v1/models' });
       expect(response.statusCode).toBe(503);
       expect(response.json()).toMatchObject({ type: 'error', error: { type: 'permission_error', code: 'broker_unavailable' } });
-      expect(response.body).not.toContain('vendor-specific');
     } finally { await server.close(); }
   });
   it('preserves a typed refusal thrown by local managed access at the HTTP writer', async () => {
@@ -734,16 +691,20 @@ describe('Provider broker target application integration', () => {
     expect(JSON.stringify(send.mock.calls)).not.toMatch(/limitId|member|maximum/iu);
   });
 
-  it('describes a plain refusal in its body and omits usage facts it does not have', () => {
+  it.each([
+    ['model_not_allowed', 403, 'permission_error'],
+    ['request_too_large', 413, 'invalid_request_error'],
+  ] as const)('writes %s with its provider-compatible HTTP error shape', (reasonCode, status, errorType) => {
     const send = vi.fn();
     const reply = { header: vi.fn(), code: vi.fn(() => ({ send })), send };
 
-    writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode: 'model_not_allowed' });
+    writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode });
 
     expect(send).toHaveBeenCalledWith({
       type: 'error',
-      error: { type: 'permission_error', code: 'model_not_allowed', message: expect.stringContaining('model_not_allowed') },
+      error: { type: errorType, code: reasonCode, message: expect.stringContaining(reasonCode) },
     });
+    expect(reply.code).toHaveBeenCalledWith(status);
   });
 
   it('names the selected resource so the recipient Session can attribute the refusal', () => {

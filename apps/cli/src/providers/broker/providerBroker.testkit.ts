@@ -1,3 +1,5 @@
+import { connect } from 'node:net';
+import { encodeProviderBrokerAuthorityV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -51,4 +53,46 @@ export function createBrokerProviderRegistry(): ProviderContributionRegistryView
     identity, pluginId: identity.pluginId, definition, provenance: 'external', source: { kind: 'path' },
   };
   return { providersByContributionKey: new Map([[`${identity.pluginId}/${identity.localId}`, provider]]) };
+}
+
+export async function requestThroughApplicationTarget(input: Readonly<{
+  port: number;
+  localCapability: string;
+  /** An Agent-supplied bearer. The target must never treat it as authority. */
+  authority?: SignedProviderBrokerRouteGrantV1;
+  /** Overrides the default small JSON body; used to probe the ingress limit. */
+  body?: string;
+  path?: string;
+  onData?: (chunk: Buffer) => void;
+}>): Promise<string> {
+  const body = input.body ?? JSON.stringify({ model: 'gpt-5', messages: [{ role: 'user', content: 'hello' }] });
+  const request = [
+    `POST ${input.path ?? '/v1/chat/completions'} HTTP/1.1`,
+    'Host: 127.0.0.1',
+    ...(input.authority ? [`Authorization: Bearer ${encodeProviderBrokerAuthorityV1(input.authority)}`] : []),
+    'X-Provider-Request: retained',
+    'X-Remove: connection-scoped',
+    'Connection: close, X-Remove',
+    'Content-Type: application/json',
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    '',
+    body,
+  ].join('\r\n');
+
+  return await new Promise<string>((resolve, reject) => {
+    const socket = connect({ host: '127.0.0.1', port: input.port });
+    const chunks: Buffer[] = [];
+    socket.once('connect', () => {
+      socket.write(input.localCapability, 'ascii');
+      // Keep the response half open. The client requested `Connection: close`,
+      // so the application owns closing only after the streamed result lands.
+      socket.write(request, 'utf8');
+    });
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+      input.onData?.(chunk);
+    });
+    socket.once('error', reject);
+    socket.once('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
 }

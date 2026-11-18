@@ -5,6 +5,8 @@ import type {
 import type { SharedManagedProviderGatewayBinding } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import { ProviderBrokerApplicationFailureError, readTrustedProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
 
 type AcquiredBrokerSourceOperation = Readonly<{
   projection: NonNullable<Awaited<ReturnType<ManagedProviderExplicitStartCustody['acquire']>>>;
@@ -29,6 +31,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   endpointTemplateId: string;
   operationClaim: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
   purposeBindings: ManagedProviderExplicitStartCustodyRequest['purposeBindings'];
+  sourceEnvelopeTransport?: ResolvedProviderManagedRuntimeDeclarationV1['sourceEnvelopeTransport'];
   modelCatalogs?: ManagedProviderExplicitStartCustodyRequest['modelCatalogs'];
   /** Source authority at this opening's admission boundary. */
   isSourceCurrent(signal: AbortSignal): Promise<boolean>;
@@ -87,22 +90,43 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
     );
     return retireInFlight;
   };
-  const acquireProjection = (signal: AbortSignal) => input.custody.acquire({
-    ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
-    ...(input.retirementGroup ? { retirementGroup: input.retirementGroup } : {}),
-    contributionKey: input.contributionKey,
-    identity: input.identity,
-    request: {
-      reason: 'explicitStartLocal',
-      endpointTemplateIds: [input.endpointTemplateId],
-    },
-    purposeBindings: input.purposeBindings,
-    ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
-    isAuthorizationCurrent,
-    revalidateAuthorization,
-    operationClaim: input.operationClaim,
-    signal,
-  });
+  // The CPX bound-purpose SDK drops upstream headers and stamps request-auth
+  // refusals itself. Its zero-binding source passthrough forwards vendor headers.
+  const hasBrokerFailureHeaders = input.sourceEnvelopeTransport === 'cpx-v1' && input.purposeBindings.bindings.length > 0;
+  const acquireProjection = async (signal: AbortSignal) => {
+    const projection = await input.custody.acquire({
+      ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
+      ...(input.retirementGroup ? { retirementGroup: input.retirementGroup } : {}),
+      contributionKey: input.contributionKey,
+      identity: input.identity,
+      request: {
+        reason: 'explicitStartLocal',
+        endpointTemplateIds: [input.endpointTemplateId],
+      },
+      purposeBindings: input.purposeBindings,
+      ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
+      isAuthorizationCurrent,
+      revalidateAuthorization,
+      operationClaim: input.operationClaim,
+      signal,
+    });
+    if (!projection || !hasBrokerFailureHeaders) return projection;
+    return {
+      ...projection,
+      access: {
+        ...projection.access,
+        request: async (request: Parameters<typeof projection.access.request>[0]) => {
+          const response = await projection.access.request(request);
+          const failure = readTrustedProviderBrokerApplicationFailure(response.status, response.headers);
+          if (failure) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new ProviderBrokerApplicationFailureError(failure);
+          }
+          return response;
+        },
+      },
+    };
+  };
   let acquired: Awaited<ReturnType<typeof acquireProjection>>;
   try {
     acquired = await acquireProjection(input.callerSignal);

@@ -1,6 +1,8 @@
 import type { TeamCredentialUsageLimitDenialV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { TeamCredentialBrokerApplicationFailureCodeV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { TeamCredentialUsageLimitDenialV1Schema } from '@happier-dev/protocol/teams/credentials/usageV1';
 import {
     PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
     PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER,
@@ -13,6 +15,19 @@ export type SessionBrokerApplicationOutcomeRecorder = (denial: SessionRuntimeTea
 
 export type ProviderBrokerApplicationFailure = Extract<Awaited<ReturnType<ProviderBrokerRequestHandler>>, { ok: false }>;
 
+/** Headers reserved for the broker's typed application-failure writer. */
+export const PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS = [
+    PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER,
+] as const;
+const providerBrokerApplicationControlHeaders = new Set<string>(PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS);
+
+export function isProviderBrokerApplicationControlHeader(name: string): boolean {
+    return providerBrokerApplicationControlHeaders.has(name.toLowerCase());
+}
+
 /** Shared by target HTTP admission and the local fresh-authority refusal. */
 export function providerBrokerApplicationFailureHeaders(response: ProviderBrokerApplicationFailure): Readonly<Record<string, string>> {
     return {
@@ -23,6 +38,22 @@ export function providerBrokerApplicationFailureHeaders(response: ProviderBroker
             [PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER]: response.usageLimit.resetsAtUtc,
         } : {}),
     };
+}
+
+/** Decode only known broker output. Provider-originated headers have no authority. */
+export function readTrustedProviderBrokerApplicationFailure(
+    status: number,
+    headers: Readonly<Record<string, string | undefined>>,
+): ProviderBrokerApplicationFailure | null {
+    if (status < 400) return null;
+    const reason = TeamCredentialBrokerApplicationFailureCodeV1Schema.safeParse(headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]);
+    if (!reason.success) return null;
+    const usageLimit = reason.data === 'team_credential_usage_limit' ? TeamCredentialUsageLimitDenialV1Schema.safeParse({
+        metric: headers[PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER],
+        remaining: headers[PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER],
+        resetsAtUtc: headers[PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER],
+    }) : null;
+    return { ok: false, reasonCode: reason.data, ...(usageLimit?.success ? { usageLimit: usageLimit.data } : {}) };
 }
 
 /** Carries a host refusal through managed-service access to the one HTTP writer. */
@@ -37,7 +68,7 @@ export class ProviderBrokerApplicationFailureError extends Error {
 export type ProviderBrokerApplicationFailureBodyV1 = Readonly<{
     type: 'error';
     error: Readonly<{
-        type: 'permission_error';
+        type: 'permission_error' | 'invalid_request_error';
         code: ProviderBrokerApplicationFailure['reasonCode'];
         /** Only the resource already selected by this consumer. */
         resourceId?: string;
@@ -62,7 +93,7 @@ export function providerBrokerApplicationFailureBody(
     return {
         type: 'error',
         error: {
-            type: 'permission_error',
+            type: response.reasonCode === 'request_too_large' ? 'invalid_request_error' : 'permission_error',
             code: response.reasonCode,
             ...(resourceId ? { resourceId } : {}),
             message,

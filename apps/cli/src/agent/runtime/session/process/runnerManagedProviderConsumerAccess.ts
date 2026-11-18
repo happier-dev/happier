@@ -16,6 +16,7 @@ import type { ExecutionRunManagedProviderSourceOpener } from '@/agent/runtime/br
 import type { RunnerManagedProviderRunServices } from './agentRuntimeDaemonServiceAuthorityClient';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
+import { ProviderBrokerApplicationFailureError, readTrustedProviderBrokerApplicationFailure } from '@/providers/broker/providerBrokerApplicationFailure';
 
 /** Private attached Run source transport; the daemon reconstructs authority
  * from the full original proof, never from this disposable cleanup handle. */
@@ -57,7 +58,7 @@ export function createRunnerManagedProviderRunSourceOpener(input: Readonly<{
             endpointUrl: template => template === proof.runtimeBindingBasis.endpoint.endpointTemplateId ? opened.endpointUrl : null,
             request: async requestInput => {
                 const result = await forward(requestInput);
-                if (!result.ok) throw createProviderErrorV1('provider_endpoint_unavailable', { connectionId: proof.runtimeBindingBasis.connectionId });
+                if (!result.ok) throw new ProviderBrokerApplicationFailureError(result);
                 return result.response;
             },
         },
@@ -85,6 +86,10 @@ export function createRunnerManagedProviderHttpBindingRequest(
                 validatedAddresses: [resolveUrlConnectionIdentity(origin.hostname).hostname],
                 method: request.method, ...(request.body ? { body: request.body } : {}),
                 headers: { ...request.headers, ...access.headers }, signal });
+            // Private daemon output is filtered; local shared CPX gateway output
+            // comes from its bound-purpose SDK, which drops upstream headers.
+            const failure = readTrustedProviderBrokerApplicationFailure(response.status, response.headers);
+            if (failure) { response.cancel(); return failure; }
             let cancelled = false;
             const cancelResponse = () => { if (!cancelled) { cancelled = true; response.cancel(); } };
             return { ok: true, response: { ok: true, status: response.status, statusText: '',

@@ -182,6 +182,8 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
         endpointTemplateId: request.application.endpointTemplateId,
         operationClaim: { kind: 'providerBroker', operation: request.operation },
         purposeBindings,
+        // Selection already admitted the declared CPX application above.
+        sourceEnvelopeTransport: 'cpx-v1',
         ...(catalog?.modelCatalogs ? { modelCatalogs: catalog.modelCatalogs } : {}),
         isSourceCurrent: async (signal) => (
           sourceAdmitted || await readsResourceCurrent(signal) && await selection.isCurrent(signal)

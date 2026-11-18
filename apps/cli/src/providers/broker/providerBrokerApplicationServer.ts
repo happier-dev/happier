@@ -24,7 +24,7 @@ import { logger } from '@/ui/logger';
 import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { ProviderBrokerApplicationPhaseError } from './providerBrokerApplicationFailureContext';
-import { ProviderBrokerApplicationFailureError, providerBrokerApplicationFailureBody, providerBrokerApplicationFailureHeaders, type ProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
+import { ProviderBrokerApplicationFailureError, isProviderBrokerApplicationControlHeader, providerBrokerApplicationFailureBody, providerBrokerApplicationFailureHeaders, type ProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
 export { PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
     PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER } from './providerBrokerPrivateProtocol';
@@ -88,8 +88,11 @@ export function writeProviderBrokerApplicationFailure(
     for (const [name, value] of Object.entries(providerBrokerApplicationFailureHeaders(response))) reply.header(name, value);
     reply.header('content-type', 'application/json');
     // `broker_unavailable` is the one retryable failure (an unexpected broker
-    // fault); every other typed reason is an authority or policy refusal.
-    return reply.code(response.reasonCode === 'broker_unavailable' ? 503 : 403)
+    // fault); request-size rejection keeps its observable 413 status; every
+    // other typed reason is an authority or policy refusal.
+    const statusCode = response.reasonCode === 'broker_unavailable' ? 503
+        : response.reasonCode === 'request_too_large' ? 413 : 403;
+    return reply.code(statusCode)
         .send(providerBrokerApplicationFailureBody(response, resourceId));
 }
 
@@ -183,14 +186,6 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         applicationRequestId: string,
         context?: ProviderBrokerAuthenticatedStreamContext,
     ) => {
-        if (response.ok && response.response.status >= 400) {
-            const reasonCode = response.response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER];
-            if (reasonCode === 'broker_unavailable' || reasonCode === 'source_unavailable'
-                || reasonCode === 'connected_service_credential_reconnect_required') {
-                await response.response.body?.cancel().catch(() => undefined);
-                response = { ok: false, reasonCode };
-            }
-        }
         if (!response.ok) {
             logger.warnLocalFile('[provider-broker-application]', { stage: 'application_response', applicationRequestId, code: response.reasonCode,
                 ...(response.sourceOpenFailureReason ? { sourceOpenFailureReason: response.sourceOpenFailureReason } : {}) });
@@ -211,7 +206,9 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
             } catch { /* File diagnostics cannot affect forwarding or cleanup. */ }
         };
         for (const [name, value] of Object.entries(response.response.headers)) {
-            if (!RESPONSE_HOP_BY_HOP_HEADERS.has(name.toLowerCase())) reply.header(name, value);
+            const normalizedName = name.toLowerCase();
+            if (!RESPONSE_HOP_BY_HOP_HEADERS.has(normalizedName)
+                && !isProviderBrokerApplicationControlHeader(normalizedName)) reply.header(name, value);
         }
         reply.code(response.response.status);
         if (!response.response.body) {

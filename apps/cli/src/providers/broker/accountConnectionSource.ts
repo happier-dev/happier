@@ -106,6 +106,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
         grantFingerprint: record.authorization.grantFingerprint,
         purposeBindings,
         purposeBasis,
+        sourceEnvelopeTransport: record.deployment.managedRuntime.sourceEnvelopeTransport,
       };
     });
     const source = await readSource();
@@ -136,6 +137,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
     const opened = await acquireBrokerSourceOperation({
       custody: input.custody, identity: source.identity, contributionKey: source.contributionKey,
       endpointTemplateId: payload.application.endpointTemplateId, purposeBindings: source.purposeBindings,
+      sourceEnvelopeTransport: source.sourceEnvelopeTransport,
       operationClaim: { kind: 'providerBroker', operation: payload.consumer },
       sharedGateway: { homeId: input.homeId, accountId: input.accountId, connectionId: payload.source.connectionId,
         machineId: input.machineId, consumerId: JSON.stringify(payload.consumer) },

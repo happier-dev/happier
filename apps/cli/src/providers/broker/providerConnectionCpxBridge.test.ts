@@ -2,6 +2,7 @@ import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroke
 import { Buffer } from 'node:buffer';
 
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
@@ -76,6 +77,24 @@ function custody(request: (input: ManagedServiceRequest) => Promise<ManagedServi
 }
 
 describe('Provider Connection CPX bridge', () => {
+  it('retains the managed carrier size refusal as a typed broker failure', async () => {
+    const managed = custody(async () => { throw new PluginError({
+      code: 'plugin_managed_service_request_too_large', message: 'Managed carrier request exceeds its limit',
+    }); });
+    const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
+    const projection = await bridge.open({ application, operation,
+      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+        protocol: 'openai-responses', publicHeaders: {}, resolvedAddresses: ['203.0.113.10'] },
+      signal: new AbortController().signal, isCurrent: async () => true,
+      acquireRequestCredential: async () => credentialLease(),
+    });
+    try {
+      await expect(projection!.access.request({ method: 'POST', pathAndQuery: '/v1/responses' })).rejects.toMatchObject({
+        failure: { ok: false, reasonCode: 'request_too_large' },
+      });
+    } finally { await projection?.retire(); }
+  });
+
   it('retains the managed upstream transport cause through the broker request', async () => {
     const failureCause = { phase: 'provider.transport', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const managed = custody(async () => { throw Object.assign(new Error('private upstream detail'), { failureCause }); });

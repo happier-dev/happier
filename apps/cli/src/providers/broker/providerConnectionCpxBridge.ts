@@ -297,7 +297,9 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         } catch (error) {
           lease.close();
           if (error instanceof ProviderBrokerApplicationFailureError) throw error;
-          return readProviderBrokerTransportFailure(error) ?? upstreamUnavailable(error);
+          const failure = readProviderBrokerTransportFailure(error);
+          if (failure) throw new ProviderBrokerApplicationFailureError(failure);
+          return upstreamUnavailable(error);
         }
         if ((response.status >= 300 && response.status < 400)
           || Object.entries(response.headers).some(([name, value]) => (

@@ -147,6 +147,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     const source = await acquireBrokerSourceOperation({ custody, identity: provider.identity,
       contributionKey: buildQualifiedPluginContributionKey(provider.identity), endpointTemplateId: group.application.endpointTemplateId,
       operationClaim: { kind: 'providerBroker', operation: scope }, purposeBindings,
+      sourceEnvelopeTransport: runtime.sourceEnvelopeTransport,
       isSourceCurrent: async currentSignal => !currentSignal.aborted && await catalog.isCurrent(),
       callerSignal: signal });
     if (!source) return refuse('provider_endpoint_unavailable');

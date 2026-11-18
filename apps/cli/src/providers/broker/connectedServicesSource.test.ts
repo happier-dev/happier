@@ -168,7 +168,7 @@ describe('Connected Services Team credential broker source', () => {
     { service: source.target.account.service, endpointTemplateId: 'cliproxyapi-anthropic', protocol: 'anthropic', purpose: 'openai-upstream' },
     { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses', purpose: 'anthropic-upstream' },
     { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, endpointTemplateId: 'cliproxyapi-openai-chat', protocol: 'openai-chat', purpose: 'anthropic-upstream' },
-  ] as const)('qualifies $purpose from the admitted source for $protocol without binding another family', async ({ service, endpointTemplateId, protocol, purpose }) => {
+  ] as const)('qualifies $purpose for $protocol and retains its gateway refusal', async ({ service, endpointTemplateId, protocol, purpose }) => {
     const account = { ...source.target.account, service };
     const exactSource = { ...source, target: { kind: 'account' as const, account } };
     const exactRequest = { ...request(), source: exactSource, application: { ...request().application, endpointTemplateId, protocol } };
@@ -177,7 +177,9 @@ describe('Connected Services Team credential broker source', () => {
     const projection = Object.freeze({
       access: Object.freeze({
         endpointUrl: vi.fn(() => 'http://127.0.0.1:45123/v1'),
-        request: vi.fn(),
+        request: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable',
+          headers: { 'x-happier-provider-broker-error-code': 'broker_unavailable' },
+          body: new Response('gateway refusal').body }),
       }),
       isCurrent: vi.fn(() => true),
       cleanup: vi.fn(),
@@ -196,7 +198,13 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    await expect(open(exactRequest)).resolves.toMatchObject({ projection, sourceMember: { service, connectedAccountId: account.accountId } });
+    const opened = await open(exactRequest);
+    expect(opened).toMatchObject({ sourceMember: { service, connectedAccountId: account.accountId } });
+    if (!opened || 'unavailable' in opened) throw new Error('Expected connected source');
+    expect(opened.projection.access.endpointUrl(endpointTemplateId)).toBe('http://127.0.0.1:45123/v1');
+    await expect(opened.projection.access.request({ method: 'POST', pathAndQuery: '/v1/responses' })).rejects.toMatchObject({
+      failure: { ok: false, reasonCode: 'broker_unavailable' },
+    });
     expect(resolveBindingIntentSelection).toHaveBeenCalledWith(expect.objectContaining({
       purpose: {
         consumer: {
@@ -307,7 +315,11 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    await expect(open(request())).resolves.toMatchObject({ projection });
+    const opened = await open(request());
+    expect(opened).toHaveProperty('projection');
+    if (!('projection' in opened)) throw new Error('Expected an admitted broker source');
+    expect(opened.projection.access.endpointUrl(request().application.endpointTemplateId)).toBe('http://127.0.0.1:45123/v1');
+    expect(opened.projection.isCurrent()).toBe(true);
     expect(custody.acquire).toHaveBeenCalledOnce();
   });
 

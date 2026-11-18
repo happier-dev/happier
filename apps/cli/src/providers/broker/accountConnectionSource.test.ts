@@ -18,19 +18,28 @@ import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/inv
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 
 describe('personal hub source admission', () => {
-  it.each(['connectionSecurity', 'managedBinding', 'unchanged', 'legacyConnectionSecurity', 'sourceCurrentness', 'homeLiveness'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
+  it.each(['connectionSecurity', 'managedBinding', 'unchanged', 'legacyConnectionSecurity', 'sourceCurrentness', 'homeLiveness', 'gatewayRefusal', 'providerHeaderCollision'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
     const base = createBrokerProviderRegistry();
     const providersByContributionKey = new Map([...base.providersByContributionKey].map(([key, contribution]) => [key, {
       ...contribution, definition: ProviderContributionV1Schema.parse({ ...contribution.definition,
-        managedRuntime: { ...contribution.definition.managedRuntime, sharing: 'connectionMachine', connectedAccounts: [] } }),
+        managedRuntime: { ...contribution.definition.managedRuntime, sharing: 'connectionMachine',
+          connectedAccounts: changedFact === 'gatewayRefusal' ? contribution.definition.managedRuntime?.connectedAccounts : [],
+          ...(changedFact === 'providerHeaderCollision' ? { sourceEnvelopeTransport: undefined } : {}) } }),
     }]));
     const registry = { providersByContributionKey };
+    const gatewayPurpose = [...providersByContributionKey.values()][0]!.definition.managedRuntime!.connectedAccounts[0];
     const connectionId = ProviderConnectionIdSchema.parse('personal-source');
     const initial = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{ v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
         deployment: { kind: 'managedLocal' },
         role: 'default', displayName: 'Gateway', displayNameMode: 'automatic', revision: 1, createdAt: 1, updatedAt: 1,
         gatewayPlacement: { kind: 'machine', machineId: 'hub-1' } }] });
+    if (changedFact === 'gatewayRefusal') {
+      if (!gatewayPurpose) throw new Error('Expected declared CPX connected-account purpose');
+      initial.connections[0]!.purposeBindingDefaults = { [gatewayPurpose.purpose]: {
+        kind: 'account', account: { service: gatewayPurpose.service, accountId: 'upstream-account' },
+      } };
+    }
     const resolve = (providerSettings: typeof initial) => resolveProviderConnectionForMachine({ connectionId,
       machineId: 'hub-1', providerSettings, registry, dnsEvidenceByEndpointUrl: new Map() });
     const resolved = resolve(initial);
@@ -43,7 +52,7 @@ describe('personal hub source admission', () => {
     if (authorized.record.deployment.kind !== 'managedLocal') throw new Error('Expected managed source');
     const capturedManagedBinding = createProviderManagedRuntimeBindingFingerprintV1({
       implementationIdentity: authorized.record.deployment.implementationIdentity,
-      managedRuntime: authorized.record.deployment.managedRuntime, purposeBindings: { v: 1, bindings: [] },
+      managedRuntime: authorized.record.deployment.managedRuntime, purposeBindings: authorized.record.deployment.purposeBindingIntents,
     });
     const application = projectProviderBrokerApplication({ connection: authorized.record,
       agentTargetKey: 'agent:happier.agent.claude/claude', protocol: 'openai-responses' });
@@ -93,7 +102,11 @@ describe('personal hub source admission', () => {
         const joined = await managed.runManagedProviderExplicitStart({ ...operation,
           signal: input.signal, isCurrent: input.isAuthorizationCurrent,
           establish: async () => ({ status: 'running', projection: {
-            access: { endpointUrl: () => 'http://127.0.0.1:43120/v1', request: unused },
+            access: { endpointUrl: () => 'http://127.0.0.1:43120/v1', request: async () => ({
+              ok: false, status: 503, statusText: 'Service Unavailable',
+              headers: { 'x-happier-provider-broker-error-code': 'broker_unavailable' },
+              body: new Response('gateway refusal').body,
+            }) },
             isCurrent: () => true, cleanup: async () => {},
           } }),
         });
@@ -107,7 +120,7 @@ describe('personal hub source admission', () => {
     let homeUnavailable = false;
     const open = createAccountConnectionBrokerSourceOpen({ homeId: 'home-1', accountId: 'account-1', machineId: 'hub-1',
       expectedAccountSettingsScopeKey: snapshot.scopeKey!,
-      custody: changedFact === 'homeLiveness' || changedFact === 'sourceCurrentness' ? custody
+      custody: changedFact === 'homeLiveness' || changedFact === 'sourceCurrentness' || changedFact === 'gatewayRefusal' || changedFact === 'providerHeaderCollision' ? custody
         : createManagedProviderExplicitStartCustody({ machineId: 'hub-1', happyHomeDir: '/unreached-personal-source' }),
       withRegistry: async read => {
         if (++registryReads === 2 && changedFact === 'sourceCurrentness') {
@@ -115,7 +128,10 @@ describe('personal hub source admission', () => {
         }
         return await read(registry);
       }, getAccountSettingsSnapshot: () => snapshot,
-      resolveBindingIntent: async () => { throw new Error('No purpose is declared'); },
+      resolveBindingIntent: async ({ purpose, target }) => {
+        if (changedFact === 'gatewayRefusal') return { purpose, target };
+        throw new Error('No purpose is declared');
+      },
       admitConsumer: async () => {
         if (changedFact === 'homeLiveness' && homeUnavailable) {
           throw Object.assign(new Error('private Home transport detail'), { failureCause });
@@ -142,12 +158,26 @@ describe('personal hub source admission', () => {
               compatibility: { result: { status: 'verified', selectedProtocol: application.protocol,
                 evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } },
                 compatibilityFingerprint: 'compatibility:v1:source', confirmed: false },
-              endpointHealth: 'not_checked', catalog: { stale: changedFact !== 'sourceCurrentness' && changedFact !== 'homeLiveness' }, loadState: 'unknown', visibility: 'visible',
+              endpointHealth: 'not_checked', catalog: { stale: !['sourceCurrentness', 'homeLiveness', 'gatewayRefusal', 'providerHeaderCollision'].includes(changedFact) }, loadState: 'unknown', visibility: 'visible',
             }] }],
         });
       } });
     try {
-      if (changedFact === 'homeLiveness') {
+      if (changedFact === 'gatewayRefusal' || changedFact === 'providerHeaderCollision') {
+        const opened = await open({ authority, signal: new AbortController().signal });
+        if (!opened) throw new Error('Expected source acquisition');
+        try {
+          const response = opened.access.request({ method: 'POST', pathAndQuery: '/v1/responses' });
+          if (changedFact === 'gatewayRefusal') await expect(response).rejects.toMatchObject({
+            failure: { ok: false, reasonCode: 'broker_unavailable' },
+          });
+          else {
+            const raw = await response;
+            expect(raw.status).toBe(503);
+            expect(await new Response(raw.body).text()).toBe('gateway refusal');
+          }
+        } finally { await opened.cleanup(); }
+      } else if (changedFact === 'homeLiveness') {
         const opened = await open({ authority, signal: new AbortController().signal });
         expect(opened).not.toBeNull();
         if (!opened) throw new Error('Expected source acquisition');
