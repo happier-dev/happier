@@ -8,7 +8,6 @@ import { decodeAutomationTemplate } from './automationTemplateCodec';
 import {
     encodeAutomationTemplateForTransport,
     resolveAutomationTemplatePayload,
-    sealAutomationTemplateForTransport,
     tryDecodeAutomationTemplateEnvelope,
 } from './automationTemplateTransport';
 
@@ -110,13 +109,7 @@ describe('automationTemplateTransport', () => {
         );
     });
 
-    it('decodes both encrypted and plaintext template envelopes', async () => {
-        const encrypted = await sealAutomationTemplateForTransport({
-            template: { directory: '/tmp/project', prompt: 'Hi', existingSessionId: 'session-9' },
-            encryptRaw: async () => 'ciphertext-base64',
-        });
-        expect(tryDecodeAutomationTemplateEnvelope(encrypted)?.kind).toBe('happier_automation_template_encrypted_v1');
-
+    it('decodes plaintext template envelopes', async () => {
         const plain = JSON.stringify({
             kind: 'happier_automation_template_plain_v1',
             payload: { directory: '/tmp/project', prompt: 'Hi', existingSessionId: 'session-9' },

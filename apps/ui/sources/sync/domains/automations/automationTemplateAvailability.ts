@@ -9,11 +9,3 @@ export class AutomationTemplateEncryptionMaterialUnavailableError extends Error 
         this.name = 'AutomationTemplateEncryptionMaterialUnavailableError';
     }
 }
-
-export function isAutomationTemplateEncryptionMaterialUnavailableError(
-    error: unknown,
-): error is AutomationTemplateEncryptionMaterialUnavailableError {
-    return error instanceof Error
-        && (error as { code?: unknown }).code
-            === AUTOMATION_TEMPLATE_ENCRYPTION_MATERIAL_UNAVAILABLE;
-}

@@ -85,21 +85,6 @@ export function parseExactTurnAutomationPrefillRoute(input: Readonly<{
     };
 }
 
-/**
- * Explicit adoption of a newer observed parent turn.
- *
- * `readExactActiveParentTurn` reports the observation default for `events`
- * because an observation cannot know what the author picked. Adoption retargets
- * the turn identity only: the event selection belongs to the author and
- * survives, so this is the one place both adopting surfaces compose the result.
- */
-export function adoptExactTurnAutomationPrefill(
-    previous: ExactTurnAutomationPrefill,
-    current: ExactTurnAutomationPrefill,
-): ExactTurnAutomationPrefill {
-    return Object.freeze({ ...current, events: previous.events });
-}
-
 export function areExactTurnAutomationPrefillsEqual(
     left: ExactTurnAutomationPrefill | null | undefined,
     right: ExactTurnAutomationPrefill | null | undefined,

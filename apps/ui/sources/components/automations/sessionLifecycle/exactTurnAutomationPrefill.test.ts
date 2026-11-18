@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    adoptExactTurnAutomationPrefill,
     areExactTurnAutomationPrefillsEqual,
     parseExactTurnAutomationPrefillRoute,
     readExactActiveParentTurn,
@@ -34,30 +33,6 @@ describe('exactTurnAutomationPrefill', () => {
         expect(route.prefill.events).toEqual(['parentTurnFailed', 'userActionRequired']);
         expect(areExactTurnAutomationPrefillsEqual(route.prefill, readExactActiveParentTurn(session as any))).toBe(true);
         expect(areExactTurnAutomationPrefillsEqual(route.prefill, { ...route.prefill, sourceTurnId: 'turn-2' })).toBe(false);
-    });
-
-    it('adopts a newer turn identity while keeping the chosen lifecycle events', () => {
-        const chosen = parseExactTurnAutomationPrefillRoute({
-            sourceSessionId: 'session-1',
-            sourceTurnId: 'turn-1',
-            sourceServerId: 'server-1',
-            sessionLifecycleEvents: 'parentTurnFailed,userActionRequired',
-        });
-        expect(chosen.kind).toBe('valid');
-        if (chosen.kind !== 'valid') return;
-        const current = readExactActiveParentTurn({ ...session, latestTurnId: 'turn-2' } as any);
-        expect(current).not.toBeNull();
-        if (!current) return;
-
-        const adopted = adoptExactTurnAutomationPrefill(chosen.prefill, current);
-        // The turn moves; the event selection is the author's and must not be
-        // silently replaced by the observation default.
-        expect(adopted).toEqual({
-            sourceSessionId: 'session-1',
-            sourceTurnId: 'turn-2',
-            sourceServerId: 'server-1',
-            events: ['parentTurnFailed', 'userActionRequired'],
-        });
     });
 
     it('treats a route with no exact-turn members as absent generic authoring', () => {

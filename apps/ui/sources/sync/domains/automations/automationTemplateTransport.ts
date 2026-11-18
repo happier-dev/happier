@@ -37,14 +37,6 @@ export function tryDecodeAutomationTemplateEnvelope(templateCiphertext: string):
     return tryParseEnvelope(templateCiphertext);
 }
 
-export function tryReadAutomationTemplateEnvelopePayloadCiphertext(templateCiphertext: string): string | null {
-    const envelope = tryParseEnvelope(templateCiphertext);
-    if (envelope?.kind !== AUTOMATION_TEMPLATE_ENVELOPE_KIND) return null;
-    return typeof envelope.payloadCiphertext === 'string' && envelope.payloadCiphertext.trim().length > 0
-        ? envelope.payloadCiphertext
-        : null;
-}
-
 export async function resolveAutomationTemplatePayload(params: Readonly<{
     templateCiphertext: string;
     decryptRaw?: (payloadCiphertext: string) => Promise<unknown | null>;
@@ -122,15 +114,4 @@ export async function encodeAutomationTemplateForTransport(params: {
         payloadCiphertext,
     };
     return JSON.stringify(envelope);
-}
-
-export async function sealAutomationTemplateForTransport(params: {
-    template: AutomationTemplate;
-    encryptRaw: (value: unknown) => Promise<string>;
-}): Promise<string> {
-    return await encodeAutomationTemplateForTransport({
-        accountMode: 'e2ee',
-        template: params.template,
-        encryptRaw: params.encryptRaw,
-    });
 }

@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationStoredDefinitionExecutionRecipeV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
-    materializeNewSessionAutomationEditorDraft,
     sanitizeNewSessionAutomationDraft,
     replaceExactTurnAutomationRowsWithCurrentTurns,
 } from './automationDraft';
@@ -68,45 +65,4 @@ describe('automationDraft', () => {
         }).triggers).toEqual([{ clientId: 'same', definition: schedule }]);
     });
 
-    it('materializes every trigger into the one canonical editor draft', () => {
-        const executionRecipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-            v: 1,
-            templateVersion: 1,
-            template: { t: 'plain', v: { v: 1, prompt: 'Run.' } },
-            triggerEvidence: null,
-            target: {
-                kind: 'executionRun',
-                request: {
-                    intent: 'task',
-                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                    permissionMode: 'read_only',
-                    retentionPolicy: 'ephemeral',
-                    runClass: 'bounded',
-                    ioMode: 'request_response',
-                },
-            },
-        });
-        const result = materializeNewSessionAutomationEditorDraft({
-            draft: {
-                pendingAutomationId: 'automation-stable-retry-id',
-                enabled: true,
-                name: '  Daily summary  ',
-                description: '  Description  ',
-                triggers: [{ clientId: 'schedule-a', definition: schedule }],
-            },
-            executionRecipe,
-            assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
-        });
-        expect(result).toMatchObject({
-            automationId: null,
-            pendingAutomationId: 'automation-stable-retry-id',
-            expectedTemplateVersion: null,
-            name: 'Daily summary',
-            description: 'Description',
-            enabled: true,
-            executionRecipe,
-            assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
-            triggers: [{ clientId: 'schedule-a', persisted: null, definition: schedule }],
-        });
-    });
 });

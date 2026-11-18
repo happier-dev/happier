@@ -20,7 +20,6 @@ import {
     formatAutomationScheduleLabel,
     formatAutomationTriggerLabel,
     formatAutomationTriggerStatusLabel,
-    getAutomationRunCauseAt,
 } from './automationListFormatting';
 
 afterEach(() => {
@@ -182,13 +181,6 @@ describe('immutable Run cause presentation', () => {
             sourceTurnId: 'turn-9',
             policy: { kind: 'currentTurn' },
         },
-    });
-
-    it('derives time and kind from immutable cause instead of mutable Run timestamps', () => {
-        expect(getAutomationRunCauseAt(retiredLifecycleCause)).toBe(90);
-        expect(getAutomationRunCauseAt({ kind: 'manual', invokedAt: 40 })).toBe(40);
-        expect(getAutomationRunCauseAt({ kind: 'conversation', occurrenceKey, occurredAt: 50 }))
-            .toBe(50);
     });
 
     it('keeps a retired trigger cause renderable after its mutable row is removed', () => {

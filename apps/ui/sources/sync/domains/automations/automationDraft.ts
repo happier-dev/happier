@@ -1,12 +1,7 @@
-import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol/automations/automationColumnBoundsV1';
 import { AutomationTriggerDefinitionInputSchema, type AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import type { AutomationAssignmentInput } from '@happier-dev/protocol/automations/automationApiV3';
-import type { AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import {
     createAutomationEditorAutomationId,
-    createAutomationEditorSourceSelectorId,
-    type AutomationEditorDraft,
 } from './automationEditorDraft';
 
 export type NewSessionAutomationTriggerDraft = Readonly<{
@@ -22,28 +17,6 @@ export type NewSessionAutomationDraft = Readonly<{
     description: string;
     triggers: ReadonlyArray<NewSessionAutomationTriggerDraft>;
 }>;
-
-const MINUTES_PER_DAY = 24 * 60;
-
-/**
- * The authored interval cadence ceiling, expressed in the unit the interval
- * picker edits: the widest whole-day cadence the Protocol's shared
- * `AutomationTrigger.everyMs` column ceiling can hold. Offering a wider cadence would
- * only produce a save the canonical server schedule admission rejects.
- */
-export const MAX_AUTOMATION_INTERVAL_MINUTES =
-    Math.floor(AUTOMATION_INT_COLUMN_MAX / 60_000 / MINUTES_PER_DAY) * MINUTES_PER_DAY;
-
-/**
- * The one clamp for an authored interval cadence. The picker, the draft
- * sanitizer, the settings form, and both submit builders share it so a cadence
- * chosen on one surface cannot be silently narrowed by whichever surface holds
- * or saves it next.
- */
-export function clampAutomationIntervalMinutes(value: number): number {
-    if (!Number.isFinite(value)) return 1;
-    return Math.min(Math.max(Math.floor(value), 1), MAX_AUTOMATION_INTERVAL_MINUTES);
-}
 
 export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
     pendingAutomationId: null,
@@ -134,40 +107,5 @@ export function sanitizeNewSessionAutomationDraft(input: unknown): NewSessionAut
         name: typeof record.name === 'string' ? record.name : '',
         description: typeof record.description === 'string' ? record.description : '',
         triggers: sanitizeTriggerRows(record.triggers),
-    };
-}
-
-/**
- * The sole conversion from Session-inline Automation state into the canonical
- * plural editor/writer draft. Recipe and assignment materialization remain at
- * their incumbent Session authoring owners and are injected here unchanged.
- */
-export function materializeNewSessionAutomationEditorDraft(params: Readonly<{
-    draft: NewSessionAutomationDraft;
-    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1;
-    assignments: ReadonlyArray<AutomationAssignmentInput>;
-}>): AutomationEditorDraft {
-    return {
-        automationId: null,
-        pendingAutomationId: params.draft.pendingAutomationId ?? createAutomationEditorAutomationId(),
-        expectedTemplateVersion: null,
-        removedTriggers: [],
-        name: params.draft.name.trim(),
-        description: params.draft.description.trim() || null,
-        enabled: params.draft.enabled,
-        recipeDirty: true,
-        executionRecipe: params.executionRecipe,
-        assignments: params.assignments,
-        triggers: params.draft.triggers.map((row) => ({
-            clientId: row.clientId,
-            persisted: null,
-            definition: row.definition,
-            ...(row.definition.kind === 'pluginEvent' && 'sourceInstanceId' in row.definition ? {
-                eventSourceBinding: {
-                    sourceSelectorId: createAutomationEditorSourceSelectorId(row.clientId),
-                    sourceInstanceId: row.definition.sourceInstanceId,
-                },
-            } : {}),
-        })),
     };
 }

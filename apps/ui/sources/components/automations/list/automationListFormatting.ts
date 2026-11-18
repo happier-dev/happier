@@ -135,10 +135,6 @@ const AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS = {
     sourceUnavailable: 'automations.detail.trigger.status.sourceUnavailable',
 } as const satisfies Record<AutomationSessionLifecycleTriggerStatus['state'], TranslationKey>;
 
-export function getAutomationRunCauseAt(cause: AutomationRunCause): number {
-    return cause.kind === 'manual' ? cause.invokedAt : cause.occurredAt;
-}
-
 export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string {
     switch (cause.kind) {
         case 'manual':

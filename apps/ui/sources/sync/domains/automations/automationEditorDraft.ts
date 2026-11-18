@@ -1,7 +1,5 @@
-import { z } from 'zod/mini';
-
-import { AutomationStoredDefinitionExecutionRecipeV1Schema, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, type AutomationStoredWorkflowDefinitionRecipeV2, type AutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import type { AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { AutomationStoredWorkflowDefinitionRecipeV2, AutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { AutomationSourceSelectorIdV1Schema, type AutomationSourceSelectorIdV1 } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import type { AutomationAssignmentInput } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
@@ -47,31 +45,8 @@ export type AutomationEditorTriggerDefinitionSeed = Readonly<{
     retainedEventPrivateDefinition?: AutomationEditorTriggerDraft['retainedEventPrivateDefinition'];
 }>;
 
-export function getAutomationEditorTriggerKind(
-    trigger: AutomationEditorTriggerDraft,
-): AutomationTriggerDefinitionInput['kind'] {
-    return trigger.definition?.kind ?? 'pluginEvent';
-}
-
 export function getAutomationEditorTriggerEnabled(trigger: AutomationEditorTriggerDraft): boolean {
     return trigger.definition?.enabled ?? trigger.retainedEvent?.enabled ?? false;
-}
-
-/**
- * Exact source truth is creation/edit authority, not a perpetual validity
- * requirement for an unchanged historical one-off row. The server uses the
- * same changed-row boundary during transactional reconciliation.
- */
-export function shouldValidateAutomationEditorLifecycleTrigger(
-    trigger: AutomationEditorTriggerDraft,
-): boolean {
-    return trigger.definition?.kind === 'sessionLifecycle'
-        && trigger.definition.policy.kind === 'currentTurn'
-        // A disabled historical one-off trigger no longer needs a live source
-        // turn. New rows and enabled/re-enabled rows still require the exact
-        // current-turn proof; the server remains authoritative for all other
-        // source/target and revision invariants.
-        && (trigger.persisted === null || (trigger.isDirty === true && getAutomationEditorTriggerEnabled(trigger)));
 }
 
 /**
@@ -106,18 +81,6 @@ export type AutomationEditorExecutionRecipe =
     | AutomationStoredDefinitionExecutionRecipeV1
     | AutomationStoredWorkflowDefinitionRecipeV2;
 
-/** The one parser for either arm, so no caller re-derives which shape it holds. */
-export const AutomationEditorExecutionRecipeSchema = z.union([
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
-    AutomationStoredWorkflowDefinitionRecipeV2Schema,
-]);
-
-export function isAutomationWorkflowRecipe(
-    recipe: AutomationEditorExecutionRecipe,
-): recipe is AutomationStoredWorkflowDefinitionRecipeV2 {
-    return recipe.v === 2;
-}
-
 export type AutomationEditorDraft = AutomationTriggerEditorValue & Readonly<{
     automationId: string | null;
     /** Client-stable identity used only by a not-yet-persisted definition. */
@@ -135,32 +98,6 @@ export type AutomationEditorDraft = AutomationTriggerEditorValue & Readonly<{
         assignments: readonly [] }>
 );
 
-/** One durable-or-pending identity for editor-owned plugin setup and writes. */
-export function requireAutomationEditorDraftIdentity(draft: AutomationEditorDraft): string {
-    const identity = draft.automationId ?? draft.pendingAutomationId;
-    if (!identity) throw new Error('Automation editor draft has no definition identity');
-    return identity;
-}
-
-/** Account/server plus durable-or-pending definition identity for one mounted draft. */
-export function createAutomationEditorLifetimeIdentity(
-    scope: Readonly<{ serverId: string; accountId: string }>,
-    definitionIdentity: string,
-): string {
-    return JSON.stringify([scope.serverId, scope.accountId, definitionIdentity]);
-}
-
-/** Exact save-time proof that a mounted draft still belongs to this Account and definition. */
-export function isAutomationEditorLifetimeIdentityCurrent(
-    mountedIdentity: string | null,
-    scope: Readonly<{ serverId: string; accountId: string }> | null,
-    definitionIdentity: string,
-): boolean {
-    return mountedIdentity !== null
-        && scope !== null
-        && mountedIdentity === createAutomationEditorLifetimeIdentity(scope, definitionIdentity);
-}
-
 export function createAutomationEditorAutomationId(): string {
     return `automation-${randomUUID()}`;
 }
@@ -168,27 +105,4 @@ export function createAutomationEditorAutomationId(): string {
 export function createAutomationEditorSourceSelectorId(stableRowId?: string): AutomationSourceSelectorIdV1 {
     const embeddedUuid = stableRowId?.match(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/u)?.[0];
     return AutomationSourceSelectorIdV1Schema.parse(embeddedUuid ?? randomUUID());
-}
-
-/**
- * Creates one client-stable row identity. For new rows the canonical writer
- * sends this exact value as the trigger ID, making retries rejoin one row.
- */
-export function createAutomationEditorTriggerClientId(): string {
-    return randomUUID();
-}
-
-/** The sole editor transition for a semantic recipe mutation. */
-export function replaceAutomationEditorExecutionRecipe(
-    draft: Extract<AutomationEditorDraft, { executionRecipe: AutomationEditorExecutionRecipe }>,
-    executionRecipe: AutomationEditorExecutionRecipe,
-): Extract<AutomationEditorDraft, { executionRecipe: AutomationEditorExecutionRecipe }> {
-    const recipe = AutomationEditorExecutionRecipeSchema.parse(executionRecipe);
-    const expectedVersion = draft.expectedTemplateVersion === null
-        ? draft.executionRecipe.templateVersion
-        : draft.expectedTemplateVersion + 1;
-    if (recipe.templateVersion !== expectedVersion) {
-        throw new Error('Automation recipe must use the exact next template version');
-    }
-    return { ...draft, executionRecipe: recipe, recipeDirty: true };
 }
