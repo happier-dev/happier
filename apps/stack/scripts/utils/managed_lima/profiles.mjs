@@ -1,4 +1,4 @@
-import { validateLimaInstanceName } from '@happier-dev/cli-common/machineLima';
+import { validateLimaInstanceName } from '../../../../../packages/cli-common/machineLima.mjs';
 const MANAGED_LIMA_ARCHITECTURES = new Set(['aarch64', 'x86_64']);
 const MANAGED_LIMA_DISK_IMAGE_FORMATS = new Set(['raw', 'asif']);
 

@@ -123,6 +123,42 @@ test('cold setup waits for joint host capacity before downloading or installing,
     assert.equal((await readFile(join(root, 'admissions'), 'utf8')).trim().split('\n').length, 2);
   });
 
+// A fresh CI checkout runs setup before any install: no installed package
+// (third-party or workspace) can resolve. The hook models that loader boundary.
+const noInstalledPackagesHook = `data:text/javascript,${encodeURIComponent(`
+  import { isBuiltin, registerHooks } from 'node:module';
+  registerHooks({ resolve(specifier, context, next) {
+    const result = isBuiltin(specifier) || /^(\\.{0,2}\\/|file:|#)/.test(specifier) ? next(specifier, context) : null;
+    if (!result || result.url.includes('/node_modules/')) {
+      throw Object.assign(new Error('Cannot find package ' + specifier + ' imported from ' + context.parentURL), { code: 'ERR_MODULE_NOT_FOUND' });
+    }
+    return result;
+  } });
+`)}`;
+
+test('cold full-checkout setup, including host admission, runs before any package is installed', async t => {
+  const { root, env: inheritedEnv } = await fixture(t);
+  let env = { ...inheritedEnv, NODE_OPTIONS: '' };
+  if (process.platform === 'linux') {
+    const { root: admissionRoot } = await createTempFixture(t, { parentDir: '/tmp', prefix: 'hps-' });
+    const broker = createAdmissionBroker({ root: admissionRoot, oldLockPath: join(root, 'old.lock'),
+      readCpuCapacity: () => 1,
+      sampleResources: async () => ({ availableMemoryKiB: 64 * 1024 * 1024, totalMemoryKiB: 64 * 1024 * 1024 }) });
+    await broker.start();
+    t.after(() => broker.close());
+    env = { ...buildNativeAdmissionFixtureEnv(env), NODE_OPTIONS: '',
+      HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: admissionRoot, HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: 'fixture',
+      HAPPIER_STACK_PM_CACHE_BASE_DIR: '' };
+  }
+  // Asynchronous: the fixture broker answers admission from this process's event loop.
+  const child = spawn(process.execPath, ['--import', noInstalledPackagesHook, setupPath, root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', value => { stderr += value; });
+  assert.deepEqual(await once(child, 'close'), [0, null], stderr);
+  const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(calls.map(([command]) => command), ['pack', 'install']);
+});
+
 // These are the setup-time source COPY inputs shared by all three Docker deps
 // stages. Deliberately omit apps/stack: it is copied only after pnpm install.
 async function dockerSetupPath(root) {
