@@ -1,11 +1,12 @@
 import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
-    type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
+    type DeploymentEnvironmentHealthFeedV1, type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 
@@ -86,154 +87,182 @@ export function domainHealthObserver(lifetime: ServerAccountScopeLifetime,
     };
 }
 
-/** Borrow the existing selected Services Resource; this never probes or samples health. */
-export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']> {
-    return (_scope, detail, publish, options) => {
-        if (options.signal.aborted) return () => {};
-        const link = detail.runtimeTargetLink;
-        if (!link || link.targetKind !== 'ownServer') {
-            publish({ environmentId: detail.environment.id, status: 'unavailable', members: [] });
-            return () => {};
-        }
-        const bindings = link.members.filter(member => member.state === 'active').map(member => ({ member,
-            owner: createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
-                hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId,
-                    machineId: member.machineId, environmentId: detail.environment.id },
-            }, projection: machineServicesListProjection }),
-        }));
-        const edge = detail.environment.ingress?.kind === 'edgeCaddy' && detail.environment.controllerMachineId
-            ? createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
-                hostRead: 'deployments.health.edge', input: { serverId: lifetime.scope.serverId,
-                    machineId: detail.environment.controllerMachineId, environmentId: detail.environment.id, targetLinkId: link.id },
-            }, projection: currentEdgeProjection }) : null;
-        let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
-        let closed = false;
-        const update = () => {
-            if (closed) return;
-            const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
-                const snapshot = owner.selection.getSnapshot();
-                const value = snapshot.value;
-                const rows = value?.kind === 'snapshot' ? value.services : [];
-                // The Resource reaches the current Machine; the Environment may
-                // still name its predecessor installation. Consume the native witness.
-                const services = rows.flatMap(row => row.deployment?.installationId !== member.installationId ? [] : [{ serviceId: row.serviceId,
-                    name: row.name, state: row.health?.status ?? 'unknown', observedAt: row.health?.observedAtMs ?? null,
-                    reason: row.health?.reason ?? (row.health ? null : 'coverage_unavailable'),
-                    ...(row.health?.expectedDown ? { expectedDown: row.health.expectedDown } : {}),
-                }]);
-                const failure = snapshot.error ? { code: snapshot.error.code ?? 'deployment_read_failed', retryable: snapshot.error.retryable ?? false }
-                    : value?.kind === 'unavailable' ? { code: value.reason, retryable: false }
-                    : services.length !== rows.length ? { code: 'target_mismatch', retryable: false } : undefined;
-                return { machineId: member.machineId, installationId: member.installationId, services,
-                    status: failure ? 'unavailable' : value?.kind === 'snapshot' ? 'ready' : 'loading',
-                    ...(failure ? { failure } : {}),
-                };
-            });
-            const status = members.length === 0 ? 'unavailable' : members.every(member => member.status === 'ready') ? 'ready'
-                : members.some(member => member.status === 'loading') ? 'loading'
-                : members.some(member => member.status === 'ready') ? 'partial' : 'unavailable';
-            const native: DeploymentHealthServicesObservationV1[] = bindings.flatMap(({ member, owner }, index) => {
-                const snapshot = owner.selection.getSnapshot();
-                if (snapshot.freshness !== 'fresh' || snapshot.error || members[index].status !== 'ready') return [];
-                return [{ environmentId: detail.environment.id, targetLinkId: link.id, targetLinkRevision: link.revision,
+type EnvironmentHealthTarget = Readonly<{
+    environment: DeploymentEnvironmentHeaderV1;
+    runtimeTargetLink?: DeploymentTargetLinkHeaderV1 | null;
+}>;
+type HealthPublisher = Parameters<NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']>>[2];
+type HealthBorrower = Readonly<{ collection: boolean; publish: HealthPublisher }>;
+const healthObservations = new WeakMap<ServerAccountScopeLifetime, Map<string, ReturnType<typeof createEnvironmentHealthObservation>>>();
+
+function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime, environment: DeploymentEnvironmentHeaderV1,
+    link: DeploymentTargetLinkHeaderV1, activeMembers: readonly DeploymentTargetLinkHeaderV1['members'][number][]) {
+    const serverId = lifetime.scope.serverId;
+    const needsEdge = environment.ingress?.kind === 'edgeCaddy';
+    const edge = needsEdge && environment.controllerMachineId
+        ? createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+            hostRead: 'deployments.health.edge', input: { serverId, machineId: environment.controllerMachineId,
+                environmentId: environment.id, targetLinkId: link.id },
+        }, projection: currentEdgeProjection }) : null;
+    const borrowers = new Set<HealthBorrower>();
+    let nativeEnvironmentId: string | undefined;
+    let bindings: { member: typeof activeMembers[number]; owner: ReturnType<typeof createMachineServiceResourceBinding<MachineServicesList>> }[] = [];
+    let stopNative: (() => void)[] = [];
+    let stopEdge: (() => void) | undefined;
+    let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
+    let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
+
+    function update() {
+        if (borrowers.size === 0) return;
+        const observations: DeploymentHealthServicesObservationV1[] = [];
+        const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
+            const snapshot = owner.selection.getSnapshot();
+            const value = snapshot.value;
+            const rows = value?.kind === 'snapshot' ? value.services.filter(row => row.environmentId === environment.id) : [];
+            // A currently reachable Machine may have replaced the installation the Environment names.
+            const services = rows.flatMap(row => row.deployment?.installationId !== member.installationId ? [] : [{ serviceId: row.serviceId,
+                name: row.name, state: row.health?.status ?? 'unknown', observedAt: row.health?.observedAtMs ?? null,
+                reason: row.health?.reason ?? (row.health ? null : 'coverage_unavailable'),
+                ...(row.health?.expectedDown ? { expectedDown: row.health.expectedDown } : {}),
+            }]);
+            const failure = snapshot.error ? { code: snapshot.error.code ?? 'deployment_read_failed', retryable: snapshot.error.retryable ?? false }
+                : value?.kind === 'unavailable' ? { code: value.reason, retryable: false }
+                : services.length !== rows.length ? { code: 'target_mismatch', retryable: false } : undefined;
+            const status = failure ? 'unavailable' : value?.kind === 'snapshot' ? 'ready' : 'loading';
+            if (status === 'ready' && snapshot.freshness === 'fresh') {
+                observations.push({ environmentId: environment.id, targetLinkId: link.id, targetLinkRevision: link.revision,
                     machineId: member.machineId, installationId: member.installationId, role: 'runtime',
-                    source: { kind: 'native' }, observedAtMs: members[index].services.reduce(
+                    source: { kind: 'native' }, observedAtMs: services.reduce(
                         (latest, service) => Math.max(latest, service.observedAt ?? 0), 0),
-                    services: members[index].services.map(service => ({ serviceId: service.serviceId,
+                    services: services.map(service => ({ serviceId: service.serviceId,
                         ...(service.observedAt === null ? {} : { observation: { status: service.state, observedAtMs: service.observedAt,
                             ...(service.reason === null ? {} : { reason: service.reason }),
                             ...(service.expectedDown ? { expectedDown: service.expectedDown } : {}),
                         } }),
                     })),
-                }];
-            });
-            const currentEdge = edge?.selection.getSnapshot();
-            const observation = currentEdge?.freshness === 'fresh' && !currentEdge.error && currentEdge.value?.ok
-                ? currentEdge.value.observation : null;
-            aggregate = projectDeploymentHealthAggregateV1({ environment: detail.environment, targetLink: link,
-                observations: observation ? [...native, observation] : native }, aggregate);
-            const edgeReady = currentEdge?.freshness === 'fresh' && !currentEdge.error && currentEdge.value?.ok;
-            const feedStatus = !edge ? status : edgeReady ? (status === 'unavailable' && members.length === 0 ? 'ready' : status)
-                : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading';
-            publish({ environmentId: detail.environment.id, status: feedStatus, members }, aggregate);
+                });
+            }
+            return { machineId: member.machineId, installationId: member.installationId, services, status,
+                ...(failure ? { failure } : {}) };
+        });
+        const status = members.length === 0 ? 'unavailable' : members.every(member => member.status === 'ready') ? 'ready'
+            : members.some(member => member.status === 'loading') ? 'loading'
+            : members.some(member => member.status === 'ready') ? 'partial' : 'unavailable';
+        const currentEdge = edge?.selection.getSnapshot();
+        const edgeResult = currentEdge?.freshness === 'fresh' && !currentEdge.error ? currentEdge.value : undefined;
+        const edgeReady = edgeResult?.ok === true;
+        if (edgeReady && edgeResult.observation) observations.push(edgeResult.observation);
+        const nextFeed: DeploymentEnvironmentHealthFeedV1 = {
+            environmentId: environment.id, members,
+            status: !edge ? status : edgeReady ? (members.length === 0 ? 'ready' : status)
+                : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading',
         };
-        const subscriptions = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
-        if (edge) subscriptions.push(edge.selection.subscribe(update, true));
-        const close = () => {
-            if (closed) return;
-            closed = true;
-            options.signal.removeEventListener('abort', close);
-            for (const unsubscribe of subscriptions) unsubscribe();
-        };
-        options.signal.addEventListener('abort', close, { once: true });
-        if (options.signal.aborted) close(); else update();
-        return close;
+        const previous = aggregate;
+        // A read still in flight supplies no edge verdict. Keep the prior aggregate on refresh.
+        const awaitingEdge = needsEdge && !edgeResult && !currentEdge?.error
+            && (!currentEdge?.value || currentEdge.pending !== 'idle');
+        const awaitingRuntime = aggregate !== undefined && status === 'loading'
+            && !(edgeReady && edgeResult.observation?.status === 'down');
+        if (!awaitingEdge && !awaitingRuntime) {
+            // Settled Resource snapshots replace withdrawn evidence. Reuse only the published shapes.
+            aggregate = retainDeep(aggregate, projectDeploymentHealthAggregateV1({ environment, targetLink: link, observations }));
+        }
+        feed = nextFeed;
+        for (const borrower of borrowers) {
+            if (!borrower.collection || previous !== aggregate) borrower.publish(feed, aggregate);
+        }
+    }
+
+    function syncNative() {
+        // Keep the detail read scoped to this Environment. List-only borrowers reuse
+        // the existing Machine-wide Resource across all covered rows on that Machine.
+        const environmentId = [...borrowers].some(borrower => !borrower.collection) ? environment.id : undefined;
+        if (bindings.length === activeMembers.length && nativeEnvironmentId === environmentId) return false;
+        for (const stop of stopNative) stop();
+        nativeEnvironmentId = environmentId;
+        bindings = activeMembers.map(member => ({ member, owner: createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+            hostRead: 'machines.services.list', input: { serverId, machineId: member.machineId,
+                ...(environmentId === undefined ? {} : { environmentId }) },
+        }, projection: machineServicesListProjection }) }));
+        stopNative = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
+        return true;
+    }
+
+    return {
+        subscribe(borrower: HealthBorrower) {
+            const first = borrowers.size === 0;
+            borrowers.add(borrower);
+            if (feed && (!borrower.collection || aggregate)) borrower.publish(feed, aggregate);
+            const nativeChanged = syncNative();
+            if (first) stopEdge = edge?.selection.subscribe(update, true);
+            if (first || nativeChanged) update();
+        },
+        unsubscribe(borrower: HealthBorrower) {
+            borrowers.delete(borrower);
+            if (borrowers.size > 0) {
+                if (syncNative()) update();
+                return false;
+            }
+            stopEdge?.();
+            for (const stop of stopNative) stop();
+            return true;
+        },
     };
 }
 
-/** Observe all native runtime members for a collection page through one shared Machine resource per Machine. */
-export function environmentCollectionHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']> {
-    return (_scope, items, publish, options) => {
-        if (options.signal.aborted) return () => {};
-        const rows = items as readonly DeploymentEnvironmentCollectionV1['items'][number][];
-        const bindings = new Map<string, ReturnType<typeof createMachineServiceResourceBinding<MachineServicesList>>>();
-        for (const item of rows) {
-            const link = item.runtimeTargetLink;
-            if (!link || link.targetKind !== 'ownServer') continue;
-            for (const member of link.members.filter(member => member.state === 'active')) {
-                if (bindings.has(member.machineId)) continue;
-                bindings.set(member.machineId, createMachineServiceResourceBinding<MachineServicesList>({ accountLifetime: lifetime, reference: {
-                    hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId, machineId: member.machineId },
-                }, projection: machineServicesListProjection }));
-            }
-        }
-        const aggregates = new Map<string, ReturnType<typeof projectDeploymentHealthAggregateV1>>();
-        let closed = false;
-        const update = () => {
-            if (closed) return;
-            for (const item of rows) {
-                const link = item.runtimeTargetLink;
-                if (!link || link.targetKind !== 'ownServer') {
-                    publish(item.environment.id, undefined);
-                    continue;
-                }
-                const observations: DeploymentHealthServicesObservationV1[] = [];
-                for (const member of link.members.filter(member => member.state === 'active')) {
-                    const owner = bindings.get(member.machineId);
-                    const snapshot = owner?.selection.getSnapshot();
-                    const value = snapshot?.value;
-                    const services = value?.kind === 'snapshot' ? value.services : [];
-                    const environmentRows = services.filter(row => row.environmentId === item.environment.id);
-                    const memberRows = environmentRows.filter(row => row.deployment?.installationId === member.installationId);
-                    if (snapshot?.freshness !== 'fresh' || snapshot.error || value?.kind !== 'snapshot'
-                        || environmentRows.length !== memberRows.length) continue;
-                    observations.push({ environmentId: item.environment.id, targetLinkId: link.id,
-                        targetLinkRevision: link.revision, machineId: member.machineId, installationId: member.installationId,
-                        role: 'runtime', source: { kind: 'native' },
-                        observedAtMs: memberRows.reduce((latest, service) => Math.max(latest, service.health?.observedAtMs ?? 0), 0),
-                        services: memberRows.map(service => ({ serviceId: service.serviceId,
-                            ...(service.health?.observedAtMs === undefined ? {} : { observation: {
-                                status: service.health.status, observedAtMs: service.health.observedAtMs,
-                                ...(service.health.reason === undefined ? {} : { reason: service.health.reason }),
-                                ...(service.health.expectedDown ? { expectedDown: service.health.expectedDown } : {}),
-                            } }) })),
-                    });
-                }
-                const aggregate = projectDeploymentHealthAggregateV1({ environment: item.environment, targetLink: link,
-                    observations }, aggregates.get(item.environment.id));
-                aggregates.set(item.environment.id, aggregate);
-                publish(item.environment.id, aggregate);
-            }
-        };
-        const subscriptions = [...bindings.values()].map(owner => owner.selection.subscribe(update, true));
-        const close = () => {
-            if (closed) return;
-            closed = true;
-            options.signal.removeEventListener('abort', close);
-            for (const unsubscribe of subscriptions) unsubscribe();
-        };
-        options.signal.addEventListener('abort', close, { once: true });
-        if (options.signal.aborted) close(); else update();
-        return close;
+/** List and detail borrow the same current aggregate for an admitted Environment and runtime basis. */
+function subscribeEnvironmentHealth(lifetime: ServerAccountScopeLifetime, target: EnvironmentHealthTarget, borrower: HealthBorrower) {
+    const { environment, runtimeTargetLink: link } = target;
+    if (!link || link.targetKind !== 'ownServer') {
+        borrower.publish({ environmentId: environment.id, status: 'unavailable', members: [] });
+        return () => {};
+    }
+    const activeMembers = link.members.filter(member => member.state === 'active');
+    const key = JSON.stringify([environment.id, environment.protection, link.id,
+        environment.ingress?.kind === 'edgeCaddy'
+            ? [environment.controllerMachineId, environment.ingress.edgeMachineId, link.revision] : null,
+        activeMembers.map(member => JSON.stringify([member.machineId, member.installationId])).sort()]);
+    const accountLifetime = readServerAccountScopeOwnerLifetime(lifetime);
+    let observations = healthObservations.get(accountLifetime);
+    if (!observations) {
+        observations = new Map();
+        healthObservations.set(accountLifetime, observations);
+    }
+    const active = observations;
+    let observation = active.get(key);
+    if (!observation) {
+        observation = createEnvironmentHealthObservation(accountLifetime, environment, link, activeMembers);
+        active.set(key, observation);
+    }
+    const shared = observation;
+    shared.subscribe(borrower);
+    return () => { if (shared.unsubscribe(borrower)) active.delete(key); };
+}
+
+function observeWhileDemanded(signal: AbortSignal, subscribe: () => () => void): () => void {
+    if (signal.aborted) return () => {};
+    const stop = subscribe();
+    let closed = false;
+    const close = () => {
+        if (closed) return;
+        closed = true;
+        signal.removeEventListener('abort', close);
+        stop();
     };
+    if (signal.aborted) close(); else signal.addEventListener('abort', close, { once: true });
+    return close;
+}
+
+export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']> {
+    return (_scope, detail, publish, { signal }) => observeWhileDemanded(signal,
+        () => subscribeEnvironmentHealth(lifetime, detail, { collection: false, publish }));
+}
+
+export function environmentCollectionHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']> {
+    return (_scope, items, publish, { signal }) => observeWhileDemanded(signal, () => {
+        const stops = items.map(item => subscribeEnvironmentHealth(lifetime, item, {
+            collection: true, publish: (feed, aggregate) => publish(feed.environmentId, aggregate),
+        }));
+        return () => { for (const stop of stops) stop(); };
+    });
 }

@@ -4253,19 +4253,19 @@ The existing `lastResults` projection remains the last-result owner. Hiding the
 read releases private-page demand and opened Account material; reopening uses the
 ordinary currentness read before disclosing facts again.
 
-The shared Environment read controller consumes those exact selected Resources
-only while an Environment or full receipt page demands current health. Both
-page hooks expose the same `healthFeed`: per Environment, active member and
-Service, it carries producer state, nullable `observedAt`, reason and expected
-Stop evidence. The controller publishes the current aggregate only as
-`detail.healthAggregate`, shared by overview, attention, health rows and receipt
-recovery; `healthFeed` carries member observations without a second aggregate.
-Record-only consumers and Session receipt chips add no health
-demand. A member installation or Environment protection change rebinds current
-health, so Production unknown/down accounting follows the admitted protection.
-Hiding the last consumer or retiring its Account closes it. Ordinary metadata refreshes
-retain current health, and the existing explicit refresh retries unavailable
-Resources. No timer, native inspection or second health reader is introduced.
+In 0.3 development, presented Environment collections, Overview and full
+receipt pages share one current health observation for each admitted Environment
+and runtime target. The observation uses the existing Machine Services Resources
+and fetches current edge evidence for edge-backed Environments. Pending edge
+reads leave the previous aggregate in place when one exists. Settled evidence
+continues through the same Production health policy.
+
+Collection rows and `detail.healthAggregate` receive the observation's same
+aggregate. The detail `healthFeed` also exposes Service state, nullable
+`observedAt`, reason and expected Stop evidence for active members. Record-only
+consumers and Session receipt chips add zero health demand. A member installation
+or Environment protection change rebinds current health. Hiding the last consumer
+or retiring its Account releases the observation.
 Historical receipt facts and L5's current URL/TLS remain separate projections.
 
 Operations outcome links consume this existing Environment detail through

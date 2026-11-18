@@ -3,11 +3,10 @@ import { createHash } from 'node:crypto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionRequestEnvelopeV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { environmentHealthObserver } from './observeEnvironmentHealth';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainReadItemV1 } from '@happier-dev/deployments';
@@ -102,17 +101,17 @@ it('reads selected Domain facts through the same controller Resource while keepi
     expect(retirementCallbacks.size).toBe(0);
 });
 
-it('pushes the same observer current edge proof into the Environment aggregate and withdraws missing or stale proof', async () => {
+it('shares current edge health between a three-Environment list and the selected page', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const link = createDeploymentTargetLinkHeaderV1({ machines: ['joining'],
         members: [{ machineId: 'joining', installationId: 'joining-installation', state: 'joining' }] });
-    const detail = { ...base, environment: { ...base.environment, controllerMachineId: 'controller',
+    const detail = { ...base, environment: { ...base.environment, serverId, protection: 'production' as const, controllerMachineId: 'controller',
         runtimeTargetLinkId: link.id, ingress: { kind: 'edgeCaddy' as const, edgeMachineId: 'edge' } },
-        runtimeTargetLink: link, memberVersions: {}, secretRevisions: [] };
+        runtimeTargetLink: link, builtInUrls: null, memberVersions: {}, secretRevisions: [] };
     const input = { serverId, machineId: 'controller', environmentId: detail.environment.id, targetLinkId: link.id };
     const reference = { hostRead: 'deployments.health.edge', input };
     const proof = { environmentId: detail.environment.id, targetLinkId: link.id, targetLinkRevision: link.revision,
-        machineId: 'edge', role: 'edge', status: 'up', observedAtMs: 100,
+        machineId: 'edge', role: 'edge', status: 'up' as 'up' | 'down', observedAtMs: 100,
         source: { kind: 'domain', observerMachineId: 'controller' } };
     let observation: typeof proof | null = proof;
     const content = () => {
@@ -136,13 +135,16 @@ it('pushes the same observer current edge proof into the Environment aggregate a
         } } };
     } });
     let deliver: (() => void) | undefined;
+    let reads = 0;
     homes.answer(serverId, actionPath, { select: async (body, request) => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
         const continuation = envelope.resourceContinuation;
         if (!continuation) throw new Error('Expected current edge Resource continuation');
         const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
+        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+            reads++;
             return reply({ ok: true, resource: reference, contentType: 'application/json', ...content() });
+        }
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
             return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
@@ -159,15 +161,40 @@ it('pushes the same observer current edge proof into the Environment aggregate a
     let aggregate: DeploymentEnvironmentHealthAggregateV1 | undefined;
     const abort = new AbortController();
     const retirementCallbacks = new Set<() => void>();
-    const stop = environmentHealthObserver({ scope: { serverId, accountId: 'account' },
+    const scope = { serverId, accountId: 'account' };
+    const transport = createDeploymentReadTransport({ scope,
         isCurrent: () => true, onRetire: callback => {
             retirementCallbacks.add(callback);
             return { dispose() { retirementCallbacks.delete(callback); } };
-        } })(
-        { serverId, accountId: 'account' }, detail, (_value, value) => { aggregate = value; }, { signal: abort.signal });
+        } });
+    const rows = [
+        { title: 'API', environment: detail.environment, runtimeTargetLink: link },
+        { title: 'Status', environment: createDeploymentEnvironmentHeaderV1({ serverId, id: 'status' }) },
+        { title: 'Billing', environment: createDeploymentEnvironmentHeaderV1({ serverId, id: 'billing' }) },
+    ];
+    const rowFacts = new Map<string, DeploymentEnvironmentHealthAggregateV1 | undefined>();
+    const edgeStates: string[] = [];
+    const stopCollection = transport.observeEnvironmentCollectionHealth!(scope, rows, (id, value) => {
+        rowFacts.set(id, value);
+        if (id === detail.environment.id && value) edgeStates.push(value.status);
+    }, { signal: abort.signal });
     try {
-        await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'up' }] }));
+        expect(edgeStates).not.toContain('down');
+        await vi.waitFor(() => expect(rowFacts.get(detail.environment.id)).toMatchObject({ status: 'up' }));
+        expect(edgeStates).toEqual(['up']);
+        expect(rowFacts.size).toBe(3);
+        transport.observeEnvironmentHealth!(scope, detail, (_feed, value) => { aggregate = value; }, { signal: abort.signal });
+        expect(aggregate).toBe(rowFacts.get(detail.environment.id));
+        expect(reads).toBe(1);
         await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+        const healthy = deliver;
+        observation = { ...proof, status: 'down', observedAtMs: 101 };
+        healthy?.();
+        await vi.waitFor(() => {
+            expect(rowFacts.get(detail.environment.id)).toMatchObject({ status: 'down', edgeUnreachable: true });
+            expect(aggregate).toBe(rowFacts.get(detail.environment.id));
+        });
+        await vi.waitFor(() => expect(deliver).not.toBe(healthy));
         const first = deliver;
         observation = null;
         first?.();
@@ -181,6 +208,6 @@ it('pushes the same observer current edge proof into the Environment aggregate a
         observation = { ...proof, targetLinkRevision: link.revision + 1 };
         deliver?.();
         await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'unknown' }] }));
-    } finally { abort.abort(); stop?.(); }
+    } finally { abort.abort(); stopCollection(); }
     expect(retirementCallbacks.size).toBe(0);
 });
