@@ -159,7 +159,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     // Missing caller wiring must never acquire the unrestricted human path.
     if (!caller || !caller.surface && caller.authority !== 'present_user' && caller.actionCaller?.kind !== 'host') throw unavailable();
     await params.assertDefinitionWriteAllowed?.(definition, context, caller);
-    if (!isWorkflowTriggerAgentCallerV1(caller) && caller.surface !== 'mcp') return;
+    if (!isWorkflowTriggerAgentCallerV1(caller)) return;
     const policy = SessionAgentSpawnPolicyV1StrictSchema.safeParse(caller.sessionAgentSpawnPolicyV1);
     const authority = caller.agentStartContext;
     if (!policy.success || !authority || !params.resolveMaterializer) throw unavailable();
