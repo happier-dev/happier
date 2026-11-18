@@ -45,7 +45,6 @@ type Entry = {
     request: Promise<void> | undefined;
     observation: Observation | undefined;
     healthObservation: DeploymentEnvironmentHealthObservationV1 | undefined;
-    collectionHealthObservation: { abort: AbortController; close: () => void } | undefined;
     nextCursor: string | null;
     dirty: boolean;
     /** A newer read started by a wake while `request` is still in flight. */
@@ -59,6 +58,15 @@ const unavailable: DeploymentReadFailureV1 = { code: 'deployment_read_failed', r
 const retiredSnapshot: DeploymentReadSnapshotV1<never> = { status: 'unavailable', value: null, failure: { code: 'authority_changed', retryable: false } };
 const releasedSnapshot: DeploymentReadSnapshotV1<never> = { status: 'idle', value: null, failure: null };
 
+function collectionRowHealthBasis(row: DeploymentEnvironmentCollectionV1['items'][number]): string {
+    const { environment, runtimeTargetLink: link } = row;
+    return JSON.stringify([environment.id, environment.protection,
+        environment.ingress?.kind === 'edgeCaddy' ? [environment.controllerMachineId, environment.ingress.edgeMachineId] : null,
+        link?.id, link?.revision, link?.targetKind,
+        link?.members.filter(member => member.state === 'active')
+            .map(member => JSON.stringify([member.machineId, member.installationId])).sort()]);
+}
+
 /** One authenticated Home/Account, optionally narrowed to a Source; no persistence or timer owner. */
 export function createDeploymentReadControllerV1({ scope: suppliedScope, transport }: Readonly<{
     scope: DeploymentReadScopeV1; transport: DeploymentReadTransportV1;
@@ -66,14 +74,15 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     const scope = Object.freeze({ ...suppliedScope });
     const entries = new Map<string, Entry>();
     const observationDemand = new Set<Entry>();
+    const observeCollectionHealth = transport.observeEnvironmentCollectionHealth;
     let observationQueued = false;
     let retired = false;
     const active = (entry: Entry) => !retired && [...entry.demands].some(demand => isDeploymentReadDemandActiveV1(demand.current));
-    const syncHealthObservation = (entry: Entry) => {
+    const syncHealthObservation = (entry: Entry, collectionWasActive?: boolean) => {
         if (entry.resource.kind === 'environment') reconcileDeploymentEnvironmentHealthObservationV1(entry,
             !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport,
-            publishCollectionHealth);
-        if (entry.resource.kind === 'collection') reconcileCollectionHealthObservation(entry);
+            observeCollectionHealth ? undefined : publishCollectionHealth);
+        if (entry.resource.kind === 'collection' && collectionWasActive !== active(entry)) reconcileCollectionHealthObservation(entry);
         if (entry.resource.kind === 'domains') reconcileDeploymentDomainHealthObservationV1(entry, active(entry),
             scope, entry.resource.environmentId!, transport);
     };
@@ -100,7 +109,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         entry.overlap = undefined;
         entry.abort?.abort();
         entry.abort = undefined;
-        stopCollectionHealthObservation(entry);
         entry.request = undefined;
         if (entry.projection.getSnapshot().status === 'loading') entry.projection.publish(releasedSnapshot);
     }
@@ -112,7 +120,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     function pauseRead(entry: Entry) {
         entry.rereadWhenSettled = false;
         stopObservation(entry);
-        stopCollectionHealthObservation(entry);
     }
     function receipt(entry: Entry): DeploymentReceiptDetailV1 | null {
         return entry.resource.kind === 'receipt' ? entry.projection.getSnapshot().value as DeploymentReceiptDetailV1 | null : null;
@@ -165,22 +172,22 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             collection.projection.publish({ ...snapshot, value: { ...page, items } });
         }
     }
-    function stopCollectionHealthObservation(entry: Entry) {
-        const observation = entry.collectionHealthObservation;
-        if (!observation) return;
-        entry.collectionHealthObservation = undefined;
-        observation.abort.abort();
-        observation.close();
-    }
     function reconcileCollectionHealthObservation(entry: Entry) {
-        stopCollectionHealthObservation(entry);
-        if (!transport.observeEnvironmentCollectionHealth || !active(entry)) return;
         const page = entry.projection.getSnapshot().value as DeploymentEnvironmentReadCollectionV1 | null;
-        if (!page || page.items.length === 0) return;
-        const abort = new AbortController();
-        const close = transport.observeEnvironmentCollectionHealth(scope, page.items, publishCollectionHealth, { signal: abort.signal });
-        entry.collectionHealthObservation = { abort, close };
-        if (abort.signal.aborted) stopCollectionHealthObservation(entry);
+        if (!observeCollectionHealth || !active(entry) || !page?.items.length) {
+            stopDeploymentEnvironmentHealthObservationV1(entry);
+            return;
+        }
+        const basis = JSON.stringify(page.items.map(collectionRowHealthBasis).sort());
+        if (entry.healthObservation?.basis === basis) return;
+        stopDeploymentEnvironmentHealthObservationV1(entry);
+        const observation: DeploymentEnvironmentHealthObservationV1 = { basis, abort: new AbortController() };
+        entry.healthObservation = observation;
+        const close = observeCollectionHealth(scope, page.items, (environmentId, aggregate) => {
+            if (!observation.abort.signal.aborted) publishCollectionHealth(environmentId, aggregate);
+        }, { signal: observation.abort.signal });
+        if (observation.abort.signal.aborted) close();
+        else observation.stop = close;
     }
     function publishValue(entry: Entry, value: unknown) {
         entry.dirty = false;
@@ -201,8 +208,13 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         }
         if (entry.resource.kind === 'collection') {
             const page = value as DeploymentEnvironmentCollectionV1;
+            const previous = entry.projection.getSnapshot().value as DeploymentEnvironmentReadCollectionV1 | null;
+            const previousById = new Map(previous?.items.map(row => [row.environment.id, row]));
             value = { ...page, items: page.items.map(row => {
-                const healthAggregate = currentEnvironmentHealth(row.environment.id);
+                const prior = previousById.get(row.environment.id);
+                const retainedHealth = prior && collectionRowHealthBasis(prior) === collectionRowHealthBasis(row)
+                    ? prior.healthAggregate : undefined;
+                const healthAggregate = retainedHealth ?? (observeCollectionHealth ? undefined : currentEnvironmentHealth(row.environment.id));
                 return { ...row, chip: row.currentDeployment ? projectDeploymentChipV1(row.currentDeployment) : null,
                     ...(healthAggregate ? { healthAggregate } : {}) };
             }) };
@@ -348,7 +360,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         let entry = entries.get(resource.key);
         if (!entry) {
             entry = { resource, projection: createDeploymentProjectionV1(), demands: new Set(), abort: undefined, request: undefined,
-                observation: undefined, healthObservation: undefined, collectionHealthObservation: undefined,
+                observation: undefined, healthObservation: undefined,
                 nextCursor: null, dirty: true, overlap: undefined, rereadWhenSettled: false };
             entries.set(resource.key, entry);
         }
@@ -363,7 +375,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         // record reads nothing (QA #65: each detail return repeated the held receipt's GET).
         else if (active(held) && ((!wasActive && (held.dirty || held.projection.getSnapshot().status !== 'ready'))
             || held.projection.getSnapshot().status === 'idle')) void refresh(held);
-        syncHealthObservation(held);
+        syncHealthObservation(held, wasActive);
         return {
             getSnapshot: () => (released ? releasedSnapshot : held.projection.getSnapshot()) as DeploymentReadSnapshotV1<T>,
             subscribe(listener) {
@@ -384,7 +396,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 const wasActive = isDeploymentReadDemandActiveV1(demand.current);
                 const entryWasActive = active(held);
                 demand.current = { ...next };
-                syncHealthObservation(held);
+                syncHealthObservation(held, entryWasActive);
                 if (!active(held)) pauseRead(held);
                 else if (!wasActive && isDeploymentReadDemandActiveV1(next)) {
                     // Deliver the current shared value when presentation resumes,
@@ -396,11 +408,12 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             },
             release() {
                 if (released) return;
+                const entryWasActive = active(held);
                 released = true;
                 for (const unsubscribe of subscriptions.keys()) unsubscribe();
                 subscriptions.clear();
                 held.demands.delete(demand);
-                syncHealthObservation(held);
+                syncHealthObservation(held, entryWasActive);
                 // Records stay with this Home/Source controller so a remount shows the admitted value while it
                 // re-reads (QA #63, #64). A retained receipt only adds to member versions, which take the newest first.
                 if (!active(held)) pauseRead(held);

@@ -526,7 +526,7 @@ describe('deployment demand read controller', () => {
             expect(bindings).toHaveLength(3);
         } finally { environment.release(); receiptPage.release(); controller.retire(); }
     });
-    it('publishes selected live health into the existing collection row', async () => {
+    it.each([false, true])('uses selected live health for collection rows only without a collection observer (%s)', async dedicatedObserver => {
         const base = networkBoundary();
         const link = base.environmentDetail.targetLinks[0]!.targetLink;
         const aggregate: DeploymentEnvironmentHealthAggregateV1 = {
@@ -539,6 +539,7 @@ describe('deployment demand read controller', () => {
             publishHealth = publish;
             return () => {};
         };
+        if (dedicatedObserver) base.transport.observeEnvironmentCollectionHealth = () => () => {};
         const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
         const collection = controller.acquireCollection({}, active);
         const environment = controller.acquireEnvironment(base.environment.id, active, { health: true });
@@ -547,7 +548,11 @@ describe('deployment demand read controller', () => {
             await environment.refresh();
             expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toBeUndefined();
             publishHealth!({ environmentId: base.environment.id, status: 'ready', members: [] }, aggregate);
-            expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toEqual(aggregate);
+            expect(environment.getSnapshot().value?.healthAggregate).toEqual(aggregate);
+            const expected = dedicatedObserver ? undefined : aggregate;
+            expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toEqual(expected);
+            await collection.refresh();
+            expect(collection.getSnapshot().value?.items[0]?.healthAggregate).toEqual(expected);
         } finally { environment.release(); collection.release(); controller.retire(); }
     });
     it('publishes live health for every collection row without a selected Environment', async () => {
@@ -580,6 +585,48 @@ describe('deployment demand read controller', () => {
                 ['acme-api', 'up'], ['acme-status', 'down'], ['billing-db', 'down'],
             ]);
         } finally { collection.release(); controller.retire(); }
+    });
+    it('keeps collection health attached through equal reads and overlapping presentation demand', async () => {
+        const base = networkBoundary();
+        const targetLink = base.environmentDetail.targetLinks[0]!.targetLink;
+        const item = { environment: base.environment, title: 'App', runtimeTargetLink: targetLink };
+        let page = createDeploymentEnvironmentCollectionV1({ items: [item] });
+        base.transport.listEnvironments.mockImplementation(async () => ({ ok: true, value: structuredClone(page) }));
+        const observations: AbortSignal[] = [];
+        const transport: DeploymentReadTransportV1 = {
+            ...base.transport,
+            observeEnvironmentCollectionHealth(_scope, [row], publish, { signal }) {
+                observations.push(signal);
+                publish(row!.environment.id, {
+                    v: 1, environmentId: row!.environment.id, targetLinkId: row!.runtimeTargetLink!.id,
+                    protection: row!.environment.protection, status: 'up', n: 1, down: 0, degraded: 0, unknown: 0,
+                    members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: true,
+                });
+                return () => {};
+            },
+        };
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const collection = controller.acquireCollection({}, active);
+        try {
+            await collection.refresh();
+            const first = collection.getSnapshot();
+            const updates = vi.fn();
+            collection.subscribe(updates);
+            const peer = controller.acquireCollection({}, active);
+            peer.release();
+            await collection.refresh();
+            expect(observations).toHaveLength(1);
+            expect(observations[0]!.aborted).toBe(false);
+            expect(updates).not.toHaveBeenCalled();
+            expect(collection.getSnapshot()).toBe(first);
+
+            page = createDeploymentEnvironmentCollectionV1({ items: [{ ...item,
+                runtimeTargetLink: { ...targetLink, revision: targetLink.revision + 1 } }] });
+            await collection.refresh();
+            expect(observations).toHaveLength(2);
+            expect(observations[0]!.aborted).toBe(true);
+        } finally { collection.release(); controller.retire(); }
+        expect(observations.at(-1)?.aborted).toBe(true);
     });
     it('withdraws the edge Resource when its controller or admitted link revision changes', async () => {
         const base = networkBoundary();
