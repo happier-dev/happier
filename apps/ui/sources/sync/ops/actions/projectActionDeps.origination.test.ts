@@ -31,7 +31,7 @@ installApprovalCommonModuleMocks();
 installDisconnectedServerSocketBoundary();
 
 describe('original Account finite Project admission', () => {
-    it.each([false, true])('forwards the existing typed Session write scope and its refusal without Account HTTP admission (refused: %s)', async refused => {
+    it.each(['success', 'forbidden', 'database failure'] as const)('forwards the existing typed Session write scope and its disposition without Account HTTP admission (%s)', async outcome => {
         const homeId = 'srv_session_finite';
         const serverUrl = 'https://session-finite.example.test';
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'ui-owner', tokenEpoch: 1,
@@ -41,6 +41,8 @@ describe('original Account finite Project admission', () => {
         expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token })).toBe(true);
         const authorization = { kind: 'session.write' as const, sessionId: 'source-session' };
         const result = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+        const failureCause = { phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+            errorCode: 'database_transaction_timeout', httpStatus: 503 };
         const calls: unknown[] = [];
         let socketCreations = 0;
         const networkPaths: string[] = [];
@@ -50,7 +52,9 @@ describe('original Account finite Project admission', () => {
             const payload = value as Readonly<{ method: string; params: unknown; authorization?: unknown; requestId?: string }>;
             calls.push(payload);
             expect(payload.requestId).toBe('session-finite-request');
-            if (refused) return { ok: false, error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN };
+            if (outcome === 'forbidden') return { ok: false, error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN };
+            if (outcome === 'database failure') return { ok: false, error: 'Database transaction timed out',
+                errorCode: failureCause.errorCode, failureCause, effectAttempted: false };
             const opened = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
             return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, opened.callId) };
         };
@@ -82,8 +86,10 @@ describe('original Account finite Project admission', () => {
             input: { workspace: { serverId: homeId, workspaceId: 'checkout', machineId: 'guest', rootPath: '/repo' }, phase: 'setup' },
             context: { surface: 'agent', authority: 'account_automation', actionRequestId: 'session-finite-request',
                 actionCaller: { kind: 'session', sessionId: authorization.sessionId, starterDepth: 0, turnDepth: 0 }, rpcSessionAuthorization: authorization } });
-        expect(received, JSON.stringify({ networkPaths, socketCreations, calls })).toEqual(refused
-            ? { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_CODES.FORBIDDEN } : result);
+        const expected = outcome === 'success' ? result
+            : outcome === 'forbidden' ? { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_CODES.FORBIDDEN }
+              : { ok: false, errorCode: failureCause.errorCode, error: failureCause.errorCode, failureCause, effectAttempted: false };
+        expect(received, JSON.stringify({ networkPaths, socketCreations, calls })).toEqual(expected);
         expect(calls).toHaveLength(1);
         expect(calls[0]).toMatchObject({ authorization, requestId: 'session-finite-request' });
         expect(actionPosts).toBe(0);

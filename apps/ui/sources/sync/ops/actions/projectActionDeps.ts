@@ -1,6 +1,7 @@
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1,
     readProjectSetupTrustRequestOperationV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
@@ -115,7 +116,13 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
             } catch (error) {
                 const code = readRpcErrorCode(error)
                     ?? (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_transport_unavailable');
-                return { ok: false, errorCode: code, error: code };
+                const refusal = { ok: false as const, errorCode: code, error: code };
+                if (!(error instanceof Error)) return refusal;
+                return readActionFailureEnvelope({
+                    ...refusal,
+                    failureCause: 'failureCause' in error ? error.failureCause : undefined,
+                    effectAttempted: 'effectAttempted' in error ? error.effectAttempted : undefined,
+                }) ?? refusal;
             }
         }
         if (!account || !canUsePrivateProjectAccountAction(account, context)) return { ok: false, errorCode: 'project_account_access_denied', error: 'project_account_access_denied' };
