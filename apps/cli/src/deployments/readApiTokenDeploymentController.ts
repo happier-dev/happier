@@ -55,11 +55,5 @@ export async function readApiTokenDeploymentController(
     );
   }
   if (!parsed.data.ok) return failure(parsed.data.error);
-  if (
-    parsed.data.serverId !== request.serverId ||
-    parsed.data.environmentId !== request.environmentId
-  ) {
-    return failure('server_scope_mismatch');
-  }
   return { ok: true, machineId: parsed.data.controllerMachineId };
 }

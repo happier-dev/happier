@@ -68,17 +68,6 @@ describe('scoped CI controller placement', () => {
 
   it.each([
     [
-      'another Home answered',
-      200,
-      {
-        ok: true,
-        serverId: 'srv_other',
-        environmentId,
-        controllerMachineId: 'controller-1',
-      },
-      'server_scope_mismatch',
-    ],
-    [
       'the grant excludes it',
       403,
       { ok: false, error: 'deployment_access_denied' },

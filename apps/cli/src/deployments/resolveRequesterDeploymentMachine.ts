@@ -4,7 +4,6 @@ import { DeploymentEnvironmentGetResultV1Schema, resolveDeploymentEnvironmentExe
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { StoredCredentials } from '@/persistence';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 
 const actionFailure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
@@ -21,9 +20,8 @@ export function resolveRequesterDeploymentMachine(params: Readonly<{
     readEnvironmentController: async request => {
       const { deploymentAction } = createCliDeploymentActionDeps({
         serverHttpBaseUrl: params.serverApiUrl,
-        admitAccount: async serverId => serverId === params.context.serverIdentityId
-          || await isServerProfileHomeIdentity(params.serverId, serverId)
-          ? null : actionFailure('server_scope_mismatch'),
+        // The URL is fixed and Home refuses a step naming another Home; a fresh runner has no saved profile.
+        admitAccount: () => null,
         resolveRequestHeaders: () => ({ ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
           Authorization: `Bearer ${params.credentials.token}` }),
         dispatchReceipt: async () => actionFailure('deployment_executor_unavailable'),
