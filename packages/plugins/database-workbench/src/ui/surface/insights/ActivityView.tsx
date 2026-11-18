@@ -112,23 +112,19 @@ function waitText(view: SessionView, translate: PluginTranslate): string {
   );
 }
 
-function Summary(props: Readonly<{ views: readonly SessionView[] }>) {
+/**
+ * The Connections metric: how many sessions, and how they split (working, idle, idle in a transaction). Activity and
+ * the database Overview draw this one metric.
+ */
+export function ConnectionsMetric(props: Readonly<{ sessions: readonly Session[] }>) {
   const translate = usePluginTranslation();
   const counts = { working: 0, idle: 0, transaction: 0 };
-  for (const { session } of props.views) {
+  for (const session of props.sessions) {
     if (session.state === 'active') counts.working += 1;
     else if (session.state?.startsWith('idle in transaction'))
       counts.transaction += 1;
     else if (session.state === 'idle') counts.idle += 1;
   }
-  const longest = props.views.reduce<SessionView | null>(
-    (held, view) =>
-      view.runningMs !== null && view.runningMs > (held?.runningMs ?? -1)
-        ? view
-        : held,
-    null,
-  );
-  const waiting = props.views.filter((view) => view.waiting).length;
   const breakdown = [
     counts.working
       ? translate('plugins.database.activity.nWorking', '{n} working', {
@@ -151,19 +147,37 @@ function Summary(props: Readonly<{ views: readonly SessionView[] }>) {
     .filter(Boolean)
     .join(' · ');
   return (
+    <Metric
+      size="stat"
+      showLabel
+      label={translate(
+        'plugins.database.activity.connections',
+        'Connections',
+      )}
+      value={String(props.sessions.length)}
+      {...(breakdown ? { caption: breakdown } : {})}
+    />
+  );
+}
+
+function Summary(props: Readonly<{ views: readonly SessionView[] }>) {
+  const translate = usePluginTranslation();
+  const sessions = React.useMemo(() => props.views.map((view) => view.session), [props.views]);
+  const longest = props.views.reduce<SessionView | null>(
+    (held, view) =>
+      view.runningMs !== null && view.runningMs > (held?.runningMs ?? -1)
+        ? view
+        : held,
+    null,
+  );
+  const waiting = props.views.filter((view) => view.waiting).length;
+  return (
     <Row gap="large" wrap>
-      <Metric
-        size="stat"
-        label={translate(
-          'plugins.database.activity.connections',
-          'Connections',
-        )}
-        value={String(props.views.length)}
-        {...(breakdown ? { caption: breakdown } : {})}
-      />
+      <ConnectionsMetric sessions={sessions} />
       {longest && longest.runningMs !== null ? (
         <Metric
           size="stat"
+      showLabel
           label={translate(
             'plugins.database.activity.longest',
             'Longest running',
@@ -174,6 +188,7 @@ function Summary(props: Readonly<{ views: readonly SessionView[] }>) {
       ) : null}
       <Metric
         size="stat"
+      showLabel
         label={translate(
           'plugins.database.activity.waitingOnLocks',
           'Waiting on others',

@@ -6,6 +6,7 @@ import {
   DATABASE_RELATIONS_LIST_ACTION_ID_V1,
   DATABASE_ROWS_READ_ACTION_ID_V1,
   DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+  DATABASE_STATS_READ_ACTION_ID_V1,
   DATABASE_STRUCTURE_READ_ACTION_ID_V1,
   DATABASE_TARGETS_LIST_ACTION_ID_V1,
   readAutomationDatabaseSubjectV1,
@@ -261,6 +262,37 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       expect(await fixture.getByText('localhost:5432')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
+  it('leads the Overview with the database size and whether statement statistics are on', async () => {
+    const basis = { bindingKey: 'binding', databaseIdentity: 'billing_dev', selectionKey: 'overview' };
+    const answers = daemonAnswers([descriptor]);
+    const executeAction = vi.fn(async (input: PluginUiTestkitExecuteActionInput) => {
+      if (input.action !== DATABASE_STATS_READ_ACTION_ID_V1) return answers(input);
+      const group = (input.input as { request?: { group?: string } }).request?.group;
+      return projectNativeJsonValueForTransport({
+        ok: true,
+        operation: 'stats.read',
+        observation: group === 'size'
+          ? { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
+              status: 'available', group: 'size', coverage: { status: 'complete' }, completeness: { complete: true },
+              data: { bytes: '412000000', measurement: 'database_bytes' } }
+          : { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
+              status: 'unavailable', group: group ?? 'statements', reason: 'extension_missing' },
+      });
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'page-overview-tiles', mountNonce: 'page-overview-tiles' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction, replacePageLocation: async ({ subPath }) => subPath },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('412 MB')).toBeTruthy();
+      expect(await fixture.getByText('Needs pg_stat_statements')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

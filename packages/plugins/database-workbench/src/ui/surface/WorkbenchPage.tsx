@@ -22,6 +22,7 @@ import { RelationData } from './RelationData.js';
 import { RelationHeader } from './RelationHeader.js';
 import { RelationStructure } from './RelationStructure.js';
 import { StagedBar, StagedReview } from './StagedChanges.js';
+import { OverviewFacts } from './OverviewFacts.js';
 import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
 import {
@@ -51,6 +52,7 @@ function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunc
         title={descriptor.label}
         meta={meta.length > 0 ? meta : [{ key: 'engine', text: databaseEngineName(descriptor.engine) }]}
       />
+      <OverviewFacts targetKey={props.targetKey} />
       <TableDirectory targetKey={props.targetKey} />
       {/* The database's own Automations (lab automations-v-database), on the subject its admitted read projected. */}
       {descriptor.automationSubject?.ok ? (

@@ -136,6 +136,32 @@ export function DatabaseIdentity(
   );
 }
 
+/**
+ * An open schema's group: its count is the relations its first page read, said only when that page is the whole
+ * schema. An unopened schema reads nothing, so it shows no count (no catalogue-count query, DBW-UILOGIC 23:39Z).
+ */
+function OpenSchemaGroup(
+  props: Readonly<{
+    targetKey: string;
+    schema: string;
+    onExpandedChange: (expanded: boolean) => void;
+    children: React.ReactNode;
+  }>,
+) {
+  const { relations, nextPageAfter, status } = useDatabaseSchemaRelations(props.targetKey, props.schema);
+  const count = (status === 'ready' || status === 'empty') && nextPageAfter === undefined ? relations.length : undefined;
+  return (
+    <NavigationList.Group
+      title={props.schema}
+      {...(count === undefined ? {} : { count })}
+      expanded
+      onExpandedChange={props.onExpandedChange}
+    >
+      {props.children}
+    </NavigationList.Group>
+  );
+}
+
 /** Mounted only while its schema is open: unopened schemas read nothing. */
 function SchemaRelations(
   props: Readonly<{
@@ -319,25 +345,21 @@ export function WorkbenchRailList(
       ) : null}
       {schemas.map((schema) => {
         const open = expanded.has(schema.name) || searching;
-        return (
-          <NavigationList.Group
-            key={schema.name}
-            title={schema.name}
-            expanded={open}
-            onExpandedChange={(next) => setSchemaOpen(schema.name, next)}
-          >
-            {open ? (
-              <SchemaRelations
-                targetKey={props.targetKey}
-                schema={schema.name}
-                query={query}
-                translate={translate}
-                selected={props.selected?.relation}
-                onOpen={props.onOpen}
-                structure={mode === 'structure'}
-              />
-            ) : null}
-          </NavigationList.Group>
+        const onExpandedChange = (next: boolean) => setSchemaOpen(schema.name, next);
+        return open ? (
+          <OpenSchemaGroup key={schema.name} targetKey={props.targetKey} schema={schema.name} onExpandedChange={onExpandedChange}>
+            <SchemaRelations
+              targetKey={props.targetKey}
+              schema={schema.name}
+              query={query}
+              translate={translate}
+              selected={props.selected?.relation}
+              onOpen={props.onOpen}
+              structure={mode === 'structure'}
+            />
+          </OpenSchemaGroup>
+        ) : (
+          <NavigationList.Group key={schema.name} title={schema.name} expanded={false} onExpandedChange={onExpandedChange} />
         );
       })}
       <CataloguePagination kind="schemas" nextPage={nextPage} previousPage={previousPage} />

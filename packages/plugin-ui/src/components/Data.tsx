@@ -21,6 +21,8 @@ export type MetricProps = Readonly<{
   comparison?: HappierDataMetricComparison;
   /** `stat` for one of a row of labelled facts; `default` for a metric that stands alone. */
   size?: 'stat' | 'default';
+  /** Draw the label above the number, where several facts stand in one row (a database's Size, Connections). */
+  showLabel?: boolean;
   /** Visible contextual line under the number, rendered by the shared metric. */
   caption?: string;
   testID?: string;
