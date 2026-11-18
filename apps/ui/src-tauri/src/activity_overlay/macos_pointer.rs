@@ -43,6 +43,9 @@ impl PointerOwner {
         let visible = ivars.tracker.is_visible()?;
         if !visible {
             super::pointer::motion_monitors::update(&mut ivars.motion.borrow_mut(), visible, false, || self.register_motion())?;
+            if let Some(ignore) = overlay_ignore_policy(ivars.tracker.position_events, false, false) {
+                ivars.window.setIgnoresMouseEvents(ignore);
+            }
             return Ok(());
         }
         let window = &ivars.window;
@@ -55,11 +58,18 @@ impl PointerOwner {
             super::pointer::motion_monitors::update(&mut ivars.motion.borrow_mut(), visible, !sample.inside && !ivars.tracker.position_events, || self.register_motion())?;
             // The drawing envelope also covers old animation frames and Extract flights.
             // Only the island receives input; global motion restores entry while ignored.
-            if window.ignoresMouseEvents() == sample.inside {
-                window.setIgnoresMouseEvents(!sample.inside);
+            if let Some(ignore) = overlay_ignore_policy(ivars.tracker.position_events, true, sample.inside) {
+                if window.ignoresMouseEvents() != ignore {
+                    window.setIgnoresMouseEvents(ignore);
+                }
             }
             sample
-        } else { Sample::from_bottom_left(frame, point) };
+        } else {
+            if let Some(ignore) = overlay_ignore_policy(ivars.tracker.position_events, false, false) {
+                window.setIgnoresMouseEvents(ignore);
+            }
+            Sample::from_bottom_left(frame, point)
+        };
         ivars.tracker.observe(sample);
         Ok(())
     }
@@ -84,6 +94,34 @@ impl PointerOwner {
             return Err("Overlay global motion monitor unavailable".to_owned());
         };
         Ok(PressMonitors { local, global })
+    }
+}
+
+/// The notch must remain click-through until its renderer-owned island geometry is available.
+/// Pet input remains controlled by its existing renderer lock policy.
+fn overlay_ignore_policy(position_events: bool, has_hit_rect: bool, inside: bool) -> Option<bool> {
+    if position_events {
+        None
+    } else {
+        Some(!has_hit_rect || !inside)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_ignore_policy;
+
+    #[test]
+    fn notch_starts_click_through_until_its_hit_region_is_known() {
+        assert_eq!(overlay_ignore_policy(false, false, false), Some(true));
+        assert_eq!(overlay_ignore_policy(false, true, true), Some(false));
+        assert_eq!(overlay_ignore_policy(false, true, false), Some(true));
+    }
+
+    #[test]
+    fn pet_keeps_its_renderer_owned_cursor_policy() {
+        assert_eq!(overlay_ignore_policy(true, false, false), None);
+        assert_eq!(overlay_ignore_policy(true, true, true), None);
     }
 }
 
@@ -130,7 +168,10 @@ pub(super) fn install<R: Runtime>(
             let class = AnyClass::get(c"NSTrackingArea").ok_or("AppKit tracking areas unavailable")?;
             // Local tracking-area moves detect leaving the island while still inside its
             // animation envelope. Pet additionally tracks moves throughout dragging.
-            let options: usize = 0x01 | 0x02 | 0x80 | 0x200 | if tracker.position_events { 0x400 } else { 0 };
+            // Keep sampling while a press drags across the retained animation envelope.
+            // Without this bit, leaving the island during a drag leaves the full panel frame
+            // accepting mouse events until another crossing happens.
+            let options: usize = 0x01 | 0x02 | 0x80 | 0x200 | 0x400;
             let area: objc2::rc::Allocated<AnyObject> = unsafe { msg_send![class, alloc] };
             let area: Retained<AnyObject> = unsafe { msg_send![area, initWithRect: NSRect::ZERO, options: options, owner: &*owner, userInfo: std::ptr::null::<AnyObject>()] };
             // AppKit does not retain a tracking area's owner; Connection owns both.

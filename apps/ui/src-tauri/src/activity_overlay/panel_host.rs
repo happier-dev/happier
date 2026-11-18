@@ -78,7 +78,10 @@ pub(crate) fn apply_overlay_host<R: tauri::Runtime>(
                 movable: false,
                 movable_by_window_background: false,
                 accepts_mouse_moved_events: true,
-                ignores_mouse_events: false,
+                // The native pointer owner enables input only inside the renderer-owned
+                // island hit rect. Start click-through so frame/lifecycle gaps cannot block
+                // the desktop while that geometry is unavailable.
+                ignores_mouse_events: true,
                 nonactivating: true,
                 keyboard_on_request: true,
                 level: Some(panel_level(dock, open)),
