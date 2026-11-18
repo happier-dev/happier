@@ -126,9 +126,12 @@ export function DeploymentAddReview(props: Readonly<{
     <ModalCardFooterActions cancel={{ onPress: props.onClose, testID: 'project-deployments.add.cancel', disabled: press.running }}>
       {props.update ? null : <RoundButton testID="project-deployments.add.back" size="normal" display="secondary" disabled={press.running}
         title={t('projects.deployments.addBack')} onPress={props.onBack} />}
-      <RoundButton testID="project-deployments.add.confirm" size="normal" title={t(props.operands.destination.kind === 'repositoryPullRequest'
-        ? 'projects.deployments.settingsSections.moveToRepository.review' : props.update ? 'common.save' : 'projects.deployments.addConfirm')}
-        disabled={!templateRef || preflight.status !== 'ready' || choicesChanged || press.running} loading={press.running} onPress={add} />
+      {/* Changed choices are reviewed by the same primary press, so Add never sits disabled without saying why (D27). */}
+      <RoundButton testID="project-deployments.add.confirm" size="normal" title={choicesChanged ? t('capabilities.store.appPage.review')
+        : t(props.operands.destination.kind === 'repositoryPullRequest'
+          ? 'projects.deployments.settingsSections.moveToRepository.review' : props.update ? 'common.save' : 'projects.deployments.addConfirm')}
+        disabled={!templateRef || press.running || preflight.status === 'checking' || (!choicesChanged && preflight.status !== 'ready')}
+        loading={press.running} onPress={choicesChanged ? () => setReviewedChoices({ ...choices }) : add} />
     </ModalCardFooterActions>
   );
   const { setChrome } = props;
@@ -178,7 +181,7 @@ export function DeploymentAddReview(props: Readonly<{
               <DeploymentTemplateChoices template={read.app} lifetime={props.lifetime} value={choices} onChange={setChoices}
                 services={preflight.connectToServices ?? []} includeDomains testID="project-deployments.add.choices"
                 existingVariableNames={props.detail.content.bindings.flatMap(binding => binding.purpose === 'variable' ? [binding.name] : [])} />
-              {choicesChanged || preflight.status === 'failed' ? <RoundButton testID="project-deployments.add.reviewChoices"
+              {!choicesChanged && preflight.status === 'failed' ? <RoundButton testID="project-deployments.add.reviewChoices"
                 size="small" display="secondary" title={t('capabilities.store.appPage.review')} disabled={preflight.status === 'checking' || press.running}
                 onPress={() => setReviewedChoices({ ...choices })} /> : null}
             </> : null}

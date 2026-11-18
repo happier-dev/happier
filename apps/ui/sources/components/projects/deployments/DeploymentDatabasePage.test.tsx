@@ -1172,8 +1172,12 @@ describe('Environment → Data → Add (P10)', () => {
         }
         expect(previews).toHaveLength(before);
         expect(applied).toEqual([]);
-        expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync('project-deployments.add.reviewChoices');
+        // Changed choices are reviewed by the primary press itself, never a disabled Add with no reason (D27).
+        expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('project-deployments.add.reviewChoices')).toBeNull();
+        await screen.pressByTestIdAsync('project-deployments.add.confirm');
+        await waitForHomeGovernance(() => expect(previews).toHaveLength(before + 1));
+        expect(applied).toEqual([]);
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
         expect(previews).toHaveLength(before + 1);
       }

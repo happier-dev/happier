@@ -20,7 +20,7 @@ import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
-import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
+import { StoreItemMark, type StoreMarkFacts } from './catalog/StoreItemMark';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
@@ -129,11 +129,9 @@ export function StoreAppListing(
   const summary = item.summary;
   const app = state.kind === 'ready' ? state.app : null;
   const name = catalogText(app?.title) ?? summary.title;
-  const mark = React.useMemo(
-    () =>
-      admitRegistrySummaryMark(summary).brandMark ?? {
-        displayName: summary.title,
-      },
+  // The same mark the App's Store row draws (one owner for list and detail, D28): its admitted artwork, else the kind's.
+  const markFacts = React.useMemo(
+    (): StoreMarkFacts => ({ kind: 'app', title: summary.title, brand: admitRegistrySummaryMark(summary).brandMark ?? null }),
     [summary],
   );
   const ready = state.kind === 'ready' ? state : null;
@@ -249,13 +247,7 @@ export function StoreAppListing(
             <View style={styles.head}>
               <CapabilityDetailHeader
                 testID="store.app.listing.header"
-                mark={
-                  <HappierBrandMark
-                    brand={mark}
-                    pixelSize={30}
-                    externallyLabelled
-                  />
-                }
+                mark={<StoreItemMark facts={markFacts} size={30} />}
                 title={name}
                 {...(prose.purpose ? { purpose: prose.purpose } : {})}
                 facts={{
