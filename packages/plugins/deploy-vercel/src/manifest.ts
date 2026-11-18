@@ -26,11 +26,12 @@ export const plugin = definePlugin({
       {
         "id": "hobby",
         "title": "Hobby",
+        "price": {
+          "amount": "0",
+          "currency": "USD",
+          "unit": "month"
+        },
         "facts": [
-          {
-            "label": "Price",
-            "value": "$0 a month"
-          },
           {
             "label": "Seats",
             "value": "1 developer"
@@ -61,10 +62,15 @@ export const plugin = definePlugin({
       {
         "id": "pro",
         "title": "Pro",
+        "price": {
+          "amount": "20",
+          "currency": "USD",
+          "unit": "month"
+        },
         "facts": [
           {
-            "label": "Price",
-            "value": "$20 a month, including 1 deploying seat"
+            "label": "Seats",
+            "value": "1 deploying seat included"
           },
           {
             "label": "Additional seats",

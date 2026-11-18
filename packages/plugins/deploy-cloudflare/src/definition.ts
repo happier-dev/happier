@@ -69,11 +69,12 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
       {
         "id": "free",
         "title": "Free",
+        "price": {
+          "amount": "0",
+          "currency": "USD",
+          "unit": "month"
+        },
         "facts": [
-          {
-            "label": "Price",
-            "value": "$0"
-          },
           {
             "label": "Requests",
             "value": "100,000 a day"
@@ -94,11 +95,12 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
       {
         "id": "paid",
         "title": "Paid",
+        "price": {
+          "amount": "5",
+          "currency": "USD",
+          "unit": "month"
+        },
         "facts": [
-          {
-            "label": "Price",
-            "value": "From $5 a month per account"
-          },
           {
             "label": "Requests",
             "value": "10M a month"
@@ -139,11 +141,12 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
         {
           "id": "free",
           "title": "Free",
+          "price": {
+            "amount": "0",
+            "currency": "USD",
+            "unit": "month"
+          },
           "facts": [
-            {
-              "label": "Price",
-              "value": "$0"
-            },
             {
               "label": "Builds",
               "value": "500 a month"
