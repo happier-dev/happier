@@ -408,6 +408,7 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
         'SQLITE_CANTOPEN', 'SQLITE_CORRUPT',
         'session_detail_invalid_response', 'session_detail_projection_unavailable', 'not_authenticated', 'client-upgrade-required',
         'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable',
+        'route_conflict', 'invalid_provider_output',
       ].includes(code) || Object.values(RPC_ERROR_CODES).some(known => known === code))) errorCode = code;
       // The managed controller throws only its own closed, code-only identifiers.
       if (errorCode === null && name === 'ManagedMachineControllerError' && typeof code === 'string'
