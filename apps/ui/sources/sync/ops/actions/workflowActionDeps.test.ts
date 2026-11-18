@@ -1907,18 +1907,31 @@ describe('UI Workflow Action front door', () => {
         try {
             const workflowRequest = runtimeFetch.getMockImplementation();
             if (!workflowRequest || !h.account.serverIdentityId) throw new Error('Expected the current Workflow Home boundary');
+            const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
             const externalAction = await createExternalActionAccountHttpBoundary({
                 serverUrl: h.home.serverUrl, serverIdentityId: h.account.serverIdentityId, accountId,
                 machineId: 'machine-a', actionId: 'action.invoke', tokenEpoch: 0,
                 execute: (raw) => {
-                    const invoked: unknown = getActionSpec('action.invoke').inputSchema.parse(raw);
-                    if (!invoked || typeof invoked !== 'object' || !('input' in invoked)) throw new Error('Expected an invoked Channels Action');
-                    const input = SessionPullRequestBindingInputV1Schema.parse(invoked.input);
+                    const invoked = getActionSpec('action.invoke').inputSchema.parse(raw);
+                    if (invoked.action.pluginId !== PLUGIN_MANIFEST.id) throw new Error('Expected an invoked Channels Action');
+                    const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === invoked.action.localId);
+                    if (!declaration?.inputSchema || !declaration.resultSchema) throw new Error('Expected a declared Channels Action contract');
+                    const input = invoked.input;
+                    if (!isValidPluginJsonSchemaValue(compilePluginJsonSchema(declaration.inputSchema), input)
+                        || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid Channels Action fixture input');
+                    let output: unknown;
                     if (input.kind === 'attach') {
-                        attachments.push(input);
-                        return { kind: 'attached', bindingId: 'binding-pr-form' };
-                    }
-                    return { kind: 'removed' };
+                        attachments.push(SessionPullRequestBindingInputV1Schema.parse(input));
+                        output = { kind: 'attached', bindingId: 'binding-pr-form' };
+                    } else if (input.kind === 'removeTrigger') output = { kind: 'removed' };
+                    else if (input.kind === 'get') output = { kind: 'ready', sessionId: input.sessionId, bindings: pullRequestLinks.map((link, index) => ({
+                        bindingId: `binding-${index}`, revision: 1, link,
+                        watch: { policy: { mode: 'off', archiveAfterMerge: false }, reason: null,
+                            fixAttemptLimit: 3, roundsStarted: 0, watchingMachine: null }, latestUpdate: null,
+                    })) };
+                    else throw new Error('Unexpected Channels Action fixture operation');
+                    if (!isValidPluginJsonSchemaValue(compilePluginJsonSchema(declaration.resultSchema), output)) throw new Error('Invalid Channels Action fixture output');
+                    return output;
                 },
             });
             const request = async (url: unknown, init?: RequestInit) => await externalAction.handle(new URL(String(url)), init)
