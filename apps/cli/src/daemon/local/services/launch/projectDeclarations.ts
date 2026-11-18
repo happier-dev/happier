@@ -97,6 +97,8 @@ export async function produceEnvironmentProjectServices(input: Readonly<{
     specIdentity: string;
     signal?: AbortSignal;
     isCurrent(): boolean;
+    /** Cold first-use recovery; never supersedes a live producer observation. */
+    recovery?: true;
     nativeEffects: Readonly<{ keys: readonly MachineNativeEffectKey[]; settleNative?: () => Promise<void> }>;
     io: NativeComposeObservationIo;
     project: Pick<NativeComposeActivatedProject, 'composeArgs' | 'services' | 'nativeIdsForService' | 'authorizeServiceObserver'> & Readonly<{
@@ -128,7 +130,7 @@ export async function produceEnvironmentProjectServices(input: Readonly<{
                 // The supervisor must replace that observation, while an unchanged
                 // native member keeps its existing observer and service generation.
                 specIdentity: JSON.stringify([input.specIdentity, [...input.project.nativeIdsForService(composeService)].sort()]),
-                signal: input.signal, isCurrent: input.isCurrent,
+                signal: input.signal, isCurrent: input.isCurrent, ...(input.recovery ? { recovery: true as const } : {}),
                 nativeEffects: input.nativeEffects, releaseObservation,
                 processSpec: { mode: { kind: 'native', builtinLifecycle: native.lifecycle } },
             });

@@ -367,7 +367,11 @@ generation lease. When that custody is missing or closed, their shared output
 owner refuses before PTY/process creation with the non-retryable
 `secret_redaction_redeploy_required` reason. Redeploying the Environment through
 normal binding acquisition refreshes masking; reopening current grants alone
-does not prove the secret bytes delivered to the retained generation. Terminal
+does not prove the secret bytes delivered to the retained generation. Cold
+first-use service recovery only fills absent or ended observations: it joins a
+live observation instead of superseding it, so a later recovery read (including
+one whose Home view still names the previous receipt) cannot replace the
+redeploy's leased observation with a lease-less one. Terminal
 RPC preserves this domain reason in its existing error envelope. This remedy is
 development behavior, not automatic sanitizer recovery after daemon restart.
 Launch, prepare/build source checks and cold reads share the own-server native

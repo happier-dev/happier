@@ -145,6 +145,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                 const handles = await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
                     appliedServiceExports: basis.ownServer?.serviceExports,
                     release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
+                    recovery: true,
                     nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
                     io: runtime.nativeIo, project: { composeArgs,
                         services,

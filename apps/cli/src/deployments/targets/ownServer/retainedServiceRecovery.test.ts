@@ -323,6 +323,10 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             }));
         },
         readHandle: () => fixture.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service),
+        // A recovery whose Home view still names the retained source receipt.
+        recoverRetainedSourceReceipt: () => restoreOwnServerDeploymentServices({ ...target, installationId: 'installation-a',
+            receipt: sourceReceipt, owner: fixture.registry.projectManagedServices, signal: new AbortController().signal,
+            isCurrent: () => true, readReceipt }),
         targetLinkId: link.id,
         async prepareBindings() {
             const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: serverUrl,
@@ -768,6 +772,26 @@ describe('retained Environment service recovery on first use', () => {
             } } }]);
             expect(fixture.sourcePath).toContain(join('releases', fixture.sourceDeploymentId));
             expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(1);
+        } finally { await fixture.dispose(); }
+    });
+
+    it('keeps the live serving observation when a later recovery reads an older receipt for the same containers', async () => {
+        // COR3-171 r4: a recovery read that ran after the redeploy registered its
+        // leased observation superseded it, so exec refused with "redeploy".
+        const fixture = await createRestartedEnvironmentFixture('running', undefined, 'reused-container');
+        try {
+            expect(await fixture.list()).toMatchObject({ kind: 'snapshot', services: [
+                { serviceId: fixture.service.serviceId, deployment: { deploymentId: 'cmvxhwoyw002imcvup262fnnk' } },
+            ] });
+            const live = fixture.readHandle();
+            if (!live) throw new Error('Expected the live serving observation');
+            expect(await fixture.recoverRetainedSourceReceipt()).toEqual([]);
+            expect(fixture.readHandle()).toBe(live);
+            expect(live.retirementSignal.aborted).toBe(false);
+            expect(await fixture.list()).toMatchObject({ kind: 'snapshot', services: [
+                { serviceId: fixture.service.serviceId, generation: live.instanceId,
+                    deployment: { deploymentId: 'cmvxhwoyw002imcvup262fnnk' } },
+            ] });
         } finally { await fixture.dispose(); }
     });
 

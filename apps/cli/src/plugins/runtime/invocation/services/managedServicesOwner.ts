@@ -257,6 +257,9 @@ export type ProjectManagedServiceSupervisionInput = ProjectManagedServiceWitness
     | Readonly<{ kind: 'environment'; authorizeLaunch?: never;
         /** Idempotent lease of the producer-bound observation IO; never native workload teardown. */
         releaseObservation(): Promise<void>;
+        /** Cold first-use recovery joins a live observation instead of superseding
+         * it: only the activating producer holds the generation's masking lease. */
+        recovery?: true;
         processSpec: Readonly<{ mode: Extract<ManagedServiceProcessSpec['mode'], { kind: 'native'; builtinLifecycle: ProjectBuiltinNativeLifecycle }> }>;
         nativeEffects: Readonly<{
     keys: readonly MachineNativeEffectKey[];
@@ -4554,13 +4557,14 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             ) {
                 return fail('plugin_managed_service_spec_conflict', 'A different reviewed service effect owns this Project declaration');
             }
+            const joinsLiveObservation = request.kind === 'environment' && request.recovery === true;
             if (existing.terminal || existing.establishmentAbort.signal.aborted
-                || request.kind === 'environment' && existing.specIdentity !== request.specIdentity) {
+                || request.kind === 'environment' && !joinsLiveObservation && existing.specIdentity !== request.specIdentity) {
                 await retireEntry(existing);
                 observationTransferred = true;
                 return await establishProject(request, restoredProcess);
             }
-            if (existing.specIdentity !== request.specIdentity) {
+            if (!joinsLiveObservation && existing.specIdentity !== request.specIdentity) {
                 return fail('plugin_managed_service_spec_conflict', 'A different reviewed service effect owns this Project declaration');
             }
             if (request.kind === 'environment' && existing.observationRelease === request.releaseObservation) observationTransferred = true;
