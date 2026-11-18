@@ -25,7 +25,9 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from './composeMachineSetup';
-import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import axios from 'axios';
+import { exercisePublicPackagePlanApply, withNativeConfirmation } from '@/testkit/machines/nativeSoftwareInstallFlow';
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
@@ -109,32 +111,53 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
 }
 
 describe('Combined Machine setup child settlement', () => {
-  it('keeps the admitted Apply credential for a nested opaque-source Plan', async () => {
-    const source = { kind: 'accountPresetOpaque' as const, presetId: 'saved', presetRevision: 1, contentEncryptionMode: 'plain' as const };
-    const direct = { kind: 'direct' as const, setup: {} };
-    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'machine', targets: [{
-      homeId: 'home', machineId: 'machine', desiredRevision: 1, sources: [source, direct], exclusions: [], recipePlans: [],
-    }] });
-    const authorization = { ...ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted', binding: {
-      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'machines.setup.apply', requestId: 'apply',
-      target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43),
-    } }), requesterAccountProjection: {} as ExternalActionRequesterAccountProjectionV1 };
-    let nestedContext: ActionExecutorContext | undefined;
-    const deps = createCombinedMachineSetupActionDeps({ readDeps: createUnavailableActionTransportDeps,
-      targetPlan: async request => {
-        nestedContext = request.context;
-        return { desiredRevision: 1, sources: [source, direct], exclusions: [], support: [], recipePlans: [] };
-      }, readHostFacts: async () => ({ machines: [{ machineId: 'machine', online: true }] }), orchestrationDirectory: '/setup',
-      startCombined: async () => undefined, waitForRun: async () => undefined, readInvocations: async () => undefined });
-    const result = await deps.prepareMachineSetupApply!({ input, context: {
-      surface: 'rpc', authority: 'present_user', serverId: 'home', actionRequestId: 'apply',
-      externalActionExecutionAuthorization: authorization,
-    } });
-    expect(result).toMatchObject({ preview: { kind: 'machineSetup' } });
-    expect(nestedContext?.externalActionExecutionAuthorization).toMatchObject({ token: 'admitted' });
-    expect(nestedContext?.externalActionExecutionAuthorization?.requesterAccountProjection)
-      .toBe(authorization.requesterAccountProjection);
+  it.skipIf(process.platform === 'win32')('keeps the admitted Apply credential for a nested opaque-source Plan', async () => {
+    await exercisePublicPackagePlanApply('native-confirm', false, async fixture => {
+      const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+      const source = { kind: 'accountPresetOpaque' as const, presetId: 'saved', presetRevision: 1,
+        contentEncryptionMode: 'plain' as const };
+      const direct = { kind: 'direct' as const, setup: {} };
+      const sources = [source, direct];
+      const resolvedSources = [{ ...source, presetContent: { content: { t: 'plain' as const,
+        v: { v: 1, name: 'Saved setup', setup: {} } }, recipientEnvelope: null } }, direct];
+      const homePost = vi.mocked(axios.post).getMockImplementation();
+      if (!homePost) throw new Error('Expected public Setup Home boundary');
+      let presetReads = 0;
+      // Only Home's saved-preset storage response is specialized. The public
+      // Action, requester sealing, Machine RPC and installed receiver stay real.
+      vi.mocked(axios.post).mockImplementation(async (url, body, options) => {
+        if (new URL(String(url)).pathname !== '/v1/machines/setup/resolve') return homePost(url, body, options);
+        presetReads += 1;
+        expect(body).toEqual({ ...target, candidatePreset: { presetId: source.presetId, presetRevision: 1 } });
+        return { status: 200, data: { sources: resolvedSources } };
+      });
+      const planned = await fixture.publicExecutor.execute('machines.setup.plan', { ...target, sources, mode: 'effects' },
+        fixture.context('machines.setup.plan', 'opaque-plan'));
+      expect(planned, JSON.stringify(planned)).toMatchObject({ ok: true });
+      if (!planned.ok) throw new Error('Opaque preset Plan was refused');
+      const plan = MachineSetupPlanResultV1Schema.parse(planned.result);
+      expect(plan.sources).toEqual(sources);
+      expect(plan.resolvedSources).toEqual(resolvedSources);
+      const planPresetReads = presetReads;
+      expect(planPresetReads).toBeGreaterThan(0);
+      const input = MachineSetupApplyInputV1Schema.parse({ ...target,
+        targets: [machineSetupApplyTargetFromPlanV1(target, plan)] });
+      const context = fixture.context('machines.setup.apply', 'opaque-apply');
+      const applied = await fixture.publicExecutor.execute('machines.setup.apply', input,
+        withNativeConfirmation('machines.setup.apply', input, context));
+      expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true });
+      if (!applied.ok) throw new Error('Opaque preset Apply was refused');
+      // Apply's admitted re-Plan must resolve the opaque source again through
+      // requester custody rather than accepting an unconditional target Plan.
+      expect(presetReads).toBeGreaterThan(planPresetReads);
+      const receipt = MachineSetupApplyResultV1Schema.parse(applied.result);
+      const retained = await fixture.operations.handlers.getV2({ operationId: receipt.operationId }, context);
+      expect(retained, JSON.stringify(retained)).toMatchObject({ kind: 'found', operation: {
+        actionId: 'machines.setup.apply', requestId: 'opaque-apply',
+        actor: { actorKind: 'person', accountId: 'alice' },
+        scope: { accountId: 'alice', machineId: fixture.machine.id },
+      } });
+    }, undefined, undefined, 'plain');
   });
   it('settles an interrupted Setup from its exact retained terminal native failure without parent attention', async () => {
     const child = { version: 1, operationId: 'native-child', revision: 5,
