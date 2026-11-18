@@ -2,7 +2,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 
 import { changeTextTestInstance, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from '@/components/tools/shell/views/ToolView.testHelpers';
@@ -147,6 +146,11 @@ function composerPart(screen: Screen, containerTestID: string, partTestID: strin
     const part = container!.findAll((node) => node.props.testID === partTestID && typeof node.props[handler] === 'function')[0];
     expect(part, `${containerTestID} › ${partTestID}`).toBeDefined();
     return part!;
+}
+
+function composerText(screen: Screen, containerTestID: string): string {
+    const input = composerPart(screen, containerTestID, 'new-session-composer-input', 'onChangeText');
+    return input.props.textSource?.getPrompt?.() ?? input.props.value ?? '';
 }
 
 /** Types into the one composer mounted under `containerTestID` and presses its Send. */
@@ -366,14 +370,9 @@ describe('ReviewFindingsMessageCard', () => {
         await flush();
 
         expect(submitMessageSpy).not.toHaveBeenCalled();
-        expect(actionSendSpy).toHaveBeenCalledTimes(1);
-        const { sessionId, message: text } = actionSendSpy.mock.calls[0]![0];
-        expect(sessionId).toBe('sess_1');
-        expect(text.startsWith(REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1)).toBe(true);
-        expect(text).toContain('comment-f1');
-        expect(text).toContain('"expectedServerRevision": 7');
-        expect(text).not.toContain('comment-f2');
-        await expect(actionSendSpy.mock.results[0]?.value).resolves.toMatchObject({ ok: true });
+        // Apply is a Review Action. It no longer bypasses the Action front door with a
+        // direct session message, so the legacy transport spy must remain untouched.
+        expect(actionSendSpy).not.toHaveBeenCalled();
     });
 
     it('leaves out of Implement a fix that was switched to Ignore while the decisions were being re-read', async () => {
@@ -398,10 +397,7 @@ describe('ReviewFindingsMessageCard', () => {
         await flush();
 
         expect(submitMessageSpy).not.toHaveBeenCalled();
-        expect(actionSendSpy).toHaveBeenCalledTimes(1);
-        const text = actionSendSpy.mock.calls[0]![0].message;
-        expect(text).toContain('comment-f2');
-        expect(text).not.toContain('comment-f1');
+        expect(actionSendSpy).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('review-finding-toggle:f1');
         expect(screen.findByTestId('review-finding-triage:f1:reject')!.props.accessibilityState).toMatchObject({ checked: true });
     });
@@ -429,9 +425,7 @@ describe('ReviewFindingsMessageCard', () => {
         await flush();
         await screen.pressByTestIdAsync('review-findings-publish-accepted');
         await flush();
-        expect(actionSendSpy).toHaveBeenCalledTimes(1);
-        expect(actionSendSpy.mock.calls[0]![0].message).toContain('comment-f2');
-        expect(actionSendSpy.mock.calls[0]![0].message).not.toContain('comment-f1');
+        expect(actionSendSpy).not.toHaveBeenCalled();
     });
 
     it('asks the reviewer that found a finding in that finding\'s own thread', async () => {
@@ -672,14 +666,13 @@ describe('ReviewFindingsMessageCard', () => {
         expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith('sess_1', {
             runId: 'run_1', actionId: 'review.follow_up', input: { findingIds: [], messageMarkdown: 'Is the key per tenant?' },
         }, expect.objectContaining({ serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } }));
-        expect(composerPart(screen, 'review-findings-follow-up', 'new-session-composer-input', 'onChangeText').props.value)
-            .toBe('Is the key per tenant?');
+        expect(composerText(screen, 'review-findings-follow-up')).toBe('Is the key per tenant?');
 
         await act(async () => {
             await composerPart(screen, 'review-findings-follow-up', 'new-session-composer-send', 'onPress').props.onPress();
         });
         await flush();
-        expect(composerPart(screen, 'review-findings-follow-up', 'new-session-composer-input', 'onChangeText').props.value).toBe('');
+        expect(composerText(screen, 'review-findings-follow-up')).toBe('');
     });
 
     it('keeps the result\'s unsent follow-up in the run\'s draft when the pane closes and opens again', async () => {
@@ -696,7 +689,7 @@ describe('ReviewFindingsMessageCard', () => {
 
         const second = await renderScreen(page);
         await flush();
-        expect(composerPart(second, 'review-findings-follow-up', 'new-session-composer-input', 'onChangeText').props.value).toBe('Half a question');
+        expect(composerText(second, 'review-findings-follow-up')).toBe('Half a question');
     });
 
     it('keeps the finding follow-up in the same run draft when the finding closes and opens again', async () => {
@@ -710,7 +703,7 @@ describe('ReviewFindingsMessageCard', () => {
         });
         await screen.pressByTestIdAsync('review-finding-toggle:f1');
         await screen.pressByTestIdAsync('review-finding-toggle:f1');
-        expect(composerPart(screen, 'review-finding-ask-field:f1', 'new-session-composer-input', 'onChangeText').props.value).toBe('Check the iOS path?');
+        expect(composerText(screen, 'review-finding-ask-field:f1')).toBe('Check the iOS path?');
         expect(screen.findByTestId('review-findings-follow-up')).toBeNull();
     });
 
@@ -778,9 +771,7 @@ describe('ReviewFindingsMessageCard', () => {
                 expect(applyReads).toBe(1);
                 expect(actionSendSpy).not.toHaveBeenCalled();
             } else {
-                expect(actionSendSpy).toHaveBeenCalledTimes(1);
-                const text = actionSendSpy.mock.calls[0]![0].message;
-                expect(text.match(/"commentId": "comment-f1"/g)).toHaveLength(1);
+                expect(actionSendSpy).not.toHaveBeenCalled();
             }
         }
 

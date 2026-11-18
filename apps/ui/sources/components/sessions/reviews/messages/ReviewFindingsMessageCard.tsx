@@ -16,7 +16,7 @@ import type {
 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 
-import { hasAgentIconMark } from '@/agents/catalog/catalog';
+import { getAgentCore, hasAgentIconMark } from '@/agents/catalog/catalog';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -118,6 +118,8 @@ type CardMember = ReviewMember & Readonly<{
 }>;
 
 function reviewerLabelOf(runRef: ReviewFindingsV2['runRef']): string {
+    const core = getAgentCore(runRef.backendId);
+    if (core) return t(core.displayNameKey);
     return resolveExecutionRunBackendLabel(runRef.backendTarget ?? { kind: 'backend', backendId: runRef.backendId }) ?? runRef.backendId;
 }
 
@@ -458,21 +460,30 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             setIsApplying(true);
             try {
                 if (!canActRef.current || !capturedLifetime.isCurrent()) return;
-                await followUpExecution.executeValue('review.apply', { sessionId, reviews: members.map(member => ({
-                    runId: member.runId,
-                    findings: member.findings.map(finding => {
-                        const comment = member.commentByFindingId.get(finding.id);
-                        return { ...finding,
-                            ...(comment ? { comment: { id: comment.id, state: comment.state, serverRevision: comment.serverRevision,
-                                ...(comment.projectId ? { projectId: comment.projectId } : {}),
-                                ...(comment.workspace ? { workspace: comment.workspace } : {}),
-                                ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
-                                ...(comment.runId ? { runId: comment.runId } : {}),
-                            } } : {}),
-                            threadRefs: member.threadRefsByFindingId[finding.id] ?? [],
-                        };
-                    }),
-                })) }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') });
+                const reviewIds = [...new Set(members.flatMap(member => [...member.commentByFindingId.values()]
+                    .map(comment => comment.reviewId).filter((reviewId): reviewId is string => Boolean(reviewId))))];
+                if (reviewIds.length > 0) {
+                    await Promise.all(reviewIds.map(reviewId => followUpExecution.executeValue('review.apply',
+                        { sessionId, reviewId }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') })));
+                } else {
+                    // Legacy unbound runs have no Review resource yet; retain their admitted
+                    // run-scoped input until the producer materializes a Review identity.
+                    await followUpExecution.executeValue('review.apply', { sessionId, reviews: members.map(member => ({
+                        runId: member.runId,
+                        findings: member.findings.map(finding => {
+                            const comment = member.commentByFindingId.get(finding.id);
+                            return { ...finding,
+                                ...(comment ? { comment: { id: comment.id, state: comment.state, serverRevision: comment.serverRevision,
+                                    ...(comment.projectId ? { projectId: comment.projectId } : {}),
+                                    ...(comment.workspace ? { workspace: comment.workspace } : {}),
+                                    ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
+                                    ...(comment.runId ? { runId: comment.runId } : {}),
+                                } } : {}),
+                                threadRefs: member.threadRefsByFindingId[finding.id] ?? [],
+                            };
+                        }),
+                    })) }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') });
+                }
             } catch (e) {
                 setError(e instanceof Error ? e.message : t('session.reviewFindings.errors.applyAcceptedFailed'));
             } finally {
@@ -497,6 +508,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             contexts.set(row.rowId, {
                 sessionId,
                 serverId,
+                accountLifetime,
                 draftRunId: runId,
                 recipient: recipientOf(rowMembers),
                 waitingLabel: waitingLabelOf(rowMembers),
@@ -541,6 +553,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                         testID="review-findings-follow-up"
                         sessionId={sessionId}
                         serverId={serverId}
+                        accountLifetime={accountLifetime}
                         draftRunId={runId}
                         placeholder={dockMembers.length > 1
                             ? t('runPage.review.askReviewersPlaceholder')

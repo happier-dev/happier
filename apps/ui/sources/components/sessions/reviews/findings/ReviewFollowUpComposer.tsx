@@ -18,6 +18,7 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Text } from '@/components/ui/text/Text';
 import { randomUUID } from '@/platform/randomUUID';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
@@ -72,6 +73,7 @@ export function ReviewFollowUpComposer(props: Readonly<{
     testID: string;
     sessionId: string;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     draftRunId: string | null;
     placeholder: string;
     recipient: ReviewFollowUpRecipient;
@@ -83,6 +85,7 @@ export function ReviewFollowUpComposer(props: Readonly<{
     const serverIds = React.useMemo(() => [serverId], [serverId]);
     const bindings = useServerCredentialAccountScopeBindings(serverIds);
     const binding = React.useMemo(() => [...bindings.values()][0] ?? null, [bindings]);
+    const accountLifetime = props.accountLifetime ?? binding;
     const [instanceId] = React.useState(randomUUID);
     const ref = React.useMemo(() => ({ kind: 'participantMessage' as const, sessionId, instanceId }), [instanceId, sessionId]);
     const address = React.useMemo(
@@ -90,17 +93,22 @@ export function ReviewFollowUpComposer(props: Readonly<{
         [props.draftRunId, sessionId],
     );
     const owner = useRepositoryComposerDocumentOwner({
-        scopeLifetime: address ? binding : null,
+        scopeLifetime: address ? accountLifetime : null,
         ref,
         address,
         capabilities: { text: true, references: true, attachments: false, submit: true },
-        isCurrent: () => binding === null || binding.isCurrent(),
+        isCurrent: () => accountLifetime === null || accountLifetime.isCurrent(),
     });
     const document = owner.read().document;
+    // The repository owner is canonical, but its write notification can arrive after the
+    // controlled input's event. Keep the just-typed projection visible until that owner reflects it.
+    const [editedText, setEditedText] = React.useState<string | null>(null);
+    const displayedText = editedText ?? document.text;
     const [sending, setSending] = React.useState(false);
     const sendingRef = React.useRef(false);
 
     const onChangeText = React.useCallback((text: string) => {
+        setEditedText(text);
         owner.replaceDocument({ ...owner.read().document, text });
     }, [owner]);
     const onMentionsChange = React.useCallback((structuredInputMentions: Parameters<NonNullable<React.ComponentProps<typeof AgentInput>['onStructuredInputMentionsChange']>>[0]) => {
@@ -109,14 +117,17 @@ export function ReviewFollowUpComposer(props: Readonly<{
 
     const onSendProp = props.onSend;
     const send = React.useCallback((options?: AgentInputSendOptions) => {
-        const text = (options?.inputTextOverride ?? owner.read().document.text).trim();
+        const text = (options?.inputTextOverride ?? editedText ?? owner.read().document.text).trim();
         if (text.length === 0 || sendingRef.current) return;
         const accepted = owner.captureCurrentness();
         sendingRef.current = true;
         setSending(true);
         fireAndForget(onSendProp(text).then((sent) => {
             // Text typed while the question was on its way stays.
-            if (sent) owner.clearAccepted(accepted);
+            if (sent) {
+                owner.clearAccepted(accepted);
+                setEditedText('');
+            }
         }).finally(() => {
             sendingRef.current = false;
             setSending(false);
@@ -139,7 +150,7 @@ export function ReviewFollowUpComposer(props: Readonly<{
     return (
         <View testID={props.testID}>
             <AgentInput
-                value={document.text}
+                value={displayedText}
                 placeholder={props.placeholder}
                 inputAccessibilityLabel={props.placeholder}
                 onChangeText={onChangeText}

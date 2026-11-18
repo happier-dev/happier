@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -26,6 +27,7 @@ export type ReviewFindingThreadEntryView = ReviewFindingThreadEntry & Readonly<{
 export type ReviewFindingAskContext = Readonly<{
     sessionId: string;
     serverId: string | null;
+    accountLifetime: ServerAccountScopeLifetime | null;
     draftRunId: string;
     recipient: ReviewFollowUpRecipient;
     /** "Waiting for Sonnet 5…" while a sent question has no answer yet. */
@@ -115,6 +117,7 @@ export function ReviewFindingThreadEntries(props: Readonly<{
                 testID={`review-finding-ask-field:${props.rowId}`}
                 sessionId={props.askContext.sessionId}
                 serverId={props.askContext.serverId}
+                accountLifetime={props.askContext.accountLifetime}
                 draftRunId={props.askContext.draftRunId}
                 placeholder={t('runPage.review.askPlaceholder')}
                 recipient={props.askContext.recipient}
