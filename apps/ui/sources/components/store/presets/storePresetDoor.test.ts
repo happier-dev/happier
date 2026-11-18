@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { projectAddToPresetChoices } from './storePresetDoor';
 
 const chrome = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'tools.browsers', recipeId: 'chrome', revision: '2' }, inputs: {} } };
-const kuma = { kind: 'app' as const, definition: { name: 'Status page', project: { kind: 'create' as const },
+const kuma = { kind: 'app' as const, definition: { name: 'Status page', project: { kind: 'create' as const }, bindings: [],
     definition: { from: 'catalogApp' as const, templateRef: { sourceId: 'catalog', itemId: 'uptime-kuma', version: '2.0.2',
         ref: { kind: 'version' as const, version: '2.0.2' } } } } };
-const preset = (id: string, items: ManagedMachinePresetV1['setup'] extends infer S ? S extends { items?: infer I } ? I : never : never): ManagedMachinePresetV1 =>
-    ({ homeId: 'srv', id, revision: 1, name: id, owner: { kind: 'account', accountId: 'a' }, setup: { items } }) as ManagedMachinePresetV1;
+const preset = (id: string, items: NonNullable<ManagedMachinePresetContentV1['setup']>['items']): OpenedManagedMachinePresetV1 =>
+    createPlainManagedMachinePresetFixture({ homeId: 'srv', id, revision: 1, name: id,
+        owner: { kind: 'account', accountId: 'a' }, setup: { items } }).opened;
 
 describe('projectAddToPresetChoices', () => {
     it('marks a preset that already sets up the same recipe, at any revision, as already in it', () => {

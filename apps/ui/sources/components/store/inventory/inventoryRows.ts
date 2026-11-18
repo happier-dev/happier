@@ -20,29 +20,27 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 export const inventoryColumnAdapter = defineSettingsCollectionAdapter(['kind', 'status', 'machine', 'project']);
 export type ManagedInventoryField = typeof inventoryColumnAdapter.fields[number];
-type OperationalKind = 'watchedService' | 'setup' | 'configuredCheck' | 'configuredBackup';
-function operationalKindWord(kind: InstalledRow['kind']): string | null {
+function inventoryKindLabel(kind: InstalledRow['kind'], presentation: 'title' | 'word'): string {
     switch (kind) {
         case 'watchedService': return t('machineServices.groups.watched');
         case 'setup': return t('capabilities.store.setupFamilyTitle');
         case 'configuredCheck': return t('capabilities.store.checksFamilyTitle');
         case 'configuredBackup': return t('projects.deployments.sectionBackups');
-        default: return null;
+        case 'theme': return t(presentation === 'title' ? 'themeStore.title' : 'settingsAppearance.theme');
+        default: return presentation === 'title' ? t(`capabilities.store.kinds.${kind}.title`) : t(`capabilities.store.kindWord.${kind}`);
     }
 }
 export function inventoryKindTitle(kind: InstalledRow['kind']): string {
-    if (kind === 'theme') return t('themeStore.title');
-    return operationalKindWord(kind) ?? t(`capabilities.store.kinds.${kind as Exclude<InstalledRow['kind'], OperationalKind>}.title`);
+    return inventoryKindLabel(kind, 'title');
 }
 export function inventoryKindWord(kind: InstalledRow['kind']): string {
-    if (kind === 'theme') return t('settingsAppearance.theme');
-    return operationalKindWord(kind) ?? t(`capabilities.store.kindWord.${kind as Exclude<InstalledRow['kind'], OperationalKind>}`);
+    return inventoryKindLabel(kind, 'word');
 }
 export type ManagedInventoryRowPresentation = Readonly<{
     row: InstalledRow;
     facts: SettingsCollectionRowFacts<ManagedInventoryField>;
     /** A route is display/navigation context, never an execution target or an admission grant. */
-    home: Readonly<{ href: string | ReturnType<typeof buildPluginDetailRoute> | null; scope: ServerAccountScope }>;
+    home: Readonly<{ href: string | ReturnType<typeof buildPluginDetailRoute> | ReturnType<typeof buildStoreListingRoute> | null; scope: ServerAccountScope }>;
     machines: readonly MachineAdministrationTargetV1[] | null;
     projects: readonly string[] | null;
     /**

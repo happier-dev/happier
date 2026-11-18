@@ -117,7 +117,9 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     if (previewOrigin.kind === 'store' && 'reference' in previewOrigin && !selection) {
                         return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
                     }
-                    const preview = runtime.preview.begin({ ...input, document, origin: previewOrigin,
+                    const preview = runtime.preview.begin({ mode: input.mode, document, origin: previewOrigin,
+                        ...(input.group ? { group: input.group } : {}),
+                        ...(input.transition ? { transition: input.transition } : {}),
                         ...(selection ? { selection } : {}) });
                     return { previewRef: preview.previewRef, coverage: runtime.coverage(document), compatibility: document.compatibility };
                 }

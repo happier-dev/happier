@@ -24,10 +24,10 @@ const { inventoryMachineKey } = await import('./inventoryRows');
 const { inventoryFamilyDiagnosticCode } = await import('./inventoryCoverage');
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
 const fields = {
-    kind: { label: 'Kind', valueLabel: (value: string) => value },
-    status: { label: 'Status', valueLabel: (value: string) => value },
-    machine: { label: 'Machine', valueLabel: (value: string) => value },
-    project: { label: 'Project', valueLabel: (value: string) => value },
+    kind: { label: 'Kind', icon: 'circle-half' as const, valueLabel: (value: string) => value },
+    status: { label: 'Status', icon: 'circle-half' as const, valueLabel: (value: string) => value },
+    machine: { label: 'Machine', icon: 'circle-half' as const, valueLabel: (value: string) => value },
+    project: { label: 'Project', icon: 'circle-half' as const, valueLabel: (value: string) => value },
 };
 const NO_OPEN = () => {};
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });

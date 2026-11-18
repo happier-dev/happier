@@ -494,7 +494,7 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
 function ThemeModeFilter(props: Readonly<{ mode: ThemeProfileMode | null; onModeChange: (mode: ThemeProfileMode | null) => void }>) {
   const phone = useDeviceType() === 'phone';
   return <SegmentedTabBar<'any' | ThemeProfileMode> role="radiogroup" segmentSizing={phone ? 'equal' : 'content'}
-    accessibilityLabel={t('themeStore.modeFilter')} testID="store.theme.modes" activeTabId={props.mode ?? 'any'}
+    accessibilityLabel={t('themeStore.modeFilter')} testIDPrefix="store.theme.modes" activeTabId={props.mode ?? 'any'}
     onSelectTab={id => props.onModeChange(id === 'any' ? null : id)}
     tabs={[{ id: 'any', label: t('themeStore.anyMode'), testID: 'store.theme.modes.any' },
       { id: 'light', label: t('themeCard.light'), testID: 'store.theme.modes.light' },

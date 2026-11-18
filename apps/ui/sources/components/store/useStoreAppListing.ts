@@ -217,11 +217,13 @@ export function useStoreAppListing(input: Readonly<{
                 const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (approval.success) return approval.data;
                 const applied = DeploymentTemplateInstantiateResultV1Schema.safeParse(result.result);
-                if (!applied.success || applied.data.kind === 'preview') return {
-                    ok: false, errorCode: 'invalid_response', error: 'invalid_response',
-                };
+                // Store installs always deploy into a stored definition; a repository pull request result is not a valid answer.
+                if (!applied.success) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
                 if (applied.data.kind === 'partial') return retainFailure({ ok: false,
                     errorCode: applied.data.errorCode, error: applied.data.errorCode, details: applied.data });
+                if (applied.data.kind !== 'applied') return {
+                    ok: false, errorCode: 'invalid_response', error: 'invalid_response',
+                };
                 if (installedProjectSourceId !== undefined) return { projectSourceId: installedProjectSourceId, environmentId: applied.data.environmentId };
                 selectedAttempt.applied = applied.data;
                 return resolveCreated(applied.data);

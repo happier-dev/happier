@@ -148,7 +148,7 @@ describe('theme surface hooks on the rendered owning primitives', () => {
                 <SelectionList themeSurface={PROJECT_PICKER_THEME_SURFACE} testID="surface-project-choices"
                     listAccessibilityLabel="Projects" rootStep={{ id: 'projects', sections: [{ kind: 'static', id: 'projects',
                         options: [{ id: 'one', label: 'One' }, { id: 'two', label: 'Two' }, { id: 'disabled', label: 'Disabled', disabled: true }] }] }}
-                    selectedOptionId="one" onSelect={() => {}} />
+                    selectedOptionId="one" onSelect={() => {}} onRequestClose={() => {}} />
                 <RoundButton title="Save" onPress={() => {}} leading={<View />} />
                 <RoundButton title="Unavailable" disabled onPress={() => {}} leading={<View />} />
                 <FieldTextInput value="query" onChangeText={() => {}} accessibilityLabel="Query" />
@@ -177,6 +177,8 @@ describe('theme surface hooks on the rendered owning primitives', () => {
     });
 
     it('emits real reachable owner parts and semantic states, including alternate painted roots', () => {
+        const mountedContainer = container;
+        if (!mountedContainer) throw new Error('Expected the mounted surface fixture');
         // Open overlays retain their real portal owner outside the root container.
         const addresses = emittedAddresses(document.body);
         expect(addresses).toContain('sidebar/root/default');
@@ -203,10 +205,10 @@ describe('theme surface hooks on the rendered owning primitives', () => {
             for (const state of ['default', 'disabled']) expect(emitted.has(`composer/${part}/${state}`), `composer/${part}/${state}`).toBe(true);
         }
         for (const fixture of ['editable', 'read-only']) {
-            expect(emittedAddresses(container.querySelector(`[data-fixture="${fixture}"]`)!)).toContain('composer/root/default');
+            expect(emittedAddresses(mountedContainer.querySelector(`[data-fixture="${fixture}"]`)!)).toContain('composer/root/default');
         }
         for (const fixture of ['bubble', 'attention']) {
-            expect(emittedAddresses(container.querySelector(`[data-fixture="${fixture}"]`)!)).toEqual(['user-bubble/root/default', 'user-bubble/text/default']);
+            expect(emittedAddresses(mountedContainer.querySelector(`[data-fixture="${fixture}"]`)!)).toEqual(['user-bubble/root/default', 'user-bubble/text/default']);
         }
     });
 

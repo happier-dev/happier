@@ -359,7 +359,7 @@ function ListingContent(
     />
   );
   const catalogFailure = (failures: CapabilityAddModalConfig<unknown>['catalog']['sourceFailures']) =>
-    failures?.length ? <RegistrySourcesUnavailable testID="store.listing.failed" size={size}
+    failures?.length ? <RegistrySourcesUnavailable testID="store.listing.failed" size={size === 'line' ? 'line' : 'page'}
       failures={failures.map(failure => ({ key: failure.sourceId, message: failure.message, onRetry: failure.onRetry }))} /> : removed;
   switch (state.kind) {
     case 'theme': return <StoreThemeListing {...state.view} />;

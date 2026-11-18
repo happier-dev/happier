@@ -232,12 +232,13 @@ describe('theme Actions through real library and try-on owners', () => {
         const imported = await execute({ actionId: THEME_ACTION_IDS.import,
             input: { file: { name: 'theme.json', text: exportThemeProfileToJson(document('retained')) } }, context: actionContext });
         expect(imported).toHaveProperty('entry');
-        if (!('entry' in imported)) throw new Error('Import failed');
-        const exported = await execute({ actionId: THEME_ACTION_IDS.export, input: { ref: imported.entry.reference }, context: actionContext });
+        if (!('entry' in imported) || !imported.entry) throw new Error('Import failed');
+        const reference = imported.entry.reference;
+        const exported = await execute({ actionId: THEME_ACTION_IDS.export, input: { ref: reference }, context: actionContext });
         expect(exported).toHaveProperty('file');
         if (!('file' in exported)) throw new Error('Export failed');
         expect(exported.file.text).toContain('futurePresentation');
-        const applied = await execute({ actionId: THEME_ACTION_IDS.apply, input: { ref: imported.entry.reference, mode: 'dark' }, context: actionContext });
+        const applied = await execute({ actionId: THEME_ACTION_IDS.apply, input: { ref: reference, mode: 'dark' }, context: actionContext });
         if (!('undoHandle' in applied) || typeof applied.undoHandle !== 'string') throw new Error('Apply failed');
         expect(await execute({ actionId: THEME_ACTION_IDS.undo, input: { undoHandle: applied.undoHandle }, context: actionContext }))
             .toMatchObject({ restored: { dark: null } });

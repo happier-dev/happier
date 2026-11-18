@@ -17,7 +17,7 @@ describe('theme Artifact header projection', () => {
                 palette: { overrides: { 'background.canvas': '#171717' }, radius: 'sharp' },
                 palettes: { light: { overrides: { 'background.canvas': '#fafafa' }, radius: 'sharp' },
                     dark: { overrides: { 'background.canvas': '#171717' }, radius: 'sharp' } } },
-            get body() { bodyReads++; throw new Error('Library must not open bodies'); } };
+            get body(): string { bodyReads++; throw new Error('Library must not open bodies'); } };
         const entry = projectThemeProfileArtifactSummary(row, scope)?.entry;
         expect(entry?.modes).toEqual(['light', 'dark']);
         expect(entry?.miniatures?.light).toMatchObject({ mode: 'light', canvas: '#fafafa' });

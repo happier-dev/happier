@@ -7,14 +7,16 @@ import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStore
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { ThemeReferenceSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { RegistryThemeListingV1 } from '@happier-dev/protocol/registries/registryThemeV1';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
 
 const externalUrlBoundary = vi.hoisted(() => vi.fn(async (_url: string) => true));
 // The platform URL effect is external; keep link admission and listing logic real.
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: externalUrlBoundary }));
-
 
 let routeParams: Record<string, string | undefined> = {};
 installPromptRegistriesCommonModuleMocks({ storage: original => original(), text: () => vi.importActual('@/text'),
@@ -120,9 +122,9 @@ it('browses an admitted plugin theme through the joined library and keeps its re
         clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {} };
     let admitted: typeof EMPTY_PLUGIN_UI_PROJECTION = projected;
     const wrap = (body: React.ReactNode) => <AppShellPluginUiProjectionValueProvider value={{ ...value, pluginUiProjection: admitted }}>
-        <PluginSurfaceFocusEligibilityProvider focused>{body}</PluginSurfaceFocusEligibilityProvider>
+        <PluginSurfaceFocusEligibilityProvider active>{body}</PluginSurfaceFocusEligibilityProvider>
     </AppShellPluginUiProjectionValueProvider>;
-    const browseInput = { query: '', sourceIds: [reference.pluginId] };
+    const browseInput: { query: string; sourceIds?: readonly string[] } = { query: '', sourceIds: [reference.pluginId] };
     const browse = await renderHook((input: typeof browseInput) => storeKinds.theme.useList(input, { presented: true }),
         { initialProps: browseInput, wrapper: ({ children }) => wrap(children) });
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(1));
@@ -155,10 +157,10 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     expect(fixture.bodyReads).toEqual([]);
     const screen = await renderScreen(wrap(<><StoreListingBody reference={route.reference} presentation="page" onClose={() => {}} /><ThemeTryBarHost /></>));
     await vi.waitFor(() => expect(screen.findAllByType(StoreThemeListing)[0]?.props.facesState).toBe('ready'));
-    const view = () => screen.findAllByType(StoreThemeListing)[0]!.props;
+    const view = () => screen.findAllByType<typeof StoreThemeListing>(StoreThemeListing)[0]!.props;
     expect(view().meta).toContain('Palette studio');
     expect(view().meta).toContain('1.2.3');
-    expect(view().faces?.map(face => face.name)).toEqual(['Night sky']);
+    expect(view().faces?.map((face: NonNullable<StoreThemeListingViewProps['faces']>[number]) => face.name)).toEqual(['Night sky']);
     await act(async () => { await view().onTryFace('night'); });
     await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.selection).toEqual(reference));
     expect(getThemeTryOnOwner().read()?.origin).toEqual({ kind: 'store', reference });
@@ -182,6 +184,7 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     await vi.waitFor(() => expect(searchRows).toHaveLength(0));
     expect(externalReads).toEqual([]);
 });
+
 it.each([
     { name: 'custom licence with its advertised link', licence: { license: 'Custom licence', licenseKind: 'custom' as const,
         licenseUrl: 'https://open-vsx.org/api/monokai/theme-monokai-pro-vscode/2.0.17/file/LICENSE.txt' }, expected: 'Licence personnalisée' },
@@ -231,7 +234,8 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     let barCommits = 0;
     const countBar = () => { barCommits++; };
     const closeListing = () => {};
-    const listingSurface = (presented: boolean, presentation: 'pane' | 'page' = 'pane', currentReference = reference) => <>
+    type ThemeListingReference = Extract<React.ComponentProps<typeof StoreListingBody>['reference'], { type: 'registryItem'; kind: 'theme' }>;
+    const listingSurface = (presented: boolean, presentation: 'pane' | 'page' = 'pane', currentReference: ThemeListingReference = reference) => <>
         <PluginSurfaceFocusEligibilityProvider active={presented}>
             <React.Profiler id="theme-listing" onRender={countListing}>
                 <StoreListingBody reference={currentReference} presentation={presentation} onClose={closeListing} />
@@ -240,7 +244,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
         <React.Profiler id="theme-try-bar" onRender={countBar}><ThemeTryBarHost /></React.Profiler>
     </>;
     const screen = await renderScreen(listingSurface(true));
-    const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
+    const view = () => screen.findAllByType<typeof StoreThemeListing>(StoreThemeListing)[0]?.props;
     await vi.waitFor(() => expect(view()?.facesState, view()?.facesError ?? undefined).toBe('ready'));
     expect(state.acquisitions).toBe(1);
     await vi.waitFor(() => expect(view()?.meta).toContain('Themes catalog'));
@@ -274,7 +278,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     await screen.update(listingSurface(true));
     await vi.waitFor(() => expect(view()?.meta).toContain('Renamed while hidden'));
     expect(state.acquisitions).toBe(1);
-    expect(view()?.facts.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
+    expect(view()?.facts?.map((fact: NonNullable<StoreThemeListingViewProps['facts']>[number]) => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
     const faces = (await getThemeRegistryLifecycle().prepareStorePreview({ sourceId, itemId: 'palette' },
         { expectedScope: storage.getState().settingsScope })).item.payload.themes;
     await act(async () => { getThemeTryOnOwner().begin({ document: faces[0]!.document, mode: faces[0]!.mode,
@@ -330,8 +334,8 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const installed = artifacts.list();
     expect(installed).toHaveLength(2);
     expect(installed.map(row => row.headerVersion)).toEqual([1, 1]);
-    const installedHeader = Object.values(storage.getState().artifacts).find(artifact =>
-        ThemeProfileArtifactHeaderSchema.safeParse(artifact.rawHeader).success);
+    const installedHeader = Object.values(storage.getState().artifacts).find((artifact): artifact is Extract<DecryptedArtifact, { isDecrypted: true }> =>
+        artifact.isDecrypted && ThemeProfileArtifactHeaderSchema.safeParse(artifact.rawHeader).success);
     if (!installedHeader) throw new Error('Expected an admitted installed theme header');
     listingCommits = 0;
     for (let index = 1; index <= 10; index++) {
@@ -341,10 +345,13 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     }
     expect(listingCommits, 'the listing ignores unrelated theme library headers').toBe(0);
     expect(view()?.installed).toBe(true);
-    const selected = storage.getState().localSettings.themeProfileSelection.light;
-    expect(selected?.kind).toBe('artifact');
-    const selectedRow = selected?.kind === 'artifact' ? artifacts.read(selected.id) : null;
-    expect(ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(selectedRow!.header)).themeSource)
+    const selected = ThemeReferenceSchema.parse(storage.getState().localSettings.themeProfileSelection?.light);
+    if (selected.kind !== 'artifact') throw new Error('Expected the selected installed artifact');
+    const selectedRow = artifacts.read(selected.id);
+    if (!selectedRow || typeof selectedRow.header !== 'string') {
+        throw new Error('Expected the selected artifact header');
+    }
+    expect(ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(selectedRow.header)).themeSource)
         .toMatchObject({ kind: 'store', contributionId: 'light' });
     const scope = storage.getState().settingsScope!;
     const row = projectInstalledStoreThemeRows(readThemeLibrarySnapshot(scope)!.entries, scope)[0]!;
@@ -352,8 +359,12 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     if (typeof destination === 'string' || !destination) throw new Error('Expected the Installed listing destination');
     const selectedListing = readStoreListingRoute(destination.params);
     if (selectedListing?.kind !== 'store') throw new Error('Expected the same Store listing route');
-    expect(selectedListing.reference).toEqual(reference);
-    await screen.update(listingSurface(true, 'page', selectedListing.reference));
+    if (selectedListing.reference.type !== 'registryItem' || selectedListing.reference.kind !== 'theme') {
+        throw new Error('Expected a registry theme listing route');
+    }
+    const installedReference = selectedListing.reference;
+    expect(installedReference).toEqual(reference);
+    await screen.update(listingSurface(true, 'page', installedReference));
     await vi.waitFor(() => expect(view()?.installed).toBe(true));
     expect(view()?.name).toBe('Palette');
     expect(state.acquisitions).toBe(1);
@@ -387,7 +398,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     await vi.waitFor(() => expect(artifacts.list()).toHaveLength(0));
     expect(view()?.onUninstall).toBeUndefined();
     // The library retains the preference; a missing selected Artifact renders the mode's base.
-    expect(storage.getState().localSettings.themeProfileSelection.light).toEqual(selected);
+    expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual(selected);
     expect(readSelectedThemeProfiles(scope).activeProfileIds.light).toBeNull();
 });
 

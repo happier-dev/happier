@@ -49,7 +49,8 @@ it('windows 200 partial-install face failures through the Store page scroll owne
 
 it('windows authored web-only CSS rules and still reveals their source line', async () => {
     const specimen = await renderSettingsView(<ThemeLibrarySpecimen scene="D4" />);
-    const basis = specimen.findAllByType(ThemeProfileEditorView)[0]!.props;
+    const basis = specimen.findByType<typeof ThemeProfileEditorView>(ThemeProfileEditorView).props;
+    if (basis.view !== 'css') throw new Error('Expected the CSS editor specimen');
     await specimen.unmount();
     const source = Array.from({ length: 200 }, (_, index) => `.rule-${index} { filter: blur(2px); }`).join('\n');
     const rules = (await prepareThemeCssAsync(source)).detailedCoverage.rules.filter(rule => !rule.native)

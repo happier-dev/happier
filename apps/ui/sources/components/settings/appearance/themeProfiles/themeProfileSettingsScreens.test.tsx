@@ -373,7 +373,7 @@ describe('Theme profile settings screen', () => {
 
         const ordinary = await renderSettingsView(<>
             <RoundButton testID="ordinary-theme-button" title="Continue" onPress={() => {}} />
-            <FieldTextInput testID="ordinary-theme-input" value="" onChangeText={() => {}} />
+            <FieldTextInput testID="ordinary-theme-input" value="" onChangeText={() => {}} accessibilityLabel="Theme input" />
         </>);
         const paintedControls = (screen: typeof ordinary) => screen.tree.root.findAll(node => typeof node.type === 'string'
             && ['button', 'input'].includes(node.props.dataSet?.surface));

@@ -158,22 +158,20 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
       </ItemGroup>
 
       <SettingAnchor setting={THEMES_SETTINGS.settings.yourThemes}>
-        {props.sections ? (
-          <>
-            {props.sections.map((section, index) => (
-              <ThemeSection key={section.mode} mode={section.mode} selectedKey={section.selectedKey} tiles={section.tiles}
-                title={t(section.mode === 'dark' ? 'themeLibrary.darkThemes' : 'themeLibrary.lightThemes')}
-                description={index === 0 && !props.hasOwnThemes ? t('settingsAppearance.themeProfiles.emptyDescription') : undefined}
-                testID={index === 0 && !props.hasOwnThemes ? 'settings-theme-profile-custom-empty' : undefined}
-                phone={phone} onChooseTheme={onChooseTheme} />
-            ))}
-          </>
-        ) : (
-          <ThemeSection mode={mode} selectedKey={props.selectedKey} tiles={props.tiles} title={undefined}
-            description={props.hasOwnThemes ? undefined : t('settingsAppearance.themeProfiles.emptyDescription')}
-            testID={props.hasOwnThemes ? undefined : 'settings-theme-profile-custom-empty'}
-            phone={phone} onChooseTheme={onChooseTheme} />
-        )}
+        <>
+          {props.sections ? props.sections.map((section, index) => (
+            <ThemeSection key={section.mode} mode={section.mode} selectedKey={section.selectedKey} tiles={section.tiles}
+              title={t(section.mode === 'dark' ? 'themeLibrary.darkThemes' : 'themeLibrary.lightThemes')}
+              description={index === 0 && !props.hasOwnThemes ? t('settingsAppearance.themeProfiles.emptyDescription') : undefined}
+              testID={index === 0 && !props.hasOwnThemes ? 'settings-theme-profile-custom-empty' : undefined}
+              phone={phone} onChooseTheme={onChooseTheme} />
+          )) : (
+            <ThemeSection mode={mode} selectedKey={props.selectedKey} tiles={props.tiles} title={undefined}
+              description={props.hasOwnThemes ? undefined : t('settingsAppearance.themeProfiles.emptyDescription')}
+              testID={props.hasOwnThemes ? undefined : 'settings-theme-profile-custom-empty'}
+              phone={phone} onChooseTheme={onChooseTheme} />
+          )}
+        </>
       </SettingAnchor>
 
       {props.onOpenStore ? (
@@ -482,7 +480,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingTop: theme.space.s12,
   },
   noticeText: {
-    color: theme.colors.state.warning.textForeground,
+    color: theme.colors.state.warning.foreground,
   },
   // A floating control over the miniature: the menu's surface and hairline keep it legible on any theme.
   tileMenu: {

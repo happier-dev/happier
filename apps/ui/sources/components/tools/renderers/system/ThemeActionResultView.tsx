@@ -252,7 +252,7 @@ function Facts(props: ThemeActionResultViewProps) {
             <Text variant="meta" style={styles.fact}>
               {' · '}
               <TextLinkButton
-                title={t('themeCard.coverageWhich', {
+                label={t('themeCard.coverageWhich', {
                   count: coverage.webOnly,
                 })}
                 onPress={props.onRevealWebOnly}

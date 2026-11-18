@@ -116,7 +116,7 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
     const { getMachineSetupDesiredV1, machineSetupItemKeyV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
     const { createCombinedMachineSetupActionDeps } = await import('../../../../../cli/src/machines/setup/composeMachineSetup');
-    const { prepareMachineSetupPlanV1 } = await import('../../../../../cli/src/machines/setup/prepareMachineSetupPlan');
+    const { prepareMachineSetupPlanV1, MachineSetupLocalPlanInputV1Schema } = await import('../../../../../cli/src/machines/setup/prepareMachineSetupPlan');
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const dispose = await installRealActionExecutorModuleLoader();
     onTestFinished(dispose);
@@ -154,7 +154,7 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
     const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         if ('targets' in input) throw new Error('The native leaf receives one Machine');
         planned.push(input.machineId);
-        return prepareMachineSetupPlanV1({ input, current, readRecipes: async () => [recipe], runNative: async command => {
+        return prepareMachineSetupPlanV1({ input: MachineSetupLocalPlanInputV1Schema.parse(input), current, readRecipes: async () => [recipe], runNative: async command => {
             if (command.executable !== 'test') throw new Error('Review must not run an effect');
             return { code: command.args.includes('!') ? 1 : 0, stdout: '', stderr: '' };
         } });

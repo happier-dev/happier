@@ -84,9 +84,10 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         const directoryAnatomy = React.useMemo<CollectionAnatomy<Row>>(() => ({
             previewAspectRatio: cardAnatomy.previewAspectRatio,
             columnTitles: cardAnatomy.columnTitles,
-            title: row => <React.Profiler id={row.key} onRender={() => {
+            title: row => cardAnatomy.title(row.card),
+            titleMeta: row => <React.Profiler id={row.key} onRender={() => {
                 rowCommits.set(row.key, (rowCommits.get(row.key) ?? 0) + 1);
-            }}>{cardAnatomy.title(row.card)}</React.Profiler>,
+            }}>{null}</React.Profiler>,
             glyph: row => cardAnatomy.glyph(row.card),
             where: row => cardAnatomy.where?.(row.card),
             reason: row => cardAnatomy.reason?.(row.card),
@@ -109,7 +110,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         key: id, name: id, byline: 'Themes', summary: '', faces: [], mark: { displayName: 'Themes' }, listing: { sourceId, itemId: id, version: '1.0.0' },
     }));
     let commits = 0;
-    const surfaces = [];
+    const surfaces: Array<{ screen: Awaited<ReturnType<typeof renderScreen>>; tree: () => React.ReactElement; node: { getBoundingClientRect: () => { left: number; top: number; width: number; height: number } } }> = [];
     for (const [index, card] of cards.entries()) {
         const top = [0, 240, 1200, 1600, 0][index] ?? 20000 + index * 240;
         const node = { getBoundingClientRect: () => ({ left: 0, top: top - offset, width: 300, height: 120 }) };
@@ -134,7 +135,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     await vi.waitFor(async () => expect(await foot(cards[0]!)).toBe('Dark · Colors only'));
     expect(await foot(cards[2]!), 'a card off screen has nothing settled to say yet').toBe('');
     expect(reads.sort()).toEqual(['icons', 'near-a', 'near-b']);
-    const pendingShell = surfaces[1]!.screen.findAll(node => node.type === 'View')[0]!;
+    const pendingShell = surfaces[1]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]!;
     expect(surfaces[1]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
     const beforePositiveArrival = liveRows.current!.rows;
     const beforePositivePreviewCommits = commits;
@@ -148,7 +149,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     console.info('STORE-PERF-1117 directory census', { initialRows: initialRows.size,
         retainedRows: liveRows.current!.rows.length, membershipTitleCommits, positiveArrivalTitleCommits: 0,
         positiveArrivalPreviewCommits });
-    expect(surfaces[1]!.screen.findAll(node => node.type === 'View')[0]).toBe(pendingShell);
+    expect(surfaces[1]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]).toBe(pendingShell);
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(60));
     const rows = await renderHook(() => useStoreThemeRows(browse.getCurrent(), () => {}, () => 'Themes'));
@@ -172,13 +173,13 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         offset = next;
         tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: next } } });
     });
-    const failedShell = surfaces[3]!.screen.findAll(node => node.type === 'View')[0]!;
+    const failedShell = surfaces[3]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]!;
     await scroll(1400);
     await vi.waitFor(() => expect(reads.sort()).toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']));
     await vi.waitFor(() => expect(surfaces[2]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
     expect(surfaces[3]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(0);
     expect(surfaces[3]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
-    expect(surfaces[3]!.screen.findAll(node => node.type === 'View')[0]).toBe(failedShell);
+    expect(surfaces[3]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]).toBe(failedShell);
     await scroll(0);
     const originalMiniature = surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)[0]!.props.miniature;
     await surfaces[0]!.screen.unmount();

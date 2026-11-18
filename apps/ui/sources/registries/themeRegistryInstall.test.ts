@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { RegistryThemeFaceV1Schema, type RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
+import type { RegistryProvenanceV1 } from '@happier-dev/protocol/registries/registryItemsV1';
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileLibrary';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import * as themeColors from '@/theme/profiles/deriveThemeColors';
@@ -58,7 +59,7 @@ function setup(acquisitionGate?: Promise<void>) {
         item: { summary: { kind: 'theme', ...listing, title: 'Paper', version: '1.0.0' }, fetchedAt: 0,
             payload: { kind: 'theme', state: 'ready', version: '1.0.0', ref, themes,
                 listing: { includes: themes.map(({ key, label, mode }) => ({ key, label, mode })), license: 'LicenseRef-Custom' } } },
-        provenance: { ...listing, format: 'happier-catalog', sourceUrl: 'https://themes.example.test/catalog', ref, importedAt: 0 },
+        provenance: { ...listing, format: 'git', sourceUrl: 'https://themes.example.test/catalog', ref, importedAt: 0 },
     };
     const reverted: typeof listing[] = [];
     let upstream = acquired;
@@ -72,16 +73,19 @@ function setup(acquisitionGate?: Promise<void>) {
                 acquisitionFailure = undefined;
                 throw error;
             }
-            return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } },
-                provenance: { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId,
-                    ...(operation.expectedScope?.accountId === 'account-b' ? { sourceUrl: 'https://themes.example.test/account-b/catalog' } : {}) } };
+            const provenance: RegistryProvenanceV1 = operation.expectedScope?.accountId === 'account-b'
+                ? { ...upstream.provenance, format: 'git', sourceUrl: 'https://themes.example.test/account-b/catalog', sourceId: key.sourceId, itemId: key.itemId }
+                : { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId };
+            return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } }, provenance };
         }, revertStorePreview: key => { reverted.push(key); } });
     return { lifecycle, library, rows, listing, options, failed, savedFaces, acquired, selection, reverted,
         failNextAcquisition: (error: Error) => { acquisitionFailure = error; },
-        publishVersion: (version: string) => { const ref = { kind: 'version', version } as const; upstream = { ...acquired,
+        publishVersion: (version: string) => { const ref = { kind: 'version', version } as const;
+            const provenance: RegistryProvenanceV1 = { ...acquired.provenance, ref };
+            upstream = { ...acquired,
             item: { ...acquired.item, summary: { ...acquired.item.summary, version },
                 payload: { ...acquired.item.payload, version, ref } },
-            provenance: { ...acquired.provenance, ref } }; },
+            provenance }; },
         counts: () => ({ acquisitions, selections, writes: savedFaces.length }) };
 }
 

@@ -64,7 +64,7 @@ describe('buildStoreUpdates', () => {
       const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: `palette-${mode}`, name: mode,
         createdAt: '2026-11-16', updatedAt: '2026-11-16', base: { light: 'light', dark: 'dark' },
         overrides: { light: {}, dark: {} }, assetAppearance: mode, source: { kind: 'store', contributionId: mode,
-          provenance: { sourceId: 'catalog', sourceUrl: 'https://catalog.example.test', format: 'happier-catalog',
+          provenance: { sourceId: 'catalog', sourceUrl: 'https://catalog.example.test', format: 'git',
             itemId: 'palette', importedAt: 1, ref: { kind: 'version', version: '1.0.0' } } } });
       if (!parsed.ok) throw new Error('Invalid theme fixture');
       return projectThemeLibraryEntry(parsed.document);

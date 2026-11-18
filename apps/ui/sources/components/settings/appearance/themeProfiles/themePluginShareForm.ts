@@ -42,7 +42,7 @@ export function createThemePluginShareForm(params: Readonly<{
         initialInput: params.themes ? { refs: params.refs } : {},
         accountLifetime: params.accountLifetime,
         signal: params.signal,
-        submit: async (candidate, { signal }) => {
+        submit: async (candidate, { signal }): Promise<ShareSubmission> => {
             if (recovery && params.pack) {
                 try {
                     const result = readThemePluginPackResult({ ok: true,
