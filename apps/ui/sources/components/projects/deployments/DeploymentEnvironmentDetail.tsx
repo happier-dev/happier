@@ -1020,10 +1020,11 @@ export const DeploymentEnvironmentDetail = React.memo(
                       phone={props.phone}
                       onOpenReceipt={openServingReceipt} />
                   </ItemGroup>
-                  <ItemGroup header="none" style={styles.factsGroup}>
+                  {/* The headline facts stay plain cells on the page under the card (dEnvOv KEEP item 3), not a second card. */}
+                  <ItemGroup header="none" surface="none" style={styles.factsGroup}>
                     <FactStrip
                       testID="project-deployments.environment.facts"
-                      layout="columns" divided narrow={props.phone}
+                      layout="columns" narrow={props.phone}
                       facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state,
                         attention?.kind === 'runningUnverified' && servingNotice !== null)}
                     />
@@ -1067,6 +1068,18 @@ export const DeploymentEnvironmentDetail = React.memo(
               )}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {ready ? null : environmentAgentActions}
+              {/* The kept order (dEnvOv KEEP item 3): Definition and Needs a repository, then Data; what runs follows. */}
+              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
+                revision={detail.content.definition.contentRevision}
+                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
+                onOpen={() => openTab('settings')}
+                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
+                  ? () => openTab('settings') : null} /> : null}
+              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
+                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
+                onOpen={props.onOpenDatabase}
+                onBackups={() => openTab('settings', 'backups')}
+                onAdd={() => { openAddDatabase?.(); }} />
               {services.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.services"
@@ -1117,17 +1130,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                     onOpenServing={openAdminAddress}
                   />
               ) : null}
-              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
-                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
-                onOpen={props.onOpenDatabase}
-                onBackups={() => openTab('settings', 'backups')}
-                onAdd={() => { openAddDatabase?.(); }} />
-              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
-                revision={detail.content.definition.contentRevision}
-                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
-                onOpen={() => openTab('settings')}
-                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
-                  ? () => openTab('settings') : null} /> : null}
               <DeploymentPendingRequest pending={detail.pendingDeployment} serverId={props.serverId} />
               {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}

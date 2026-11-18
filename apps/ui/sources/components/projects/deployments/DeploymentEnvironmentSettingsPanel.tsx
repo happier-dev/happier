@@ -192,6 +192,11 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               params: { serverId: props.detail.environment.serverId } })} />
         </ItemGroup>
         {changeOutcome(null)}
+        {/* The kept order (dEnvSettings KEEP): the stored definition and Move to repository, then where it runs. */}
+        {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
+          definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
+        {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
+          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} machineName={machineName} /> : null}
         <View ref={revealHost('servers-build')} collapsable={false}>
         <ItemGroup
           testID={section('servers-build')}
@@ -305,11 +310,6 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         </View>
 
-        {/* Where it runs leads (lab envSet); what it runs, the definition, follows. */}
-        {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
-          definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
-        {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
-          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} machineName={machineName} /> : null}
         <DeploymentPrivateServiceExports detail={detail} editing={editing} />
 
         <View ref={revealHost('controller')} collapsable={false}>
