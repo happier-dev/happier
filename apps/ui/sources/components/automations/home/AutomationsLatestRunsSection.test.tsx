@@ -342,9 +342,10 @@ describe('Automations · Latest runs on Home', () => {
             widgetPresentation={presentation} body={{ kind: 'empty', title: 'Nothing running', reason: 'Local services show here.' }} />);
         await flushHookEffects({ cycles: 2 });
         const widgetRoom = room(widget, 'small-widget');
-        expect(widgetRoom).toBeGreaterThan(0);
+        // A Home card hugs what it shows (owner 2026-11-18): no reserved footprint for either card.
+        expect(widgetRoom).toBeNull();
         standardCleanup();
-        // No workflows yet: the scene and its action keep the declared room instead of growing the row.
+        // No workflows yet: the scene and its action follow the same rule as the Small beside it.
         server.automations = [];
         const empty = await renderScreen(<AutomationsLatestRunsSection widgetPresentation={presentation} />);
         await flushHookEffects({ cycles: 4 });

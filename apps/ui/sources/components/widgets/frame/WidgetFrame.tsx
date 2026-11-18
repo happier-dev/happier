@@ -167,7 +167,7 @@ export type WidgetFrameProps = Readonly<{
      * How the owning surface sizes this frame's body, apart from the body's own size and width:
      * `fixed` (a grid surface: the size's rows, scrolling inside), `grow` (at least those rows, taller
      * when the body is) or `content` (a content-height surface such as a core page: exactly the body).
-     * Default: `fixed`; inside a group, `grow` on a grid and `content` on a phone's stack.
+     * Default: `content` on Home, else `fixed`; inside a group, `grow` on a grid and `content` on a phone's stack.
      */
     bodyHeight?: 'fixed' | 'grow' | 'content';
     /** Existing native Board height, including its Auto lifecycle; not a second saved height. */
@@ -274,7 +274,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     // Inside a group nothing clips (A6): a grid cell keeps its rows' room and grows; a phone's stack is its content.
     // Empty content changes the room, never the wrapper: remounting a body withdraws its empty-state
     // report, restores the fixed wrapper, and starts its credential/data read again.
-    const bodyHeight = props.bodyHeight ?? (props.grouped ? phone ? 'content' : 'grow' : 'fixed');
+    // A Home card hugs what it shows, never an empty footprint; its host's `fill` lines a grid row up to the row's
+    // tallest card (owner 2026-11-18). Other grid surfaces (the Board, the Companion) keep their fixed rows.
+    const bodyHeight = props.bodyHeight ?? (props.grouped ? phone ? 'content' : 'grow' : props.placement === 'home' ? 'content' : 'fixed');
     // A body that sizes itself (a grown or content-height cell) is told its own room: the box its content takes, at
     // least the rows a grown cell keeps. Never the band's: a frame stretched by a taller partner column, or by a
     // partner that grows while it refreshes, leaves that space empty instead of handing it to a chart (lab wgusage-CD).

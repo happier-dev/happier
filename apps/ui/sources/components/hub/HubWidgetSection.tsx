@@ -179,8 +179,8 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
                 })}
                 grouped={props.grouped === true || props.sectionHost === true}
                 fill
-                // A lead card has its row to itself (no partner to match), so it takes its content's height.
-                {...(props.sectionHost || props.leads ? { bodyHeight: 'content' as const } : {})}
+                // A page section sizes to its body like a Home card does, though it draws grouped.
+                {...(props.sectionHost ? { bodyHeight: 'content' as const } : {})}
                 {...(props.entityDrag && props.showGrip ? { leading: <SessionSurfaceEntityDragHandle drag={drag} title={props.entityDrag.title} testID={`${props.testID}.move`} /> } : {})}
                 menu={props.menu}
                 livePicture={widgetCandidateHoldsHtml(descriptor)}

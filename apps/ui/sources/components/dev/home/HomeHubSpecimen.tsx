@@ -325,7 +325,7 @@ function ShowcaseCard(props: Readonly<{ id: string; testID: string; size?: Widge
         // No machine yet (58d AF1, lab af-first): the real Machines empty state, the ways to add one.
         return (
             <WidgetFrame testID={props.testID} frameStyle="card" placement="home" fill mark="desktop" title="Machines"
-                widgetPresentation={widgetPresentation} bodyHeight={props.placement.leads ? 'content' : undefined}
+                widgetPresentation={widgetPresentation}
                 body={{ kind: 'content', children: <MachineAddWays testIDPrefix={props.testID} /> }} />
         );
     }

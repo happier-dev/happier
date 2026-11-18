@@ -139,7 +139,7 @@ describe('WidgetFrame', () => {
     it('projects native body states through their enclosing grouped frame while loading and standalone frames keep their room', async () => {
         const widgetPresentation = { size: 'tall' as const,
             footprint: { columns: 2, columnSpan: 1, rowSpan: 4, height: 'tall' as const, width: 'half' as const } };
-        const render = (empty: boolean, grouped = true) => <WidgetFrame testID="native" frameStyle="plain" placement="home"
+        const render = (empty: boolean, grouped = true) => <WidgetFrame testID="native" frameStyle="plain" placement="board"
             grouped={grouped} title="Native" widgetPresentation={widgetPresentation} body={{ kind: 'content', children:
                 <WidgetFrame testID="native-body" frameStyle="plain" placement="home" presentation="body" title={null}
                     body={empty ? { kind: 'empty', title: 'No runs', reason: 'Runs will appear here' }
@@ -205,7 +205,7 @@ describe('WidgetFrame', () => {
         const document = { version: 1, root: { kind: 'chart', label: 'Checks', style: 'bar', rows: [],
             data: { kind: 'value', value: [{ x: 'Mon', y: 2 }, { x: 'Tue', y: 4 }, { x: 'Wed', y: 3 }] },
             x: { path: ['x'], type: 'string' }, y: { path: ['y'], type: 'number' } } };
-        const screen = await renderScreen(<WidgetFrame testID="declarative" frameStyle="card" placement="home" title="Checks"
+        const screen = await renderScreen(<WidgetFrame testID="declarative" frameStyle="card" placement="board" title="Checks"
             widgetPresentation={{ size: 'tall', footprint: { columns: 2, columnSpan: 1, rowSpan: 4, width: 'half', height: 'tall' } }}
             body={{ kind: 'content', children: <SessionBoardDeclarativeContent document={document} /> }} />);
         const viewport = screen.findByTestId('declarative.viewport')!;
@@ -233,7 +233,7 @@ describe('WidgetFrame', () => {
         }
         const widgetPresentation = { size: 'wide' as const,
             footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact' as const, width: 'full' as const } };
-        const render = () => <WidgetFrame testID="measured" frameStyle="card" placement="home" title="Rows"
+        const render = () => <WidgetFrame testID="measured" frameStyle="card" placement="board" title="Rows"
             {...{ widgetPresentation }} body={{ kind: 'content', children: <Body /> }} />;
         const screen = await renderScreen(render());
         const viewport = screen.findByTestId('measured.viewport');
@@ -283,8 +283,22 @@ describe('WidgetFrame', () => {
         expect(tight.findByTestId('tight.refreshing')?.props.accessibilityLabel).toBe('widgetDefinition.refreshing');
         expect(tight.getTextContent()).not.toContain('widgetDefinition.refreshing');
     });
+    it('hugs its content on Home when ungrouped: no fixed footprint viewport, the body still told its declared room (owner 2026-11-18)', async () => {
+        const { HappierScrollArea } = await import('@happier-dev/plugin-ui/presentation');
+        let observed: ReturnType<typeof useWidgetPresentation>;
+        function Body() { observed = useWidgetPresentation(); return <>three vitals</>; }
+        const screen = await renderScreen(<WidgetFrame testID="vitals" frameStyle="card" placement="home" title="App vitals" fill
+            widgetPresentation={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular', width: 'half' } }}
+            body={{ kind: 'content', children: <Body /> }} />);
+        expect(screen.root.findAllByType(HappierScrollArea)).toHaveLength(0);
+        await act(async () => { screen.findByTestId('vitals.viewportBody')!.props.onLayout({ nativeEvent: { layout: { width: 560, height: 96 } } }); });
+        // The card is as tall as its three rows; a chart in the same frame still reads the room its size declares.
+        expect(screen.findByTestId('vitals.viewportBody')!.props.style).not.toHaveProperty('minHeight');
+        expect(observed?.geometry?.width).toBe(560);
+        expect(observed?.geometry?.height).toBeGreaterThan(96);
+    });
     it('fades the foot of a fixed body whose rows run past it, so no line reads as cut off', async () => {
-        const frame = await renderScreen(<WidgetFrame testID="fixed" frameStyle="card" placement="home" title="Period summary"
+        const frame = await renderScreen(<WidgetFrame testID="fixed" frameStyle="card" placement="board" title="Period summary"
             widgetPresentation={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, height: 'compact', width: 'half' } }}
             body={{ kind: 'content', children: <>many rows</> }} />);
         const masked = () => StyleSheet.flatten(frame.findByTestId('fixed.viewport')!.props.style) as Record<string, unknown>;
@@ -626,9 +640,9 @@ describe('WidgetFrame', () => {
         expect(body.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!
             .findByType(HappierSurfaceState).props.size).toBe('line');
         standardCleanup();
-        // Real content on a phone keeps its declared room.
+        // Real content on a phone is its rows' height too: Home cards hug their content (owner 2026-11-18).
         const rows = await renderFrame({ widgetPresentation: medium });
-        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeGreaterThan(0);
+        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
     });
 
     it('names a failure in the person\'s terms and offers the one fixing action', async () => {
@@ -795,11 +809,11 @@ describe('WidgetFrame', () => {
         expect(StyleSheet.flatten(line.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
         expect(StyleSheet.flatten(line.findByTestId('frame.hover')!.props.style).flexGrow).toBeUndefined();
         standardCleanup();
-        // Rows keep the declared room and the row's height.
+        // Rows take their own height, no empty footprint (owner 2026-11-18), and still fill the row to its tallest card.
         const rows = await renderFrame({ placement: 'home', fill: true, widgetPresentation: presentation,
             body: { kind: 'content', children: <Text>row one</Text> } });
         await flushHookEffects({ cycles: 2 });
-        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeGreaterThan(0);
+        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
         expect(StyleSheet.flatten(rows.findByTestId('frame.hover')!.props.style).flexGrow).toBe(1);
     });
 
