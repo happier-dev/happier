@@ -456,6 +456,9 @@ describe('a Key flow check names its routes and reads its trend from the collect
     const { formatServiceCheckLatency } = await import('./serviceCheckPresentation');
     expect(formatServiceCheckLatency(1420)).toMatch(/^1\.42\b/);
     expect(formatServiceCheckLatency(388.4)).toMatch(/^388\b/);
+    // A round second keeps its figures, so "1.40 sec" stands in a column beside "1.42 sec".
+    expect(formatServiceCheckLatency(1400)).toMatch(/^1\.40\b/);
+    expect(formatServiceCheckLatency(2000)).toMatch(/^2\.00\b/);
   });
 
   it('names a trend window’s two ends with their day, so a 24-hour window never reads as one day backwards', async () => {

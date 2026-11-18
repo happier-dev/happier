@@ -531,7 +531,7 @@ export function formatServiceCheckUnit(value: number, name: 'millisecond' | 'sec
 /** A response or request time: whole milliseconds under a second, else seconds to three figures ("1.42 sec", the p95 precision). */
 export function formatServiceCheckLatency(ms: number): string {
   if (ms < 1000) return formatServiceCheckUnit(Math.round(ms), 'millisecond');
-  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'second', unitDisplay: 'short', maximumSignificantDigits: 3 })
+  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'second', unitDisplay: 'short', minimumSignificantDigits: 3, maximumSignificantDigits: 3 })
     .format(ms / 1000);
 }
 export function formatServiceCheckPeriod(ms: number): string {
