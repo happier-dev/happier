@@ -77,10 +77,15 @@ export function connectUiPersonActionClient(params: Readonly<{
 
 export function connectUiTriageActionClient(params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{
     additionalPlugins?: readonly Readonly<{
+        packageName: string;
         manifest: import('@happier-dev/plugin-sdk/manifest').PluginManifest;
         activate(api: import('@happier-dev/plugin-sdk').PluginAccountApi): void | Promise<void>;
     }>[];
 }>): ReturnType<typeof connectUiActionClient>;
+export function prepareUiTriageActionPluginsForTest(
+    additionalPlugins?: Parameters<typeof connectUiTriageActionClient>[0]['additionalPlugins'],
+): Promise<void>;
+
 
 export function connectFreshVercelThroughDeploymentUi(params: Readonly<{
     serverUrl: string;

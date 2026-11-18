@@ -1,3 +1,5 @@
+import triagePackage from '../../../../../../packages/plugins/triage/package.json';
+import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
@@ -5,6 +7,9 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { createHomeHubArtifactHttpBoundary } from './homeHubArtifactHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from './serverAccountConnectionHarness';
 import { installPortableAccountPluginReleaseForTest } from './portableAccountPlugin';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionInputV1Schema,
+    PluginAvailabilityCollectionWritersClaimActionOutputV1Schema, PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 
 vi.mock('socket.io-client', async importOriginal => (
     await import('./serverAccountConnectionHarness')
@@ -25,6 +30,59 @@ function portablePlugin(id: string) {
         api.actions.register('read', async () => ({ pluginId: id }));
     } };
 }
+
+it('admits authored Triage Collections at Home and retains source custody through real Availability refresh', async () => {
+    const [{ PLUGIN_MANIFEST: manifest }, { activate }, { prepareSourceDeclaredAccountPluginsForTest },
+        { readPluginAccountAvailability }, { getSyncSingleton }] = await Promise.all([
+        import('../../../../../../packages/plugins/triage/src/manifest'),
+        import('../../../../../../packages/plugins/triage/src/accountRuntime'),
+        import('./portableAccountPlugin'), import('@/sync/domains/plugins/availability/projection'), import('@/sync/runtime/getSyncSingleton'),
+    ]);
+    const { prepareUiTriageActionPluginsForTest } = await import('../triageActionClientIntegrationTestkit');
+    await prepareUiTriageActionPluginsForTest();
+    const install = await prepareSourceDeclaredAccountPluginsForTest([{ packageName: triagePackage.name, manifest, activate }]);
+    const accountId = 'source-triage-account';
+    const home = createHomeHubArtifactHttpBoundary(accountId);
+    let claimed: ReturnType<typeof PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse> | undefined;
+    const refs = normalizePluginAccountCollectionContractsV1({ pluginId: manifest.id,
+        contributions: manifest.contributes.accountCollections }).map(({ pluginId, collectionId, schemaVersion, contractDigest }) =>
+        ({ pluginId, collectionId, schemaVersion, contractDigest }));
+    const intent = () => ({ pluginId: manifest.id, desiredVersion: null, enabled: true,
+        offlineUiHosting: 'disabled', writableCollections: refs, revision: 'source-claim' });
+    connection = await restoreServerAccountForTest({ serverUrl: 'http://source-triage.test', accountId,
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim']) {
+                claimed = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(JSON.parse(String(init?.body)));
+                return Response.json(PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse({ intent: intent() }));
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                return Response.json({ availabilityCursor: 1, snapshots: [], inventoryComplete: true, releases: [] });
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+                return Response.json({ availabilityCursor: 1, pluginIds: claimed ? [manifest.id] : [], failedPluginIds: [],
+                    intentReads: claimed ? [{ pluginId: manifest.id, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+                        availabilityCursor: 1, hostingCapability: { enabled: false }, intent: intent(), release: null,
+                        uiArtifacts: [], packageAssets: [],
+                    }) }] : [] });
+            }
+            return home.request(url, init);
+        } });
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Expected restored Account lifetime');
+    const installed = await install({ accountLifetime, publishProjection: true });
+    try {
+        const read = () => readPluginAccountAvailability(accountLifetime.scope);
+        expect(read().readCurrentAccountExecution(manifest.id)).toMatchObject({ kind: 'available', release: null,
+            sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration' } } });
+        expect(claimed?.manifest.id).toBe(manifest.id);
+        await getSyncSingleton().refreshPluginAccountAvailability();
+        expect(read().readCurrentAccountKvCapability({ pluginId: manifest.id })).toMatchObject({ kind: 'available' });
+        for (const ref of refs) expect(read().readCurrentCollectionContract({ pluginId: manifest.id,
+            collectionId: ref.collectionId, ref })).toMatchObject({ kind: 'available' });
+        expect(read().readAccountUiProjection()?.actionsById[`${manifest.id}/${TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1}`]?.available).toBe(true);
+    } finally { await installed.dispose(); }
+});
 
 it('admits and keeps both portable Account executables in one published action set', async () => {
     const accountId = 'portable-plugins-account';

@@ -32,6 +32,62 @@ export type PortableAccountPluginFixture = Readonly<{
     prepareRegistration?: PluginUiClientExecutableActivation['prepareRegistration'];
 }>;
 
+export type SourceDeclaredAccountPluginFixture = PortableAccountPluginFixture & Readonly<{ packageName: string }>;
+
+/** Prepare physical app declarations before the first Account publication; install after restore. */
+export async function prepareSourceDeclaredAccountPluginsForTest(plugins: readonly SourceDeclaredAccountPluginFixture[]) {
+    const [{ projectBundledPluginUiDeclaration },
+        { installBundledPluginUiDeclarationsForTest }, { getSyncSingleton }, { ensureActivePluginAccountCollectionContract }] = await Promise.all([
+        import('../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs'),
+        import('../mocks/bundledPluginUiAssets'), import('@/sync/runtime/getSyncSingleton'),
+        import('@/sync/api/plugins/availability/ensureActivePluginAccountCollectionContract'),
+    ]);
+    const declarations = await Promise.all(plugins.map(async plugin => {
+        const manifest = PluginPortableReleaseManifestV1Schema.parse(plugin.manifest);
+        const target = manifest.contributes.actions.find(action => action.execution.target === 'account')?.execution;
+        if (target?.target !== 'account') throw new Error('Fixture requires an authored Account Action');
+        return await projectBundledPluginUiDeclaration({ packageName: plugin.packageName,
+            packageVersion: manifest.version, manifest, artifactGraphs: [createPortableAccountExecutableArtifact(target.account)] });
+    }));
+    installBundledPluginUiDeclarationsForTest(declarations);
+    return async (input: Readonly<{ accountLifetime: ActiveServerAccountScopeLifetime; publishProjection?: boolean }>) => {
+        await getSyncSingleton().refreshPluginAccountAvailability();
+        const readAvailability = () => readPluginAccountAvailability(input.accountLifetime.scope);
+        for (const declaration of declarations) {
+            const ref = declaration.collectionContracts[0];
+            if (ref && !await ensureActivePluginAccountCollectionContract({ pluginId: declaration.pluginId, ref,
+                accountLifetime: input.accountLifetime, readAvailability })) {
+                throw new Error(`Home did not admit authored Account Collections for ${declaration.pluginId}`);
+            }
+        }
+        const projection = readAvailability().readAccountUiProjection();
+        if (!projection) throw new Error('Source Account fixture has no admitted projection');
+        const prepared: Awaited<ReturnType<typeof preparePortableAccountPluginForTest>>[] = [];
+        try {
+            for (const plugin of plugins) {
+                const selected = readAvailability().readCurrentAccountExecution(plugin.manifest.id);
+                if (selected.kind !== 'available') throw new Error(`Source Account fixture is not admitted: ${selected.code}`);
+                prepared.push(await preparePortableAccountPluginForTest({ ...plugin, accountLifetime: input.accountLifetime,
+                    deferActivation: true, projection, origin: { ...input.accountLifetime.scope,
+                        custodyId: selected.custodyId, sourceCustody: selected.sourceCustody } }));
+            }
+            const activations = prepared.flatMap(plugin => plugin.activations);
+            const attempts = await getInstalledPluginUiClientExecutableComposition().reconcile(activations);
+            if (attempts.some(attempt => !attempt.result.ok)) {
+                throw new Error(`Account fixture activation failed: ${JSON.stringify(attempts.map(attempt => attempt.result))}`);
+            }
+            const unpublish = publishPortableAccountPluginProjection(projection, input.accountLifetime, input.publishProjection);
+            return { projection, activations, async dispose() {
+                unpublish();
+                for (const plugin of prepared) await plugin.dispose();
+            } };
+        } catch (error) {
+            for (const plugin of prepared) await plugin.dispose();
+            throw error;
+        }
+    };
+}
+
 /** Admit a real portable release before installing its Account executable at the byte-loader boundary. */
 export async function installPortableAccountPluginReleaseForTest(
     input: PortableAccountPluginFixture & Readonly<{
@@ -147,6 +203,8 @@ async function preparePortableAccountPluginForTest(input: Readonly<{
     prepareRegistration?: PluginUiClientExecutableActivation['prepareRegistration'];
     accountLifetime: ActiveServerAccountScopeLifetime;
     origin?: PluginUiAccountExecutableOrigin;
+    /** A source fixture consumes the complete projection admitted by Availability. */
+    projection?: PluginUiProjectionModel;
     /** Model the AppShell's scoped publication for ordinary host dependencies. */
     publishProjection?: boolean;
     /** Prepare several actual plugins, then admit their complete activation set together. */
@@ -185,7 +243,7 @@ async function preparePortableAccountPluginForTest(input: Readonly<{
     ).filter(([, descriptor]) => descriptor.pluginId === input.manifest.id));
     const contributionIds = [...projectedActions.map(action => action.id), ...projectedResources.map(resource => `resources/${resource.id}`),
         ...Object.values(connectedAccountDescriptorsById).map(descriptor => `connectedAccountDescriptors/${descriptor.id}`)];
-    const projection: PluginUiProjectionModel = {
+    const projection: PluginUiProjectionModel = input.projection ?? {
         ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
         installedPackagesById: { [input.manifest.id]: PluginProjectionInstalledPackageV2Schema.parse({
             id: input.manifest.id, displayName: input.manifest.displayName, version: input.manifest.version,
@@ -203,7 +261,8 @@ async function preparePortableAccountPluginForTest(input: Readonly<{
                     cacheIdentity: { artifactDigest: graph.digest } } }];
         })),
     };
-    const resolved = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform });
+    const resolved = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform })
+        .filter(entry => entry.pluginId === input.manifest.id);
     if (resolved.length === 0) throw new Error('Authored Account executable was not projected');
     const composition = getInstalledPluginUiClientExecutableComposition();
     const cache = createPluginReactNativeBundleCache();

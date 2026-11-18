@@ -3,6 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installNativeRuntimeFetchBoundaryForTest } from '@/dev/testkit/harness/nativeRuntimeFetch';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createPluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
 
@@ -25,6 +26,8 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 afterEach(async () => { rpc.action.mockReset(); await connection?.dispose(); connection = undefined; });
 
 it.each(['mounted', 'unmounted'] as const)('preserves the mounted Machine through Session admission for a %s Account Resource nested daemon read without sharing it with a Machine-less demand', async presentation => {
+    // The outer Account executable runs in native UI; its child retains explicit daemon placement.
+    installNativeRuntimeFetchBoundaryForTest();
     const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
     const { PluginError } = await import('@happier-dev/plugin-sdk');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
@@ -45,7 +48,8 @@ it.each(['mounted', 'unmounted'] as const)('preserves the mounted Machine throug
     const request = createSessionReadBatchFetchBoundary(async (url, init) => {
         if (new URL(String(url)).pathname === `/v2/sessions/${sessionId}`) {
             sessionReads++;
-            return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id: sessionId })));
+            return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id: sessionId,
+                metadata: { path: '/repo', host: 'test' } })));
         }
         return http.request(url, init);
     });

@@ -31,7 +31,7 @@ export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
 export { mountUiRetainedProjectTerminal } from './projectTerminalPresentationIntegrationTestkit';
 export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests } from './mocks/bundledPluginUiAssets';
 export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';
-export { connectUiTriageActionClient } from './triageActionClientIntegrationTestkit';
+export { connectUiTriageActionClient, prepareUiTriageActionPluginsForTest } from './triageActionClientIntegrationTestkit';
 export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
 
 /** Native desktop HTTP and the person's answer are physical platform boundaries. */
