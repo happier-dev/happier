@@ -540,14 +540,27 @@ export function projectWorkflowRunFailure(params: Parameters<typeof projectWorkf
         || (invocation.lifecycle !== 'failed' && invocation.lifecycle !== 'needs_attention'
             && invocation.lifecycle !== 'outcome_uncertain' && invocation.lifecycle !== 'waiting_for_review'
             && invocation.lifecycle !== 'waiting_for_approval')) return null;
-    const entry = params.structure.get(invocation.id);
-    const node = entry?.nodeId == null ? null : params.projection?.nodesById.get(entry.nodeId);
     return {
         invocationId: invocation.id,
         invocationLifecycle: invocation.lifecycle,
-        step: !entry?.isFrame && node ? { name: node.label, ordinal: node.stepOrdinal ?? null } : null,
+        step: projectWorkflowRunFailedStep({ invocation, structure: params.structure, projection: params.projection }),
         recovery: projectWorkflowInvocationRecovery(params),
     };
+}
+
+/**
+ * The authored step a failure row belongs to, with the number its Map row carries. The Run's failure and, while that
+ * failure is still being looked up, the Run's headline both read it, so the headline names the step the Map marks.
+ * A structural Run failure does not turn a completed child into a failed step.
+ */
+export function projectWorkflowRunFailedStep(params: Readonly<{
+    invocation: WorkflowRunInvocationIndexV1;
+    structure: ReadonlyMap<string, WorkflowInvocationStructureEntry>;
+    projection: WorkflowFlowProjection | null;
+}>): WorkflowRunFailurePresentation['step'] {
+    const entry = params.structure.get(params.invocation.id);
+    const node = entry?.nodeId == null ? null : params.projection?.nodesById.get(entry.nodeId);
+    return !entry?.isFrame && node ? { name: node.label, ordinal: node.stepOrdinal ?? null } : null;
 }
 
 export function formatWorkflowRunStateLabel(state: WorkflowRunStateV1): string {

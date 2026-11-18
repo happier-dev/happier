@@ -122,6 +122,7 @@ import {
     describeWorkflowInvocationCause,
     projectWorkflowInvocationRecovery,
     projectWorkflowRunFailure,
+    projectWorkflowRunFailedStep,
     selectWorkflowRunFailureInvocation,
     selectWorkflowRunApprovalPresentation,
     type WorkflowRunFailurePresentation,
@@ -949,8 +950,21 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const primaryReviewId = props.selectedInvocationId === null && primaryAction === null
         ? attentionIndexRows[0]?.invocation.id : undefined;
     // The outcome names the failed step by its number; its title sits on a line of its own (WAVE-ACCEPT-1118D c1).
+    // The Run's pages land before its separate first-failure lookup settles; until then the headline names the failed
+    // row the Map already marks, never "No step finished." beside it (LABPARITY-ACCEPT-F fix 2).
+    const settlingFailureInvocation = failurePresentation == null && props.firstFailedInvocationResolution !== 'resolved'
+        && (props.run.state === 'failed' || props.run.state === 'interrupted')
+        ? selectWorkflowRunFailureInvocation({ invocations: props.invocations, structure: derivedStructure,
+            firstFailedInvocationId: props.invocations.find(row => row.lifecycle === 'failed')?.id ?? null, runState: props.run.state })
+        : null;
+    const failedStepFacts = failurePresentation != null
+        ? { step: failurePresentation.step, lifecycle: failurePresentation.invocationLifecycle }
+        : settlingFailureInvocation === null ? null : {
+            step: projectWorkflowRunFailedStep({ invocation: settlingFailureInvocation, structure: derivedStructure, projection: flowProjection }),
+            lifecycle: settlingFailureInvocation.lifecycle,
+        };
     const failedStep = props.run.state === 'failed' || props.run.state === 'interrupted'
-        ? describeWorkflowRunFailedStep(failurePresentation?.step ?? null) : null;
+        ? describeWorkflowRunFailedStep(failedStepFacts?.step ?? null) : null;
     const failedStepLabel = failedStep?.reference ?? null;
     // The failed step's card says its cause and when its choices appear while that step is open beside the Run; the
     // page says them when no pane shows that card: on a phone, with nothing open, or with another step open.
@@ -1015,7 +1029,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             cancelRequested: props.cancelRequested,
             coverage,
             historyComplete: props.invocationHistoryComplete,
-            failure: failedStepLabel === null ? null : { step: failedStepLabel, lifecycle: failurePresentation?.invocationLifecycle },
+            failure: failedStepLabel === null ? null : { step: failedStepLabel, lifecycle: failedStepFacts?.lifecycle },
             setup: runSetupOutcome,
             runningStep: runningStep === null ? null : runningOccurrence === null ? runningStep : `${runningStep} · ${runningOccurrence}`,
             attention: firstAttention === undefined || firstAttentionLabel === null ? null : {

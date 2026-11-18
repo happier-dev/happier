@@ -1028,6 +1028,27 @@ describe('WorkflowRunContent', () => {
     expect(open.getTextContent()).toContain(reconnect);
   });
 
+  it('names the failed step the Map marks while the first-failure lookup is still settling (LABPARITY-ACCEPT-F fix 2)', async () => {
+    // The Run's pages land before its separate first-failure lookup: the Map already marks step 1 failed,
+    // so the headline reads that same row instead of saying no step finished.
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'machine_unavailable', message: 'The target Machine was offline.' } });
+    viewport.window = { width: 1440, height: 900 };
+    const settling = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
+      invocations: [invocation], invocationProgressById: new Map([[invocation.id, progress]]),
+      firstFailedInvocationId: null, firstFailedInvocationResolution: 'loading', selectedInvocationId: null, view: 'flow',
+    });
+    expect(settling.findAllByType(WorkflowLifecycleStatus).some(node => node.props.testID === 'workflow-run-flow-node-analyze-state'))
+      .toBe(true);
+    const outcome = String(settling.findByTestId('workflow-run-outcome')?.props.children);
+    expect(outcome).toContain('workflows.run.stepNumber');
+    expect(outcome).not.toContain('workflows.run.nothingFinishedSentence');
+    expect(settling.findByTestId('workflow-run-failed-step-title')?.props.children).toBe('Analyze the repository');
+  });
+
   it('says Skipped on a completed Run map for a step it never ran, and only when the history is complete', async () => {
     const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'completed' });
     const taken = createWorkflowInvocationIndexFixture({ id: 'taken', parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });
