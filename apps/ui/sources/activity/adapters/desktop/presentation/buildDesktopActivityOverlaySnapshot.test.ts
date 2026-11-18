@@ -76,6 +76,30 @@ function createOverlaySource(params: Readonly<{
 }
 
 describe('buildDesktopActivityOverlaySnapshot', () => {
+    it('projects native approval choices into the desktop request snapshot', () => {
+        const nativeChoices = {
+            requirementId: 'native-overlay-request',
+            source: 'native-agent',
+            choices: [
+                { id: 'allow_once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+                { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+            ],
+        } as const;
+        const session = createSessionFixture({ id: 'native-overlay', serverId: 'server-1', active: true,
+            metadata: { path: '/tmp/native-overlay', host: 'qa', flavor: 'codex' },
+            agentState: { requests: { ask: { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' },
+                nativeChoices, createdAt: 950 } } },
+        });
+        const candidate = buildSessionActivityAttention({ session, nowMs: 1_000 });
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({ sessions: [session] }),
+            sourceOverview: { candidates: [candidate], counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
+            activityPolicy: resolveActivitySurfacePolicy({}), desktopPolicy: createDesktopPolicy(), nowMs: 1_000,
+        });
+
+        expect(snapshot.permissionRequests[0]?.permissionChoices?.map(choice => choice.id)).toEqual(['allow_once', 'deny']);
+    });
+
     it('keeps the Session catalog Always allow choice for an external MCP ask', () => {
         const mcpTool = ResolvedMcpToolIdentityV1Schema.parse({ server: 'github', tool: 'edit_file',
             item: { serverId: 'github' }, serverTitle: 'GitHub',

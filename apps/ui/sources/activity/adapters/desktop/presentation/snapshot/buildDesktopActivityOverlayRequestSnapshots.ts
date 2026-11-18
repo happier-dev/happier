@@ -176,6 +176,7 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 allowActionIdentifier: 'session.permission.respond',
                 denyActionIdentifier: 'session.permission.respond',
                 permissionChoices: canApprove ? resolveSessionPermissionChoices({ toolName: request.tool, toolInput: request.arguments,
+                    nativeChoices: request.nativeChoices, nativeChoiceAvailability: request.nativeChoiceAvailability,
                     source: request.source, suggestions: request.permissionSuggestions, permissionBehavior,
                     mcpTool: request.mcpTool, canWriteCatalog: Boolean(serverId && params.audienceScopes?.has(serverId)) }) : [],
                 risk: classifyPermissionRequestRisk({

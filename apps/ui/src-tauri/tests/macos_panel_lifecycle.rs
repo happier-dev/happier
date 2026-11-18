@@ -144,6 +144,7 @@ fn main() {
                 desktop_panel::apply(&window, desktop_panel::PanelOptions {
                     shadow: false, opaque: false, movable: decorated, movable_by_window_background: false,
                     accepts_mouse_moved_events: true, ignores_mouse_events: false, nonactivating: true,
+                    keyboard_on_request: false,
                     level: None, collection_behavior: tauri_nspanel::CollectionBehavior::new(),
                 })?;
                 assert!(!native.isVisible(), "conversion must not present an unpainted page");
