@@ -9,6 +9,7 @@ import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceS
 import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -488,7 +489,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       // Opening a Project is the person adding it to their Projects list (owner 11-08), whoever invokes
       // projects.open for them. A reviewed child of another Action (a Session's project files) keeps its root
       // Action's binding and stays a Session folder. The list is not the open: a failed write leaves it unlisted.
-      if (!requester.rows.authorization || requester.rows.authorization.binding.actionId === 'projects.open') {
+      if (!requester.rows.authorization || isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) {
         await mutateProjectAccountOrganization({ ...requester.rows, serverId: acceptedRef.ref.serverId,
           projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,
           mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
