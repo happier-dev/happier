@@ -23,18 +23,29 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 import type { MachineAddArrivalNext } from './useMachineAddFlow';
 
+/** A pushed way's page (lab add/sshp, phone-system-1109 p5-pair): its page header names the way and shows its lead. */
+export type MachineAddPageLead = Readonly<{ publish: (lead: string | null) => void }>;
+
+const MachineAddPageLeadContext = React.createContext<MachineAddPageLead | null>(null);
+
+/** Inside a pushed way's page the pane hands its lead to the page header instead of drawing its own. */
+export const MachineAddPageLeadProvider = MachineAddPageLeadContext.Provider;
+
 /** The pane's title and one-paragraph lead (what this way does, in the person's words). */
-const MachineAddPaneTitlesContext = React.createContext(true);
-
-/** Whether a pane names its way: off on a page that is already titled by it (a phone's pushed way). */
-export const MachineAddPaneTitles = MachineAddPaneTitlesContext.Provider;
-
 export function MachineAddPaneHeader(props: Readonly<{ title: string; lead: string; testID?: string }>) {
     const styles = stylesheet;
-    const titled = React.useContext(MachineAddPaneTitlesContext);
+    const page = React.useContext(MachineAddPageLeadContext);
+    const publish = page?.publish;
+    // Before paint, so the page header's description never arrives late and pushes the page down.
+    React.useLayoutEffect(() => {
+        if (!publish) return undefined;
+        publish(props.lead);
+        return () => publish(null);
+    }, [publish, props.lead]);
+    if (page) return null;
     return (
         <View testID={props.testID} style={styles.header}>
-            {titled ? <Text accessibilityRole="header" style={styles.title}>{props.title}</Text> : null}
+            <Text accessibilityRole="header" style={styles.title}>{props.title}</Text>
             <Text style={styles.lead}>{props.lead}</Text>
         </View>
     );

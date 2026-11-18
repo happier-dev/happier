@@ -27,7 +27,8 @@ import { readMachineAddDevice } from './useMachineAddPaths';
 import {
     MachineAddFailureNotice,
     MachineAddPaneHeader,
-    MachineAddPaneTitles,
+    MachineAddPageLeadProvider,
+    type MachineAddPageLead,
     MachineAddStepList,
     MachineArrivedCard,
     MachineNotSeeingNotice,
@@ -114,6 +115,8 @@ type MachineAddFormProps = Readonly<{
     onOpenWay?: (way: MachineAddRoutePath) => void;
     /** `page` on a phone: the way this pushed page shows (the route's `path`); absent, the page lists the ways. */
     openedWay?: MachineAddRoutePath;
+    /** The page header that names an opened way and shows its pane's lead (the draft screen's). */
+    pageLead?: MachineAddPageLead;
 }>;
 
 export function MachineAddForm(props: MachineAddFormProps) {
@@ -206,10 +209,10 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
         if (opened) {
             return (
                 <View testID={props.testID}>
-                    {/* The pushed page is titled by its way, so the pane does not title itself again (lab add/sshp). */}
-                    <MachineAddPaneTitles value={false}>
+                    {/* The pushed page is titled by its way; the pane's lead becomes that header's description (lab add/sshp). */}
+                    <MachineAddPageLeadProvider value={props.pageLead ?? null}>
                         <MachineAddPane flow={flow} pathId={opened} onPage testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />
-                    </MachineAddPaneTitles>
+                    </MachineAddPageLeadProvider>
                 </View>
             );
         }

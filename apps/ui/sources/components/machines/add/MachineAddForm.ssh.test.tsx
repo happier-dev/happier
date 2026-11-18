@@ -226,11 +226,15 @@ describe('Add a machine on a phone', () => {
     expect(readMachineAddFlowDraft().creating).toBe(false);
     await list.unmount();
 
+    // The page header names the pushed way and shows the lead its pane decides (p5-pair: title, then lead).
+    const published: Array<string | null> = [];
+    const pageLead = { publish: (lead: string | null) => { published.push(lead); } };
     const pushed = await renderScreen(
       <MachineAddForm
         layout="page"
         canCreate
         openedWay="ssh"
+        pageLead={pageLead}
         testID="form"
         onOpenWay={() => {}}
         onClose={() => {}}
@@ -242,8 +246,13 @@ describe('Add a machine on a phone', () => {
     );
     const { t } = await import('@/text');
     expect(pushed.tree.findAll((node) => node.props.accessibilityRole === 'header' && node.props.children === t('addFlows.pathSshTitle'))).toHaveLength(0);
+    const lead = published.at(-1);
+    expect([t('addFlows.sshLeadCommand', { home: 'Build' }), t('addFlows.sshLeadTask', { home: 'Build' })]).toContain(lead);
+    expect(pushed.tree.findAll((node) => node.props.children === lead)).toHaveLength(0);
     expect(byId(pushed, 'form.way.create')).toHaveLength(0);
     expect(byId(pushed, 'managed-picker')).toHaveLength(0);
     await pushed.unmount();
+    // Leaving the way clears the header's description.
+    expect(published.at(-1)).toBeNull();
   });
 });

@@ -21,6 +21,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { MachineAddFormWithFlow, machineAddWayTitle, useMachineAddPushesWays } from './MachineAddForm';
+import type { MachineAddPageLead } from './MachineAddPanes';
 import { machineAddLeadsWithCreate, readMachineAddRoutePath } from './machineAddPaths';
 import { readMachineAddDevice } from './useMachineAddPaths';
 import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
@@ -150,12 +151,16 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         }, lifetime);
     }, [returning, returnToComposer]);
 
+    // A pushed way's pane decides its lead; this header shows it under the way's name, before the Home it joins.
+    const [wayLead, setWayLead] = React.useState<string | null>(null);
+    const pageLead = React.useMemo<MachineAddPageLead>(() => ({ publish: setWayLead }), []);
+
     return (
         <ItemList keyboardShouldPersistTaps="handled">
             <PageHeader
                 testID="settings.machines.draft.header"
                 title={pushedWay ? machineAddWayTitle(pushedWay) : t('settingsOverview.addMachineTitle')}
-                description={pushedWay ? undefined : canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
+                description={pushedWay ? wayLead ?? undefined : canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
                 meta={[{ key: 'home', icon: 'house', text: homeName ? t('addFlows.machineJoinsHome', { home: homeName }) : t('managedMachines.add.joinsThisHome') }]}
                 actions={(
                     <>
@@ -178,6 +183,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                         canCreate={canCreate}
                         creationServerId={serverId}
                         openedWay={routePath}
+                        pageLead={pageLead}
                         onOpenWay={openWay}
                         onClose={discard}
                         onStartSession={startSession}
