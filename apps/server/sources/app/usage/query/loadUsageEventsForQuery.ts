@@ -124,8 +124,12 @@ export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
     if (eventIds === undefined) return await tx.usageEvent.findMany({ where,
         orderBy: { observedAt: 'asc' }, select: usageEventSelect });
     const rows: UsageQueryEvent[] = [];
+    // Prisma adds a small fixed predicate envelope to SQLite statements beyond
+    // the caller-visible day filters; reserve it so each chunk stays below the
+    // driver's binding ceiling when the day projection is present.
+    const sqlitePredicateHeadroom = 20;
     for (const ids of portableQueryChunks({ values: eventIds, bindingsPerValue: 1,
-        fixedBindings: 1 + (endMs === undefined ? 0 : 1) + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length })) {
+        fixedBindings: 1 + (endMs === undefined ? 0 : 1) + TEAM_CREDENTIAL_ONLY_USAGE_SOURCES.length + ((days?.length ?? 0) * 2) + sqlitePredicateHeadroom })) {
         rows.push(...await tx.usageEvent.findMany({ where: { ...where, id: { in: [...ids] } },
             orderBy: { observedAt: 'asc' }, select: usageEventSelect }));
     }
