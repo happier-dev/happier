@@ -4676,7 +4676,8 @@ then selects Docker's native `rootless` context for the Happier user. Docker
 clients consume that context's socket endpoint; they do not construct a socket
 path. Explicit `DOCKER_HOST` or `DOCKER_CONTEXT` selections still override the
 user's default. The recipe uses the packaged `dockerd-rootless-setuptool.sh`
-when available, otherwise Docker's documented user installer at
+when its rootless script and Docker CLI share a directory, otherwise Docker's
+documented user installer at
 `https://get.docker.com/rootless`. Existing system Docker services are preserved.
 On hosts restricting unprivileged user namespaces, the same reviewed step loads
 an AppArmor profile for the Happier user's downloaded RootlessKit executable.

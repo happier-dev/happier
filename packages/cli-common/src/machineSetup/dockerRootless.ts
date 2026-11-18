@@ -28,11 +28,14 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 unset DOCKER_HOST DOCKER_CONTEXT
 export PATH="$HOME/bin:/usr/share/docker.io/contrib:$PATH"
-if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
-    tool=$(command -v dockerd-rootless-setuptool.sh)
+tool=$(command -v dockerd-rootless-setuptool.sh || true)
+rootless=$(command -v dockerd-rootless.sh || true)
+# The upstream setup tool invokes Docker beside dockerd-rootless.sh. Some
+# distro packages put the scripts in contrib but keep Docker in /usr/bin.
+if [ -n "$tool" ] && [ -n "$rootless" ] && [ -x "$(dirname "$rootless")/docker" ]; then
     "$tool" install --force
 else
-    # Ubuntu's docker.io can omit the upstream rootless tools. Use Docker's
+    # Ubuntu's docker.io can omit or split the upstream rootless tools. Use Docker's
     # documented user install, without replacing packages or the shared daemon.
     installer=$(mktemp)
     trap 'rm -f "$installer"' EXIT HUP INT TERM
