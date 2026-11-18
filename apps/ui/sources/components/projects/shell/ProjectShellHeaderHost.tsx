@@ -338,7 +338,9 @@ export const ProjectPhoneHead = React.memo(function ProjectPhoneHead(
   const { checkout } = useProjectShellCheckout(props);
   const { serverId, projectKey, id } = props.workspaceRef;
   const project = React.useMemo(() => ({ serverId, projectKey: projectKey ?? id }), [id, projectKey, serverId]);
-  return <ProjectPhoneHeadView checkout={checkout} project={project} launchers={props.launchers} />;
+  // The same Project-launched composer the wide header's New session opens (one launcher, one draft owner).
+  const newSession = useProjectNewSessionAction({ workspaceRef: props.workspaceRef, activeRootPath: props.activeRootPath });
+  return <ProjectPhoneHeadView checkout={checkout} project={project} launchers={props.launchers} onNewSession={newSession.open} />;
 });
 
 const PHONE_HEAD_CHIP_SLOT = { flexShrink: 1, minWidth: 0 } as const;
@@ -348,6 +350,7 @@ export function ProjectPhoneHeadView(props: Readonly<{
   checkout: ProjectShellCheckout;
   project: Readonly<{ serverId: string; projectKey: string }>;
   launchers: ProjectHeaderActionsProps;
+  onNewSession?: () => void;
 }>) {
   const lookAnchorRef = React.useRef<View | null>(null);
   const [lookOpen, setLookOpen] = React.useState(false);
@@ -359,6 +362,7 @@ export function ProjectPhoneHeadView(props: Readonly<{
   return (
     <ProjectHeaderActions
       {...props.launchers}
+      {...(props.onNewSession ? { onNewSession: props.onNewSession } : {})}
       // The bar's right side is capped; the chip gives up its width there (its name ellipsizes) and Back stays.
       leading={<View style={PHONE_HEAD_CHIP_SLOT}>
         <ProjectCheckoutChip checkout={props.checkout} compact={false} testID="project-phone-checkout" />

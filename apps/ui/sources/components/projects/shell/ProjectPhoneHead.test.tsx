@@ -73,4 +73,26 @@ describe('Project phone head (owner P1 11-15)', () => {
       await screen.unmount();
     }
   });
+
+  it('carries New session on the bar, so a phone can open the Project-launched composer', async () => {
+    const onNewSession = vi.fn();
+    const screen = await renderScreen(
+      <ProjectPhoneHeadView
+        checkout={checkout}
+        project={{ serverId: 'home', projectKey: 'project' }}
+        launchers={{ testIdPrefix: 'project-header', showWorktreesButton: false }}
+        onNewSession={onNewSession}
+      />,
+    );
+    try {
+      const add = screen.findHostByTestId('project-header-new-session');
+      expect(add?.props.accessibilityLabel).toBe(t('projects.open.newSession'));
+      await React.act(async () => {
+        add!.props.onPress();
+      });
+      expect(onNewSession).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

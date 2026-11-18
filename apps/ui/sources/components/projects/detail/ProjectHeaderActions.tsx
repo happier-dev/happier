@@ -40,6 +40,8 @@ export type ProjectHeaderActionsProps = Readonly<{
     onOpenBrowser?: () => void;
     /** Absent where the Project cockpit bar is on screen: Terminal lives in the bar and its ⋯ there. */
     onOpenTerminal?: () => void;
+    /** The phone head's `+` (`ProjectPhoneHead`): the Project-launched composer, as the wide header's New session. */
+    onNewSession?: () => void;
     /** A phone page's own head (`ProjectPhoneHead`): its Machine chip before the launchers, its ⋯ after them. */
     leading?: React.ReactNode;
     trailing?: React.ReactNode;
@@ -95,6 +97,18 @@ export const ProjectHeaderActions = React.memo((props: ProjectHeaderActionsProps
                     onPress={props.onOpenTerminal}
                     accessibilityLabel={t('settings.terminal')}
                     icon={glyph('terminal')}
+                />
+            ) : null}
+            {props.onNewSession ? (
+                <IconButton
+                    testID={`${props.testIdPrefix}-new-session`}
+                    variant="plain"
+                    size={size}
+                    interactiveTargetGapPx={ACTION_GAP_PX}
+                    onPress={props.onNewSession}
+                    accessibilityLabel={t('projects.open.newSession')}
+                    tooltip={t('projects.open.newSession')}
+                    icon={glyph('plus')}
                 />
             ) : null}
             {props.trailing}
