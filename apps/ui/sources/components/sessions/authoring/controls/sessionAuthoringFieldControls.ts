@@ -127,6 +127,8 @@ export type SessionAuthoringFieldControlModel =
             title: string;
             options: readonly SessionAuthoringFieldOption[];
             selectedOptionId: string;
+            /** Mixed selections use the same unselected display contract as ordinary options. */
+            unselectedLabel?: string;
         }>>;
     }>
     | Readonly<{
