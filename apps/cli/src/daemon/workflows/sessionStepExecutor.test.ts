@@ -1694,8 +1694,10 @@ describe('workflow Session step executor', () => {
     })]);
   });
 
-  it('preserves the selected Team source when admitting input to an existing Session', async () => {
+  it('admits input with the newer Team model retained by the existing Session', async () => {
     const admitted: unknown[] = [];
+    const credentials = { token: 'token', encryption: null };
+    const retainedSessionId = 'c111111111111111111111111';
     const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const teamSelection = {
       v: 2 as const,
@@ -1710,15 +1712,25 @@ describe('workflow Session step executor', () => {
         modelId: 'muse-spark-1.3-contributor',
       },
     };
+    const read = readiness.get.getMockImplementation()!;
+    readiness.get.mockImplementation(async (url: string) => url.endsWith(`/v2/sessions/${retainedSessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({
+        id: retainedSessionId, active: true, encryptionMode: 'plain',
+        metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), share: null,
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1,
+          workspace: { machineId: 'machine-1', path: '/repo' },
+          nativeSession: { runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } },
+          runtime: { modelSelectionIntentV2: teamSelection },
+        }),
+      }) } } : read(url));
+    const resolveConversation: Parameters<typeof createProductionWorkflowSessionStepExecutor>[0]['resolveExistingSessionConversation'] =
+      params => resolveWorkflowSessionConversation({ ...params, credentials });
     const execute = createProductionWorkflowSessionStepExecutor({
-      credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      credentials, machineId: 'machine-1',
       machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing target'); },
-      resolveSharedRunConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
-        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: { agentTargetKey: target.identity.pluginId + '/' + target.identity.localId, providerConnectionId: null, modelId: 'legacy' }, updatedAt: 200 }, teamModelSelection: teamSelection },
-      }), resolveProducerConversation: async () => null,
-      resolveExistingSessionConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
-        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: { agentTargetKey: target.identity.pluginId + '/' + target.identity.localId, providerConnectionId: null, modelId: 'legacy' }, updatedAt: 200 }, teamModelSelection: teamSelection },
-      }),
+      resolveSharedRunConversation: () => resolveConversation({ sessionId: retainedSessionId, machineId: 'machine-1' }),
+      resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: resolveConversation,
       sessionInput: { enqueue: async (request) => { admitted.push(request); return { status: 'accepted', localId: 'input' }; },
         observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } }),
       },
@@ -1728,7 +1740,10 @@ describe('workflow Session step executor', () => {
       invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
       input: { text: 'work', references: [], attachments: [], values: [] },
       execution: { conversation: { kind: 'shared_run' }, agentTarget: target,
-        permissionMode: 'default', permissionModeUpdatedAt: 300, modelSelection: teamSelection },
+        permissionMode: 'default', permissionModeUpdatedAt: 200,
+        modelSelection: { v: 2, updatedAt: 200, ref: {
+          source: 'native', agentTargetKey: teamSelection.ref.agentTargetKey, modelId: 'authored-native-model',
+        } } },
       executionTarget: { kind: 'session' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
       beforeInputAdmission: async () => {}, onInputAccepted: async () => {},
@@ -1736,7 +1751,7 @@ describe('workflow Session step executor', () => {
     expect(result).toEqual({ kind: 'completed', result: 'done' });
     expect(admitted).toEqual([expect.objectContaining({
       modelSelectionInput: teamSelection.ref,
-      modelSelectionUpdatedAt: 300,
+      modelSelectionUpdatedAt: teamSelection.updatedAt,
     })]);
   });
 
