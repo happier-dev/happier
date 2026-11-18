@@ -120,6 +120,25 @@ describe('Herdr terminal host creation', () => {
     }, { maxInitialRequestBytes: 1024 * 1024 });
   });
 
+  it.each([
+    ['times out', 'timeout', { reason: 'timeout', duplicateRisk: 'likely', recoverable: true }],
+    ['fails', 'error', { reason: 'submit_failed', duplicateRisk: 'possible', recoverable: false }],
+  ] as const)('maps an Enter that %s through the shared submit-failure rule', async (_label, fault, expected) => {
+    await withHerdrApi(async (api) => {
+      api.panes.add('managed');
+      api.faults.set('pane.send_keys', fault);
+      const result = await createHerdrTerminalHostAdapter({
+        binary: 'herdr', sessionName: 'work', actionTimeoutMs: 200, startupTimeoutMs: 200,
+      }).injectUserPrompt({
+        kind: 'herdr', sessionName: 'work', socketPath: api.socketPath,
+        terminalId: 'terminal_1', paneId: 'managed',
+        attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
+      }, { text: 'queued prompt', multiline: false, origin: { kind: 'rpc', nonce: 'enter-failure' }, scheduling: {} });
+      expect(result).toMatchObject({ status: 'failed', phase: 'after_enter_unknown', ...expected });
+      expect(api.requests.filter((request) => request.method === 'pane.send_keys')).toHaveLength(1);
+    });
+  });
+
   it.skipIf(process.platform === 'win32')('preserves stopped disposition and both causes when launch handoff removal fails', async () => {
     await withHerdrApi(async (api) => {
       api.faults.set('pane.get', 'error');

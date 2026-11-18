@@ -11,10 +11,11 @@ import {
 } from '@happier-dev/agents';
 import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 import {
-  resolveTerminalPromptSubmissionFailureReason,
+  resolveTerminalPromptSubmissionFailure,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
 
+import { captureTerminalInputState } from '../terminalHost/inputStability';
 import { createTmuxTerminalControlPort } from './control';
 import { resolveTmuxPromptSubmitDelayMs, resolveTmuxSendKeysChunkSize } from './env';
 import { evaluateTmuxPaneLiveness } from './paneLiveness';
@@ -123,16 +124,6 @@ function failedInjectionResult(params: Readonly<{
   };
 }
 
-const DEFAULT_INPUT_STABILITY_DELAY_MS = 50;
-
-function cursorPositionsEqual(
-  left: Readonly<{ x: number; y: number }> | null,
-  right: Readonly<{ x: number; y: number }> | null,
-): boolean {
-  if (left === null || right === null) return left === right;
-  return left.x === right.x && left.y === right.y;
-}
-
 export function createTmuxTerminalHostAdapter(params?: Readonly<{
   tmux?: TmuxTerminalHostUtility;
   now?: () => number;
@@ -178,22 +169,19 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
     // the old captureCurrentInput + isUserTyping(50,2) path that did three captures and fed a
     // single line into the parser.
     try {
-      const before = await handleTmux.captureCurrentInput(target);
-      const beforeCursor = await handleTmux.captureCursorPosition(target);
-      await wait(DEFAULT_INPUT_STABILITY_DELAY_MS);
-      const after = await handleTmux.captureCurrentInput(target);
-      const cursor = await handleTmux.captureCursorPosition(target);
-      const result = {
-        stable: before === after && cursorPositionsEqual(beforeCursor, cursor),
-        currentInput: after,
-        ...(cursor !== null ? { cursor } : {}),
-        observedAt: now(),
-      };
+      const result = await captureTerminalInputState({
+        sample: async () => ({
+          text: await handleTmux.captureCurrentInput(target),
+          cursor: await handleTmux.captureCursorPosition(target),
+        }),
+        wait,
+        now,
+      });
       logTmuxDebug('[TMUX] Input capture completed', {
         target,
         stable: result.stable,
         textLength: result.currentInput.length,
-        hasCursor: cursor !== null,
+        hasCursor: result.cursor !== undefined,
       });
       return result;
     } catch {
@@ -323,19 +311,12 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
       });
 
       if (!typed.success) {
-        const reason = typed.reason === 'verification_failed'
-          ? resolveTerminalPromptSubmissionFailureReason(typed.reason)
-          : typed.reason === 'submit_failed'
-            ? 'submit_failed'
-            : typed.reason === 'timeout'
-              ? 'timeout'
-              : 'write_failed';
+        const reason = typed.reason === 'verification_failed' || typed.reason === 'submit_failed' || typed.reason === 'timeout'
+          ? typed.reason
+          : 'write_failed';
         return failedInjectionResult({
           handle,
-          reason,
-          phase: typed.phase,
-          duplicateRisk: typed.duplicateRisk,
-          recoverable: typed.duplicateRisk !== 'likely',
+          ...resolveTerminalPromptSubmissionFailure({ reason, phase: typed.phase, duplicateRisk: typed.duplicateRisk }),
           observedAt: now(),
         });
       }

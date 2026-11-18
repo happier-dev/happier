@@ -1,4 +1,8 @@
-import type { TerminalPromptInput } from '@happier-dev/agents';
+import type {
+  TerminalInjectionDuplicateRisk,
+  TerminalInjectionFailurePhase,
+  TerminalPromptInput,
+} from '@happier-dev/agents';
 import type { AgentTerminalPromptSubmitVerificationPolicyV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const DEFAULT_POST_SUBMIT_SETTLE_MS = 50;
@@ -18,10 +22,34 @@ export type TerminalPromptSubmissionResult =
     submitMayHaveReachedPane: boolean;
   }>;
 
-export function resolveTerminalPromptSubmissionFailureReason(
-  reason: Extract<TerminalPromptSubmissionResult, { success: false }>['reason'],
-): 'verification_failed' | 'submit_failed' | 'timeout' {
-  return reason;
+export type TerminalPromptSubmissionFailureReason = Extract<TerminalPromptSubmissionResult, { success: false }>['reason'];
+
+/**
+ * The one rule every terminal host uses for a failed prompt submission. Nothing here is ever
+ * resent: every runner failure carries `duplicateRisk` other than 'none', and after Enter the
+ * Session waits for the provider's own evidence. `recoverable` only says whether the Session keeps
+ * the prompt in custody (an Enter that may have reached the Agent, or a prompt still staged) or
+ * ends it (`submit_failed`: the host refused Enter or exited, so no acceptance can follow).
+ * `write_failed` (a host's own staging write failed before Enter) keeps custody like any pre-Enter failure.
+ */
+export function resolveTerminalPromptSubmissionFailure<
+  Failure extends Readonly<{
+    reason: TerminalPromptSubmissionFailureReason | 'write_failed';
+    phase: TerminalInjectionFailurePhase;
+    duplicateRisk: TerminalInjectionDuplicateRisk;
+  }>,
+>(failure: Failure): Readonly<{
+  reason: TerminalPromptSubmissionFailureReason;
+  phase: Failure['phase'];
+  duplicateRisk: Failure['duplicateRisk'];
+  recoverable: boolean;
+}> {
+  return {
+    reason: failure.reason,
+    phase: failure.phase,
+    duplicateRisk: failure.duplicateRisk,
+    recoverable: failure.reason !== 'submit_failed',
+  };
 }
 
 function defaultWait(delayMs: number): Promise<void> {

@@ -439,6 +439,39 @@ describe('createZellijTerminalHostAdapter', () => {
     expect(actions.sendEnter).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['times out', new ZellijActionTimeoutError('send-keys'), { reason: 'timeout', duplicateRisk: 'likely', recoverable: true }],
+    ['fails', new Error('zellij action failed'), { reason: 'submit_failed', duplicateRisk: 'possible', recoverable: false }],
+  ] as const)('maps an Enter that %s through the shared submit-failure rule', async (_label, enterError, expected) => {
+    const actions = createActions({ sendEnter: vi.fn(async () => { throw enterError; }) });
+    const adapter = createTestZellijAdapter({ zellijBinary: '/tools/zellij', socketDir: '/tmp/zellij-sock', actions });
+
+    await expect(adapter.injectUserPrompt({
+      kind: 'zellij',
+      sessionName: 'session-a',
+      paneId: 'terminal_42',
+      socketDir: '/tmp/zellij-sock',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    }, {
+      text: 'queued prompt',
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'nonce-zellij-enter-failure' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      phase: 'after_enter_unknown',
+      ...expected,
+    });
+    expect(actions.sendEnter).toHaveBeenCalledTimes(1);
+  });
+
   it('reports post-submit verification failure without claiming the live zellij host is unreachable', async () => {
     let elapsedMs = 208;
     const prompt = 'queued prompt remains visible';

@@ -11,7 +11,6 @@ import {
   type TerminalInputInjectionResult,
   type TerminalInputState,
   type TerminalPromptInput,
-  type TerminalSpecialKey,
 } from '@happier-dev/agents';
 import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 import { encodeTerminalPasteInput } from '@happier-dev/protocol/terminal/inputEncoding';
@@ -21,13 +20,14 @@ import {
   remainingTerminalHostDeadlineMs,
 } from '@/integrations/terminalHost/deadline';
 import {
-  resolveTerminalPromptSubmissionFailureReason,
+  resolveTerminalPromptSubmissionFailure,
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '@/integrations/terminalHost/promptSubmitVerification';
 
-import { buildTerminalControlCapture } from '@/integrations/terminalHost/controlCapture';
-import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
+import { buildTerminalControlCapture, normalizeCapturedScreen } from '@/integrations/terminalHost/controlCapture';
+import { captureTerminalInputState, TERMINAL_INPUT_STABILITY_DELAY_MS } from '@/integrations/terminalHost/inputStability';
+import { TERMINAL_SPECIAL_KEY_RAW_SEQUENCES } from '@/integrations/terminalHost/controlTypes';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PtyProvider } from './provider';
@@ -41,7 +41,6 @@ import { getAgentTerminalSessionManager } from './agentTerminals';
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
-const INPUT_STABILITY_DELAY_MS = 50;
 const POST_WRITE_LIVENESS_DELAY_MS = 25;
 
 /** The host's view of one Agent terminal: its screen and exit. The PTY itself is the manager's. */
@@ -99,27 +98,6 @@ function failedInjectionResult(params: Readonly<{
   };
 }
 
-function resolveSpecialKeyBytes(key: TerminalSpecialKey): string {
-  switch (key) {
-    case 'Enter':
-      return '\r';
-    case 'Escape':
-      return '\u001b';
-    case 'ArrowUp':
-      return '\u001b[A';
-    case 'ArrowDown':
-      return '\u001b[B';
-    case 'Tab':
-      return '\t';
-    case 'ShiftTab':
-      return TERMINAL_SHIFT_TAB_SEQUENCE;
-    case 'CtrlC':
-      return '\u0003';
-    case 'Backspace':
-      return '\u007f';
-  }
-}
-
 export function createPtyTerminalHostAdapter(params?: Readonly<{
   /** Tests: spawn Agents with this provider (in a private manager) instead of the Session holder. */
   ptyProvider?: PtyProvider;
@@ -149,7 +127,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     : getAgentTerminalSessionManager());
   const cols = Math.max(2, Math.trunc(params?.cols ?? DEFAULT_COLS));
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
-  const inputStabilityDelayMs = Math.max(0, Math.trunc(params?.inputStabilityDelayMs ?? INPUT_STABILITY_DELAY_MS));
+  const inputStabilityDelayMs = Math.max(0, Math.trunc(params?.inputStabilityDelayMs ?? TERMINAL_INPUT_STABILITY_DELAY_MS));
   const postWriteLivenessDelayMs = Math.max(0, Math.trunc(params?.postWriteLivenessDelayMs ?? POST_WRITE_LIVENESS_DELAY_MS));
   const promptSubmitVerification = params?.promptSubmitVerification;
   const now = params?.now ?? (() => Date.now());
@@ -191,17 +169,15 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     if (!session || session.ended) {
       throw new Error('PTY terminal host is not alive');
     }
-    const firstInput = await session.screen.capture();
-    await delay(inputStabilityDelayMs);
-    const currentInput = await session.screen.capture();
-    return {
-      stable: firstInput.text === currentInput.text
-        && firstInput.cursor.x === currentInput.cursor.x
-        && firstInput.cursor.y === currentInput.cursor.y,
-      currentInput: currentInput.text,
-      cursor: currentInput.cursor,
-      observedAt: now(),
-    };
+    return await captureTerminalInputState({
+      sample: async () => {
+        const screen = await session.screen.capture();
+        return { text: screen.text, cursor: screen.cursor };
+      },
+      wait: delay,
+      delayMs: inputStabilityDelayMs,
+      now,
+    });
   }
 
   function createControlPort(handle: TerminalHostHandle): TerminalControlPort {
@@ -224,7 +200,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       async sendSpecialKey(key) {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
-        return await writeToSession(session, resolveSpecialKeyBytes(key))
+        return await writeToSession(session, TERMINAL_SPECIAL_KEY_RAW_SEQUENCES[key])
           ? { status: 'sent', at: now() }
           : { status: 'host_dead', recoverable: false };
       },
@@ -443,17 +419,17 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
               ?? promptSubmitVerification.verifyAfterSubmit
             )({
               promptText,
-              screenText: (await session.screen.capture()).text,
+              screenText: normalizeCapturedScreen((await session.screen.capture()).text),
             }),
             verifyAfterSubmit: async ({ promptText }) => promptSubmitVerification.verifyAfterSubmit({
               promptText,
-              screenText: (await session.screen.capture()).text,
+              screenText: normalizeCapturedScreen((await session.screen.capture()).text),
             }),
           }
           : {}),
         submitEnter: async ({ remainingTimeoutMs }) => {
           if (remainingTimeoutMs === 0) return 'timeout';
-          if (!await writeToSession(session, '\r')) return 'failed';
+          if (!await writeToSession(session, TERMINAL_SPECIAL_KEY_RAW_SEQUENCES.Enter)) return 'failed';
           return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
         },
         remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
@@ -461,10 +437,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       if (!submission.success) {
         return failedInjectionResult({
           handle,
-          reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
-          phase: submission.phase,
-          duplicateRisk: submission.duplicateRisk,
-          recoverable: submission.reason !== 'submit_failed',
+          ...resolveTerminalPromptSubmissionFailure(submission),
           observedAt: now(),
         });
       }
@@ -477,7 +450,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     },
     async interruptTurn(handle) {
       const session = readSession(handle);
-      if (!session || !await writeToSession(session, '\u001b')) {
+      if (!session || !await writeToSession(session, TERMINAL_SPECIAL_KEY_RAW_SEQUENCES.Escape)) {
         throw new Error('Failed to interrupt PTY terminal host');
       }
     },

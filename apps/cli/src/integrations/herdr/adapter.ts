@@ -13,11 +13,13 @@ import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 
 import { buildTerminalControlCapture, normalizeCapturedScreen } from '@/integrations/terminalHost/controlCapture';
 import {
-  resolveTerminalPromptSubmissionFailureReason,
+  resolveTerminalPromptSubmissionFailure,
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '@/integrations/terminalHost/promptSubmitVerification';
 import { createTerminalHostDeadline, remainingTerminalHostDeadlineMs } from '@/integrations/terminalHost/deadline';
+import { captureTerminalInputState } from '@/integrations/terminalHost/inputStability';
+import { delay } from '@/utils/time';
 import { logger } from '@/ui/logger';
 import { TerminalHostCreationError, TerminalHostStartupError } from '@/integrations/terminal/host/errors';
 
@@ -59,9 +61,10 @@ function failedInjection(
   reason: Extract<TerminalInputInjectionResult, { status: 'failed' }>['reason'],
   phase: Extract<TerminalInputInjectionResult, { status: 'failed' }>['phase'],
   duplicateRisk: Extract<TerminalInputInjectionResult, { status: 'failed' }>['duplicateRisk'],
+  recoverable = reason !== 'pane_dead',
 ): TerminalInputInjectionResult {
   return {
-    status: 'failed', reason, phase, duplicateRisk, recoverable: reason !== 'pane_dead',
+    status: 'failed', reason, phase, duplicateRisk, recoverable,
     observedAt: Date.now(), hostKind: 'herdr', hostSessionName: handle.sessionName,
     ...(handle.paneId ? { paneId: handle.paneId } : {}),
   };
@@ -110,10 +113,11 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
     const pane = await resolvePane(handle);
     if (!pane) return { stable: false, currentInput: '', observedAt: Date.now() };
     try {
-      const first = await clientFor(handle).readPane(pane.paneId);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const currentInput = await clientFor(handle).readPane(pane.paneId);
-      return { stable: first === currentInput, currentInput, observedAt: Date.now() };
+      return await captureTerminalInputState({
+        sample: async () => ({ text: await clientFor(handle).readPane(pane.paneId) }),
+        wait: delay,
+        now: Date.now,
+      });
     } catch {
       return { stable: false, currentInput: '', observedAt: Date.now() };
     }
@@ -311,12 +315,8 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
         },
       });
       if (!submitted.success) {
-        return failedInjection(
-          handle,
-          resolveTerminalPromptSubmissionFailureReason(submitted.reason),
-          submitted.phase,
-          submitted.duplicateRisk,
-        );
+        const failure = resolveTerminalPromptSubmissionFailure(submitted);
+        return failedInjection(handle, failure.reason, failure.phase, failure.duplicateRisk, failure.recoverable);
       }
       return {
         status: 'injected', injectedAt: Date.now(), bytesWritten: Buffer.byteLength(input.text),

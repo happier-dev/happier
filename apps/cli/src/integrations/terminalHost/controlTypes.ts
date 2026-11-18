@@ -14,14 +14,14 @@ export type {
 } from '@happier-dev/agents';
 
 /**
- * Raw byte sequence used for a {@link TerminalSpecialKey} when a host has no native named key
- * for it. zellij has no Tab/ShiftTab/CtrlC/Backspace action, so these are written as literal
- * bytes; tmux uses this only for ShiftTab (its named `S-Tab` is a proven no-op). `Enter` and
- * `Escape` are intentionally absent because both hosts have a dedicated named-key path.
+ * The one raw byte sequence for each {@link TerminalSpecialKey}. The holder PTY writes these
+ * bytes for every key. zellij uses them where it has no named action (Tab/ShiftTab/CtrlC/
+ * Backspace/arrows) and tmux only for ShiftTab (its named `S-Tab` is a proven no-op); both keep
+ * their named Enter/Escape paths.
  */
-export const TERMINAL_SPECIAL_KEY_RAW_SEQUENCES: Readonly<
-  Partial<Record<TerminalSpecialKey, string>>
-> = Object.freeze({
+export const TERMINAL_SPECIAL_KEY_RAW_SEQUENCES: Readonly<Record<TerminalSpecialKey, string>> = Object.freeze({
+  Enter: '\r',
+  Escape: '\u001b',
   Tab: '\t',
   ArrowUp: '\u001b[A',
   ArrowDown: '\u001b[B',

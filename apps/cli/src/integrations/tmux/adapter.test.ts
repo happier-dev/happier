@@ -428,8 +428,46 @@ describe('createTmuxTerminalHostAdapter', () => {
       reason: 'verification_failed',
       phase: 'after_enter_unknown',
       duplicateRisk: 'likely',
+      // After Enter the Session awaits the provider's verdict; it never resends or ends the prompt.
+      recoverable: true,
     });
     expect(submitted).toBe(true);
+  });
+
+  it('ends a prompt whose Enter tmux refused instead of awaiting a provider that never received it', async () => {
+    const tmux = new TmuxUtilities();
+    tmux.executeTmuxCommand = vi.fn(async (args: readonly string[]): Promise<TmuxCommandResult> => ({
+      returncode: args[0] === 'send-keys' && args.includes('C-m') ? 1 : 0,
+      stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
+      stderr: '',
+      command: [...args],
+    })) as TmuxUtilities['executeTmuxCommand'];
+    const adapter = createTmuxTerminalHostAdapter({ tmux, now: () => 514, wait: async () => {} });
+
+    await expect(adapter.injectUserPrompt({
+      kind: 'tmux',
+      sessionName: 'session-a',
+      paneId: 'claude',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    }, {
+      text: 'queued prompt',
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'nonce-enter-refused' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'submit_failed',
+      phase: 'after_enter_unknown',
+      duplicateRisk: 'possible',
+      recoverable: false,
+    });
   });
 
   it('reports unstable input state when tmux screen capture is unavailable', async () => {

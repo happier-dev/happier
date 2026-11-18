@@ -28,6 +28,7 @@ import {
   remainingTerminalHostDeadlineMs,
 } from '../terminalHost/deadline';
 import { normalizeCapturedScreen } from '../terminalHost/controlCapture';
+import { captureTerminalInputState } from '../terminalHost/inputStability';
 import { sanitizeTerminalHostDiagnosticText } from '../terminalHost/sanitizeTerminalHostDiagnosticText';
 import { TerminalHostCreationError, TerminalHostStartupError, type TerminalHostCreationFailure } from '../terminal/host/errors';
 import { logger } from '@/ui/logger';
@@ -37,12 +38,11 @@ import {
   type InspectZellijSessionSocketPresence,
 } from './socketPresence';
 import {
-  resolveTerminalPromptSubmissionFailureReason,
+  resolveTerminalPromptSubmissionFailure,
   runTerminalPromptSubmission,
 } from '../terminalHost/promptSubmitVerification';
 
 const DEFAULT_STARTUP_ACTION_TIMEOUT_MS = 60_000;
-const DEFAULT_INPUT_STABILITY_DELAY_MS = 50;
 const MAX_LIVENESS_SCREEN_DUMP_CHARS = 2_000;
 function wait(delayMs: number): Promise<void> {
   return delayMs <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -442,20 +442,19 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
     if (!inspection.liveness.paneAlive || !inspection.targetPaneId) {
       throw new Error('zellij terminal pane is not alive');
     }
-    const before = await actions.dumpScreen({
-      zellijBinary: params.zellijBinary,
-      env: baseEnv(params.socketDir, handle.sessionName),
-      paneId: inspection.targetPaneId,
-      timeoutMs: actionTimeoutMs,
+    const paneId = inspection.targetPaneId;
+    return await captureTerminalInputState({
+      sample: async () => ({
+        text: await actions.dumpScreen({
+          zellijBinary: params.zellijBinary,
+          env: baseEnv(params.socketDir, handle.sessionName),
+          paneId,
+          timeoutMs: actionTimeoutMs,
+        }),
+      }),
+      wait: waitFn,
+      now,
     });
-    await waitFn(DEFAULT_INPUT_STABILITY_DELAY_MS);
-    const after = await actions.dumpScreen({
-      zellijBinary: params.zellijBinary,
-      env: baseEnv(params.socketDir, handle.sessionName),
-      paneId: inspection.targetPaneId,
-      timeoutMs: actionTimeoutMs,
-    });
-    return { stable: before === after, currentInput: after, observedAt: now() };
   }
 
   return {
@@ -628,34 +627,34 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         });
       }
 
-      try {
-        const submissionDeadline = createTerminalHostDeadline(
-          input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(textToWrite),
-        );
-        const submission = await runTerminalPromptSubmission({
-          promptText: textToWrite,
-          signal: input.signal,
-          resolveDeliveryState: input.resolveDeliveryState,
-          ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
-            ? {
-              verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
-                const screenText = await actions.dumpScreen({
-                  zellijBinary: params.zellijBinary,
-                  env: baseEnv(params.socketDir, handle.sessionName),
-                  paneId,
-                  timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
-                });
-                return (
-                  params.promptSubmitVerification?.verifyBeforeSubmitStaging
-                  ?? params.promptSubmitVerification?.verifyAfterSubmit
-                )?.({
-                  promptText,
-                  screenText: normalizeCapturedScreen(screenText),
-                }) ?? false;
-              },
-            }
-            : {}),
-          submitEnter: async ({ remainingTimeoutMs }) => {
+      const submissionDeadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(textToWrite),
+      );
+      const submission = await runTerminalPromptSubmission({
+        promptText: textToWrite,
+        signal: input.signal,
+        resolveDeliveryState: input.resolveDeliveryState,
+        ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
+          ? {
+            verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
+              const screenText = await actions.dumpScreen({
+                zellijBinary: params.zellijBinary,
+                env: baseEnv(params.socketDir, handle.sessionName),
+                paneId,
+                timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
+              });
+              return (
+                params.promptSubmitVerification?.verifyBeforeSubmitStaging
+                ?? params.promptSubmitVerification?.verifyAfterSubmit
+              )?.({
+                promptText,
+                screenText: normalizeCapturedScreen(screenText),
+              }) ?? false;
+            },
+          }
+          : {}),
+        submitEnter: async ({ remainingTimeoutMs }) => {
+          try {
             await actions.sendEnter({
               zellijBinary: params.zellijBinary,
               env: baseEnv(params.socketDir, handle.sessionName),
@@ -663,43 +662,33 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               timeoutMs: remainingTimeoutMs ?? DEFAULT_ZELLIJ_ACTION_TIMEOUT_MS,
             });
             return 'success';
-          },
-          ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
-            ? {
-              verifyAfterSubmit: async ({ promptText, remainingTimeoutMs }) => {
-                const screenText = await actions.dumpScreen({
-                  zellijBinary: params.zellijBinary,
-                  env: baseEnv(params.socketDir, handle.sessionName),
-                  paneId,
-                  timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
-                });
-                return params.promptSubmitVerification?.verifyAfterSubmit({
-                  promptText,
-                  screenText: normalizeCapturedScreen(screenText),
-                }) ?? false;
-              },
-            }
-            : {}),
-          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
-          wait: waitFn,
-        });
-        if (!submission.success) {
-          return failedInjectionResult({
-            handle,
-            reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
-            phase: submission.phase,
-            duplicateRisk: submission.duplicateRisk,
-            recoverable: submission.reason !== 'submit_failed',
-            observedAt: now(),
-          });
-        }
-      } catch (error) {
+          } catch (error) {
+            return isZellijActionTimeoutError(error) ? 'timeout' : 'failed';
+          }
+        },
+        ...(params.promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
+          ? {
+            verifyAfterSubmit: async ({ promptText, remainingTimeoutMs }) => {
+              const screenText = await actions.dumpScreen({
+                zellijBinary: params.zellijBinary,
+                env: baseEnv(params.socketDir, handle.sessionName),
+                paneId,
+                timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
+              });
+              return params.promptSubmitVerification?.verifyAfterSubmit({
+                promptText,
+                screenText: normalizeCapturedScreen(screenText),
+              }) ?? false;
+            },
+          }
+          : {}),
+        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
+        wait: waitFn,
+      });
+      if (!submission.success) {
         return failedInjectionResult({
           handle,
-          reason: isZellijActionTimeoutError(error) ? 'timeout' : 'submit_failed',
-          phase: 'after_enter_unknown',
-          duplicateRisk: 'likely',
-          recoverable: false,
+          ...resolveTerminalPromptSubmissionFailure(submission),
           observedAt: now(),
         });
       }

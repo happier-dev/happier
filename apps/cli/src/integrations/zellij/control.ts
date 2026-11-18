@@ -107,9 +107,7 @@ export function createZellijTerminalControlPort(params: Readonly<{
       if (!paneId) return noTarget;
       if (key === 'Enter') return sendNamedKey(() => params.actions.sendEnter(paneActionParams()));
       if (key === 'Escape') return sendNamedKey(() => params.actions.sendEscape(paneActionParams()));
-      const raw = TERMINAL_SPECIAL_KEY_RAW_SEQUENCES[key];
-      if (raw === undefined) return { status: 'unsupported', reason: 'special_key_unsupported' };
-      return write(raw);
+      return write(TERMINAL_SPECIAL_KEY_RAW_SEQUENCES[key]);
     },
     async captureScreen(): Promise<TerminalControlCaptureResult> {
       if (!paneId) return noTarget;
