@@ -21,7 +21,9 @@ export {
     resolveManagedServerLightPathEnvValue,
     resolvePersonalHomePrivateFilesDir,
     resolveServerIdentityRecordPath,
+    resolveServerPrivateRuntimeDir,
 } from './personalHome/pathResolvers.js';
+export { isSharedDatabaseConsumer, readServerIdentityRecord } from './personalHome/serverIdentityRecord.js';
 export { publishPersonalHomeFileNoClobberDurably, replacePersonalHomeFileDurably } from './personalHome/durableFile.js';
 export {
     assertPersonalHomeBootAdmission,

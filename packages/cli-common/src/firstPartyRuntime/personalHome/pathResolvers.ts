@@ -95,5 +95,10 @@ function readFileUrlPath(databaseUrl: string, platform: NodeJS.Platform): string
  * it to recognize the identity their own server minted, without importing server internals.
  */
 export function resolveServerIdentityRecordPath(dataDir: string): string {
-  return join(dataDir, 'runtime', 'server.identity');
+  return join(resolveServerPrivateRuntimeDir(dataDir), 'server.identity');
+}
+
+/** The server's private runtime directory under its light data directory (identity, descriptor continuity). */
+export function resolveServerPrivateRuntimeDir(dataDir: string): string {
+  return join(dataDir, 'runtime');
 }

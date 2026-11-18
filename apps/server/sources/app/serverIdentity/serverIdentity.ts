@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
     publishPersonalHomeFileNoClobberDurably,
+    readServerIdentityRecord,
     replacePersonalHomeFileDurably,
 } from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { SERVER_IDENTITY_ID_PATTERN } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
@@ -85,22 +86,13 @@ const databaseServerIdentityStore: ServerIdentityStore = {
     },
 };
 
-function isFileExistsError(error: unknown, code: "ENOENT" | "EEXIST"): boolean {
-    return error !== null && typeof error === "object" && "code" in error && error.code === code;
+function isFileExistsError(error: unknown): boolean {
+    return error !== null && typeof error === "object" && "code" in error && error.code === "EEXIST";
 }
 
 function createFileServerIdentityStore(path: string): ServerIdentityStore {
-    const read = async (): Promise<string | null> => {
-        let stored: string;
-        try {
-            stored = await readFile(path, "utf8");
-        } catch (error) {
-            if (isFileExistsError(error, "ENOENT")) return null;
-            throw error;
-        }
-        const value = stored.trim();
-        return value ? assertValidServerIdentityId(value, path) : null;
-    };
+    // The Stack and the CLI read this record through the same cli-common parser.
+    const read = () => readServerIdentityRecord(path);
     const writeTemporary = async (serverIdentityId: string): Promise<string> => {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
         const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -123,7 +115,7 @@ function createFileServerIdentityStore(path: string): ServerIdentityStore {
                 await publishPersonalHomeFileNoClobberDurably(temporaryPath, path);
                 return candidate;
             } catch (error) {
-                if (!isFileExistsError(error, "EEXIST")) throw error;
+                if (!isFileExistsError(error)) throw error;
                 const raced = await read();
                 if (raced) return raced;
                 throw error;

@@ -12,6 +12,7 @@ import {
 } from './pathResolvers.js';
 
 export { resolveServerIdentityRecordPath } from './pathResolvers.js';
+export { isSharedDatabaseConsumer, parseServerIdentityRecord, readServerIdentityRecord, readServerIdentityRecordSync } from './serverIdentityRecord.js';
 
 export type PersonalHomeRuntimeLayout = Readonly<{
   installRoot: string;
