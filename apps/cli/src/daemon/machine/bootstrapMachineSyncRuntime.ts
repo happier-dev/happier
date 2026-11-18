@@ -90,6 +90,7 @@ import { configuration } from '@/configuration';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { resetAccountSettingsRefreshBackoff } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createProviderAccountSettingsController } from '@/daemon/lifecycle/providerAccountSettings';
 import {
   fetchServerFeaturesSnapshot,
@@ -2318,6 +2319,8 @@ export async function bootstrapMachineSyncRuntime(
       try {
         // Reconnect can be the first live Account snapshot after an offline start.
         // Keep optional plugin settings independent of Machine publication/readiness.
+        // A reconnect supersedes any Settings refresh backoff from the outage.
+        resetAccountSettingsRefreshBackoff();
         if (params.credentials) {
           await warmActiveAccountSettingsSnapshotBestEffort({ credentials: params.credentials, logger });
         }

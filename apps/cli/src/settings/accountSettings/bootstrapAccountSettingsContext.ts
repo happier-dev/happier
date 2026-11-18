@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
 
 import type { AgentId } from '@happier-dev/agents';
+import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AccountSettings, AccountSettingsV2GetResponse, BackendTargetRefV1 } from '@happier-dev/protocol';
@@ -515,8 +516,34 @@ function rememberInMemoryAccountSettingsContext(
     validatedAtMs: Math.max(previousValidation, validatedAtMs ?? context.loadedAtMs) }));
 }
 
+// A failed refresh keeps serving the cache, which stays stale, so without this
+// every caller re-read the server (a 502ing server saw ~1 read/s for hours).
+// Failures back off on the server reconnect policy; success, a forced refresh,
+// a required minimum version or a reconnect (reset) try the server at once.
+type RefreshBackoff = Readonly<{ consecutiveFailures: number; nextAttemptAtMs: number }>;
+const refreshBackoffByScopeKey = new Map<string, RefreshBackoff>();
+
+function recordRefreshFailure(scopeKey: string, nowMs: number): RefreshBackoff {
+  const consecutiveFailures = (refreshBackoffByScopeKey.get(scopeKey)?.consecutiveFailures ?? 0) + 1;
+  const retryInMs = computeManagedConnectionBackoffMs({
+    attempt: consecutiveFailures,
+    minMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs,
+    maxMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs,
+    jitterRatio: DEFAULT_MANAGED_CONNECTION_POLICY.jitterRatio,
+  });
+  const backoff = { consecutiveFailures, nextAttemptAtMs: nowMs + retryInMs };
+  refreshBackoffByScopeKey.set(scopeKey, backoff);
+  return backoff;
+}
+
+/** Reconnect boundary: the next Settings read tries the server at once. */
+export function resetAccountSettingsRefreshBackoff(): void {
+  refreshBackoffByScopeKey.clear();
+}
+
 export function resetInMemoryAccountSettingsContextForTests(): void {
   inMemoryByScopeKey.clear();
+  refreshBackoffByScopeKey.clear();
   resetActiveAccountSettingsSnapshotForTests();
 }
 
@@ -949,6 +976,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (!shouldTreatVersionAsFresh(candidate.settingsVersion, minSettingsVersion)) {
       throw new AccountSettingsStaleError();
     }
+    refreshBackoffByScopeKey.delete(scopeKey);
     const recordPublication = beginPhase('publication');
     let publication: ReturnType<typeof publishContext>;
     try {
@@ -997,12 +1025,19 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     ? shouldTreatCacheAsFresh(cache, nowMs, ttlMs) && shouldTreatVersionAsFresh(cache.settingsVersion, minSettingsVersion)
     : false;
   const shouldForceFetch = refresh === 'force';
+  const backoff = refreshBackoffByScopeKey.get(scopeKey);
+  const refreshBackedOff = !shouldForceFetch && minSettingsVersion === null
+    && backoff !== undefined && nowMs < backoff.nextAttemptAtMs;
+  const logRefreshFailure = (message: string, err: unknown) => {
+    const { consecutiveFailures, nextAttemptAtMs } = recordRefreshFailure(scopeKey, nowMs);
+    logger.debug(message, { ...serializeAxiosErrorForLog(err), consecutiveFailures, retryInMs: nextAttemptAtMs - nowMs });
+  };
   const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
 
   if (effectiveMode === 'fast') {
     const base = await useCache();
     const needsRefresh = shouldForceFetch || !cacheFresh;
-    if (!needsRefresh) return base;
+    if (!needsRefresh || refreshBackedOff) return base;
 
     // Fire refresh immediately; expose promise for long-running processes.
     const whenRefreshed = fetchAndPersist().catch(async (err) => {
@@ -1011,14 +1046,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       if (params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
         throw err;
       }
-      logger.debug('[accountSettings] background refresh failed; using cache', serializeAxiosErrorForLog(err));
+      logRefreshFailure('[accountSettings] background refresh failed; using cache', err);
       return base;
     });
     return { ...base, whenRefreshed };
   }
 
   // blocking mode
-  if (!shouldForceFetch && cacheFresh) {
+  if ((!shouldForceFetch && cacheFresh) || refreshBackedOff) {
     return useCache();
   }
 
@@ -1030,7 +1065,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
       throw err;
     }
-    logger.debug('[accountSettings] fetch failed; falling back to cache', serializeAxiosErrorForLog(err));
+    logRefreshFailure('[accountSettings] fetch failed; falling back to cache', err);
     return useCache();
   }
 }
