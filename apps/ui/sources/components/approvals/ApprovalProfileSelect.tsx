@@ -186,7 +186,7 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
                 title={t('workflows.triggers.guided.profile.title')} icon={props.icon} density="compact"
                 // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
                 // the Machine's own profile.
-                detail={displayReady
+                detail={displayReady || typeof props.value !== 'string'
                     ? approvalProfileChoiceTitle(props.mode, props.value, displayProfiles, null, defaultChoices)
                     : t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
                 disabled={disabled} onPress={toggle} /> : undefined}

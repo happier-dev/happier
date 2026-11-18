@@ -18,6 +18,12 @@ const source = {
   unavailable: false,
 } as const;
 
+it('shows the Session’s Machine default before the Approval profile catalog has been opened', async () => {
+  const screen = await renderScreen(<ApprovalProfileSelect mode="session" presentation="row"
+    testID="profile" value={null} source={{ ...source, ready: false }} onChange={() => {}} />);
+  expect(screen.getTextContent()).toMatch(/workflows\.triggers\.guided\.profile\.machineDefault|Machine default/);
+});
+
 // A composer chip with nothing chosen names its field ("Approval profile"), the filter-chip convention; it never shows a
 // sentence about inheriting from a Session a fresh draft doesn't have (QA-SHELL-1114 F3: Home showed "Inherit the
 // Session profile" as a full-width bar above every new Session).

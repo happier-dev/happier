@@ -60,6 +60,7 @@ import { useSessionHandoffAction } from '@/sync/domains/sessionHandoff/useSessio
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
 import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
@@ -503,7 +504,7 @@ function SessionInfoContent({
     sessionServerId,
   );
   const reachableMachineId = reachableMachineTarget?.machineId ?? null;
-  const { availability: handoffAvailability, run: runHandoff, sourceMachineId: sourceMachineIdForHandoff } = useSessionHandoffAction({
+  const { availability: handoffAvailability, run: runHandoff } = useSessionHandoffAction({
     sessionId: session.id,
     session,
     serverId: sessionServerId,
@@ -512,8 +513,8 @@ function SessionInfoContent({
     execute: executor.execute,
     placement: 'session_info',
   });
-  const currentExecutionMachineId =
-    reachableMachineId ?? sourceMachineIdForHandoff;
+  const executionMachineDisplay = useSessionMachineDisplayIdentity(session.id, sessionServerId);
+  const currentExecutionMachineId = reachableMachineId ?? (executionMachineDisplay.machineId || null);
   const currentExecutionMachinePresence = useMachinePresenceSummary(
     sessionServerId,
     currentExecutionMachineId,
@@ -1291,6 +1292,7 @@ function SessionInfoContent({
         sessionName={sessionName}
         agentId={agentId}
         status={sessionStatus}
+        machineReachability={currentExecutionMachinePresence.reachability}
         meta={[aiProviderTitle, currentModelName].filter(
           (fact): fact is string => Boolean(fact),
         )}

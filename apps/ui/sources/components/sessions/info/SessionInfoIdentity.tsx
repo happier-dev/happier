@@ -17,6 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { readSessionTurnStartedAtMs } from '@/sync/domains/session/awareness/useSessionAwareness';
+import type { SessionMachineReachability } from '@/sync/domains/machines/reachability/resolveSessionMachineReachability';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import {
@@ -53,6 +54,7 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
     sessionName: string;
     agentId: string | null;
     status: SessionStatus;
+    machineReachability: SessionMachineReachability;
     /** What runs it, after the status: Agent, model. */
     meta: readonly string[];
     /** Where it runs: the machine, then the folder. */
@@ -98,7 +100,9 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
         style={[styles.statusText, { color: props.status.statusColor }]}
         numberOfLines={1}
       >
-        {props.status.statusText}
+        {props.status.state === 'ready' && props.machineReachability === 'unreachable'
+          ? t('sessionAgentActivity.roster.machineOfflineUnnamed')
+          : props.status.statusText}
       </Text>
       {/* While a turn runs, how long it has (lab csinfo I2 "Working · 4 min"): the one shared clock. */}
       {turnStartedAtMs !== null ? (
