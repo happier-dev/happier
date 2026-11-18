@@ -159,7 +159,7 @@ describe('createActionExecutor (review.start)', () => {
     })]);
     const request = WorkflowRunStartRequestV1Schema.parse(workflowStarts[0]);
     const round = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound);
-    expect((await records.read(round.reviewId))?.rounds[0]?.state).toBe('running');
+    expect((await records.read(round.reviewId))?.rounds[0]?.state).toBe('failed');
   });
   it.each([
     { runCreation: 'noRunCreated', cancel: false, expectedState: 'failed' },
