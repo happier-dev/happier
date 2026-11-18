@@ -89,10 +89,14 @@ const ACTION_OPERATION_ERROR_MAX_LENGTH_V1 = 10_000;
 
 const ActionOperationProgressLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1)));
 
+const ActionOperationCancellationV1Schema = lazyZodSchema(() => z.enum(['unsupported', 'supported']));
+
 export const ActionOperationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   version: z.literal(1),
   visibility: z.literal('activity'),
   progress: z.enum(['indeterminate', 'reported']),
+  /** The handler consumes its host-owned AbortSignal; settlement still reports the actual outcome. */
+  cancellation: z.optional(ActionOperationCancellationV1Schema),
   presentation: z.strictObject({
     onStart: z.enum(['current', 'detail', 'activity']),
   }),
@@ -577,7 +581,7 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   domainRef: z.optional(ActionOperationDomainRefV1Schema),
   observation: z.optional(ActionOperationObservationV1Schema),
   setupReview: z.optional(ProjectSetupConsentFailureDetailsV1Schema),
-  cancellation: z.enum(['unsupported', 'supported']),
+  cancellation: ActionOperationCancellationV1Schema,
 }).check(z.superRefine((snapshot, context) => {
   const terminal = snapshot.state === 'succeeded'
     || snapshot.state === 'failed'
