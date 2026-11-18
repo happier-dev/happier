@@ -64,7 +64,7 @@ it.each([
 it.each([
     { sources: 'repository and repository-free Sources', secondRepository: false },
     { sources: 'repository-only Sources', secondRepository: true },
-])('shows the admitted Project Source total and owner refusals inside Joined for $sources', async ({ secondRepository }) => {
+])('shows the admitted Project Source total in Joined and setup for $sources', async ({ secondRepository }) => {
     onTestFinished(await installRealActionExecutorModuleLoader());
     const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-resources.example.test',
         serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
@@ -89,6 +89,13 @@ it.each([
     const { TeamJoinedSummary } = await import('@/components/teams/join/TeamJoinedSummary');
     const { t } = await import('@/text');
     const team = teamSummaryFixture({ id: address.teamId, policy: teamPolicyFixture({ managedDefaults: null }) });
+    homes.answer(serverId, '/v1/teams/get', { body: team });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    storage.getState().activateProfileScope({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const screen = await renderScreen(<TeamJoinedCard testID="joined" result={{ outcome: 'joined', teamId: address.teamId }}
         teamName={team.name} accountScope={lifetime.scope} onOpenTeam={() => {}}
         summary={<TeamJoinedSummary testID="joined-resources" context={{ scope: lifetime.scope, address, team, lifetime }} />} />);
@@ -103,7 +110,15 @@ it.each([
         expect(screen.getTextContent()).toContain(t('teams.join.summary.unavailable'));
         expect(screen.findByTestId('joined-resources-sessions')).toBeNull();
         expect(screen.findByTestId('joined-action')).not.toBeNull();
-    } finally { await screen.unmount(); await scopeHook.unmount(); }
+    } finally { await screen.unmount(); }
+    const { TeamSetupScreen } = await import('./TeamSetupScreen');
+    const setup = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} />);
+    try {
+        const row = secondRepository ? 'team-setup-repository:shared-tools' : 'team-setup-source:shared-tools';
+        await waitForHomeGovernance(() => expect(setup.findByTestId(row), setup.getTextContent()).not.toBeNull());
+        expect(setup.findByTestId('team-setup-empty')).toBeNull();
+        if (!secondRepository) expect(setup.findByTestId('team-setup-repository-include:shared-tools')).toBeNull();
+    } finally { await setup.unmount(); await scopeHook.unmount(); }
 });
 
 it.each(['source_backend_unavailable', 'source_unavailable'] as const)(
