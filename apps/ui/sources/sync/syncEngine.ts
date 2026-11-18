@@ -420,6 +420,7 @@ import {
 import { resolveSettingsSecretsKeySet } from './encryption/resolveSettingsSecretsKeySet';
 import { didControlReturnToMobile } from './domains/session/control/controlledByUserTransitions';
 import { submitSessionUserMessage } from './domains/session/input/submitSessionUserMessage';
+import { submitUiSessionMessage } from './ops/actions/submitSessionMessage';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { shouldDelegatePendingActivationToDaemon } from './domains/session/input/pendingActivationWakeDecision';
 import {
@@ -5720,7 +5721,7 @@ class Sync {
             accountSettings: state.settings,
         };
 
-        const result = await submitSessionUserMessage(port, {
+        const result = await submitUiSessionMessage(port, {
             sessionId,
             ...(options?.actionContext ? { actionContext: options.actionContext } : {}),
             ...(options?.serverId ? { serverId: options.serverId } : {}),

@@ -159,20 +159,23 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     steerWithoutConfig?: boolean;
 }>;
 
+type SessionMessageSubmitReceipt = Extract<import('@happier-dev/protocol/sessions/messages/sessionInputAdmission').SessionMessageSendResultV1,
+    { status: 'accepted' | 'alreadyAccepted' | 'replied' | 'held' }>;
+
 export type PendingMessageSubmitResult = Readonly<{
     localId?: string;
     accepted?: boolean;
     /** The exact row was durably cancelled while its enqueue operation was in flight. */
     cancelled?: true;
     terminal?: true;
-}> | void;
+}> & (Readonly<{ status?: undefined }> | SessionMessageSubmitReceipt) | void;
 
 export type DirectMessageSubmitResult = Readonly<{
     localId?: string;
     seq?: number;
     persistence?: Extract<SubmitPersistence, 'pending' | 'transcript_committed' | 'provider_direct'>;
     providerAcceptancePending?: boolean;
-}> | void;
+}> & (Readonly<{ status?: undefined }> | SessionMessageSubmitReceipt) | void;
 
 export type DirectMessageLocalPendingProjection = Readonly<{
     localId: string;

@@ -358,10 +358,8 @@ export function resolveMachineTargetForSessionFromState(
     return null;
 }
 
-function hasKnownUnavailableMachineState(machine: Machine | undefined): boolean {
-    if (!machine) return false;
-    if (machine.replacedByMachineId) return true;
-    return isMachineOnline(machine) === false;
+function hasKnownRetiredMachineState(machine: Machine | undefined): boolean {
+    return Boolean(machine?.revokedAt || machine?.replacedByMachineId);
 }
 
 function hasConflictingDirectSessionMachine(input: ReturnType<typeof readPrivateSessionTargetInput>): boolean {
@@ -397,7 +395,9 @@ export function resolveMachineControlTargetForSessionFromState(
     if (hasConflictingDirectSessionMachine(input)) return null;
 
     const knownMachine = findMachineInCollection(input.machines, machineId) ?? undefined;
-    if (hasKnownUnavailableMachineState(knownMachine)) return null;
+    // Control routing needs identity even while the Machine sleeps; Home owns
+    // wake admission. RPC routing above still requires answered reachability.
+    if (hasKnownRetiredMachineState(knownMachine)) return null;
     const basePath = resolveSessionBasePathForMachine({
         ...input, originMachineId: input.sessionMachineId, targetMachineId: machineId,
     });

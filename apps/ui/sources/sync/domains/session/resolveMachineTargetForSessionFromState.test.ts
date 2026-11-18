@@ -35,7 +35,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
         expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toMatchObject(target);
         publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
-        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual({ ...target, confidence: 'metadata_direct' });
         publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 1 }, []);
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
     });
@@ -47,7 +47,9 @@ describe('resolveMachineTargetForSessionFromState', () => {
         const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
         publishMachineActivity(machine, { active: true, activeAt: 1 }, []);
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
-        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual({
+            machineId: machine.id, basePath: '/workspace', confidence: 'metadata_direct',
+        });
     });
 
     it('retains the canonical workspace Machine target for an offline Session', () => {
@@ -81,13 +83,24 @@ describe('resolveMachineTargetForSessionFromState', () => {
             ...(origin === 'retained' ? { [guest.id]: guest } : {}), [clone.id]: clone,
         } };
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
-        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual(origin === 'retained' ? null : {
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual({
             machineId: guest.id, basePath: '/Users/lume/project', confidence: 'metadata_direct',
         });
         const ready = { ...state, machines: { ...state.machines, [guest.id]: answeredMachineFixture({ ...guest, active: true }) } };
         expect(resolveMachineTargetForSessionFromState(ready, session.id)).toEqual({
             machineId: guest.id, basePath: '/Users/lume/project',
         });
+    });
+
+    it.each(['revoked', 'replaced'] as const)('refuses a %s direct Machine identity for control', retirement => {
+        const machine = answeredMachineFixture({ id: 'retired-machine', active: false,
+            ...(retirement === 'revoked' ? { revokedAt: 1 } : { replacedByMachineId: 'replacement-machine' }) });
+        const session = createSessionFixture({ id: 'retired-session', metadata: {
+            machineId: machine.id, path: '/workspace', host: 'retired.local',
+        } });
+        const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
     });
 
     it('reads current Machine activity when the retained inventory object is unchanged', () => {
@@ -99,7 +112,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
         publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
-        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual({ ...target, confidence: 'metadata_direct' });
         publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 1 }, []);
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
     });
@@ -177,7 +190,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
                 ...(route !== 'replacement' ? { metadata: machineMetadata } : {}) }),
         } };
         expect(resolveMachineTargetForSessionFromState(state, 's1')).toBeNull();
-        expect(resolveMachineControlTargetForSessionFromState(state, 's1')).toEqual(route === 'same-host missing source' ? {
+        expect(resolveMachineControlTargetForSessionFromState(state, 's1')).toEqual(route !== 'replacement' ? {
             machineId: 'machine-old', basePath: '/host/old-project', agentBasePath: '/agent/old-project',
             confidence: 'metadata_direct',
         } : null);

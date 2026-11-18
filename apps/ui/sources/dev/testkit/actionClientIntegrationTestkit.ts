@@ -86,6 +86,32 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             // An initial press lets the receiving owner supply its exact review
             // before the fixture's person confirms through the real UI executor.
             executePresented: confirmed,
+            async submitSessionMessage(sessionId: string, text: string) {
+                const [{ submitAppSessionComposerMessage }, { createSyncBackedSubmitPort },
+                    { captureActiveServerAccountScopeLifetime }, { getPermissionModeOverrideForSpawn }] = await Promise.all([
+                    import('@/components/sessions/transcript/source/appSessionTranscriptActions'),
+                    import('@/sync/domains/session/input/syncBackedSubmitPort'),
+                    import('@/sync/domains/scope/activeServerAccountScope'),
+                    import('@/sync/domains/permissions/permissionModeOverride'),
+                ]);
+                const visible = await getSyncSingleton().ensureSessionVisibleForMessageRoute(sessionId,
+                    { serverId, forceRefresh: true, hydrateMessages: false });
+                const session = selectHomeQualifiedSession(storage.getState(), sessionId, serverId, serverId);
+                const accountLifetime = captureActiveServerAccountScopeLifetime();
+                if (visible.kind !== 'available' || !session || !accountLifetime) {
+                    throw new Error('Composer Session Account unavailable');
+                }
+                const settings = storage.getState().settings;
+                return await submitAppSessionComposerMessage(createSyncBackedSubmitPort(), {
+                    sessionId, session, text, serverId, accountLifetime,
+                    configuredMode: settings.sessionMessageSendMode,
+                    busySteerSendPolicy: settings.sessionBusySteerSendPolicy,
+                    sessionInactiveResumePolicy: settings.sessionInactiveResumePolicy,
+                    resumeCapabilityOptions: { accountSettings: settings },
+                    permissionOverride: getPermissionModeOverrideForSpawn(session),
+                    callerSurface: 'session_composer',
+                });
+            },
             async readDeploymentReceipt(environmentId: string, deploymentId: string) {
                 const [{ captureLazyActionAccountContext }, { createDeploymentReadTransport }] = await Promise.all([
                     import('@/sync/ops/actions/actionAccountContext'),

@@ -20,7 +20,8 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -96,6 +97,86 @@ afterEach(async () => {
 });
 
 describe('submitSessionDraft', () => {
+    it.each(['composer', 'composer-direct', 'composer-held', 'composer-direct-held', 'composer-settings', 'composer-team', 'sync', 'sync-direct', 'voice', 'draft', 'public'] as const)('keeps %s Send on the Home Action delivery owner', async entry => {
+        const direct = entry.includes('-direct');
+        const held = entry.endsWith('-held');
+        const machine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'alice',
+            machine: { active: false, presenceProtocolVersion: 1 } });
+        publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
+        storage.setState({ machines: { ...storage.getState().machines, [machine.id]: machine },
+            machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } });
+        if (entry === 'composer-settings') storage.setState({ settings: {
+            ...storage.getState().settings, claudeRemoteMaxThinkingTokens: 8192,
+        } });
+        const session = installSessionActionFixture({ homes, storage, serverId, session: {
+            id: sessionId, active: direct, pendingVersion: 2,
+            metadata: { machineId: 'machine_1', path: '/repo', host: 'qa-host', flavor: 'claude',
+                version: direct ? '0.0.1' : '999.0.0', claudeSessionId: 'retained-session' },
+        } });
+        const text = 'READY169 UI asleep first attempt SUCCESS';
+        const localId = 'ui-asleep-input';
+        const desiredModel = entry === 'composer-team'
+            ? { v: 2 as const, updatedAt: 1234, ref: { source: 'team_resource' as const, teamId: 'team-1',
+                resourceId: 'team-model', expectedResourceRevision: 7, deliveryMode: 'vendor-native' as const,
+                agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'desired-model' } }
+            : { v: 1 as const, updatedAt: 1234, ref: {
+                agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_ui', modelId: 'desired-model' } };
+        homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(request.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine_1' },
+                input: { sessionId, message: text, requestedAction: { v: 1, kind:
+                    entry === 'composer' || entry === 'composer-held' || entry === 'composer-settings' || entry === 'composer-team' || entry === 'sync' ? 'enqueue' : 'send_now' } } });
+            if (entry !== 'draft' && entry !== 'public') expect(request.envelope).toMatchObject({ input: {
+                permissionModeOverride: 'safe-yolo', modelSelection: desiredModel,
+                messageMeta: { displayText: 'Readable composer prompt', appendSystemPrompt: 'Keep my selected context.',
+                    providerExtra: { enabled: true }, modelSelectionV1: desiredModel },
+            } });
+            if (entry === 'composer-settings') expect(request.envelope).toMatchObject({ input: {
+                messageMeta: { claudeRemoteMaxThinkingTokens: 8192 },
+            } });
+            return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
+                execution: { ok: true, result: held
+                    ? { status: 'held', localId, code: 'session_input_target_unavailable' }
+                    : { status: 'accepted', localId } } } };
+        } });
+        let result: unknown;
+        const metaOverrides = { appendSystemPrompt: 'Keep my selected context.', providerExtra: { enabled: true },
+            permissionMode: 'safe-yolo', model: 'desired-model', modelSelectionV1: desiredModel };
+        if (entry.startsWith('composer')) {
+            const { submitAppSessionComposerMessage } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+            const { createSyncBackedSubmitPort } = await import('@/sync/domains/session/input/syncBackedSubmitPort');
+            result = await submitAppSessionComposerMessage(createSyncBackedSubmitPort(), { sessionId, session, text, localId,
+                displayText: 'Readable composer prompt', metaOverrides,
+                configuredMode: 'agent_queue', sessionInactiveResumePolicy: 'online_only', serverId,
+                resumeCapabilityOptions: { accountSettings: entry === 'composer-settings'
+                    ? { ...storage.getState().settings, claudeRemoteMaxThinkingTokens: 4096 }
+                    : storage.getState().settings } });
+            expect(result).toMatchObject(held
+                ? { type: 'wake_pending', persistence: 'pending', localId, errorCode: 'session_input_target_unavailable',
+                    wake: { attempted: false, state: 'not_needed' } }
+                : { type: 'success', persistence: 'pending', localId });
+        } else if (entry === 'sync' || entry === 'sync-direct' || entry === 'voice') {
+            const { sync } = await import('@/sync/sync');
+            result = await sync.submitMessage(sessionId, text, 'Readable composer prompt', metaOverrides,
+                { serverId, localId, ...(direct ? { forceImmediate: true } : {}),
+                    ...(entry === 'voice' ? { forceImmediate: true, callerSurface: 'voice_turn', hostAdmissionOrigin: 'voice' } : {}) });
+            expect(result).toMatchObject({ type: 'success', persistence: 'pending', localId });
+        } else if (entry === 'draft') {
+            createExistingSessionComposerDocumentOwner({ scope: target(), ref: { kind: 'session', sessionId } })
+                .replaceDocument({ text, structuredInputMentions: [], composerAttachments: [] });
+            result = await submitSessionDraft({ sessionTarget: target() });
+            expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+        } else {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            result = await createDefaultActionExecutor().execute('session.message.send', {
+                sessionId, message: text, localId, reply: 'none', requestedAction: { v: 1, kind: 'send_now' },
+            }, { surface: 'ui', serverId });
+            expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+        }
+        expect(homes.requestsFor('/v1/actions/session.message.send'), JSON.stringify(result)).toHaveLength(1);
+        expect(homes.requestsFor(`/v2/sessions/${sessionId}/pending`)).toHaveLength(0);
+    });
+
     it('returns a typed persistence failure before attempting attachment-only Send', async () => {
         const scope = target();
         const records = await import('@/sync/domains/state/browserRecordStorage');

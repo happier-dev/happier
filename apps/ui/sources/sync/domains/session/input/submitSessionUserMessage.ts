@@ -443,6 +443,20 @@ async function shouldWakePendingInputFromUi(
     return !delegated;
 }
 
+/** A held Home receipt retains Pending custody without claiming provider acceptance or waking again. */
+export function projectHeldSessionInputReceipt(
+    receipt: PendingMessageSubmitResult | DirectMessageSubmitResult,
+    localId?: string,
+): SubmitSessionUserMessageResult | null {
+    return receipt?.status === 'held' ? {
+        type: 'wake_pending',
+        persistence: 'pending',
+        wake: { attempted: false, state: 'not_needed' },
+        errorCode: receipt.code,
+        localId: receipt.localId ?? localId,
+    } : null;
+}
+
 async function directSend(
     port: SessionSubmitPort,
     opts: SubmitSessionUserMessageOptions,
@@ -486,11 +500,12 @@ async function directSend(
         );
         const localId = readLocalId(sendResult) ?? handoffLocalId ?? opts.localId ?? undefined;
         const persistence = resolveDirectSubmitPersistence(sendResult, sawLocalPendingProjection);
+        const held = projectHeldSessionInputReceipt(sendResult, localId);
         if (!isSubmitAccountLifetimeCurrent(opts)) {
             // The transport result is the custody fact. Retirement after an ACK
             // must not reinterpret an accepted prompt as a failed send, while
             // the retired Composer owner remains fenced from clearing its draft.
-            return {
+            return held ?? {
                 type: 'success',
                 persistence,
                 ...(sendResult?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
@@ -504,7 +519,7 @@ async function directSend(
                 ...(localId ? { localId } : {}),
             });
         }
-        return {
+        return held ?? {
             type: 'success',
             persistence,
             ...(sendResult?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
@@ -610,6 +625,8 @@ async function enqueuePending(
     // Pending already owns this input. Runtime wake is a later lifecycle phase,
     // not a prerequisite for handing off the still-current Composer snapshot.
     if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
+    const held = projectHeldSessionInputReceipt(enqueueResult, localId);
+    if (held) return held;
     if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.accepted === false) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         return {
@@ -619,7 +636,8 @@ async function enqueuePending(
             localId,
         };
     }
-    if (isExecutionRun || (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.terminal === true)) {
+    if (isExecutionRun || (enqueueResult && typeof enqueueResult === 'object'
+        && (enqueueResult.status !== undefined || enqueueResult.terminal === true))) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         return {
             type: 'success',

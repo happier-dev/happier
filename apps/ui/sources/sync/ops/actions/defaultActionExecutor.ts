@@ -9,7 +9,7 @@ import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateVi
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
-import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
@@ -189,8 +189,8 @@ import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { readSessionExchangeStatus } from '@/sync/api/session/sessionExchangeApi';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
-import { readSessionMessageInputSchema } from './sessionMessageInputSchema';
+import { createSessionMessageDelivery, type SessionMessageDelivery, type SessionMessageComposerSubmission } from './sessionMessageDelivery';
+import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
@@ -797,7 +797,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Mounted device-setting lifetime guard, evaluated at the admitted persistence boundary. */
   beforeLocalSettingCommit?: () => void;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
-  sessionSendMessage?: NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+  sessionSendMessage?: (args: Parameters<SessionMessageDelivery>[0], delivery?: SessionMessageDelivery) => ReturnType<SessionMessageDelivery>;
+  /** Session authoring borrows the Account settings already captured for Action admission. */
+  sessionMessageAuthoringInput?: (settings?: Awaited<ReturnType<typeof readActionAdmissionSettings>>) => unknown;
   /** Captured host constraint on the resolved recipient, evaluated once before delivery. */
   admitSessionMessageTarget?: (target: Pick<Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0],
     'sessionId' | 'serverId'>) => ActionExecuteFailure | null;
@@ -808,20 +810,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Final discard effect supplied by main; the Capture UI already resolved its shared Undo hold. */
   screenCaptureDiscard?: import('./screenCaptureActions').ScreenCaptureNativePort['discard'];
   /** Exact captured host Composer; never Action input, plugin metadata, or serialized authority. */
-  sessionMessageComposerSubmission?: Readonly<{
-    sourceComposerRef: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1;
-    isCurrent: () => boolean;
-    legacyAttachments?: Readonly<{
-      drafts: readonly import('@/components/sessions/attachments/attachmentDraftModel').AttachmentDraft[];
-      config: import('@/sync/domains/transfers/ops/uploadSessionAttachment').AttachmentsUploadConfig;
-      originalMessage: string;
-      onUploadedDraftCheckpoint: (checkpoint: import('@/components/sessions/attachments/uploadAttachmentDraftsToSession').AttachmentTargetUploadedDraftCheckpoint) => Promise<void> | void;
-      onUploadedDraftCheckpointStale: (attempt: Readonly<Pick<import('@/components/sessions/attachments/uploadAttachmentDraftsToSession').AttachmentTargetUploadedDraftCheckpoint,
-        'target' | 'executionTarget' | 'messageLocalId'>> & Readonly<{
-          handles: readonly import('@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1').SessionAttachmentHandleV1[];
-        }>) => void;
-    }>;
-  }>;
+  sessionMessageComposerSubmission?: SessionMessageComposerSubmission;
   /** Captured local file sources for this invocation; approval stores descriptors only. */
   discussionAttachmentSources?: readonly import('@/sync/domains/attachments/prepareAttachmentPayloads').PreparedAttachmentSource[];
   /** Selected-Machine hook delivery; Action admission and approval stay in this executor. */
@@ -1305,6 +1294,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     throwIfAborted(signal);
     return result;
   };
+
+  const deliverSessionMessage = createSessionMessageDelivery({ account: accountContext,
+    composerSubmission: opts?.sessionMessageComposerSubmission, readTarget: readAccountSessionControlTarget,
+    assertExpectedAccount: assertExpectedActionAccount });
 
   const readAccountAcpCatalog: NonNullable<ActionExecutorDeps['readAccountAcpCatalog']> = async ({ signal }) => {
     if (!accountContext) return { status: 'unavailable', reason: 'unauthorized' };
@@ -4211,132 +4204,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionSendMessage: async (args) => {
       const targetFailure = opts?.admitSessionMessageTarget?.(args);
       if (targetFailure) return targetFailure;
-      if (opts?.sessionSendMessage) return opts.sessionSendMessage(args);
-      const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
-      const requiresReplyCustody = args.reply === 'wait' || args.reply === 'return' || args.wait === true;
+      // Embedded Sessions retain their existing scoped input port. Every Home
+      // authoring path uses the same delivery owner, including legacy direct Send.
+      const homeDelivery = isEmbedWindowContext() ? undefined : deliverSessionMessage;
+      if (opts?.sessionSendMessage) return opts.sessionSendMessage(args, homeDelivery);
       const authoredStructuredInput = args.authoredInput && 'message' in args.authoredInput ? args.authoredInput.structuredInput : undefined;
-      const requiresTargetInputAdmission = authoredStructuredInput?.reviewComments !== undefined
-        || authoredStructuredInput?.sessionAttachments !== undefined
-        || args.inputAdmission !== undefined && requiresAuthenticatedMachineAdmissionForSessionInput(args.inputAdmission.request);
-      const composerSubmission = opts?.sessionMessageComposerSubmission;
-      if (composerSubmission && (!composerSubmission.isCurrent() || signal?.aborted)) {
-        return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
-      }
-      if (composerSubmission || requiresReplyCustody || requiresTargetInputAdmission || args.modelOverride !== undefined || args.providerConnectionId !== undefined
-          || args.idempotencyKey !== undefined || args.attachments !== undefined || args.source !== undefined) {
-        if (!args.authoredInput) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-        // Dispatch has resolved the exact Home. Borrow its Account for
-        // reply/input custody; the remote Action still authorizes the
-        // resolved target and requester.
-        const ownedAccount = !accountContext && serverId
-          ? await captureLazyActionAccountContext(serverId, signal) : null;
-        const account = accountContext ?? ownedAccount;
-        if (!account) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-        try {
-          if (ownedAccount) assertExpectedActionAccount(account, args.context);
-          account.assertCurrent();
-          const { session, target } = await readAccountSessionControlTarget(account, sessionId, signal);
-          if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-          if (requiresReplyCustody) {
-            const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
-              readTransport: account.readTransport, request: (path, init) => account.request(path, { ...init, signal: ownedSignal }),
-              machineIds: [target.machineId], signal: ownedSignal }));
-            account.assertCurrent();
-            throwIfAborted(signal);
-            const row = machines.get(target.machineId);
-            const machine = row?.revokedAt === null && row.replacedByMachineId === null ? row : null;
-            if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionMessageReply')) {
-              return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-            }
-          }
-          // Relay the validated authored variant, not its local text/metadata projection.
-          let input = { ...args.authoredInput, sessionId };
-          const context: ActionExecutorContext = { ...args.context, actionCaller: args.actionCaller ?? args.context.actionCaller,
-            serverId: account.serverId, runtimeAccountId: account.accountId,
-            externalActionTarget: { kind: 'machine', machineId: target.machineId } };
-          const execute = createUiAccountAction({ account });
-          let advertisedInputSchema: object;
-          try {
-            advertisedInputSchema = await readSessionMessageInputSchema({ account, session,
-              machineId: target.machineId, context, signal });
-            account.assertCurrent();
-            throwIfAborted(signal);
-            if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
-              return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-            }
-          } catch {
-            throwIfAborted(signal);
-            account.assertCurrent();
-            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-          }
-          if (composerSubmission?.legacyAttachments && 'message' in input) {
-            if (!localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-            const { uploadSessionMessageAttachmentDrafts } = await import('@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts');
-            const uploaded = await uploadSessionMessageAttachmentDrafts({
-              target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-              executionTarget: { serverId: account.serverId, machineId: target.machineId },
-              drafts: composerSubmission.legacyAttachments.drafts, config: composerSubmission.legacyAttachments.config,
-              onUploadedDraftCheckpoint: composerSubmission.legacyAttachments.onUploadedDraftCheckpoint,
-              messageLocalId: localId, ...(signal ? { signal } : {}),
-              isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
-            });
-            if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
-            if ('ok' in uploaded) return uploaded;
-            const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
-            input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
-              structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
-                ...(input.structuredInput?.browserContext ? { browserContext: reconcileBrowserContextPictures(input.structuredInput.browserContext, uploaded) } : {}) } };
-          }
-          let preparedAttachments: Awaited<ReturnType<typeof import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments').prepareTargetComposerAttachments>> = null;
-          if (composerSubmission && 'message' in input && input.structuredInput?.composerAttachments?.length) {
-            if (!localId || !composerSubmission.isCurrent() || signal?.aborted) {
-              return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
-            }
-            const { prepareTargetComposerAttachments } = await import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments');
-            preparedAttachments = await prepareTargetComposerAttachments({
-              attachments: input.structuredInput.composerAttachments,
-              sourceComposerRef: composerSubmission.sourceComposerRef,
-              targetComposerRef: { kind: 'session', sessionId },
-              executionTarget: { serverId: account.serverId, machineId: target.machineId },
-              messageLocalId: localId, signal, isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
-            });
-            if (!preparedAttachments) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
-            const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
-            input = { ...input, structuredInput: RawIngressStructuredInputV1Schema.parse({
-              ...input.structuredInput, composerAttachments: preparedAttachments.attachments,
-            }) };
-            if (!composerSubmission.isCurrent() || !account.accountLifetime.isCurrent() || signal?.aborted) {
-              await preparedAttachments.releaseOnRejection();
-              return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
-            }
-          }
-          if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
-            await preparedAttachments?.releaseOnRejection();
-            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-          }
-          const result = await execute({ actionId: 'session.message.send', input, context, ...(signal ? { signal } : {}) });
-          const failure = ActionExecuteFailureSchema.safeParse(result);
-          if (failure.success && failure.data.errorCode === 'session_attachment_upload_checkpoint_stale'
-            && composerSubmission?.legacyAttachments && localId && 'message' in input) {
-            composerSubmission.legacyAttachments.onUploadedDraftCheckpointStale({
-              target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-              executionTarget: { serverId: account.serverId, machineId: target.machineId }, messageLocalId: localId,
-              handles: input.structuredInput?.sessionAttachments ?? [],
-            });
-            await preparedAttachments?.releaseOnRejection();
-            return result;
-          }
-          const { SessionMessageSendResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
-          const receipt = SessionMessageSendResultV1Schema.safeParse(result);
-          if (preparedAttachments && receipt.success && (receipt.data.status === 'rejected'
-            || receipt.data.status === 'alreadyAccepted' || receipt.data.status === 'replied')) {
-            await preparedAttachments.releaseOnRejection();
-          }
-          return result;
-        } finally {
-          ownedAccount?.dispose();
-        }
-      }
+      if (homeDelivery || opts?.sessionMessageComposerSubmission || args.reply === 'wait' || args.reply === 'return' || args.wait === true
+        || authoredStructuredInput?.reviewComments !== undefined || authoredStructuredInput?.sessionAttachments !== undefined
+        || args.inputAdmission !== undefined && requiresAuthenticatedMachineAdmissionForSessionInput(args.inputAdmission.request)
+        || args.modelSelection !== undefined || args.modelOverride !== undefined || args.providerConnectionId !== undefined || args.idempotencyKey !== undefined
+        || args.attachments !== undefined || args.source !== undefined) return deliverSessionMessage(args);
+      const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
       const hostAdmissionOrigin = args.inputAdmission
         ? { kind: 'action' as const, admission: args.inputAdmission }
         : args.callerSurface === 'voice' ? 'voice' as const : undefined;
@@ -5969,7 +5847,16 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       ? { ok: false as const, errorCode: 'server_unreachable', error: 'server_unreachable' }
       : null;
   const executeAction = async (actionId: ActionId, input: unknown, context?: UiActionExecutorContext, confirmInFlow = false): Promise<ActionExecuteResult> => {
-    if (confirmInFlow) {
+    const authorInput = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 ? opts?.sessionMessageAuthoringInput : undefined;
+    const prepareAuthoredInput = (settings?: Awaited<ReturnType<typeof readActionAdmissionSettings>>) => {
+      if (!authorInput) return { ok: true as const, input };
+      const value = authorInput(settings);
+      if (!confirmInFlow) return { ok: true as const, input: value };
+      const parsed = getActionSpec(actionId).inputSchema.safeParse(value);
+      return parsed.success ? { ok: true as const, input: parsed.data }
+        : { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    };
+    if (confirmInFlow && !authorInput) {
       const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
       if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       input = parsed.data;
@@ -5980,12 +5867,22 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     const api = await apiTokenTransport();
     if (api) {
       const failure = apiTokenComposerSubmissionFailure(actionId);
-      return failure ?? await executeApiTokenAction(api, actionId, input, actionContext);
+      if (failure) return failure;
+      const prepared = prepareAuthoredInput();
+      return prepared.ok ? await executeApiTokenAction(api, actionId, prepared.input, actionContext) : prepared;
     }
     const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
-    if (!serverId) return await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, input, actionContext);
+    if (!serverId) {
+      const prepared = prepareAuthoredInput();
+      return prepared.ok ? await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, prepared.input, actionContext) : prepared;
+    }
     try {
-      const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, voiceSpeechSource, archiveInput: input, serverId }, async (executor, account) => {
+      const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, voiceSpeechSource, archiveInput: input, serverId }, async (executor, account, settings) => {
+        if (authorInput) {
+          const prepared = prepareAuthoredInput(settings);
+          if (!prepared.ok) return prepared;
+          input = prepared.input;
+        }
         const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts, reviewedManagedMachine);
         if (native && 'ok' in native) return native;
         const actionRequestId = native || confirmInFlow ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;

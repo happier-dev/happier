@@ -50,6 +50,7 @@ export function connectUiActionClient(params: Readonly<{
     execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
     executeConfirmed(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
     executePresented(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
+    submitSessionMessage(sessionId: string, text: string): Promise<Readonly<{ type: string; errorCode?: string; errorMessage?: string }>>;
     readDeploymentReceipt(environmentId: string, deploymentId: string): Promise<
         import('@happier-dev/deployments').DeploymentReadResultV1<import('@happier-dev/deployment-protocol/v1').DeploymentReceiptDetailV1>>;
     executeVoiceSpawn(input: unknown, effectId: string): Promise<string>;
