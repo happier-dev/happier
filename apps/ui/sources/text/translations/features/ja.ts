@@ -19885,10 +19885,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         fromPlugins: 'プラグインから',
         verbs: {
             title: '実行する内容',
-            command: 'コマンドを実行',
-            message: 'メッセージを送信',
-            session: 'セッションを開始',
-            choose: '実行する内容を選択',
             commandMenu: 'コマンドを実行',
             commandSub: 'いずれかのマシンでシェルコマンドを実行',
             messageMenu: 'セッションにメッセージを送信',
@@ -19900,12 +19896,11 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         },
         builder: {
             title: 'これを自動化',
+            titleFor: ({ resource }) => `${resource} を自動化`,
+            openInEditor: 'エディタで開く',
             savesAs: 'ワークフローとして保存',
             savesAsShort: '保存名',
             namePlaceholder: 'ワークフロー名',
-            addAnotherStep: 'ステップを追加…',
-            blank: '開始条件と実行内容を選んでください。',
-            does: '実行',
         },
     },
     tabs: {

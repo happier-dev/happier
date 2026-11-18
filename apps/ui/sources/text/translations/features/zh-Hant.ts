@@ -19825,10 +19825,6 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         fromPlugins: '來自外掛',
         verbs: {
             title: '執行內容',
-            command: '執行命令',
-            message: '傳送訊息',
-            session: '開始工作階段',
-            choose: '選擇執行內容',
             commandMenu: '執行命令',
             commandSub: '在你的某台機器上執行 shell 命令',
             messageMenu: '傳送訊息給工作階段',
@@ -19840,12 +19836,11 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         },
         builder: {
             title: '自動化此項',
+            titleFor: ({ resource }) => `自動化 ${resource}`,
+            openInEditor: '在編輯器中開啟',
             savesAs: '儲存為工作流程',
             savesAsShort: '儲存為',
             namePlaceholder: '為工作流程命名',
-            addAnotherStep: '新增其他步驟…',
-            blank: '選擇觸發條件和執行內容。',
-            does: '執行',
         },
     },
     tabs: {

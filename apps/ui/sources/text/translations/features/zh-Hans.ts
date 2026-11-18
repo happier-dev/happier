@@ -19825,10 +19825,6 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         fromPlugins: '来自插件',
         verbs: {
             title: '执行内容',
-            command: '运行命令',
-            message: '发送消息',
-            session: '开始会话',
-            choose: '选择执行内容',
             commandMenu: '运行命令',
             commandSub: '在你的某台机器上运行 shell 命令',
             messageMenu: '向会话发送消息',
@@ -19840,12 +19836,11 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         },
         builder: {
             title: '自动化此项',
+            titleFor: ({ resource }) => `自动化 ${resource}`,
+            openInEditor: '在编辑器中打开',
             savesAs: '保存为工作流',
             savesAsShort: '保存为',
             namePlaceholder: '为工作流命名',
-            addAnotherStep: '添加其他步骤…',
-            blank: '选择触发条件和执行内容。',
-            does: '执行',
         },
     },
     tabs: {

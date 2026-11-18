@@ -20008,10 +20008,6 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         fromPlugins: 'Des plugins',
         verbs: {
             title: 'Ce qu’il fait',
-            command: 'exécuter une commande',
-            message: 'envoyer un message',
-            session: 'démarrer une session',
-            choose: 'choisir ce qu’il fait',
             commandMenu: 'Exécuter une commande',
             commandSub: 'Une commande shell sur l’une de vos machines',
             messageMenu: 'Envoyer un message à une session',
@@ -20023,12 +20019,11 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         },
         builder: {
             title: 'Automatiser ceci',
+            titleFor: ({ resource }) => `Automatiser ${resource}`,
+            openInEditor: 'Ouvrir dans l’éditeur',
             savesAs: 'Enregistré comme workflow',
             savesAsShort: 'Enregistré sous',
             namePlaceholder: 'Nommez ce workflow',
-            addAnotherStep: 'Ajouter une autre étape…',
-            blank: 'Choisissez ce qui le déclenche et ce qu’il fait.',
-            does: 'Action',
         },
     },
     tabs: {

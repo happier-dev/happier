@@ -19975,10 +19975,6 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         fromPlugins: 'Z wtyczek',
         verbs: {
             title: 'Co robi',
-            command: 'uruchom polecenie',
-            message: 'wyślij wiadomość',
-            session: 'rozpocznij sesję',
-            choose: 'wybierz, co robi',
             commandMenu: 'Uruchom polecenie',
             commandSub: 'Polecenie powłoki na jednej z Twoich maszyn',
             messageMenu: 'Wyślij wiadomość do sesji',
@@ -19990,12 +19986,11 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         },
         builder: {
             title: 'Zautomatyzuj to',
+            titleFor: ({ resource }) => `Automatyzuj ${resource}`,
+            openInEditor: 'Otwórz w edytorze',
             savesAs: 'Zapisuje się jako workflow',
             savesAsShort: 'Zapisz jako',
             namePlaceholder: 'Nazwij ten workflow',
-            addAnotherStep: 'Dodaj kolejny krok…',
-            blank: 'Wybierz, co go uruchamia i co robi.',
-            does: 'Robi',
         },
     },
     tabs: {

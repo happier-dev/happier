@@ -94,6 +94,8 @@ export function useWorkflowEventAutomate(
         anchorRef={anchorRef}
         accountLifetime={opening.lifetime}
         intent={opening.intent}
+        // The event being automated names the builder ("Automate A Machine came online").
+        resourceName={opening.intent.name}
         onRequestClose={() => setOpening(null)}
       />
     );

@@ -411,6 +411,14 @@ describe('the Session Info page Automations section', () => {
     await act(async () => { actionsRef.current?.openNewTrigger(anchorRef); });
     await settle();
     expect(screen.findByTestId('workflow-builder')).not.toBeNull();
+    // WF-ACCEPT-1118 item 3 (lab round 1116c pop-v): the editor's own sentence on a new draft. No step is preselected
+    // ("Add a first step", no separate verb chip), the title names the resource, and the foot is Open in the editor.
+    expect(screen.findByTestId('workflow-builder-verb')).toBeNull();
+    expect(screen.findByTestId('workflow-builder-sentence-add-step')).not.toBeNull();
+    expect(screen.findByTestId('workflow-builder-title')?.props.children).toContain('workflows.sentence.builder.titleFor');
+    expect(screen.findByTestId('workflow-builder-open-editor')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.sentence.builder.openInEditor');
+    expect(screen.getTextContent()).not.toContain('workflows.sentence.builder.addAnotherStep');
   });
 
   it('presents concurrent Habit read failures once and retries the section together', async () => {

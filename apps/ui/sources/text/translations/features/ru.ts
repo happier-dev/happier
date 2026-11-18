@@ -19979,10 +19979,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         fromPlugins: 'Из плагинов',
         verbs: {
             title: 'Что делает',
-            command: 'выполнить команду',
-            message: 'отправить сообщение',
-            session: 'начать сессию',
-            choose: 'выберите, что делать',
             commandMenu: 'Выполнить команду',
             commandSub: 'Команда оболочки на одной из ваших машин',
             messageMenu: 'Отправить сообщение в сессию',
@@ -19994,12 +19990,11 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         },
         builder: {
             title: 'Автоматизировать',
+            titleFor: ({ resource }) => `Автоматизировать ${resource}`,
+            openInEditor: 'Открыть в редакторе',
             savesAs: 'Сохраняется как workflow',
             savesAsShort: 'Сохранить как',
             namePlaceholder: 'Назовите workflow',
-            addAnotherStep: 'Добавить ещё шаг…',
-            blank: 'Выберите, что его запускает и что он делает.',
-            does: 'Действие',
         },
     },
     tabs: {

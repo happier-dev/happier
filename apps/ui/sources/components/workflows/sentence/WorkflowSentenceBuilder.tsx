@@ -26,24 +26,15 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useWorkflowSentenceDraft } from '../authoring/useWorkflowSentenceDraft';
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
-import {
-  addWorkflowEditorBlock,
-  WorkflowBlockListEditor,
-} from '../editor/WorkflowBlockListEditor';
-import {
-  WorkflowAddBlockMenu,
-  type WorkflowAddBlockRequest,
-} from '../editor/WorkflowAddBlockMenu';
+import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
 import { useWorkflowEditorSelector } from '../editor/workflowEditorDraftStore';
 import { WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { readWorkflowActionFieldRequests } from '../presentation/workflowActionFieldRequests';
-import { WORKFLOW_BLOCK_KIND_GLYPH } from '../presentation/workflowBlockKindGlyph';
-import { formatWorkflowSummaryStepName } from '../presentation/workflowSummaryLine';
 import { useWorkflowAuthoringHost } from '../screens/useWorkflowAuthoringHost';
 import { validateWorkflowEditorPage } from '../screens/WorkflowEditorBody';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
-import { WorkflowSentenceChip, WorkflowSentenceRowsContext, WorkflowSentenceUnit } from './WorkflowSentenceChip';
+import { WorkflowSentenceRowsContext } from './WorkflowSentenceChip';
 import { WorkflowSentenceView } from './WorkflowSentenceView';
 
 /** The lab's builder width (05 S3): the sentence reads on one or two lines beside its verb body. */
@@ -62,14 +53,17 @@ export type WorkflowSentenceBuilderProps = Readonly<{
   anchorRef: React.RefObject<View | null>;
   /** The source the sentence starts from (a resource's place, an event, a starter's trigger). One per mount. */
   intent: WorkflowSentenceEditorIntent;
+  /** What is being automated, named in the title ("Automate Production · happier-web"); absent: "Automate this". */
+  resourceName?: string;
   accountLifetime: ServerAccountScopeLifetime;
   onRequestClose: () => void;
 }>;
 
 /**
- * "Automate this…" (D10, 05 S3): one sentence — When ⟨event⟩, ⟨verb ▾⟩ on ⟨Machine⟩ in ⟨folder⟩ — and the
- * verb's own step card under it. Save writes an ordinary one-step workflow and its trigger through the
- * sentence draft's Save; Add another step… opens the same draft in the editor. Anchored on wide, the shared
+ * "Automate this…" (lab round 1116c host): the editor's own Sentence view on a new draft pre-filled from the
+ * resource — When ⟨its event⟩, on ⟨Machine⟩ in ⟨folder⟩, "Add a first step" (none is preselected), "→ reports" once
+ * there is a step — with the host's title naming the resource, "Saves as a workflow" (named from the sentence),
+ * and a foot of Open in the editor (the same draft, every view) and Cancel/Save. Anchored on wide, the shared
  * sheet on a phone.
  */
 export function WorkflowSentenceBuilder(
@@ -83,7 +77,7 @@ export function WorkflowSentenceBuilder(
       placement="auto-vertical"
       phonePresentation="sheet"
       sheetMaterial="solid"
-      accessibilityLabel={t('workflows.sentence.builder.title')}
+      accessibilityLabel={builderTitle(props.resourceName)}
       edgePadding={{ horizontal: 12, vertical: 12 }}
       portal={{
         web: { target: 'body' },
@@ -172,44 +166,6 @@ function WorkflowSentenceBuilderBody(
       }}
     />
   );
-  // The verb replaces the sentence's one step: a new verb starts that step afresh.
-  const changeVerb = (request: WorkflowAddBlockRequest) => {
-    addWorkflowEditorBlock({
-      draft: { ...draftStore.get(), blocks: [] },
-      list: { kind: 'root' },
-      request,
-      onChange,
-      onSelect: selectBlock,
-    });
-  };
-  const verbClause = (
-    <WorkflowSentenceUnit rowLabel={t('workflows.sentence.rows.then')}>
-    <WorkflowAddBlockMenu
-      purpose="verb"
-      onAdd={changeVerb}
-      scopeLabel={t('workflows.sentence.verbs.title')}
-      composerScope={host.composerScope}
-      renderTrigger={({ open, toggle, anchorRef }) => (
-        <WorkflowSentenceChip
-          anchorRef={anchorRef}
-          kind={step === null ? 'placeholder' : 'verb'}
-          title={t('workflows.sentence.builder.does')}
-          label={
-            step === null
-              ? t('workflows.sentence.verbs.choose')
-              : describeVerb(step)
-          }
-          icon={step === null ? 'plus' : verbGlyph(step)}
-          open={open}
-          hasPopup="menu"
-          onPress={toggle}
-          testID={`${TEST_ID}-verb`}
-        />
-      )}
-      testID={`${TEST_ID}-verb-menu`}
-    />
-    </WorkflowSentenceUnit>
-  );
   const validation = validateWorkflowEditorPage(draftStore.get(), {
     stagedAttachments: composerCustody.readStagedAttachments(),
     authoringFacts: host.authoringFacts,
@@ -248,9 +204,9 @@ function WorkflowSentenceBuilderBody(
             <RoundButton
               size="small"
               display="inverted"
-              leading={<Icon name="plus" size={ICON_SIZE.xs} />}
+              leading={<Icon name="arrow-square-out" size={ICON_SIZE.xs} />}
               testID={`${TEST_ID}-open-editor`}
-              title={t('workflows.sentence.builder.addAnotherStep')}
+              title={t('workflows.sentence.builder.openInEditor')}
               onPress={openEditor}
             />
             <View style={styles.footEnd}>
@@ -277,11 +233,10 @@ function WorkflowSentenceBuilderBody(
       }
     >
       <View testID={TEST_ID} style={styles.body}>
-        {props.sheet ? null : (
-          <Text style={styles.title}>
-            {t('workflows.sentence.builder.title')}
-          </Text>
-        )}
+        {/* The title names what is automated, on a phone's sheet too (lab round 1116c pop-v-*-390). */}
+        <Text testID={`${TEST_ID}-title`} style={styles.title}>
+          {builderTitle(props.resourceName)}
+        </Text>
         <WorkflowSentenceRowsContext.Provider value={props.sheet}>
         <WorkflowDocumentGridContext.Provider value="compact">
           <WorkflowSentenceView
@@ -291,7 +246,6 @@ function WorkflowSentenceBuilderBody(
             selectedBlockId={selectedBlockId}
             onSelectBlock={selectBlock}
             whenClause={whenClause}
-            verbClause={blocks.length > 1 || step?.kind === 'if' ? undefined : verbClause}
             place={{
               target: project,
               machineName,
@@ -329,11 +283,6 @@ function WorkflowSentenceBuilderBody(
           />
         </WorkflowDocumentGridContext.Provider>
         </WorkflowSentenceRowsContext.Provider>
-        {step === null ? (
-          <Text style={styles.blank}>
-            {t('workflows.sentence.builder.blank')}
-          </Text>
-        ) : null}
         <View style={styles.name}>
           <Text style={styles.nameLabel}>
             {t('workflows.sentence.builder.savesAs')}
@@ -355,25 +304,11 @@ function WorkflowSentenceBuilderBody(
   );
 }
 
-/** The verb as the sentence says it: the three presets by name, any other step as the summary line names it. */
-function describeVerb(step: WorkflowBlock): string {
-  if (step.kind === 'step') return t('workflows.sentence.verbs.session');
-  if (step.kind === 'action' && step.actionId === 'machines.command.run')
-    return t('workflows.sentence.verbs.command');
-  if (step.kind === 'action' && step.actionId === 'session.message.send')
-    return t('workflows.sentence.verbs.message');
-  return formatWorkflowSummaryStepName(step);
-}
-
-function verbGlyph(
-  step: WorkflowBlock,
-): React.ComponentProps<typeof WorkflowSentenceChip>['icon'] {
-  if (step.kind === 'action' && step.actionId === 'machines.command.run')
-    return 'terminal';
-  if (step.kind === 'action' && step.actionId === 'session.message.send')
-    return 'chat-circle';
-  if (step.kind === 'step') return 'sparkle';
-  return WORKFLOW_BLOCK_KIND_GLYPH[step.kind];
+/** The host names what it automates; without one the builder says "Automate this". */
+function builderTitle(resourceName: string | undefined): string {
+  return resourceName === undefined || resourceName.trim().length === 0
+    ? t('workflows.sentence.builder.title')
+    : t('workflows.sentence.builder.titleFor', { resource: resourceName });
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -385,10 +320,6 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     ...Typography.variant('heading', 'semiBold'),
     color: theme.colors.text.primary,
-  },
-  blank: {
-    ...Typography.variant('meta'),
-    color: theme.colors.text.tertiary,
   },
   name: {
     flexDirection: 'row',

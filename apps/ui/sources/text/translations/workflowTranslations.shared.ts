@@ -254,10 +254,6 @@ export const en = {
         fromPlugins: 'From plugins',
         verbs: {
             title: 'What it does',
-            command: 'run a command',
-            message: 'send a message',
-            session: 'start a session',
-            choose: 'choose what it does',
             commandMenu: 'Run a command',
             commandSub: 'A shell command on one of your Machines',
             messageMenu: 'Send a message to a session',
@@ -269,12 +265,11 @@ export const en = {
         },
         builder: {
             title: 'Automate this',
+            titleFor: ({ resource }: { resource: string }) => `Automate ${resource}`,
+            openInEditor: 'Open in the editor',
             savesAs: 'Saves as a workflow',
             savesAsShort: 'Saves as',
             namePlaceholder: 'Name this workflow',
-            addAnotherStep: 'Add another step…',
-            blank: 'Choose what starts it and what it does.',
-            does: 'Does',
         },
     },
     tabs: {

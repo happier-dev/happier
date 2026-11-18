@@ -19965,10 +19965,6 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         fromPlugins: 'Dels connectors',
         verbs: {
             title: 'Què fa',
-            command: 'executar una ordre',
-            message: 'enviar un missatge',
-            session: 'iniciar una sessió',
-            choose: 'tria què fa',
             commandMenu: 'Executar una ordre',
             commandSub: 'Una ordre de shell en una de les teves màquines',
             messageMenu: 'Enviar un missatge a una sessió',
@@ -19980,12 +19976,11 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         },
         builder: {
             title: 'Automatitza això',
+            titleFor: ({ resource }) => `Automatitza ${resource}`,
+            openInEditor: 'Obre a l’editor',
             savesAs: 'Es desa com a workflow',
             savesAsShort: 'Es desa com a',
             namePlaceholder: 'Posa nom al workflow',
-            addAnotherStep: 'Afegeix un altre pas…',
-            blank: 'Tria què l’inicia i què fa.',
-            does: 'Fa',
         },
     },
     tabs: {

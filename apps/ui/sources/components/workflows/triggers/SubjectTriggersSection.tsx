@@ -358,7 +358,7 @@ export const SubjectTriggersSectionContent = React.memo(
         ) : null}
         {opening?.kind === 'sentence' ? (
           <WorkflowSentenceBuilder key={opening.key} anchorRef={opening.anchor} intent={opening.intent}
-            accountLifetime={opening.lifetime} onRequestClose={close} />
+            resourceName={props.subjectName} accountLifetime={opening.lifetime} onRequestClose={close} />
         ) : null}
         {opening?.kind === 'deployOnPush' && props.pushSetup ? (
           <DeploymentPushTriggerSetup anchorRef={opening.anchor} onRequestClose={close}
