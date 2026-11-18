@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { reclaimPrivateSourceWebExports, sourceBundleBuildLockPath, withSourceBundlePublication } from './build_source_runtime.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { writeRunningStackState } from '../testkit/core/running_stack_owner.mjs';
 
 async function completedBundle(stacksRoot, name, completedMs = Date.now()) {
   const directory = join(stacksRoot, 'source-bundles', `runtime-${name}`);
@@ -35,7 +36,7 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     const selection = JSON.stringify({ entrypoint: selected.entrypoint });
     await writeFile(selectionPath, selection);
     // Selections pin shared bundles while their Stack runs.
-    await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid, processes: {} }));
+    await writeRunningStackState(t, stackBaseDir);
     // Process discovery is the OS boundary; retain the real pin and retirement owners.
     const readdir = fs.promises.readdir;
     t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
@@ -43,9 +44,11 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     syncBuiltinESMExports();
     t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
     const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
-    await reclaimSourceBundles({ stacksRoot });
+    const preview = await reclaimSourceBundles({ stacksRoot });
     assert.equal(existsSync(obsolete.entrypoint), true, 'maintenance defaults to dry-run');
-    await reclaimSourceBundles({ stacksRoot, dryRun: false });
+    assert.deepEqual(preview.sharedRoots, [obsolete.directory], 'dry-run names what a real run reclaims');
+    const reclaimed = await reclaimSourceBundles({ stacksRoot, dryRun: false });
+    assert.deepEqual(reclaimed.sharedRoots, [obsolete.directory]);
     assert.equal(existsSync(obsolete.directory), false);
     assert.equal(existsSync(selected.entrypoint), true, 'selected older products remain pinned');
     assert.equal(existsSync(newest.entrypoint), true, 'newest completed fallback remains available');
@@ -62,10 +65,11 @@ test('a stopped Stack releases its selection pins; a running Stack keeps them',
     const newest = await completedBundle(stacksRoot, 'newest');
     const { spawnSync } = await import('node:child_process');
     const deadPid = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
-    for (const [name, bundle, ownerPid] of [['agent-qa-running', live, process.pid], ['agent-qa-stopped', stopped, Number(deadPid)]]) {
+    for (const [name, bundle] of [['agent-qa-running', live], ['agent-qa-stopped', stopped]]) {
       const stackBaseDir = join(stacksRoot, name);
       await mkdir(join(stackBaseDir, 'source-runtime'), { recursive: true });
-      await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid, processes: {} }));
+      if (name === 'agent-qa-running') await writeRunningStackState(t, stackBaseDir);
+      else await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid: Number(deadPid), processes: {} }));
       await writeFile(join(stackBaseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: bundle.entrypoint }));
     }
     // Process discovery is the OS boundary; retain the real pin and retirement owners.
@@ -83,6 +87,42 @@ test('a stopped Stack releases its selection pins; a running Stack keeps them',
     const { readSelectedSourceRuntimeRecord } = await import('../runtime/shared/source_bundle_record.mjs');
     assert.equal(await readSelectedSourceRuntimeRecord({ stackBaseDir: join(stacksRoot, 'agent-qa-stopped'),
       component: 'server', required: false }), null);
+  });
+
+test('a stale state with remote services and a recycled PID releases its selection; a live Stack keeps selection and rollback',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-stale-stack-pins-' });
+    const stacksRoot = fixture.path('stacks');
+    const liveSelected = await completedBundle(stacksRoot, 'live-selected', Date.now() - 40000);
+    const liveRollback = await completedBundle(stacksRoot, 'live-rollback', Date.now() - 30000);
+    const staleSelected = await completedBundle(stacksRoot, 'stale-selected', Date.now() - 20000);
+    await completedBundle(stacksRoot, 'newest');
+    const live = join(stacksRoot, 'agent-qa-live');
+    const stale = join(stacksRoot, 'agent-qa-stale');
+    for (const stack of [live, stale]) await mkdir(join(stack, 'source-runtime'), { recursive: true });
+    await writeRunningStackState(t, live);
+    await writeFile(join(live, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: liveSelected.entrypoint }));
+    await writeFile(join(live, 'source-runtime/rollback.json'),
+      JSON.stringify({ selections: { server: { entrypoint: liveRollback.entrypoint } } }));
+    // A stale state from an earlier run: its owner PID was recycled by another
+    // live process (this test runner), its daemon PID has no recorded start
+    // witness, and its remote-target services were never cleared.
+    await writeFile(join(stale, 'stack.runtime.json'), JSON.stringify({ stackName: 'agent-qa-stale', ownerPid: process.pid,
+      processes: { daemonPid: process.pid }, processInstances: { owner: { pid: process.pid, fingerprint: 'linux-proc:1' } },
+      startedAt: new Date().toISOString(),
+      remoteTargets: { nl3: { services: { server: true, daemon: true }, runtimeMode: 'source-snapshot' } } }));
+    await writeFile(join(stale, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: staleSelected.entrypoint }));
+    // Process command discovery is the OS boundary; retain the real pin and liveness owners.
+    const readdir = fs.promises.readdir;
+    t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
+      String(path) === '/proc' ? [] : await readdir(path, ...args));
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
+    await reclaimSourceBundles({ stacksRoot, dryRun: false });
+    const remaining = (await fs.promises.readdir(join(stacksRoot, 'source-bundles'))).filter(name => name.startsWith('runtime-')).sort();
+    assert.deepEqual(remaining, ['runtime-live-rollback', 'runtime-live-selected', 'runtime-newest']);
+    assert.equal(existsSync(staleSelected.directory), false);
   });
 
 test('publication releases custody before process scans and recursive retirement',
@@ -174,7 +214,7 @@ test('a publication during reclamation pins a bundle before its retirement decis
     for (const stack of [firstStack, adoptingStack]) {
       await mkdir(join(stack, 'source-runtime'), { recursive: true });
       // Selections are written by a running start/reload; they pin while it runs.
-      await writeFile(join(stack, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid, processes: {} }));
+      await writeRunningStackState(t, stack);
     }
     const lockPath = join(stacksRoot, 'source-bundles/publication.lock');
     const readdir = fs.promises.readdir;

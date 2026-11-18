@@ -14,6 +14,7 @@ import { runInNewContext } from 'node:vm';
 import { run } from '../utils/proc/proc.mjs';
 import { exportSourceWebUi, withSourceWebUiInputs } from './build_source_web_ui.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { startRunningStackOwner } from '../testkit/core/running_stack_owner.mjs';
 import { prepareFiniteSourceWebFixture, relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { captureSourceWebBuildInputs, readWorkspacePackages, setBundleReadOnly, withSourceBundlePublication } from './build_source_runtime.mjs';
@@ -993,8 +994,10 @@ test('shared source publication retains serving, selected and pending web export
   const servingLink = join(stackBaseDir, 'source-runtime/ui');
   await mkdir(dirname(servingLink), { recursive: true });
   await symlink(serving.uiDir, servingLink, process.platform === 'win32' ? 'junction' : 'dir');
+  // Selections pin while the serving Stack's own owner process runs.
+  const { ownerPid } = await startRunningStackOwner(t, stackBaseDir);
   await recordStackRuntimeStart(join(stackBaseDir, 'stack.runtime.json'), {
-    stackName: 'serving', ownerPid: process.pid, runtimeMode: 'source-snapshot', sourceUi: 'export',
+    stackName: 'serving', ownerPid, runtimeMode: 'source-snapshot', sourceUi: 'export',
     sourceUiLaunch: { uiDir: servingLink },
   });
   const preparationDir = join(store, 'preparing/source-runtime/bundle-reload');

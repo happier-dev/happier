@@ -13,6 +13,7 @@ import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admiss
 import { assertSharedDatabaseMigrationsApplied, SharedDatabaseMigrationError } from '../utils/server/shared_database_migration_gate.mjs';
 import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
+import { hasTrustedStackRuntimeLifecycle } from '../utils/stack/runtime_state.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs, isSourceServerGeneratedInput } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCachedFileDigestSync } from '../utils/fs/cached_file_digest.mjs';
 import { writeJsonAtomic } from '../utils/fs/json.mjs';
@@ -390,10 +391,24 @@ async function readOptionalJson(path) {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-function privateSourceStackActive(state, pending) {
-  return [state?.ownerPid, ...Object.values(state?.processes ?? {}).flat(), pending?.pid]
-    .some(pid => Number.isSafeInteger(Number(pid)) && Number(pid) > 1 && observePidLiveness(pid).status !== 'dead')
-    || Object.values(state?.remoteTargets ?? {}).some(target => Object.values(target?.services ?? {}).some(Boolean));
+// A Stack runs only while a recorded owner or process is verifiably its own
+// live process: the canonical runtime lifecycle owner checks the recorded
+// start witness and boot, then the Stack's launch binding. A recycled PID or a
+// remote-service flag left in a stale state file proves nothing. Inconclusive
+// observation retains.
+async function privateSourceStackActive(stackBaseDir, state, pending) {
+  if (Number.isSafeInteger(Number(pending?.pid)) && Number(pending.pid) > 1
+    && observePidLiveness(pending.pid).status !== 'dead') return true;
+  if (!state) return false;
+  try {
+    return await hasTrustedStackRuntimeLifecycle(state, {
+      stackName: String(state.stackName ?? '').trim() || basename(stackBaseDir),
+      envPath: join(stackBaseDir, 'env'), cliHomeDir: join(stackBaseDir, 'cli'),
+    }, { throwOnInconclusive: true });
+  } catch (error) {
+    if (error?.code === 'ESTACKRUNTIMEPROCESSINCONCLUSIVE' || error?.code === 'EPROCESSIDENTITYINCONCLUSIVE') return true;
+    throw error;
+  }
 }
 
 function readSourceRetentionRecord(path) {
@@ -409,20 +424,21 @@ function sourceRecordReferencePaths(record) {
     .filter(path => typeof path === 'string');
 }
 
-function readSourceRetentionStack(stackBaseDir) {
+async function readSourceRetentionStack(stackBaseDir) {
   const sourceRoot = join(stackBaseDir, 'source-runtime');
   const pending = readSourceRetentionRecord(join(sourceRoot, 'start.pending.json'));
   const state = readSourceRetentionRecord(join(stackBaseDir, 'stack.runtime.json'));
+  const active = await privateSourceStackActive(stackBaseDir, state, pending);
   const references = [];
   if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
   const selections = ['daemon', 'server', 'ui'].flatMap(component =>
     sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
   // An unsettled reload may still restart the incumbent revision it replaced.
   references.push(...readSourceSelectionRollbackPaths(stackBaseDir));
-  if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
+  if (active && [state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceRuntimeLaunch));
   }
-  if ([state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)) {
+  if (active && [state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceUiLaunch));
   }
   // A Stack's own outputs stay pinned by its selections. A shared bundle stays
@@ -430,8 +446,8 @@ function readSourceRetentionStack(stackBaseDir) {
   // reload's selection awaits activation (owner ruling 2026-11-15, growth
   // fixes): a stopped Stack with no pending selection releases it, and its
   // next start treats a reclaimed selection as absent.
-  const pinsSelections = privateSourceStackActive(state, pending) || pendingSourceSelectionAwaitsActivation(pending);
-  return { state, pending, references: [...references, ...selections],
+  const pinsSelections = active || pendingSourceSelectionAwaitsActivation(pending);
+  return { state, pending, active, references: [...references, ...selections],
     sharedReferences: pinsSelections ? [...references, ...selections] : references };
 }
 
@@ -465,8 +481,8 @@ function canonicalSourceReferences(references) {
   });
 }
 
-function privateSourceRecordRetains(stackBaseDir, directory, records = readSourceRetentionStack(stackBaseDir)) {
-  if (privateSourceStackActive(records.state, records.pending)) return true;
+function privateSourceRecordRetains(directory, records) {
+  if (records.active) return true;
   const canonicalDirectory = realpathSync(directory);
   return canonicalSourceReferences(records.references)
     .some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep));
@@ -508,15 +524,18 @@ async function withSourceBundlePublicationCustody({ bundleRoot, component = 'sha
 }
 
 async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryRun, signal }) {
-  if (!candidates.length) return;
+  const sharedRoots = [];
+  if (!candidates.length) return sharedRoots;
   const retired = [];
-  await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'retirement' }, () => {
+  await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'retirement' }, async () => {
     // Refresh the narrow canonical pin records after expensive qualification.
-    // Every publisher/adopter uses this same custody; no await separates its
-    // final pin check from the atomic removal of the reusable directory name.
-    const stacks = new Map(readdirSync(stacksRoot, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && entry.name !== 'source-bundles')
-      .map(entry => [join(stacksRoot, entry.name), readSourceRetentionStack(join(stacksRoot, entry.name))]));
+    // Every publisher/adopter uses this same custody; no await separates a
+    // candidate's final pin check from the atomic removal of its reusable name.
+    const stacks = new Map();
+    for (const entry of readdirSync(stacksRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === 'source-bundles') continue;
+      stacks.set(join(stacksRoot, entry.name), await readSourceRetentionStack(join(stacksRoot, entry.name)));
+    }
     const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.sharedReferences));
     for (const candidate of candidates) {
       const info = sourceRetentionStat(candidate.directory);
@@ -526,7 +545,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
         || !sameSourceRetentionStat(completion, candidate.completion ?? null)
         || (candidate.fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, candidate.fingerprint), { staleAfterMs: Infinity }))
         || references.some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep))
-        || (candidate.privateStack && privateSourceRecordRetains(candidate.privateStack, candidate.directory, stacks.get(candidate.privateStack))));
+        || (candidate.privateStack && privateSourceRecordRetains(candidate.directory, stacks.get(candidate.privateStack))));
       if (!info || retained) {
         if (candidate.result) {
           candidate.result.reclaimableRoots--;
@@ -535,6 +554,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
         }
         continue;
       }
+      if (!candidate.result) sharedRoots.push(candidate.directory);
       if (dryRun) continue;
       retired.push({ ...candidate, directory: retireSourceDirectory(candidate.directory) });
     }
@@ -548,6 +568,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
       candidate.result.reclaimedBytes += candidate.bytes;
     }
   }
+  return sharedRoots;
 }
 
 async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = false, privateStackNames,
@@ -598,7 +619,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     if (!entry.isDirectory() || entry.name === 'source-bundles') continue;
     const stackBaseDir = join(stacksRoot, entry.name);
     const sourceRoot = join(stackBaseDir, 'source-runtime');
-    const { pending, state, sharedReferences } = readSourceRetentionStack(stackBaseDir);
+    const records = await readSourceRetentionStack(stackBaseDir);
+    const { active, sharedReferences } = records;
     references.push(...sharedReferences);
     if (existsSync(sourceRoot)) {
       const entries = await readdir(sourceRoot, {withFileTypes:true});
@@ -617,8 +639,7 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
       if (privateStackNames && !privateStackNames.includes(entry.name)) continue;
       const names = entries.filter(bundle => bundle.isDirectory() && /^(?:\.retired-)?web-/.test(bundle.name)).map(bundle => bundle.name);
       if (!names.length) continue;
-      const active = privateSourceStackActive(state, pending);
-      const group = { stack: entry.name, parent: sourceRoot, names, active };
+      const group = { stack: entry.name, parent: sourceRoot, names, active, records };
       privateWeb.push(group);
       if (active) continue; // Another program's running or preparing Stack is untouched.
       // Legacy private exports have no completion record. Reuse the producer's
@@ -652,7 +673,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     return canonicalReferences.some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep))
       || liveCommands.includes(directory + sep) || liveCommands.includes(canonicalDirectory + sep);
   };
-  const nominations = (dryRun || !reclaimShared ? [] : candidates)
+  // Dry-run qualifies shared products exactly like a real run, without retiring them.
+  const nominations = (!reclaimShared ? [] : candidates)
     .filter(candidate => !isPinned(candidate.directory));
   const stacks = [];
   for (const group of privateWeb) {
@@ -662,7 +684,7 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     const qualified = [];
     const qualification = reapHistoricalTempRoots(group.parent, '/proc', { candidateNames, dryRun: true,
       retainCandidate: (directory, _references, tree) => {
-        if (privateSourceRecordRetains(dirname(group.parent), directory)) return true;
+        if (privateSourceRecordRetains(directory, group.records)) return true;
         qualified.push({ directory, info: tree.info, bytes: tree.bytes, privateStack: dirname(group.parent) });
         return false;
       } });
@@ -671,8 +693,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     stacks.push(result);
     nominations.push(...qualified.map(candidate => ({ ...candidate, result })));
   }
-  await retireSourceCandidates({ stacksRoot, bundleRoot, candidates: nominations, dryRun, signal });
-  return { observationUnavailable: false, stacks };
+  const sharedRoots = await retireSourceCandidates({ stacksRoot, bundleRoot, candidates: nominations, dryRun, signal });
+  return { observationUnavailable: false, stacks, sharedRoots };
 }
 
 /** Explicit private-export maintenance uses exactly the publication owner's

@@ -24,6 +24,7 @@ import { prepareSourceComponent, resolveSourceComponentWatchPaths } from '../uti
 import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
 import { applyServerHostDatabaseProviderEnv } from '../utils/server/apply_runtime_server_database_env.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { startRunningStackOwner, writeRunningStackState } from '../testkit/core/running_stack_owner.mjs';
 import { installSourceAdmissionFixture, installSourcePreparationInputs, sourceProducerFixtureOptions } from '../testkit/core/source_runtime_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
@@ -621,7 +622,9 @@ test('publication reaps superseded private web exports and preserves selected, l
     await writeFile(join(stopped, 'source-runtime/selected-ui.json'), JSON.stringify({
       uiDir: join(stopped, 'source-runtime/web-selected/export'),
     }));
-    await writeFile(join(running, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid }));
+    await writeRunningStackState(t, running);
+    // Started now; its state is written only after nomination (below).
+    const lateOwner = await startRunningStackOwner(t, stopped);
     await writeFile(join(pending, 'source-runtime/start.pending.json'), JSON.stringify({ pid: process.pid }));
     const selection = await readFile(join(stopped, 'source-runtime/selected-ui.json'), 'utf8');
     const held = await open(join(stopped, 'source-runtime/web-held/export/index.html'));
@@ -644,7 +647,7 @@ test('publication reaps superseded private web exports and preserves selected, l
     t.mock.method(fs, 'readFileSync', (path, ...args) => {
       if (!activated && typeof path === 'string' && path.startsWith('/proc/') && path.endsWith('/environ')) {
         activated = true;
-        fs.writeFileSync(join(stopped, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid }));
+        fs.writeFileSync(join(stopped, 'stack.runtime.json'), JSON.stringify(lateOwner));
       }
       return originalRead(path, ...args);
     });
