@@ -818,7 +818,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
-function ItemRow(props: ItemProps) {
+function ItemRow(props: ItemProps & Readonly<{
+    /** How far this row reaches past its bare section's content (the `Item` wrapper's bleed); its hairline stops there. */
+    rowBleedPx?: number;
+}>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const selectionContext = React.useContext(ItemGroupSelectionContext);
@@ -1296,7 +1299,9 @@ function ItemRow(props: ItemProps) {
                 kind: pageOperation ? 'operation' : 'adaptive',
                 rowWidthPx,
                 accessoryWidthPx,
-                menuRow: isMenuRow,
+                // Trailing facts and marks that are never cut (a picker row's check, glyphs, star) move by their
+                // measured width alone, as in a menu: a lone check keeps its line on a phone.
+                menuRow: isMenuRow || accessoryMaxWidth === 'row',
             }))));
     const stackAccessoryRef = React.useRef(stackAccessory);
     const fieldLayout = React.useMemo(() => ({
@@ -1617,13 +1622,18 @@ function ItemRow(props: ItemProps) {
     // page hairline in the page divider colour.
     const flatDividerColor = pageSheet?.rowDividerColor ?? (isPageRow ? theme.colors.border.subtle : null);
     const hasLeading = icon != null || leftElement != null;
-    const flatDividerInset = flatDividerColor === null ? null : happierPageRowDividerInset({
+    const flatDividerInsetBase = flatDividerColor === null ? null : happierPageRowDividerInset({
         rowInsetPx: pageRowInsetPx ?? PAGE_LIST_METRICS.rowPaddingHorizontalPx,
         leadingPx: isPageRow
             ? (reservesLeadingColumn || hasLeading ? (iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx) + PAGE_LIST_METRICS.rowLeadingGapPx : 0)
             : (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0),
         framed: pageSheet?.framed,
     });
+    // A bare section's row reaches into the margin by its bleed; its hairline stops on the content's trailing edge,
+    // as a flat sheet's does (`happierPageRowDividerInset`, unframed), never in the margin (LABPARITY-ACCEPT-B fix 7).
+    const rowBleedPx = props.rowBleedPx ?? 0;
+    const flatDividerInset = flatDividerInsetBase !== null && rowBleedPx > flatDividerInsetBase.marginEnd
+        ? { ...flatDividerInsetBase, marginEnd: rowBleedPx } : flatDividerInsetBase;
     const rowFollowed = React.useContext(HappierListRowFollowedContext);
     const rowPrecedesSelected = React.useContext(HappierListRowPrecedesSelectedContext);
     // The one list-row rule, for a row whose list states its order (a column, a flat page list; never a sheet's or a
@@ -2436,6 +2446,6 @@ export const Item = React.memo<ItemProps>((props) => {
     const directoryRow = React.useContext(PageDirectoryRowsContext);
     if (!sectionBleed) return <ItemRow {...props} />;
     // Only the section's own rows bleed: a row drawn inside this one (an accessory, an expanded body) does not.
-    const row = <SectionRowBleedContext.Provider value={0}><ItemRow {...props} /></SectionRowBleedContext.Provider>;
+    const row = <SectionRowBleedContext.Provider value={0}><ItemRow {...props} rowBleedPx={-sectionBleed.marginHorizontal} /></SectionRowBleedContext.Provider>;
     return directoryRow ? row : <View style={sectionBleed}>{row}</View>;
 });

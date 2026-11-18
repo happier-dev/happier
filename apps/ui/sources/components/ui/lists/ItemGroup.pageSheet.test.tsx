@@ -470,7 +470,10 @@ describe('Page row seams start at the text and run to the sheet trailing edge (P
         expect(paints.some((style) => style.borderBottomColor === theme.colors.edge.surface)).toBe(false);
         expect(paints.some((style) => style.boxShadow === theme.colors.shadowCard.boxShadow)).toBe(false);
         const inset = PAGE_LIST_METRICS.rowPaddingHorizontalPx;
-        expect(rowSeams(screen, ['row-a'])).toEqual([{ start: inset, end: 0 }]);
+        // The row reaches into the margin by its bleed; its hairline stops on the content's trailing edge, as a flat
+        // sheet's does (LABPARITY-ACCEPT-B fix 7: Credentials Secrets ran to x387 past the 374 edge).
+        const bleed = inset - PAGE_LIST_METRICS.headingOpticalInsetPx;
+        expect(rowSeams(screen, ['row-a'])).toEqual([{ start: inset, end: bleed }]);
         expect(rowDividers(screen, ['row-a'])).toEqual([theme.colors.border.subtle]);
     });
 });
