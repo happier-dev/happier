@@ -11,7 +11,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -102,6 +102,39 @@ const automationWorkerMocks = vi.hoisted(() => ({
 vi.mock('../automation/automationWorker', () => ({
   startAutomationWorker: automationWorkerMocks.startAutomationWorker,
 }));
+
+// Home boundary: requester admission reads the Home server and opens its sealed Settings.
+// A test sets `admitted` to stand in for an answered Home; otherwise the real adapter runs.
+const homeAdmission = vi.hoisted(() => ({
+  admitted: null as null | Readonly<Record<string, unknown>>,
+  cleanupOnFailure: vi.fn(async () => {}),
+}));
+vi.mock('../sessionEncryption/requesterSessionCredentials', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../sessionEncryption/requesterSessionCredentials')>();
+  return {
+    ...actual,
+    readRequesterMachineAdmissionCurrent: async (input: Parameters<typeof actual.readRequesterMachineAdmissionCurrent>[0]) => (
+      homeAdmission.admitted
+        ? { actorAccountId: input.attribution.accountId, custodianAccountId: input.attribution.accountId } as never
+        : await actual.readRequesterMachineAdmissionCurrent(input)),
+    prepareRequesterSessionBootstrap: async (input: Parameters<typeof actual.prepareRequesterSessionBootstrap>[0]) => (
+      homeAdmission.admitted
+        ? { admitted: homeAdmission.admitted, cleanupOnFailure: homeAdmission.cleanupOnFailure } as never
+        : await actual.prepareRequesterSessionBootstrap(input)),
+  };
+});
+
+/** An admitted Run's requester and the saved Settings operation its Home answers with. */
+function admitWorkflowRequester() {
+  const savedSecretOperationContext = { serverHttpBaseUrl: 'https://home.test' };
+  homeAdmission.admitted = { savedSecretOperationContext, isCurrent: async () => true };
+  homeAdmission.cleanupOnFailure.mockClear();
+  const requester = {
+    credentials: { token: 'requester-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+    attribution: { serverId: configuration.activeServerId, accountId: 'account_1', machineId: 'machine_1', installationId: 'installation_1' },
+  } as const;
+  return { savedSecretOperationContext, requester };
+}
 
 const deviceLocalSecretStorage = {
   sealJson: vi.fn(() => 'sealed'),
@@ -1382,17 +1415,29 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     const workerParams = automationWorkerMocks.startAutomationWorker.mock.calls.at(-1)?.[0] as
       | Parameters<typeof startAutomationWorker>[0]
       | undefined;
-    await expect(workerParams?.coordinateWorkflowRun?.({} as never)).resolves.toBeUndefined();
+    // Without the admitted Run's Home evidence the worker parks the claim (74de158cc9a).
+    await expect(workerParams?.coordinateWorkflowRun?.({} as never)).rejects.toMatchObject({ code: 'source_unavailable' });
+    expect(createWorkflowRunCoordinatorForMachine).not.toHaveBeenCalled();
+
+    const { savedSecretOperationContext, requester } = admitWorkflowRequester();
+    try {
+      await expect(workerParams?.coordinateWorkflowRun?.({ runId: 'run_1' } as never, requester as never)).resolves.toBeUndefined();
+    } finally { homeAdmission.admitted = null; }
     expect(createWorkflowRunCoordinatorForMachine).toHaveBeenCalledWith({
       machineId: 'machine_1',
+      requesterCredentials: requester.credentials,
+      savedSecretOperationContext,
+      requesterWorkAttributionV1: requester.attribution,
       machineAdmissionTransport: expect.any(Function),
-      machineActionDirectTargetTransport: {
+      machineActionDirectTargetTransport: expect.objectContaining({
         machineId: 'machine_1',
-        machineServiceAction: expect.any(Function),
         invoke: expect.any(Function),
-      },
+      }),
+      runActionOperation: expect.any(Function),
     });
     expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
+    // The claim's requester custody is released when the claim settles.
+    expect(homeAdmission.cleanupOnFailure).toHaveBeenCalledOnce();
   });
 
   it('uses the live server feature decision for the existing Workflow coordinator without restarting Automation', async () => {
@@ -1447,22 +1492,25 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       | undefined;
     const coordinate = workerParams?.coordinateWorkflowRun;
     expect(coordinate).toBeDefined();
-
-    await expect(coordinate?.({} as never)).rejects.toThrow('Workflow Run coordinator is unavailable');
-    await runtime.recoverWorkflowRuns?.('startup');
-    expect(recoverWorkflowRuns).not.toHaveBeenCalled();
-    await featureStore.refresh();
-    await expect(coordinate?.({} as never)).rejects.toThrow('Workflow Run coordinator is unavailable');
-    await featureStore.refresh();
-    await expect(coordinate?.({} as never)).resolves.toEqual(coordinatedOutcome);
-    await runtime.recoverWorkflowRuns?.('reconnect');
-    expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
-    expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
-    await featureStore.refresh();
-    await expect(coordinate?.({} as never)).rejects.toThrow('Workflow Run coordinator is unavailable');
-    await runtime.recoverWorkflowRuns?.('reconnect');
-    expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
-    expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
+    const { requester } = admitWorkflowRequester();
+    const claim = () => coordinate?.({ runId: 'run_1' } as never, requester as never);
+    try {
+      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
+      await runtime.recoverWorkflowRuns?.('startup');
+      expect(recoverWorkflowRuns).not.toHaveBeenCalled();
+      await featureStore.refresh();
+      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
+      await featureStore.refresh();
+      await expect(claim()).resolves.toEqual(coordinatedOutcome);
+      await runtime.recoverWorkflowRuns?.('reconnect');
+      expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
+      expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
+      await featureStore.refresh();
+      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
+      await runtime.recoverWorkflowRuns?.('reconnect');
+      expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
+      expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
+    } finally { homeAdmission.admitted = null; }
   });
 
   it('wires the production peer-mediation live-stream capture adapter into machine bootstrap config', () => {
