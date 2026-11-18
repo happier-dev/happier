@@ -56,11 +56,8 @@ export function composeUsageRecap(args: Readonly<{
   };
   const nightShift = snapshot.howYouWork?.nightShift;
   if (selected.has('night') && nightShift && (!intervals || sameIntervalPeriod)) facts.night = nightShift;
-  const workStatus = snapshot.sources.find(row => row.source === 'work')?.status;
-  // Unavailable Work evidence can still project an empty outcome list. Only
-  // admitted reads or retained positive witnesses establish recap Work facts.
-  const work = (workStatus !== undefined && ['available', 'partial', 'stale'].includes(workStatus))
-    || (workStatus === 'pending' && (snapshot.work?.outcomes.length ?? 0) > 0) ? snapshot.work : undefined;
+  // Aggregation retains witnessed summaries, including measured zero, through rereads.
+  const work = snapshot.workSummary === undefined ? undefined : snapshot.work;
   if (selected.has('work') && work) facts.work = { linkedOutcomes: work.outcomes.length,
     allocatedContributions: work.allocations.filter(row => row.outcome !== null).length,
     unallocatedContributions: work.allocations.filter(row => row.outcome === null).length };

@@ -268,14 +268,31 @@ describe('private recap composition', () => {
     expect(composeUsageRecap({ input, snapshot: pending.results[0]! })).toMatchObject({ kind: 'composed',
       unavailableFields: [], facts: { work: { linkedOutcomes: 1 }, highlights: [{ kind: 'linked_outcomes', count: 1 }] },
       coverage: { pending: true, sourceStatuses: expect.arrayContaining([{ status: 'pending' }]) } });
-    for (const previous of [undefined, available]) {
+    for (const status of ['pending', 'error'] as const) {
+      const retainedEmpty = resolveUsagePageAggregation({ queries: [query],
+        accounting: [{ query, value, status: 'available' }],
+        work: [{ query, status, ...(status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) }],
+        previous: available }, bundledUsageModelPriceCatalog).results[0]!;
+      expect(retainedEmpty.workSummary?.mergedPrCount).toBe(0);
+      expect(composeUsageRecap({ input, snapshot: retainedEmpty })).toMatchObject({ kind: 'composed',
+        unavailableFields: [], facts: { work: { linkedOutcomes: 0, allocatedContributions: 0,
+          unallocatedContributions: 1 }, highlights: [] } });
+    }
+    {
       const noWitness = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }], previous }, bundledUsageModelPriceCatalog).results[0]!;
+        accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!;
       expect(composeUsageRecap({ input, snapshot: noWitness })).toMatchObject({ kind: 'composed',
         unavailableFields: ['work'], facts: { highlights: [] }, coverage: { pending: true } });
       const composed = composeUsageRecap({ input, snapshot: noWitness });
       expect(composed.kind === 'composed' && composed.facts.work).toBeUndefined();
     }
+    const forbidden = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'error', errorCode: 'forbidden' }], previous: available }, bundledUsageModelPriceCatalog).results[0]!;
+    expect(forbidden.workSummary).toBeUndefined();
+    const refused = composeUsageRecap({ input, snapshot: forbidden });
+    expect(refused.kind === 'composed' && refused.facts.work).toBeUndefined();
+    expect(refused.kind === 'composed' && refused.unavailableFields).toContain('work');
   });
 
   it('keeps missing accounting unavailable after read admission', () => {
