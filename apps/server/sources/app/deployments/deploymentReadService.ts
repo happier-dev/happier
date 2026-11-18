@@ -1,5 +1,5 @@
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, projectDeploymentControllerAvailabilityV1,
-    type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1,
+    type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1, type DeploymentEnvironmentControllerResultV1,
     type DeploymentEnvironmentGetInputV1, type DeploymentReceiptGetInputV1,
     type DeploymentEnvironmentListInputV1, type DeploymentReceiptListInputV1, DeploymentStateV1Schema } from '@happier-dev/protocol';
 import { canTransitionDeploymentV1, projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
@@ -9,6 +9,7 @@ import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
+import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
     canDeployDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
@@ -97,6 +98,29 @@ export async function readDeploymentEnvironmentAccessInTx(tx: Tx, actorAccountId
             deploy: canDeployDeploymentEnvironment(projectDeploymentSourceAdmission(source), environment) });
     }
     return { ok: true, items };
+}
+
+/**
+ * Content-free routing for one deploy submission (plan 40 §6.8): the Environment's current
+ * controller, disclosed only to a caller who may deploy it now. An API token must also be
+ * granted `deployments.deploy` on this exact Environment by the canonical grant evaluator;
+ * that is a routing fact, never a Machine grant. Home still admits the submission itself.
+ */
+export async function readDeploymentEnvironmentControllerInTx(tx: Tx, actorAccountId: string,
+    input: Readonly<{ serverId: string; environmentId: string }>, authentication: DeploymentAuthentication,
+    apiTokenGrant?: ApiTokenGrantV1,
+): Promise<DeploymentEnvironmentControllerResultV1> {
+    if (apiTokenGrant && !evaluateApiTokenGrantV1({ grant: apiTokenGrant, actionId: 'deployments.deploy',
+        environmentId: input.environmentId, environmentAdmission: 'pre_open' }).ok) {
+        return deploymentFailure('deployment_access_denied', { phase: 'deployment.environment.controller.grant', causeKind: 'access_denied' });
+    }
+    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
+    if (!loaded.ok) return loaded;
+    if (loaded.row.deletedAt || !canDeployDeploymentEnvironment(loaded.admission, loaded.row)) {
+        return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.controller.access',
+            causeKind: loaded.row.deletedAt ? 'already_deleted' : 'access_denied' });
+    }
+    return { ok: true, serverId: input.serverId, environmentId: loaded.row.id, controllerMachineId: loaded.row.controllerMachineId };
 }
 
 function deploymentMachineReferenceWhere(machineId: string) {

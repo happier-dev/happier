@@ -60,7 +60,13 @@ In the development preview, a deployment token can be limited to one Environment
 with only `deployments.deploy` and `action.operations.get`. Keep approval access
 off and leave Session, computer and creation grants empty. The token can deploy
 an exact commit and read its own operation; it does not grant general computer
-access.
+access. Before each deploy it reads which computer currently runs that
+Environment, and nothing else about it.
+
+If your Account uses end-to-end encryption, create the token with **Encryption
+access** and store the complete `hapc_v1` credential as `HAPPIER_TOKEN`. A token
+without encryption access is refused with `client_required` and a note naming
+the missing encryption access.
 
 Choose **Automatic** when authoring the token to save consent for those deploys.
 The corresponding grant field is `deployApproval: 'automatic'`. Saving that

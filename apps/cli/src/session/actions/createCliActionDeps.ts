@@ -5,7 +5,8 @@ import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
-import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { apiTokenEncryptionAccessRequired } from '@/auth/apiTokenDeploymentCustody';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { sessionProjectFilesOpenChildrenV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
@@ -959,7 +960,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         && !binding.workflowActionOrigin && !binding.managedContinuation
         && context.actionCaller?.kind !== 'workflowRun'
         && !readRequesterAccountEncryptionMaterialSnapshot(authorization)) {
-        throw Object.assign(new Error('api_token_encryption_access_unavailable'), { code: 'content_unavailable' });
+        throw createActionExecuteFailureError(apiTokenEncryptionAccessRequired());
       }
       const directMachineId = params.machineActionDirectTargetTransport?.machineId;
       if (directMachineId && selectedMachineId === directMachineId

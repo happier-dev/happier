@@ -564,6 +564,19 @@ export const DeploymentEnvironmentAccessResultV1Schema = lazyZodSchema(() => z.u
 ]));
 export type DeploymentEnvironmentAccessInputV1 = z.infer<typeof DeploymentEnvironmentAccessInputV1Schema>;
 export type DeploymentEnvironmentAccessResultV1 = z.infer<typeof DeploymentEnvironmentAccessResultV1Schema>;
+/**
+ * Content-free routing for one deploy submission (plan 40 §6.8): the Environment's
+ * current controller, read before an encrypted request seals its target. Success
+ * also confirms the authenticated Home identity. Home still admits the deploy itself.
+ */
+export const DEPLOYMENT_ENVIRONMENT_CONTROLLER_HTTP_PATH_TEMPLATE_V1 = '/v1/deployments/environments/:environmentId/controller';
+export const DeploymentEnvironmentControllerInputV1Schema = lazyZodSchema(() => z.strictObject({ ...home }));
+export const DeploymentEnvironmentControllerResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
+    controllerMachineId: DeploymentIdentifierV1Schema }),
+  DeploymentActionFailureV1Schema,
+]));
+export type DeploymentEnvironmentControllerResultV1 = z.infer<typeof DeploymentEnvironmentControllerResultV1Schema>;
 export const DeploymentReceiptGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, environmentId: z.optional(DeploymentIdentifierV1Schema), deploymentId: DeploymentIdentifierV1Schema,
   /** Open exact private evidence on the Account host; never forwarded to metadata storage. */

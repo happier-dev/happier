@@ -2,7 +2,7 @@ import { readDaemonHostResourceActionFailure } from '@/rpc/handlers/daemonHostRe
 import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
+import { apiTokenEncryptionAccessRequired, retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -898,8 +898,12 @@ async function executeExternalActionRequest(input: Readonly<{
     && (hasProtectedTokenContentAccess || admittedAuthorization.binding.actionId === 'deployments.deploy')
     && !admittedAuthorization.requesterAccountProjection) {
     const projected = await prepareApiTokenDeploymentAccountProjection(admittedAuthorization, input.signal);
+    // The projection refused. An encrypted Account root without same-token access
+    // is the caller's missing credential; every other refusal stays unavailable.
     if (!projected) return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
-      execution: { ok: false, errorCode: 'content_unavailable', error: 'api_token_encryption_access_unavailable' } });
+      execution: admittedAuthorization.binding.accountEncryptionMode === 'e2ee' && !hasProtectedTokenContentAccess
+        ? apiTokenEncryptionAccessRequired()
+        : { ok: false, errorCode: 'content_unavailable', error: 'api_token_encryption_access_unavailable' } });
     releaseTokenAccountProjection = projected.dispose;
   }
   if (admittedAuthorization && originalRootCurrentness) admittedAuthorization = retainVerifiedExternalActionRequester({

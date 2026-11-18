@@ -308,9 +308,10 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     if (!credentials) throwActionFailure({ ok: false, errorCode: 'not_authenticated', error: 'Sign in before generating a deployment step.' });
     const mode = await runWithServerHttpBaseUrl(fixedServer.serverApiUrl, () =>
       createConnectedServiceCredentialApi(credentials).getAccountEncryptionMode({ usage: 'fresh-authority', signal }));
-    if (mode !== 'plain') throwActionFailure({ ok: false, errorCode: 'client_required',
-      error: mode === 'e2ee' ? 'Encrypted deployment automation requires the in-process Happier SDK client.'
-        : 'Account encryption mode could not be verified for this Home.' });
+    // The emitted step runs this binary's in-process SDK, which seals an
+    // encryption-capable HAPPIER_TOKEN for an end-to-end encrypted Account.
+    if (mode !== 'plain' && mode !== 'e2ee') throwActionFailure({ ok: false, errorCode: 'client_required',
+      error: 'Account encryption mode could not be verified for this Home.' });
     const executor = await deps.createExecutorFn({ credentials, ...fixedServer, serverIdentityId,
       readCredentials: () => deps.readCredentialsForServerIdFn(fixedServer.serverId), externalActionClient: true });
     const context = { ...actionContext(signal), serverId: fixedServer.serverId, serverIdentityId };

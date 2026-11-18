@@ -25,3 +25,15 @@ export function retainApiTokenDeploymentContentAccess(authorization: ExternalAct
 export function readApiTokenDeploymentContentAccess(authorization: ExternalActionExecutionAuthorizationV1): Custody | null {
   return (authorization as Authorization)[tokenContentAccess] ?? null;
 }
+
+/**
+ * One public refusal when an end-to-end encrypted Account's content-consuming root
+ * carries no same-token encryption access: a plain hap_v1 bearer, or a sealed request
+ * without content access. It names the missing credential, never Account content.
+ */
+export function apiTokenEncryptionAccessRequired() {
+  return { ok: false as const, errorCode: 'client_required', effectAttempted: false,
+    error: 'This Home uses end-to-end encryption, and this API token has no encryption access.',
+    details: { requiredFact: 'api_token_encryption_access',
+      remedy: 'Create an API token with encryption access and use that credential as HAPPIER_TOKEN.' } };
+}

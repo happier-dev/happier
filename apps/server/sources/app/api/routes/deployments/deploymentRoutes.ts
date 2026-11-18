@@ -12,6 +12,7 @@ import {
     DeploymentTransitionInputV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentReceiptResultV1Schema, DeploymentActionFailureV1Schema,
     DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema,
     DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema,
+    DEPLOYMENT_ENVIRONMENT_CONTROLLER_HTTP_PATH_TEMPLATE_V1, DeploymentEnvironmentControllerInputV1Schema, DeploymentEnvironmentControllerResultV1Schema,
     DeploymentPendingCancelInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     DeploymentTargetLinkInputV1Schema,
     DeploymentTimestampV1Schema,
@@ -34,6 +35,7 @@ import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } fro
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
 import { readDeploymentExecutionBindingFromRequest, readDeploymentExecutionEffectFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx, readDeploymentApprovalEnvironmentInTx,
+    readDeploymentEnvironmentControllerInTx,
     listDeploymentEnvironmentsInTx, listDeploymentReceiptsInTx, readDeploymentMachineReferencesInTx } from '@/app/deployments/deploymentReadService';
 import type { Fastify } from '../../types';
 import { registerEnvironmentSecretLaunchAdmissionRoute } from './environmentSecretLaunchAdmissionRoute';
@@ -167,6 +169,19 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError) return reply.code(400).send(invalid);
         const result = await inReadSnapshot(tx => readDeploymentEnvironmentAccessInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request)));
+        return reply.code(status(result)).send(result);
+    });
+    // A scoped CI token needs this one content-free routing read before it seals
+    // its deploy target; the read service applies the token's exact Environment grant.
+    app.get(DEPLOYMENT_ENVIRONMENT_CONTROLLER_HTTP_PATH_TEMPLATE_V1, { preHandler: app.authenticate,
+        config: { allowApiToken: true, allowScopedApiToken: true }, attachValidation: true,
+        schema: { params: environmentParams, querystring: DeploymentEnvironmentControllerInputV1Schema,
+            response: responses(DeploymentEnvironmentControllerResultV1Schema) },
+    }, async (request, reply) => {
+        if (request.validationError) return reply.code(400).send(invalid);
+        const result = await inReadSnapshot(tx => readDeploymentEnvironmentControllerInTx(tx, request.userId,
+            { ...request.query, ...request.params }, readTeamOperationAuthenticationFromRequest(request),
+            request.apiTokenPrincipal?.grant));
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/targets/list', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

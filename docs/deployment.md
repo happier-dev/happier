@@ -3085,11 +3085,25 @@ In 0.3 development, `happier actions get deployments.deploy --github-actions
 --environment <id> --server-id <profile>` emits a copyable GitHub Actions steps
 array. Generation checks the selected Home's current Account mode and repository
 Environment through the existing Action readers. Stored definitions refuse with
-`needs_repository`; encrypted or unverifiable Account mode requires the in-process
-SDK (`client_required`) rather than emitting an unusable binary-only step.
+`needs_repository`; unverifiable Account mode refuses with `client_required`.
+An end-to-end encrypted Account gets the same step: the binary's in-process SDK
+seals the request when `HAPPIER_TOKEN` is an encryption-capable `hapc_v1`
+credential, and a plain `hap_v1` bearer is refused at the controller with
+`client_required` and `details.requiredFact: 'api_token_encryption_access'`.
 The step uses the installed `happier` binary, the selected Home's canonical URL,
 `secrets.HAPPIER_TOKEN`, the event SHA and the run id/attempt as its request key.
 It does not embed a token value or select a deployment Machine.
+
+Placement for an API token reads one content-free fact before submission:
+`GET /v1/deployments/environments/:environmentId/controller?serverId=<Home>`
+returns `{ serverId, environmentId, controllerMachineId }`. Home answers only when
+the token's grant admits `deployments.deploy` on that exact Environment (checked
+before any row read, so an ungranted Environment refuses the same way whether or
+not it exists) and the Account may deploy it now. The answer is routing, never a
+Machine grant; the submission is still admitted at Home against the current
+controller. Its success also confirms the authenticated Home identity, so a fresh
+CI runner needs no saved Home profile. The full Environment read stays closed to
+scoped tokens.
 
 The emitted `--wait --json` invocation observes the exact returned operation
 address on its original host, carrying the submitted Environment explicitly.

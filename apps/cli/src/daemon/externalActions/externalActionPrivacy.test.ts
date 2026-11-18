@@ -175,6 +175,47 @@ describe('private external Action origins with the real CLI executor', () => {
       expect(await admitted!.requesterAccountProjection!.isCurrent()).toBe(false);
     } finally { executed.mockRestore(); network.mockRestore(); diagnostics.mockRestore(); }
   });
+  it.each(['bearer', 'sealed-without-access'] as const)('tells an E2EE CI deploy without token encryption access what it needs (%s)', async shape => {
+    // A plain hap_v1 bearer, or a sealed request that carries no same-token
+    // content access, cannot open the encrypted Account's Environment content.
+    const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, approve: false,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['environment'] }, create: null });
+    const input = { serverId: binding.serverIdentityId, environmentId: 'environment', sha: 'a'.repeat(40), requestKey: 'ci-1' };
+    const envelope = shape === 'bearer' ? { v: 1 as const, requestId: binding.requestId, target, input }
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        binding: { ...binding, actionId: 'deployments.deploy' }, input, material,
+        randomBytes: length => new Uint8Array(length).fill(1) });
+    const network = vi.spyOn(axios, 'request').mockImplementation(async () => {
+      throw new Error('No token encryption material may be fetched without same-token access');
+    });
+    const executor = owner().executor;
+    const executed = vi.spyOn(executor, 'execute');
+    try {
+      const root = executionAuthorization('deployments.deploy', envelope);
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, binding: { ...root.binding,
+        grant, accountEncryptionMode: 'e2ee', environmentId: 'environment',
+        deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ ...root.binding,
+          environmentId: 'environment', source: { id: 'source-app', revision: 1 } }) } });
+      Object.defineProperty(authorization, 'requesterHttpProjection', { enumerable: false, value: { accountId: principal.accountId,
+        serverId: binding.serverIdentityId, serverIdentityId: binding.serverIdentityId, serverHttpBaseUrl: 'https://token.test',
+        accountEncryptionMode: 'e2ee', isCurrent: async () => true, createRequestHeaders: async () => ({ 'x-test-root': 'signed' }) } });
+      Object.freeze(authorization);
+      const result = await executeExternalAction({ ...owner(), executor, actionId: 'deployments.deploy', envelope,
+        principal: { ...principal, grant }, currentMachineId: target.machineId,
+        currentInstallationId: 'machine-installation-1', executionAuthorization: authorization });
+      if (result.kind !== 'response') throw new Error(`Expected a typed response, got ${JSON.stringify(result)}`);
+      const execution = envelope.v === 1 ? 'execution' in result.response ? result.response.execution : undefined
+        : openExternalActionResponseV2({ binding: { ...binding, actionId: 'deployments.deploy' },
+          request: envelope, envelope: result.response, material });
+      expect(execution).toMatchObject({ ok: false, errorCode: 'client_required', effectAttempted: false,
+        details: { requiredFact: 'api_token_encryption_access' } });
+      expect(JSON.stringify(execution)).not.toContain('a'.repeat(40));
+      expect(executed).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { executed.mockRestore(); network.mockRestore(); }
+  });
+
   it('relays an encrypted SDK Session spawn through daemon Machine RPC after test authorization', async () => {
     const home = fastify();
     const handlers: RpcHandlerMap = new Map();

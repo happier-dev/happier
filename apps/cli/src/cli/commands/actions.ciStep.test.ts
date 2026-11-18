@@ -18,7 +18,10 @@ import { handleActionsCommand } from './actions';
 import { dispatchCli } from '@/cli/dispatch';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
+import { writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId } from '@/persistence';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import tweetnacl from 'tweetnacl';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
@@ -37,7 +40,9 @@ const homeId = 'srv_ci_home';
 const environmentId = "prod'quoted-$(printf unexpected)-${{ secrets.NOT_AN_INPUT }}";
 const sha = 'a'.repeat(40);
 const httpFixtures: Array<() => Promise<void>> = [];
-function generationDeps(kind: 'repository' | 'stored' = 'repository', supported = true, mode: string = 'plain', origin = 'https://ci.example.test') {
+type SealedEnvironmentContent = Readonly<{ dataEncryptionKey: string; header: string; body: string }>;
+function generationDeps(kind: 'repository' | 'stored' = 'repository', supported = true, mode: string = 'plain', origin = 'https://ci.example.test',
+  sealed?: (content: unknown) => SealedEnvironmentContent) {
   const detail = createDeploymentEnvironmentDetailV1();
   detail.environment.id = environmentId;
   detail.environment.serverId = homeId;
@@ -49,10 +54,15 @@ function generationDeps(kind: 'repository' | 'stored' = 'repository', supported 
   // testkit so the real client opens the actual plain storage envelope.
   const home = fastify();
   home.get('/v1/account/encryption', async () => ({ mode, updatedAt: 0 }));
-  const artifacts = registerAccountArtifactRoutes(home, 'account', { encryptionMode: 'plain' });
-  artifacts.seed(detail.environment.contentArtifactId,
-    encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'CI' }),
-    encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) }));
+  if (sealed) {
+    const stored = sealed(detail.content);
+    registerAccountArtifactRoutes(home, 'account', { encryptionMode: 'e2ee' })
+      .seed(detail.environment.contentArtifactId, stored.header, stored.body, stored.dataEncryptionKey);
+  } else {
+    registerAccountArtifactRoutes(home, 'account', { encryptionMode: 'plain' }).seed(detail.environment.contentArtifactId,
+      encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'CI' }),
+      encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) }));
+  }
   const restoreHttp = installAxiosFastifyAdapter({ app: home, origin });
   httpFixtures.push(async () => { restoreHttp(); await home.close(); });
   const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => supported
@@ -119,7 +129,6 @@ describe('emitted deployment CI step through the Actions command', () => {
   });
   it.each([
     ['stored', 'plain', true, 'needs_repository'],
-    ['repository', 'e2ee', true, 'client_required'],
     ['repository', 'unknown', true, 'client_required'],
     ['repository', 'plain', false, 'unsupported_action'],
   ] as const)('does not emit an unusable %s/%s helper', async (kind, mode, supported, code) => {
@@ -139,6 +148,38 @@ describe('emitted deployment CI step through the Actions command', () => {
         expect(output.logs.join('\n')).not.toContain('${{ github.sha }}');
         expect(JSON.parse(output.logs.join('\n'))).toMatchObject({ ok: false, error: { code } });
         expect(process.exitCode).toBe(1);
+      } finally { output.restore(); }
+    });
+  });
+  it('emits the same runnable helper on an end-to-end encrypted Home', async () => {
+    // The emitted binary step runs the in-process SDK, which seals an
+    // encryption-capable HAPPIER_TOKEN; Account mode alone is no reason to refuse.
+    await withTempDir('happier-deployment-ci-e2ee-', async homeDir => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_TOKEN: undefined, HAPPIER_ACTIVE_SERVER_ID: 'ci-profile',
+        HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+      reloadConfiguration();
+      await seedTestServerProfile({ id: 'ci-profile', homeId, serverUrl: 'https://ci.example.test' });
+      const account = tweetnacl.box.keyPair();
+      const credentials = { token: 'interactive', encryption: { type: 'dataKey' as const, publicKey: account.publicKey,
+        machineKey: account.secretKey } };
+      await writeCredentialsDataKey({ publicKey: account.publicKey, machineKey: account.secretKey, token: credentials.token });
+      // Seal the Environment exactly as an encrypted Account client stores it.
+      const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
+      if (resource.mode !== 'e2ee') throw new Error('Expected encrypted resource key');
+      const seal = (value: unknown) => encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleActionsCommand(['get', 'deployments.deploy', '--github-actions', '--environment', environmentId,
+          '--server-id', 'ci-profile'], generationDeps('repository', true, 'e2ee', 'https://ci.example.test', content => ({
+          dataEncryptionKey: resource.dataEncryptionKey,
+          header: seal({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'CI' }),
+          body: seal({ body: JSON.stringify(content) }),
+        })));
+        const [step] = StepSchema.parse(parse(output.logs.join('\n')));
+        expect(step?.run).toContain('happier actions invoke deployments.deploy');
+        expect(step?.env.HAPPIER_TOKEN).toBe('${{ secrets.HAPPIER_TOKEN }}');
+        expect(process.exitCode ?? 0).toBe(0);
       } finally { output.restore(); }
     });
   });
