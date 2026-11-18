@@ -56,6 +56,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, type SessionPendingMessageComposerAdmissionAcceptedRequestV1, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { HAPPIER_SKILL_MENTIONS_METADATA_KEY, HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY, hasRawComposerAttachmentSelectionV1, hasRawSessionAttachmentSelectionV1, HappierStructuredInputV1Schema, HappierStructuredInputV1StoredSchema, RawIngressStructuredInputV1Schema, RawIngressStructuredInputV1StoredSchema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
+import { readSessionInputContextDisplayTextV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema, type SessionStoredMessageContent, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
@@ -1084,7 +1085,9 @@ function coercePendingUserTextRecord(decrypted: unknown): { rawRecord: RawRecord
     }
 
     const displayTextRaw = record.meta?.displayText;
-    const displayText = typeof displayTextRaw === 'string' && displayTextRaw.trim().length > 0 ? displayTextRaw : undefined;
+    const displayText = typeof displayTextRaw === 'string' && displayTextRaw.trim().length > 0
+        ? displayTextRaw
+        : readSessionInputContextDisplayTextV1(text);
 
     return { rawRecord: record, text, displayText };
 }

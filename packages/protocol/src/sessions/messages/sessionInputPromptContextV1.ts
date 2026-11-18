@@ -30,6 +30,21 @@ const MAX_CONTEXT_VALUE_CODE_POINTS = 128;
 const INPUT_CONTEXT_OPEN = '<happier_input_context v="1">';
 const INPUT_CONTEXT_CLOSE = '</happier_input_context>';
 
+function readLeadingInputContextSuffix(text: string): string | null | undefined {
+  if (!text.startsWith(INPUT_CONTEXT_OPEN)) return undefined;
+  const end = text.indexOf(INPUT_CONTEXT_CLOSE, INPUT_CONTEXT_OPEN.length);
+  return end === -1 ? null : text.slice(end + INPUT_CONTEXT_CLOSE.length);
+}
+
+/** Return the body of a stored prompt with its leading input context omitted for display. */
+export function readSessionInputContextDisplayTextV1(text: string): string | undefined {
+  const suffix = readLeadingInputContextSuffix(text);
+  // The full renderer joins the frame and body with a blank line. Strip only
+  // that separator, preserving any authored Markdown indentation or spacing.
+  if (suffix === '') return '';
+  return suffix?.startsWith('\n\n') ? suffix.slice(2) : undefined;
+}
+
 /** Summaries omit delivery frames but retain visible text in truncated native previews. */
 export function readSessionInputPromptTitleTextV1(text: string): string {
   let remaining = text.trim();
@@ -47,10 +62,9 @@ export function readSessionInputPromptTitleTextV1(text: string): string {
       break;
     }
     if (remaining.startsWith('<happier_coding_prompt ')) return '';
-    if (!remaining.startsWith(INPUT_CONTEXT_OPEN)) break;
-    const end = remaining.indexOf(INPUT_CONTEXT_CLOSE, INPUT_CONTEXT_OPEN.length);
-    if (end === -1) return '';
-    const suffix = remaining.slice(end + INPUT_CONTEXT_CLOSE.length);
+    const suffix = readLeadingInputContextSuffix(remaining);
+    if (suffix === undefined) break;
+    if (suffix === null) return '';
     if (!suffix.trim()) return '';
     if (!/^\s/u.test(suffix)) break;
     remaining = suffix.trimStart();

@@ -267,6 +267,23 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(messages[1]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
     });
 
+    it('projects the authored body of a queued Discussion request while retaining its delivery text', async () => {
+        const sessionId = 'pending-discussion-request';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        const authored = 'Verify the final receipt.\n\nUse the report as evidence.';
+        const text = '<happier_input_context v="1">\nsource_kind="sessionAction"\ninput_kind="discussion_request"\n'
+            + 'discussion_sender_account_id="account-fixture"\ndiscussion_id="discussion-fixture"\n'
+            + '</happier_input_context>\n\n' + authored;
+        const rawRecord: RawRecord = { role: 'user', content: { type: 'text', text } };
+        const content = { t: 'encrypted', c: await encryptRawRecordForPending({ encryption, sessionId, rawRecord }) };
+        await fetchAndApplyPendingMessagesV2({ sessionId, encryption,
+            request: async () => Response.json({ pending: [{ localId: 'discussion-request', messageRole: 'user',
+                content, status: 'queued', position: 0, createdAt: 1, updatedAt: 1 }] }) });
+        expect(storage.getState().sessionPending[sessionId]?.messages).toMatchObject([
+            { text, displayText: authored, rawRecord },
+        ]);
+    });
+
     it('projects a queued attachment-only media row instead of a false decrypt failure', async () => {
         const sessionId = 's_attachment_only_pending';
         const encryption = await createPendingQueueEncryption({ sessionId });
