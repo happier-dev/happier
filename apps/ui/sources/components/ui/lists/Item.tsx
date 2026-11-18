@@ -687,9 +687,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     titleQualifier: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
-        flexShrink: 0,
-        // A short qualifier (a machine's telling suffix, a Team) stays whole; a long one (a folded Machine's full
-        // name) ellipsizes past half the line, so the title it qualifies always keeps the other half.
+        // The title keeps its whole name up to the title floor first (`ITEM_TITLE_META_TITLE_MIN_PX`, owner choice
+        // "floor" 2026-11-18); the qualifier then shows what fits, never more than half the line.
+        flexShrink: 1,
+        minWidth: 0,
         maxWidth: '50%',
     },
     subtitle: {
@@ -1238,6 +1239,19 @@ function ItemRow(props: ItemProps & Readonly<{
     // in a narrow pane instead of stacking beside 160px of empty label column.
     const [detailWidthPx, setDetailWidthPx] = React.useState<number | null>(null);
     const [titleNaturalWidthPx, setTitleNaturalWidthPx] = React.useState<number | null>(null);
+    // A qualified title holds min(its natural width, the title floor) before its qualifier ellipsizes; layout reports
+    // whole pixels, so the name needs one pixel more than its measured width not to clip.
+    const [qualifiedTitleFloorPx, setQualifiedTitleFloorPx] = React.useState<number | null>(null);
+    const handleQualifiedTitleMeasureLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const widthPx = event.nativeEvent.layout.width;
+        if (!Number.isFinite(widthPx) || widthPx <= 0) return;
+        const floorPx = Math.min(Math.ceil(widthPx) + 1, ITEM_TITLE_META_TITLE_MIN_PX);
+        setQualifiedTitleFloorPx((current) => (current === floorPx ? current : floorPx));
+    }, []);
+    const qualifiedTitleFloorStyle = React.useMemo(
+        () => (qualifiedTitleFloorPx === null ? null : { minWidth: qualifiedTitleFloorPx }),
+        [qualifiedTitleFloorPx],
+    );
     const measuresDetail = isPageRow && Boolean(detail) && isNarrowRow;
     // A field beside a short name needs only that name's room (see `resolveHappierPageRowFieldMaxWidth`).
     const measuresFieldLabel = isPageRow && fieldAccessory && isNarrowRow;
@@ -1797,14 +1811,14 @@ function ItemRow(props: ItemProps & Readonly<{
                     </>
                 ) : (typeof title === 'string' || typeof title === 'number') && titleTrailing ? (
                     <View style={styles.inlineMarkRow}>
-                        <View style={styles.inlineMarkText}>
+                        <View style={[styles.inlineMarkText, titleQualifier && qualifiedTitleLines === 1 ? qualifiedTitleFloorStyle : null]}>
                             {renderPrimitiveText({
                                 value: title,
                                 ref: titleRef,
                                 dataSet: titleDataSet,
                                 style: [styles.title, titleSizeStyle, titleColor, titleStyle],
                                 // A qualified title (a same-named machine's telling suffix) is one line in every row role: the
-                                // name shortens and the qualifier stays whole beside it, never beside half a wrapped name.
+                                // name holds the title floor, then the qualifier shows what fits, never beside half a wrapped name.
                                 numberOfLines: qualifiedTitleLines,
                                 ellipsizeMode: titleEllipsizeMode,
                                 highlightQuery: titleHighlightQuery,
@@ -1980,6 +1994,11 @@ function ItemRow(props: ItemProps & Readonly<{
                 <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1} onLayout={handleTitleMeasureLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title as string | number}</Text>
             ) : null}
+            {titleQualifier && (typeof title === 'string' || typeof title === 'number') ? (
+                <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1}
+                    onLayout={handleQualifiedTitleMeasureLayout}
+                    aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title}</Text>
+            ) : null}
             {rightElementYields && (typeof title === 'string' || typeof title === 'number') ? (
                 <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1}
                     onLayout={(event: LayoutChangeEvent) => {
@@ -2040,6 +2059,8 @@ function ItemRow(props: ItemProps & Readonly<{
         titleAccessory,
         inlineQualifier,
         qualifiedTitleLines,
+        qualifiedTitleFloorStyle,
+        handleQualifiedTitleMeasureLayout,
         subtitleEllipsizeMode,
         subtitleLines,
         subtitleSizeStyle,
