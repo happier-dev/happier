@@ -59,7 +59,7 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
         case 'input':
             return withPath(t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) }), reference.path);
         case 'trigger_event':
-            return withPath(t('workflows.list.event', { eventId: formatWorkflowTriggerEventIdentityV1(reference.event) }), reference.path);
+            return withPath(formatWorkflowTriggerEventIdentityV1(reference.event), reference.path);
         case 'result':
             // A field reads as its step and field ("Check the fix · Fixed", lab E1); the whole result keeps its noun.
             return reference.path.length === 0
