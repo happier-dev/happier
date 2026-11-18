@@ -389,6 +389,12 @@ export type ArtifactBrowserOrganization = Readonly<{
     collapsedFolderIds?: ReadonlySet<string>;
 }>;
 
+/** Whether a classified artifact is listed under the chosen kind. The rows and the tree share this one rule. */
+function artifactMatchesBrowserKind(filterKind: ArtifactBrowserFilter['kind'], kind: ArtifactBrowserRow['kind'],
+    artifact: Parameters<typeof artifactLivesInArtifacts>[0]): boolean {
+    return filterKind === 'home' ? artifactLivesInArtifacts(artifact) : filterKind === 'all' || kind === filterKind;
+}
+
 /** Listed kinds in the chosen order, searched through title and private organization; a search spans every kind but a chosen one. */
 export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
     artifacts: readonly T[],
@@ -401,7 +407,8 @@ export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
     for (const artifact of artifacts) {
         const kind = classifyArtifactBrowserKind(artifact);
         if (kind === null) continue;
-        if (filter.kind === 'home' ? !needle && !artifactLivesInArtifacts(artifact) : filter.kind !== 'all' && kind !== filter.kind) continue;
+        // A search under Home spans every kind; any other chosen kind still narrows it.
+        if (!(filter.kind === 'home' && needle) && !artifactMatchesBrowserKind(filter.kind, kind, artifact)) continue;
         let placement: ReturnType<typeof resolveArtifactOrganizationHeaderV1> = {};
         let organizationError: ArtifactBrowserRow<T>['organizationError'];
         if (organization.folders) {
@@ -431,7 +438,16 @@ export type ArtifactBrowserTreeNode<T extends ArtifactBrowserArtifact = Decrypte
 /** Visible rows for the shared Tree. Filtering keeps the ancestors of matching leaves. */
 export function projectArtifactBrowserTree<T extends ArtifactBrowserArtifact>(artifacts: readonly T[], filter: ArtifactBrowserFilter,
     organization: ArtifactBrowserOrganization = {}): readonly ArtifactBrowserTreeNode<T>[] {
-    const rows = projectArtifactBrowserRows(artifacts, filter, organization);
+    const searching = filter.query.trim().length > 0;
+    // A kind-filtered tree still needs the complete classified rows to decide which folders
+    // are occupied. Classify and organize once, then derive the visible leaves from that
+    // baseline; rebuilding the projection for occupancy doubled the inventory work.
+    const allRows = !searching && filter.kind !== 'all'
+        ? projectArtifactBrowserRows(artifacts, { ...filter, kind: 'all' }, organization)
+        : projectArtifactBrowserRows(artifacts, filter, organization);
+    const rows = !searching && filter.kind !== 'all'
+        ? allRows.filter(row => artifactMatchesBrowserKind(filter.kind, row.kind, row.artifact))
+        : allRows;
     const folders = new Map((organization.folders?.folders ?? []).map(folder => [folder.id, folder]));
     const parentById = new Map<string, string | null>();
     for (const folder of folders.values()) {
@@ -443,7 +459,6 @@ export function projectArtifactBrowserTree<T extends ArtifactBrowserArtifact>(ar
         // Retained malformed topology remains visible; display never repairs persisted data.
         parentById.set(folder.id, parent && (seen.has(parent) || !folders.has(parent)) ? null : folder.parentId ?? null);
     }
-    const searching = filter.query.trim().length > 0;
     const included = new Set<string>();
     const include = (folderId: string | null) => {
         let id = folderId;
@@ -454,7 +469,7 @@ export function projectArtifactBrowserTree<T extends ArtifactBrowserArtifact>(ar
         // A kind narrows what is listed, not where it can be filed: a folder holding nothing stays a place to file into
         // (a folder just made under a kind would otherwise vanish); one holding only other kinds is left out.
         const occupied = new Set<string>();
-        for (const row of projectArtifactBrowserRows(artifacts, { ...filter, kind: 'all' }, organization)) {
+        for (const row of allRows) {
             let id = row.folderId;
             while (id && folders.has(id) && !occupied.has(id)) { occupied.add(id); id = parentById.get(id) ?? null; }
         }

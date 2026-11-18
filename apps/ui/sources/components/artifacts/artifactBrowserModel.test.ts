@@ -112,6 +112,23 @@ describe('artifactBrowserModel', () => {
         expect(collapsed.map(node => node.key)).toEqual(['folder:empty', 'folder:root', 'artifact:orphan']);
     });
 
+    it('classifies each artifact once when building a filtered tree', () => {
+        let headerReads = 0;
+        const artifacts = Array.from({ length: 100 }, (_, index) => {
+            const value = artifact(`artifact-${index}`, { kind: 'prompt_doc.v2', title: `Prompt ${index}` });
+            const header = value.header;
+            Object.defineProperty(value, 'header', { configurable: true, enumerable: true, get: () => {
+                headerReads += 1;
+                return header;
+            } });
+            return value;
+        });
+        projectArtifactBrowserTree(artifacts, { query: '', kind: 'prompt', sort: 'title_asc' }, {
+            folders: { v: 1, folders: [{ id: 'empty', name: 'Empty', parentId: null }] },
+        });
+        expect(headerReads).toBeLessThan(500);
+    });
+
     it('keeps malformed retained folder topology visible without inventing a persistence repair', () => {
         const folders = { v: 1 as const, folders: [{ id: 'orphan', name: 'Orphan', parentId: 'missing' },
             { id: 'a', name: 'A', parentId: 'b' }, { id: 'b', name: 'B', parentId: 'a' }] };
