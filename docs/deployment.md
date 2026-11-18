@@ -66,7 +66,7 @@ The catalog is a snapshot held by the caller for the suggestion round.
 
 The dialog uses a read-only `task` run on the first eligible Machine whose Agent
 can run the `deploy_suggestion` task. Its input contains the person's description,
-the catalog snapshot, and variable names with secret flags, never secret values.
+the catalog snapshot, and, when variable metadata is supplied, names with secret flags rather than secret values.
 The run can return typed questions in the existing transient question shape. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
