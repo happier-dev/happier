@@ -61,11 +61,12 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it.each([
     { scenario: 'READY', title: 'settles the retained Vercel receipt from READY' },
     { scenario: 'ERROR', title: 'settles the retained Vercel receipt from ERROR' },
+    { scenario: 'concurrent observer', title: 'returns the settled Vercel receipt when another observer activates it during the provider read' },
     { scenario: 'exact SHA', title: 'prepares an exact-SHA Vercel deploy without Compose' },
     { scenario: 'Session GitHub HEAD', title: 'prepares Vercel from native GitHub HEAD through its retained Session MCP' },
 ] as const)('$title through its real runtime', async ({ scenario }) => {
     const sessionHead = scenario === 'Session GitHub HEAD';
-    const readyState = scenario === 'exact SHA' || sessionHead ? 'READY' : scenario;
+    const readyState = scenario === 'exact SHA' || sessionHead || scenario === 'concurrent observer' ? 'READY' : scenario;
     const accountId = 'owner', origin = 'https://platform-home.test', serverId = 'srv_vercel_receipt_home';
     const providerAccountId = 'team_reviewed', projectId = 'prj_reviewed', sha = 'f'.repeat(40);
     const app = fastify();
@@ -136,6 +137,7 @@ it.each([
         projectTargetAccounts: async () => [], assertTargetAccountMaterializable: async () => undefined,
     });
     const providerRequests: { method: string; path: string; body: unknown }[] = [];
+    let settleConcurrentObservation: (() => void) | undefined;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
         const parsed = new URL(String(url));
         if (parsed.origin === origin) {
@@ -152,6 +154,7 @@ it.each([
         expect(parsed.origin).toBe('https://api.vercel.com');
         expect(new Headers(init?.headers).get('authorization') === 'Bearer preview-fixture-secret').toBe(true);
         providerRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname, body: null });
+        settleConcurrentObservation?.();
         return Response.json({ id: 'dpl_reviewed', projectId, readyState,
             ...(readyState === 'ERROR' ? { errorCode: 'NOW_SANDBOX_WORKER_ROOTDIR_NOT_EXIST',
                 errorMessage: 'provider-private-output-must-not-escape' } : {}) });
@@ -175,6 +178,12 @@ it.each([
     app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async request => {
         const body = DeploymentTransitionInputV1Schema.parse(request.body);
         transitions.push(body);
+        // Home already accepts an identical settled state before checking the
+        // old receipt/TargetLink revisions (transitionDeploymentInTx).
+        if (receipt.state === body.state && receipt.state === 'succeeded') return {
+            ok: true, environmentId: receipt.environmentId, revision: 1,
+            deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state,
+        };
         const stored = authored.artifacts.read(body.contentArtifactId);
         if (!stored || !body.contentUpdate) throw new Error('Expected the admitted receipt update');
         authored.artifacts.seed(body.contentArtifactId, body.contentUpdate.header ?? stored.header, body.contentUpdate.body ?? stored.body);
@@ -281,6 +290,16 @@ it.each([
         seed(receipt.contentArtifactId, 'deployment-receipt.v1', { ...candidate.content,
             platform: { ...candidate.content.platform, observation: { v: 1, state: 'running',
                 providerDeploymentId: 'dpl_reviewed', observedAtMs: 1 } } });
+        if (scenario === 'concurrent observer') settleConcurrentObservation = () => {
+            // The provider response overlaps the Home boundary's other observer,
+            // which has committed this receipt and advanced its serving Link.
+            receipt = { ...receipt, state: 'succeeded', revision: 3, settledAtMs: 2 };
+            row.targetLink = { ...row.targetLink, revision: row.targetLink.revision + 1,
+                activeDeploymentId: receipt.id, state: 'deployed' };
+            seed(receipt.contentArtifactId, 'deployment-receipt.v1', { ...candidate.content,
+                platform: { ...candidate.content.platform, observation: { v: 1, state: 'succeeded',
+                    providerDeploymentId: 'dpl_reviewed', observedAtMs: 2 } } });
+        };
         const input = { serverId, environmentId: environment.environment.id, deploymentId: receipt.id };
         const observed = await executor.execute('deployments.receipts.observe', input, context);
         const state = readyState === 'READY' ? 'succeeded' : 'failed';
@@ -288,6 +307,9 @@ it.each([
             state, deploymentId: receipt.id, deploymentRevision: 3 } });
         expect(receipt).toMatchObject({ state, revision: 3 });
         expect(transitions).toHaveLength(1);
+        if (scenario === 'concurrent observer') {
+            expect(transitions[0]).toMatchObject({ expectedTargetLinkRevision: candidate.content.platform.targetLinkRevision });
+        }
         expect(providerRequests).toEqual([{ method: 'GET', path: '/v13/deployments/dpl_reviewed', body: null }]);
         const stored = authored.artifacts.read(receipt.contentArtifactId);
         if (!stored) throw new Error('Expected retained receipt Artifact');

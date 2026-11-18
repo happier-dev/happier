@@ -662,8 +662,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const link = environment?.targetLinks.find(item => item.id === receipt.targetLinkId);
                 if (environment && !link) return failure('target_mismatch');
                 const uniformProof = link?.source.kind === 'plugin' && request.content?.platform
-                    && request.content.platform.targetLinkRevision === link.revision
-                    ? { expectedTargetLinkRevision: link.revision }
+                    ? { expectedTargetLinkRevision: request.content.platform.targetLinkRevision }
                     : link?.source.kind === 'host' ? readDeploymentUniformTargetLinkRevisionV1({ deploymentId: receipt.id,
                         actionOperationId: receipt.actionOperationId,
                         targetLink: link, content: DeploymentOwnServerContentV1Schema.parse(request.content) }) : undefined;
