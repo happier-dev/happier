@@ -1,3 +1,4 @@
+import { readPetAtlasImageHeaderV1 } from '@happier-dev/protocol/pets/atlasImageHeader';
 import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
 import { getPetAtlasForDimensionsV1 } from '@happier-dev/protocol/pets/constants';
 import type { PetAtlasInspectorV1 } from '@happier-dev/protocol/pets/accountPetCreateValidation';
@@ -35,111 +36,6 @@ function isAborted(signal?: AbortSignal): boolean {
 
 function abortedIssue(): PetPackageValidationIssueV1 {
   return issue('internal_error', 'Pet atlas validation was aborted.');
-}
-
-function isPng(bytes: Buffer): boolean {
-  return bytes.length >= 24
-    && bytes[0] === 0x89
-    && bytes[1] === 0x50
-    && bytes[2] === 0x4e
-    && bytes[3] === 0x47
-    && bytes[4] === 0x0d
-    && bytes[5] === 0x0a
-    && bytes[6] === 0x1a
-    && bytes[7] === 0x0a;
-}
-
-function readPngInfo(bytes: Buffer): PetImageInfo | null {
-  if (!isPng(bytes)) return null;
-  let offset = 8;
-  let width = 0;
-  let height = 0;
-  let colorType: number | null = null;
-  let hasTransparencyChunk = false;
-  let hasImageData = false;
-  let hasEnd = false;
-
-  while (offset + 12 <= bytes.length) {
-    const chunkLength = bytes.readUInt32BE(offset);
-    const chunkType = bytes.toString('ascii', offset + 4, offset + 8);
-    const dataOffset = offset + 8;
-    const nextOffset = dataOffset + chunkLength + 4;
-    if (nextOffset > bytes.length) return null;
-
-    if (chunkType === 'IHDR') {
-      if (offset !== 8 || chunkLength !== 13) return null;
-      width = bytes.readUInt32BE(dataOffset);
-      height = bytes.readUInt32BE(dataOffset + 4);
-      colorType = bytes[dataOffset + 9] ?? null;
-      if (colorType === null || ![0, 2, 3, 4, 6].includes(colorType)) return null;
-    } else if (chunkType === 'tRNS') {
-      hasTransparencyChunk = true;
-    } else if (chunkType === 'IDAT') {
-      hasImageData = true;
-    } else if (chunkType === 'IEND') {
-      if (chunkLength !== 0) return null;
-      hasEnd = true;
-      break;
-    }
-
-    offset = nextOffset;
-  }
-
-  if (!hasEnd || !hasImageData || colorType === null) return null;
-  const hasAlpha = colorType === 4 || colorType === 6 || hasTransparencyChunk;
-  return {
-    mediaType: 'image/png',
-    width,
-    height,
-    hasOpaqueBackground: !hasAlpha,
-  };
-}
-
-function readWebpChunkInfo(bytes: Buffer, chunkOffset: number): PetImageInfo | null {
-  const chunkType = bytes.toString('ascii', chunkOffset, chunkOffset + 4);
-  const dataOffset = chunkOffset + 8;
-  if (chunkType === 'VP8X' && bytes.length >= dataOffset + 10) {
-    const width = 1 + bytes.readUIntLE(dataOffset + 4, 3);
-    const height = 1 + bytes.readUIntLE(dataOffset + 7, 3);
-    return { mediaType: 'image/webp', width, height };
-  }
-  if (chunkType === 'VP8 ' && bytes.length >= dataOffset + 10) {
-    const startCodeOffset = dataOffset + 3;
-    if (bytes[startCodeOffset] !== 0x9d || bytes[startCodeOffset + 1] !== 0x01 || bytes[startCodeOffset + 2] !== 0x2a) {
-      return null;
-    }
-    const width = bytes.readUInt16LE(dataOffset + 6) & 0x3fff;
-    const height = bytes.readUInt16LE(dataOffset + 8) & 0x3fff;
-    return { mediaType: 'image/webp', width, height, hasOpaqueBackground: true };
-  }
-  if (chunkType === 'VP8L' && bytes.length >= dataOffset + 5 && bytes[dataOffset] === 0x2f) {
-    const b0 = bytes[dataOffset + 1]!;
-    const b1 = bytes[dataOffset + 2]!;
-    const b2 = bytes[dataOffset + 3]!;
-    const b3 = bytes[dataOffset + 4]!;
-    const width = 1 + (((b1 & 0x3f) << 8) | b0);
-    const height = 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6));
-    return { mediaType: 'image/webp', width, height };
-  }
-  return null;
-}
-
-function readWebpInfo(bytes: Buffer): PetImageInfo | null {
-  if (bytes.length < 20 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WEBP') {
-    return null;
-  }
-
-  const riffEnd = bytes.readUInt32LE(4) + 8;
-  if (riffEnd > bytes.length) return null;
-  let offset = 12;
-  while (offset + 8 <= riffEnd) {
-    const chunkSize = bytes.readUInt32LE(offset + 4);
-    if (offset + 8 + chunkSize > riffEnd) return null;
-    const info = readWebpChunkInfo(bytes, offset);
-    if (info) return info;
-    offset += 8 + chunkSize + (chunkSize % 2);
-  }
-  return null;
 }
 
 async function inspectImageContentWithSharp(input: Readonly<{
@@ -203,8 +99,10 @@ export async function defaultPetImageInfoDecoder(input: Readonly<{
   signal?: AbortSignal;
 }>): Promise<PetImageInfo | null> {
   if (isAborted(input.signal)) return null;
-  const headerInfo = readPngInfo(input.bytes) ?? readWebpInfo(input.bytes);
-  if (!headerInfo || input.strict !== true) return headerInfo;
+  const headerInfo = readPetAtlasImageHeaderV1(input.bytes);
+  if (!headerInfo || input.strict !== true || !getPetAtlasForDimensionsV1(headerInfo.width, headerInfo.height)) {
+    return headerInfo;
+  }
   if (isAborted(input.signal)) return null;
   return await inspectImageContentWithSharp({
     bytes: input.bytes,

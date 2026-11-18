@@ -33,13 +33,10 @@ import {
   type PetAssetMediaTypeV1,
 } from './accountLibrary.js';
 import { PetCellBoundsV1Schema } from './atlasPixelInspection.js';
-import {
-  isAccountPetSpritesheetMediaTypeV1,
-  type AccountPetCreateValidationResultV1,
-} from './accountPetCreateValidation.js';
+import type { AccountPetCreateValidationResultV1 } from './accountPetCreateValidation.js';
+import { isAccountPetSpritesheetMediaTypeV1 } from './atlasImageHeader.js';
 import { PET_PACKAGE_LIMITS_V1 } from './constants.js';
 import { PetPackageManifestV1Schema } from './manifest.js';
-import { computeAccountPetPackageDigestV1 } from './portablePetV1.js';
 
 export const ACCOUNT_PET_METADATA_BLOB_KIND_V1 =
   'account_pet_metadata' as const;
@@ -78,21 +75,23 @@ function sealedSpritesheetPlaintextBytes(spritesheetBytes: number): number {
   return 2 + 4 * Math.ceil(spritesheetBytes / 3);
 }
 
-/**
- * Ciphertext bounds derived from the canonical package limits; the Home enforces
- * these on E2EE writes instead of decoding content it cannot read.
- */
-export const ACCOUNT_PET_ENCRYPTED_LIMITS_V1 = Object.freeze({
-  maxSealedMetadataBytes: PET_PACKAGE_LIMITS_V1.maxManifestBytes,
-  maxContentCiphertextChars: getAccountScopedBlobCiphertextBase64LengthV1(
-    PET_PACKAGE_LIMITS_V1.maxManifestBytes,
-  ),
-  maxSpritesheetCiphertextBytes:
-    SECRETBOX_FRAME_BYTES +
-    sealedSpritesheetPlaintextBytes(
-      PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes,
-    ),
-});
+type AccountPetEncryptionLimitsV1 = Readonly<{
+  maxManifestBytes?: number;
+  maxSpritesheetBytes?: number;
+}>;
+
+/** The Home derives ciphertext bounds from the same package limits as Plain admission. */
+export function deriveAccountPetEncryptedLimitsV1(limits: AccountPetEncryptionLimitsV1) {
+  const maxSealedMetadataBytes = limits.maxManifestBytes ?? PET_PACKAGE_LIMITS_V1.maxManifestBytes;
+  const maxSpritesheetBytes = limits.maxSpritesheetBytes ?? PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes;
+  return {
+    maxSealedMetadataBytes,
+    maxContentCiphertextChars: getAccountScopedBlobCiphertextBase64LengthV1(maxSealedMetadataBytes),
+    maxSpritesheetCiphertextBytes: SECRETBOX_FRAME_BYTES + sealedSpritesheetPlaintextBytes(maxSpritesheetBytes),
+  };
+}
+
+export const ACCOUNT_PET_ENCRYPTED_LIMITS_V1 = Object.freeze(deriveAccountPetEncryptedLimitsV1({}));
 
 export type AccountPetSealResultV1 =
   | Readonly<{ ok: true; request: AccountPetEncryptedCreateRequestV1 }>
@@ -120,10 +119,7 @@ export function sealAccountPetPackageV1(
       digest: request.spritesheet.digest,
       sizeBytes: request.spritesheet.sizeBytes,
     },
-    digest: computeAccountPetPackageDigestV1(
-      request.manifest,
-      spritesheetBytes,
-    ),
+    digest: input.validated.packageDigest,
     ...(input.validated.opaqueBounds
       ? { opaqueBounds: input.validated.opaqueBounds }
       : {}),
@@ -181,13 +177,15 @@ export type AccountPetEncryptedCreateAdmissionV1 = Readonly<{
  */
 export function admitAccountPetEncryptedCreateRequestV1(
   raw: unknown,
+  limits: AccountPetEncryptionLimitsV1 = {},
 ): AccountPetEncryptedCreateAdmissionV1 | null {
   const parsed = AccountPetEncryptedCreateRequestV1Schema.safeParse(raw);
   if (!parsed.success) return null;
   const { content, spritesheet } = parsed.data;
+  const bounds = deriveAccountPetEncryptedLimitsV1(limits);
   if (
     content.c.length >
-      ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxContentCiphertextChars ||
+      bounds.maxContentCiphertextChars ||
     readAccountScopedCiphertextKindByte(content.c, 'canonical') !==
       getAccountScopedBlobKindByte(ACCOUNT_PET_METADATA_BLOB_KIND_V1)
   ) {
@@ -195,7 +193,7 @@ export function admitAccountPetEncryptedCreateRequestV1(
   }
   if (
     spritesheet.sizeBytes >
-      ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxSpritesheetCiphertextBytes ||
+      bounds.maxSpritesheetCiphertextBytes ||
     readCanonicalPaddedBase64DecodedLength(spritesheet.data) !==
       spritesheet.sizeBytes ||
     readAccountScopedCiphertextKindByte(spritesheet.data, 'canonical') !==

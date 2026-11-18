@@ -11,6 +11,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { validateAccountPetCreateRequestV1 } from "@happier-dev/protocol/pets/accountPetCreateValidation";
 import { openAccountPetSpritesheetV1, openAccountPetStoredEntryForModeV1, sealAccountPetPackageV1 } from "@happier-dev/protocol/pets/accountPetEncryptionV1";
+import { PET_ATLAS_V1, PET_ATLAS_V2 } from "@happier-dev/protocol/pets/constants";
 
 import {
     createPrismaAccountPetLibraryPersistence,
@@ -19,14 +20,9 @@ import {
     type PersistedAccountPet,
 } from "./accountPetLibraryPersistence";
 import { createAccountPetLibraryServices } from "./accountPetLibraryService";
+import { webpAtlasHeader } from "./accountPetAtlas.testkit";
 
-const WEBP_BYTES = Uint8Array.from([
-    0x52, 0x49, 0x46, 0x46,
-    0x18, 0x00, 0x00, 0x00,
-    0x57, 0x45, 0x42, 0x50,
-    0x56, 0x50, 0x38, 0x20,
-    0x00,
-]);
+const WEBP_BYTES = webpAtlasHeader(PET_ATLAS_V1);
 
 function digest(bytes: Uint8Array): string {
     return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -677,6 +673,7 @@ describe("account pet library services", () => {
     });
 
     it("reuses a normalized package across service recreation before quota admission or another asset write", async () => {
+        const request = requestFor(webpAtlasHeader(PET_ATLAS_V2));
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         await createAccount("account-1");
@@ -697,13 +694,13 @@ describe("account pet library services", () => {
 
         const created = await firstServices.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request,
         });
         expect(created.ok).toBe(true);
         if (!created.ok) throw new Error("expected account pet creation to succeed");
 
         expect(created.pet.opaqueBounds).toEqual({ x: 15, y: 20, width: 130, height: 170 });
-        expect(created.pet.manifest).toEqual({ ...requestFor(WEBP_BYTES).manifest, spriteVersionNumber: 2 });
+        expect(created.pet.manifest).toEqual({ ...request.manifest, spriteVersionNumber: 2 });
         expect(created.pet.hasNeutralLookCell).toBe(false);
 
         const secondServices = createAccountPetLibraryServices({
@@ -717,11 +714,11 @@ describe("account pet library services", () => {
             }),
         });
 
-        await expect(secondServices.createAccountPetForAccount({ accountId: "account-1", request: requestFor(WEBP_BYTES) }))
+        await expect(secondServices.createAccountPetForAccount({ accountId: "account-1", request }))
             .resolves.toEqual({ ok: true, pet: created.pet, reused: true });
         expect(privateWrites).toHaveBeenCalledTimes(1);
         await createAccount("account-2");
-        const other = await secondServices.createAccountPetForAccount({ accountId: "account-2", request: requestFor(WEBP_BYTES) });
+        const other = await secondServices.createAccountPetForAccount({ accountId: "account-2", request });
         expect(other.ok).toBe(true);
         if (!other.ok) throw new Error("expected the other Account to create its own pet");
         expect(other.pet.accountPetId).not.toBe(created.pet.accountPetId);
@@ -831,6 +828,7 @@ describe("account pet library services", () => {
     });
 
     it("reuses a normalized package admitted concurrently before the per-account count quota", async () => {
+        const request = requestFor(webpAtlasHeader(PET_ATLAS_V2));
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         const privateFiles = createLocalPrivateFilesBackend({ rootDir });
@@ -852,12 +850,12 @@ describe("account pet library services", () => {
 
         const firstCreate = services.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request,
         });
         await pausedPersistence.waitForFirstPersistStart;
         const secondCreate = services.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request,
         });
         pausedPersistence.releaseFirstPersist();
 
@@ -1002,6 +1000,15 @@ describe("account pet library services", () => {
         if (!validated.ok) throw new Error(validated.reason);
         const sealed = sealAccountPetPackageV1({ validated, material, randomBytes: (length) => new Uint8Array(randomBytes(length)) });
         if (!sealed.ok) throw new Error(sealed.reason);
+
+        const limitedServices = createAccountPetLibraryServices({
+            privateFiles,
+            persistence: createPrismaAccountPetLibraryPersistence(),
+            maxSpritesheetBytes: WEBP_BYTES.byteLength - 3,
+        });
+        await expect(limitedServices.createAccountPetForAccount({
+            accountId: "account-e2ee", accountEncryptionMode: "e2ee", storagePolicy: "optional", request: sealed.request,
+        })).resolves.toMatchObject({ ok: false, errorCode: "invalid_request" });
 
         const created = await services.createAccountPetForAccount({
             accountId: "account-e2ee", accountEncryptionMode: "e2ee", storagePolicy: "optional", request: sealed.request,

@@ -140,7 +140,7 @@ describe("accountRoutes pets.sync routes", () => {
 
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
     });
 
     it("creates and lists account pet metadata through the real route stack", async () => {

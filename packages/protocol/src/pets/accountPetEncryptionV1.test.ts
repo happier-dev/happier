@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 
 import { inspectPetAtlasRgbaPixelsV1 } from './atlasPixelInspection.js';
-import { PET_ANIMATION_ROWS_V1, PET_ATLAS_V1 } from './constants.js';
+import { PET_ANIMATION_ROWS_V1, PET_ATLAS_V1, PET_ATLAS_V2 } from './constants.js';
 import { buildAccountPetCreateRequestV1 } from './importActionV1.js';
 import {
   computeAccountPetPackageDigestV1,
@@ -25,9 +25,20 @@ import {
 } from './accountLibrary.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 
-const PNG = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8,
-]);
+// The decoder boundary supplies pixels. These chunks supply the real PNG header.
+function pngWithDimensions(width: number, height: number): Uint8Array {
+  const png = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 0, 0, 0, 0, 0, 8, 6, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 73, 68, 65, 84, 0, 0, 0, 0,
+    0, 0, 0, 0, 73, 69, 78, 68, 0, 0, 0, 0,
+  ]);
+  const header = new DataView(png.buffer);
+  header.setUint32(16, width);
+  header.setUint32(20, height);
+  return png;
+}
+const PNG = pngWithDimensions(PET_ATLAS_V1.width, PET_ATLAS_V1.height);
 const material: AccountScopedCryptoMaterial = {
   type: 'dataKey',
   machineKey: new Uint8Array(32).fill(7),
@@ -54,7 +65,7 @@ const inspectValidAtlas: PetAtlasInspectorV1 = async () => {
   };
 };
 
-function packageRequest() {
+function packageRequest(spritesheetBytes = PNG) {
   return buildAccountPetCreateRequestV1({
     manifest: {
       id: 'tide',
@@ -63,7 +74,7 @@ function packageRequest() {
       spritesheetPath: 'spritesheet.png',
     },
     mediaType: 'image/png',
-    spritesheetBytes: PNG,
+    spritesheetBytes,
     origin: { kind: 'registry', sourceId: 'petdex', itemId: 'tide' },
   });
 }
@@ -102,6 +113,19 @@ function servedEntry(
 }
 
 describe('E2EE Account pet packages', () => {
+  it('admits v1 and v2 atlases and refuses oversized dimensions before raster decoding', async () => {
+    for (const { width, height } of [PET_ATLAS_V1, PET_ATLAS_V2]) {
+      await expect(validateAccountPetCreateRequestV1(packageRequest(pngWithDimensions(width, height)), {
+        inspectAtlas: async () => ({ width, height, hasAlpha: true }),
+      })).resolves.toMatchObject({ ok: true });
+    }
+    const inspectAtlas = vi.fn(inspectValidAtlas);
+    await expect(validateAccountPetCreateRequestV1(packageRequest(pngWithDimensions(16_384, 16_384)), {
+      inspectAtlas,
+    })).resolves.toMatchObject({ ok: false, reason: 'atlas_contract' });
+    expect(inspectAtlas).not.toHaveBeenCalled();
+  });
+
   it('seals only ciphertext toward the Home and reopens the owner entry and spritesheet', async () => {
     const request = await sealedRequest();
     expect(JSON.stringify(request)).not.toContain('Tide');

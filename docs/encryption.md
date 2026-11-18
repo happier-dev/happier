@@ -1151,22 +1151,24 @@ released plaintext create package; the Home validates it with
 `validateAccountPetCreateRequestV1` (`packages/protocol/src/pets/accountPetCreateValidation.ts`,
 decoded with sharp) and reuses an identical plaintext package digest.
 
-An E2EE Account's writing client runs the same protocol validator with its platform
-decoder (canvas on web, Skia on native, sharp in the daemon), then seals with
+An E2EE Account's writing client runs the same protocol validator, which checks
+atlas header dimensions before invoking the platform decoder (canvas on web,
+Skia on native, sharp in the daemon). The writing client seals with
 `sealAccountPetPackageV1` (`packages/protocol/src/pets/accountPetEncryptionV1.ts`).
 It uses two Account-scoped domains. `account_pet_metadata` (kind byte 53) holds the
 manifest, origin, spritesheet media type, plaintext digests, opaque bounds and the
 neutral look cell. `account_pet_spritesheet` (kind byte 54) holds the sheet's padded
 base64. The create body is `{ content: { t: 'encrypted', c }, spritesheet }`, where
 the spritesheet carries the sealed bytes, their size and their SHA-256. The Home
-admits only that structure, both kind bytes, the ciphertext bounds derived from
-`PET_PACKAGE_LIMITS_V1` (`ACCOUNT_PET_ENCRYPTED_LIMITS_V1`) and the existing count
-and byte quotas, measured on ciphertext. It stores `contentMode: 'encrypted'` on the
+admits that structure and both kind bytes, applies ciphertext bounds derived from
+the configured pet manifest and spritesheet limits, and measures count and byte
+quotas on ciphertext. Route admission uses the same configured limits. It stores `contentMode: 'encrypted'` on the
 package and asset rows, the envelope in the manifest column, an empty origin and an
 `application/octet-stream` asset. Server-visible fields are ids, ciphertext sizes
-and digests, version and timestamps. The Home does no digest reuse for E2EE;
-clients decide registry-origin and package-digest reuse against the opened library
-with `findMatchingAccountPetV1`.
+and digests, version and timestamps. The UI uses `findMatchingAccountPetV1` against
+the opened library for registry-origin reuse and for package-digest reuse when
+copying a bundled pet. A match returns the existing pet without spending quota
+or offering a delete Undo.
 
 `openAccountPetStoredEntryForModeV1` is the client read boundary: a Plain Account
 reads only plaintext entries and an E2EE Account only sealed ones. Opening the

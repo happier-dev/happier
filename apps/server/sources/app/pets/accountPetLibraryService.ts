@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { isAccountPetEncryptedLibraryEntryV1, type AccountPetCreateResponseV1, type AccountPetDeleteResponseV1, type AccountPetEncryptedLibraryEntryV1, type AccountPetLibraryEntryV1, type AccountPetListResponseV1, type AccountPetStoredLibraryEntryV1, type AccountPetSyncUnavailableResponseV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { admitAccountPetEncryptedCreateRequestV1, isAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
-import { computeAccountPetPackageDigestV1 } from '@happier-dev/protocol/pets/portablePetV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
 
@@ -331,7 +330,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
      * ciphertext structure and size, then quota; it has no plaintext digest to reuse.
      */
     async function createEncryptedAccountPet(accountId: string, request: unknown): Promise<AccountPetCreateResponseV1> {
-        const admitted = admitAccountPetEncryptedCreateRequestV1(request);
+        const admitted = admitAccountPetEncryptedCreateRequestV1(request, options);
         if (!admitted) return invalidCreateResponse();
         const petId = createId();
         const assetId = createId();
@@ -400,7 +399,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                 assetDigest: spritesheet.digest,
                 mediaType: spritesheet.mediaType,
             });
-            const packageDigest = computeAccountPetPackageDigestV1(validated.request.manifest, validated.spritesheetBytes);
+            const packageDigest = validated.packageDigest;
             const entry: AccountPetLibraryEntryV1 = {
                 accountPetId: petId,
                 packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,

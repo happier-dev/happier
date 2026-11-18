@@ -9,11 +9,12 @@ import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '@happier-dev/p
 import type { ServerFetch } from '@/sync/http/client';
 import { createUiPetActionExecute } from './petActionDeps';
 import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
-import { readPetImportOutcomeV1 } from '@happier-dev/protocol/pets/importActionV1';
+import { buildAccountPetCreateRequestV1, readPetImportOutcomeV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { admitAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { PET_ATLAS_WEBP_HEADER as WEBP } from '@/dev/testkit/fixtures/petAtlasHeaders';
 
 // Machine RPC is the external daemon transport; the Action and Account request path stay real.
 const boundary = vi.hoisted(() => ({ machineRpc: vi.fn() }));
@@ -34,7 +35,6 @@ const context = { surface: 'ui' as const, authority: 'present_user' as const };
 const unused = async (): Promise<never> => { throw new Error('Unexpected transport'); };
 
 const legacySecret = new Uint8Array(32).fill(21);
-const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x18, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
 
 /** The Home answers Account currentness for the credential's mode; other paths reach the test's request. */
 function account(request: ServerFetch, credentials: AuthCredentials = { token: 'token' }) {
@@ -211,7 +211,7 @@ describe('pet Actions through their import and Account boundaries', () => {
         expect(readPetImportOutcomeV1(result)).toEqual({ kind: 'added', pet: normalized, reused: true });
     });
 
-    it('validates and seals a registry pet for an E2EE Account, then reuses it by origin from the opened library', async () => {
+    it.each(['registry', 'package'] as const)('seals an E2EE %s import and reuses it on the second Copy without spending quota', async kind => {
         const credentials: AuthCredentials = { token: 'token', secret: encodeBase64(legacySecret, 'base64url') };
         const http: RegistryHttpV1 = { getText: unused,
             getJson: async () => ({ ok: true, fetchedAt: 1, value: { pet: {
@@ -228,24 +228,30 @@ describe('pet Actions through their import and Account boundaries', () => {
             posted.push(body);
             const admitted = admitAccountPetEncryptedCreateRequestV1(body);
             if (!admitted) return Response.json({ ok: false, errorCode: 'account_encryption_mode_mismatch', error: 'mismatch' }, { status: 400 });
-            const entry = { accountPetId: 'sealed-winter', packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, content: admitted.content,
+            const entry = { accountPetId: `sealed-winter-${stored.length + 1}`, packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, content: admitted.content,
                 spritesheetAssetRef: { assetId: 'asset', digest: admitted.spritesheetDigest, sizeBytes: admitted.spritesheetCiphertext.byteLength },
                 digest: 'sha256:ciphertext', sizeBytes: 1, createdAt: 1, updatedAt: 1 };
             stored.push(entry);
             return Response.json({ ok: true, pet: entry }, { status: 201 });
         };
         const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request, credentials), async () => registry) });
-        const input = { source: { kind: 'registry', sourceId: 'builtin:codex-pets', itemId: 'winter' } };
+        const input = { source: kind === 'registry'
+            ? { kind, sourceId: 'builtin:codex-pets', itemId: 'winter' }
+            : { kind, package: buildAccountPetCreateRequestV1({
+                manifest: pet.manifest, mediaType: 'image/webp', spritesheetBytes: WEBP, origin: { kind: 'manualImport' },
+            }) } };
 
-        const imported = await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context);
-        expect(readPetImportOutcomeV1(imported)).toMatchObject({ kind: 'added', pet: { accountPetId: 'sealed-winter',
-            manifest: { displayName: 'Winter' }, origin: { kind: 'registry', itemId: 'winter' } } });
+        const imported = readPetImportOutcomeV1(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context));
+        expect(imported).toMatchObject({ kind: 'added', pet: { accountPetId: 'sealed-winter-1',
+            manifest: { displayName: 'Winter' }, origin: kind === 'registry' ? { kind, itemId: 'winter' } : { kind: 'manualImport' } } });
         expect(JSON.stringify(posted)).not.toContain('Winter');
         expect(JSON.stringify(posted)).not.toContain('codex-pets');
 
-        expect(readPetImportOutcomeV1(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context)))
-            .toMatchObject({ kind: 'added', reused: true, pet: { accountPetId: 'sealed-winter' } });
+        const repeated = readPetImportOutcomeV1(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context));
+        if (imported.kind !== 'added') throw new Error('Expected the initial Copy to add a pet');
+        expect(repeated).toEqual({ kind: 'added', pet: imported.pet, reused: true });
         expect(posted).toHaveLength(1);
+        expect(stored).toHaveLength(1);
     });
 
     it('refuses an invalid package for an E2EE Account on this client with could_not_add details', async () => {

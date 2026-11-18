@@ -4,6 +4,7 @@ import type { AuthCredentials } from "@/auth/storage/tokenStorage";
 import { upsertAndActivateServer } from "@/sync/domains/server/serverRuntime";
 import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from "@/utils/system/runtimeFetch";
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from "@/dev/testkit/fixtures/accountEncryptionCurrentness";
+import { PET_ATLAS_PNG_HEADER } from "@/dev/testkit/fixtures/petAtlasHeaders";
 import { decodeBase64, encodeBase64 } from "@/encryption/base64";
 import type { ServerFetch } from "@/sync/http/client";
 import { validateAccountPetCreateRequestV1 } from "@happier-dev/protocol/pets/accountPetCreateValidation";
@@ -92,7 +93,7 @@ describe("apiAccountPets", () => {
     it("draws an E2EE pet's decrypted spritesheet bound to its opened entry, and fails closed otherwise", async () => {
         const secret = new Uint8Array(32).fill(31);
         const e2eeCredentials: AuthCredentials = { token: "token-1", secret: encodeBase64(secret, "base64url") };
-        const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9]);
+        const png = PET_ATLAS_PNG_HEADER;
         const validated = await validateAccountPetCreateRequestV1(buildAccountPetCreateRequestV1({
             manifest: { id: "tide", displayName: "Tide", description: "A pet.", spritesheetPath: "spritesheet.png" },
             mediaType: "image/png", spritesheetBytes: png, origin: { kind: "manualImport" },

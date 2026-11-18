@@ -6,6 +6,7 @@ import type { AuthCredentials } from "@/auth/storage/tokenStorage";
 import { encodeBase64 } from '@/encryption/base64';
 import type { AccountPetMetadata } from "./accountPetLibraryTypes";
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { PET_ATLAS_PNG_HEADER as PNG } from '@/dev/testkit/fixtures/petAtlasHeaders';
 
 const resolveRuntimeFeatureDecisionOrThrow = vi.hoisted(() => vi.fn());
 
@@ -16,7 +17,6 @@ vi.mock("@/sync/domains/features/featureDecisionInputs", () => ({
 const credentials: AuthCredentials = { token: "token-1" };
 const legacySecret = new Uint8Array(32).fill(11);
 const legacyCredentials: AuthCredentials = { token: "token-1", secret: encodeBase64(legacySecret, 'base64url') };
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
 function metadata(accountPetId: string): AccountPetMetadata {
     return {

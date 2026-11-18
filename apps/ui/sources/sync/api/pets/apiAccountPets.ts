@@ -4,7 +4,9 @@ import { AccountPetCreateResponseV1Schema, AccountPetDeleteResponseV1Schema, Acc
     PetAssetMediaTypeV1Schema, type AccountPetCreateRequestV1,
     type AccountPetLibraryEntryV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { validateAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetCreateValidation';
-import { openAccountPetSpritesheetV1, openAccountPetStoredEntryForModeV1, sealAccountPetPackageV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
+import { openAccountPetSpritesheetV1, openAccountPetStoredEntryForModeV1, sealAccountPetPackageV1,
+    type AccountPetEntryOpenModeV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
+import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { inspectPetAtlasImage } from '@/sync/domains/pets/inspectPetAtlasImage';
 import { resolveAccountPetReadAdmission } from '@/sync/domains/pets/resolveAccountPetReadAdmission';
@@ -32,10 +34,20 @@ export async function listAccountPets(
     const request = options.request ?? serverFetch;
     const admission = await resolveAccountPetReadAdmission(credentials, options.request ? { request: options.request } : {});
     if (admission.status === 'unavailable') return UNAVAILABLE;
+    return readOpenedAccountPets(credentials, admission.account, request);
+}
+
+async function readOpenedAccountPets(
+    credentials: AuthCredentials,
+    account: AccountPetEntryOpenModeV1,
+    request: ServerFetch,
+    signal?: AbortSignal,
+): Promise<OpenedAccountPetsListResponse> {
     const response = await request("/v1/account/pets", {
         headers: {
             Authorization: `Bearer ${credentials.token}`,
         },
+        signal,
     }, { includeAuth: false, retry: "none" });
 
     const raw = await response.json();
@@ -45,7 +57,7 @@ export async function listAccountPets(
     }
     if (!parsed.ok) return parsed;
     // A mode mismatch or an entry that fails to open settles missing, so faces keep their seeded fallback.
-    const pets = parsed.pets.flatMap(entry => openAccountPetStoredEntryForModeV1(entry, admission.account) ?? []);
+    const pets = parsed.pets.flatMap(entry => openAccountPetStoredEntryForModeV1(entry, account) ?? []);
     return { ok: true, pets };
 }
 
@@ -64,6 +76,14 @@ export async function createAccountPet(credentials: AuthCredentials, input: Acco
         const validated = await validateAccountPetCreateRequestV1(input, { inspectAtlas: inspectPetAtlasImage });
         options.signal?.throwIfAborted();
         if (!validated.ok) return { ok: false, errorCode: validated.errorCode, error: validated.error, details: { reason: validated.reason } };
+        // Registry imports already looked up the origin before acquiring package bytes.
+        if (validated.request.origin.kind !== 'registry') {
+            const library = await readOpenedAccountPets(credentials, admission.account, options.request, options.signal);
+            options.signal?.throwIfAborted();
+            if (!library.ok) return library;
+            const existing = findMatchingAccountPetV1(library.pets, { kind: 'digest', digest: validated.packageDigest });
+            if (existing) return { ok: true, pet: existing, reused: true };
+        }
         const sealed = sealAccountPetPackageV1({ validated, material: admission.account.material, randomBytes: getRandomBytes });
         if (!sealed.ok) return { ok: false, errorCode: sealed.errorCode, error: sealed.error, details: { reason: sealed.reason } };
         body = sealed.request;

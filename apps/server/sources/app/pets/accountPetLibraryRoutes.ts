@@ -2,7 +2,7 @@ import { z } from "zod/mini";
 
 import { AccountPetAssetReadResponseV1Schema, AccountPetCreateResponseV1Schema, AccountPetDeleteResponseV1Schema, AccountPetListResponseV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
 
-import { ACCOUNT_PET_ENCRYPTED_LIMITS_V1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
+import { deriveAccountPetEncryptedLimitsV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 
 import { readPetsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -27,8 +27,11 @@ function resolveAccountPetCreateBodyLimitBytes(): number {
         limits.maxCanonicalPackageBytes,
     );
     const plainBody = base64Length(maxBinaryPayloadBytes) + limits.maxManifestBytes;
-    const sealedBody = base64Length(ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxSpritesheetCiphertextBytes)
-        + ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxContentCiphertextChars;
+    const sealedLimits = deriveAccountPetEncryptedLimitsV1({
+        maxManifestBytes: limits.maxManifestBytes,
+        maxSpritesheetBytes: limits.maxCanonicalSpritesheetBytes,
+    });
+    const sealedBody = base64Length(sealedLimits.maxSpritesheetCiphertextBytes) + sealedLimits.maxContentCiphertextChars;
     return Math.max(plainBody, sealedBody) + ACCOUNT_PET_CREATE_JSON_OVERHEAD_BYTES;
 }
 

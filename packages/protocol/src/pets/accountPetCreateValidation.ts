@@ -10,12 +10,14 @@ import {
   type PetAssetMediaTypeV1,
 } from './accountLibrary.js';
 import type { PetCellBoundsV1 } from './atlasPixelInspection.js';
+import { isAccountPetSpritesheetMediaTypeV1, readPetAtlasImageHeaderV1 } from './atlasImageHeader.js';
 import {
   PET_ATLAS_V2,
   PET_PACKAGE_LIMITS_V1,
   getPetAtlasForDimensionsV1,
 } from './constants.js';
 import { PetPackageManifestV1Schema } from './manifest.js';
+import { computeAccountPetPackageDigestV1 } from './portablePetV1.js';
 
 /** Decoded-atlas facts a platform decoder reports through `inspectPetAtlasRgbaPixelsV1`. */
 export type PetAtlasInspectionV1 = Readonly<{
@@ -62,6 +64,7 @@ export type AccountPetCreateValidationResultV1 =
       ok: true;
       request: AccountPetCreateRequestV1;
       spritesheetBytes: Uint8Array;
+      packageDigest: string;
       opaqueBounds?: PetCellBoundsV1;
       hasNeutralLookCell?: boolean;
     }>
@@ -150,47 +153,8 @@ function readCanonicalBase64(
   return length === null || length === 0 ? null : { padded, length };
 }
 
-function hasExpectedMagicBytes(
-  bytes: Uint8Array,
-  mediaType: PetAssetMediaTypeV1,
-): boolean {
-  if (mediaType === 'image/webp') {
-    return (
-      bytes.byteLength >= 12 &&
-      bytes[0] === 0x52 &&
-      bytes[1] === 0x49 &&
-      bytes[2] === 0x46 &&
-      bytes[3] === 0x46 &&
-      bytes[8] === 0x57 &&
-      bytes[9] === 0x45 &&
-      bytes[10] === 0x42 &&
-      bytes[11] === 0x50
-    );
-  }
+function hasExpectedAtlasPixels(inspection: PetAtlasInspectionV1): boolean {
   return (
-    bytes.byteLength >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  );
-}
-
-/** The decoded bytes are a spritesheet of the declared media type. */
-export function isAccountPetSpritesheetMediaTypeV1(
-  bytes: Uint8Array,
-  mediaType: PetAssetMediaTypeV1,
-): boolean {
-  return hasExpectedMagicBytes(bytes, mediaType);
-}
-
-function hasExpectedAtlasContract(inspection: PetAtlasInspectionV1): boolean {
-  return (
-    getPetAtlasForDimensionsV1(inspection.width, inspection.height) !== null &&
     inspection.hasAlpha === true &&
     inspection.hasOpaqueBackground !== true &&
     inspection.hasTransparentBackground !== false &&
@@ -254,10 +218,15 @@ export async function validateAccountPetCreateRequestV1(
   const bytes = decodeBase64(encoded.padded);
   if (bytes.byteLength !== spritesheet.sizeBytes)
     return invalid('spritesheet_size_mismatch');
-  if (!hasExpectedMagicBytes(bytes, spritesheet.mediaType))
+  if (!isAccountPetSpritesheetMediaTypeV1(bytes, spritesheet.mediaType))
     return invalid('spritesheet_media_type');
   if (spritesheet.digest !== `sha256:${computeSha256HexDigest(bytes)}`)
     return invalid('spritesheet_digest');
+
+  const header = readPetAtlasImageHeaderV1(bytes);
+  if (!header) return invalid('atlas_decode');
+  const atlas = getPetAtlasForDimensionsV1(header.width, header.height);
+  if (!atlas) return invalid('atlas_contract');
 
   let opaqueBounds: PetCellBoundsV1 | undefined;
   let hasNeutralLookCell: boolean | undefined;
@@ -267,9 +236,9 @@ export async function validateAccountPetCreateRequestV1(
   } catch {
     return invalid('atlas_decode');
   }
-  if (!hasExpectedAtlasContract(inspection)) return invalid('atlas_contract');
+  if (inspection.width !== header.width || inspection.height !== header.height || !hasExpectedAtlasPixels(inspection))
+    return invalid('atlas_contract');
   opaqueBounds = inspection.opaqueBounds ?? undefined;
-  const atlas = getPetAtlasForDimensionsV1(inspection.width, inspection.height);
   if (atlas === PET_ATLAS_V2) {
     parsed.data.manifest.spriteVersionNumber = 2;
     hasNeutralLookCell = inspection.hasNeutralLookCell === true;
@@ -281,6 +250,7 @@ export async function validateAccountPetCreateRequestV1(
     ok: true,
     request: parsed.data,
     spritesheetBytes: bytes,
+    packageDigest: computeAccountPetPackageDigestV1(parsed.data.manifest, bytes),
     ...(opaqueBounds ? { opaqueBounds } : {}),
     ...(hasNeutralLookCell !== undefined ? { hasNeutralLookCell } : {}),
   };

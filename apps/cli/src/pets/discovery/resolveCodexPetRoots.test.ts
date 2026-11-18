@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { CODEX_NATIVE_HOME } from '@happier-dev/protocol/agents/codex/native-home-policy';
 
 const createdRoots = new Set<string>();
 
@@ -31,12 +32,12 @@ async function loadRootsModule() {
 describe('resolveCodexPetRoots', () => {
   it('resolves the Protocol-owned native home without requiring an Agent runtime contribution', async () => {
     const root = tempRoot();
-    const userCodexHome = join(root, 'custom-codex');
+    const userCodexHome = join(root, CODEX_NATIVE_HOME.defaultRelativePath);
     await mkdir(join(userCodexHome, 'pets'), { recursive: true });
 
     const mod = await loadRootsModule();
     const roots = await mod.resolveCodexPetRoots({
-      env: { CODEX_HOME: '~/custom-codex', HOME: root },
+      env: { HOME: root },
       includeUserCodexHome: true,
       includeConnectedServiceCodexHomes: false,
     });

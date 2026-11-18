@@ -2,20 +2,16 @@ import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 
 import { describe, expect, it, vi } from "vitest";
+import { PET_ATLAS_V1, PET_ATLAS_V2 } from "@happier-dev/protocol/pets/constants";
 
+import { webpAtlasHeader } from "./accountPetAtlas.testkit";
 import { validateAccountPetCreateRequest } from "./accountPetLibraryValidation";
 
 function digest(bytes: Uint8Array): string {
     return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-const WEBP_BYTES = Uint8Array.from([
-    0x52, 0x49, 0x46, 0x46,
-    0x18, 0x00, 0x00, 0x00,
-    0x57, 0x45, 0x42, 0x50,
-    0x56, 0x50, 0x38, 0x20,
-    0x00,
-]);
+const WEBP_BYTES = webpAtlasHeader(PET_ATLAS_V1);
 
 function crc32(bytes: Buffer): number {
     let c = 0xffffffff;
@@ -86,8 +82,8 @@ function requestFor(bytes: Uint8Array, overrides: Record<string, unknown> = {}) 
     };
 }
 
-function requestWithManifest(overrides: Record<string, unknown>) {
-    const request = requestFor(WEBP_BYTES);
+function requestWithManifest(overrides: Record<string, unknown>, bytes = WEBP_BYTES) {
+    const request = requestFor(bytes);
     return {
         ...request,
         manifest: {
@@ -107,10 +103,11 @@ describe("validateAccountPetCreateRequest", () => {
         expect(await validateAccountPetCreateRequest({ ...request, origin: { ...origin, author: "not persisted" } }, { inspectAtlas }))
             .toMatchObject({ ok: false, errorCode: "invalid_request" });
     });
-    it.each([[1, 2288, 2], [2, 1872, 1]] as const)("derives the version from decoded dimensions (%i, %i → %i)", async (label, height, version) => {
-        const request = requestWithManifest({ spriteVersionNumber: label });
+    it.each([[1, PET_ATLAS_V2.height, 2], [2, PET_ATLAS_V1.height, 1]] as const)("derives the version from decoded dimensions (%i, %i → %i)", async (label, height, version) => {
+        const { width } = PET_ATLAS_V1;
+        const request = requestWithManifest({ spriteVersionNumber: label }, webpAtlasHeader({ width, height }));
         const result = await validateAccountPetCreateRequest(request, {
-            inspectAtlas: async () => ({ width: 1536, height, hasAlpha: true, hasNeutralLookCell: false }),
+            inspectAtlas: async () => ({ width, height, hasAlpha: true, hasNeutralLookCell: false }),
         });
         expect(result).toMatchObject({ ok: true, request: { manifest: { spriteVersionNumber: version } }, ...(version === 2 ? { hasNeutralLookCell: false } : {}) });
     });
