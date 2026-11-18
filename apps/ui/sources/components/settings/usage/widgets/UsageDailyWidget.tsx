@@ -14,7 +14,7 @@ import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
 import { usageOtherColor, usageSignatureAccent } from '../usageAccent';
-import { formatUsageCalendarDate, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
+import { formatUsageCalendarDate, formatUsageWeeklyBucketLabel, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
 import { useUsageChartDetails } from './usageMountedControls';
@@ -87,8 +87,8 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, coverage, props.slice.accounting, props.slice.accountingObservationRange),
     [props.query, coverage, props.slice.accounting, props.slice.accountingObservationRange]);
   const bucketLabel = React.useCallback(
-    (startMs: number) =>
-      formatUsageCalendarDate(
+    (startMs: number) => range?.granularity === 'week' ? formatUsageWeeklyBucketLabel(startMs, range)
+      : formatUsageCalendarDate(
         startMs,
         props.query.timeZoneOffsetMinutes,
         props.query.granularity === 'hour'
@@ -97,13 +97,13 @@ export function UsageDailyWidget(props: UsageBodyProps) {
             ? { month: 'short', year: '2-digit' }
             : { month: 'short', day: 'numeric' },
       ),
-    [props.query.granularity, props.query.timeZoneOffsetMinutes],
+    [range, props.query.granularity, props.query.timeZoneOffsetMinutes],
   );
   const sourceSeries = React.useMemo(() => usageSourceTimelineSeries({
     timeline: metric === 'cost' ? view?.pageCost.accounting.engineTimeline : props.slice.accounting?.engineTimeline,
     range, coverage, metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: agentIdFromEngineKey, label: usageAgentTitle,
-    color: (_index, key) => getAgentIdentityColor(theme, key), bucketLabel,
+    color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : getAgentIdentityColor(theme, key), bucketLabel,
   }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, bucketLabel]);
   const byAgent = sourceSeries.length > 0 || (metric === 'tokens' && view?.agentMix.hasData === true);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);

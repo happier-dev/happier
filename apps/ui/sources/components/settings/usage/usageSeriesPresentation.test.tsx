@@ -55,6 +55,27 @@ describe('the all-series lens', () => {
 });
 
 describe('usage projection into the shared series renderer', () => {
+    it.each(['tokens', 'cost'] as const)('keeps the five leading %s series and conserves everything else in Other', (metric) => {
+        const leader = (key: string, value: number) => {
+            const tokens = { input: value, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: value };
+            const cost = { reportedUsd: value, estimatedUsd: null, currency: 'USD', costSource: 'provider_reported' as const };
+            return { key, eventCount: 1, tokens, cost, sources: [{ source: 'runtime', path: 'runtime' as const,
+                execution: 'happier' as const, eventCount: 1, tokens, cost }] };
+        };
+        const series = usageSourceTimelineSeries({
+            timeline: [
+                { bucketStartMs: 0, bucketEndMs: 10, leaders: [leader('a', 1), leader('b', 2), leader('c', 3), leader('d', 4), leader('e', 5), leader('f', 6)] },
+                { bucketStartMs: 10, bucketEndMs: 20, leaders: [leader('a', 10), leader('g', 11)] },
+                { bucketStartMs: 20, bucketEndMs: 30, leaders: [leader('f', 1)] },
+            ],
+            range: null, metric, costMode: 'reported',
+            dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String,
+        });
+        expect(series.map(entry => entry.id)).toEqual(['a', 'g', 'f', 'e', 'd', '__other__']);
+        expect(series.at(-1)?.points.map(point => point.y)).toEqual([5, null, null]);
+        expect(series.at(-1)?.sourceDetails?.['0']?.map(part => part.value).sort()).toEqual([2, 3]);
+        expect([0, 1, 2].map(index => series.reduce((sum, entry) => sum + (entry.points[index]?.y ?? 0), 0))).toEqual([21, 21, 1]);
+    });
     it('retains known source measurements beside unknown source partitions', () => {
         const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
         const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };

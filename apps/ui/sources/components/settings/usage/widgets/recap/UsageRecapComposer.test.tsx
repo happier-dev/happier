@@ -145,8 +145,8 @@ describe('recap composer through authorized query and composition', () => {
     await act(async () => {
       screen.findAllByType(SegmentedTabBar).find(node => node.props.testIDPrefix === 'usage-recap-period')!.props.onSelectTab('all');
     });
-    await vi.waitFor(() => expect(reads.some(query => query.granularity === 'month')).toBe(true));
-    const request = reads.find(query => query.granularity === 'month')!;
+    await vi.waitFor(() => expect(reads.some(query => query.granularity === 'week')).toBe(true));
+    const request = reads.find(query => query.granularity === 'week')!;
     expect(request.dateRange?.endMs).toEqual(expect.any(Number));
     expect(request.dateRange).not.toHaveProperty('startMs');
     await vi.waitFor(() => expect({

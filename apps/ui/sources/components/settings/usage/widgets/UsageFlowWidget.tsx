@@ -74,7 +74,8 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: byModel ? key => key : agentIdFromEngineKey,
     label: byModel ? (key, fallback) => usageDimensionLabel('model', key, fallback) : usageAgentTitle,
-    color: (index, key) => byModel ? usageSeriesColor(theme, index) : getAgentIdentityColor(theme, key),
+    color: (index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme)
+      : byModel ? usageSeriesColor(theme, index) : getAgentIdentityColor(theme, key),
     bucketLabel: startMs => formatUsageCalendarDate(startMs, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
   }), [byModel, accounting, range, props.slice.accounting?.coverage, view?.pageCost.selection, props.query, theme]);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);

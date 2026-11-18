@@ -1429,6 +1429,15 @@ export interface UsageModelMix {
 
 const USAGE_MODEL_MIX_DEFAULT_MAX_SERIES = 5;
 
+export function rankUsageTimelineSeries<T extends { key: string; total: number | null }>(
+    series: readonly T[], maxSeries = USAGE_MODEL_MIX_DEFAULT_MAX_SERIES,
+): { leaders: T[]; other: T[] } {
+    const ranked = [...series].sort((left, right) =>
+        compareUsageMeasurementsDescending(left.total, right.total) || left.key.localeCompare(right.key));
+    const cap = Math.max(1, maxSeries);
+    return { leaders: ranked.slice(0, cap), other: ranked.slice(cap) };
+}
+
 export function buildUsageModelMix(
     timeline: readonly UsageAnalyticsTimelineBucket[],
     maxSeries: number = USAGE_MODEL_MIX_DEFAULT_MAX_SERIES,
@@ -1445,26 +1454,21 @@ export function buildUsageModelMix(
             }
         }
     }
-    const ranked = [...totalsByKey.entries()]
-        .map(([key, value]) => ({ key, label: value.label, totalTokens: value.tokens }))
-        .sort((left, right) => compareUsageMeasurementsDescending(left.totalTokens, right.totalTokens) || left.key.localeCompare(right.key));
-
-    const grandTotal = ranked.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.totalTokens), null);
-    const cap = Math.max(1, maxSeries);
-    const topEntries = ranked.slice(0, cap);
-    const tailEntries = ranked.slice(cap);
+    const entries = [...totalsByKey.entries()].map(([key, value]) => ({ key, label: value.label, total: value.tokens }));
+    const { leaders: topEntries, other: tailEntries } = rankUsageTimelineSeries(entries, maxSeries);
+    const grandTotal = entries.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.total), null);
     const topKeys = new Set(topEntries.map((entry) => entry.key));
 
     const keys: UsageModelMixSeriesKey[] = topEntries.map((entry) => ({
         key: entry.key,
         label: entry.label,
-        totalTokens: entry.totalTokens,
+        totalTokens: entry.total,
     }));
     if (tailEntries.length > 0) {
         keys.push({
             key: USAGE_MODEL_MIX_OTHER_KEY,
             label: '',
-            totalTokens: tailEntries.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.totalTokens), null),
+            totalTokens: tailEntries.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.total), null),
         });
     }
 

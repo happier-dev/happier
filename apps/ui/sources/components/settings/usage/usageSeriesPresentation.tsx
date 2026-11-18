@@ -9,7 +9,7 @@ import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/pr
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { ChartTooltip } from '@/components/ui/charts';
-import { resolveUsageMeasuredTokens, type UsageHourRhythm, type UsageModelMix } from '@/sync/api/account/usageAnalytics';
+import { rankUsageTimelineSeries, resolveUsageMeasuredTokens, USAGE_MODEL_MIX_OTHER_KEY, type UsageHourRhythm, type UsageModelMix } from '@/sync/api/account/usageAnalytics';
 import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { t } from '@/text';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -162,10 +162,11 @@ export function usageSourceTimelineSeries(input: Readonly<{
     bucketLabel: (startMs: number) => string;
 }>): readonly UsageSourceSeries[] {
     const timeline = input.timeline ?? [];
-    const parts = new Map<string, { key: string; label: string; values: Map<number, number | null>; allOutside: boolean;
-        details: Record<string, Map<string, UsageSourceDetail>> }>();
+    if (input.metric === 'tokens' && !timeline.some(bucket => bucket.leaders.some(leader => leader.sources?.length))) return [];
+    type Series = { key: string; label: string; values: Map<number, number | null>; allOutside: boolean;
+        details: Record<string, Map<string, UsageSourceDetail>> };
+    const parts = new Map<string, Series>();
     for (const bucket of timeline) for (const leader of bucket.leaders) {
-        if (input.metric === 'tokens' && !leader.sources?.length) continue;
         const key = input.dimensionKey(leader.key);
         const entry = parts.get(key) ?? { key, label: input.label(key, leader.key === key ? leader.label : undefined),
             values: new Map<number, number | null>(), allOutside: true, details: {} };
@@ -179,6 +180,9 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 : resolveUsageCostBasis(leader.cost, input.costMode)?.amountUsd ?? null : null;
             const previous = entry.values.get(bucket.bucketStartMs);
             entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, value));
+        } else if (!leader.sources?.length) {
+            const previous = entry.values.get(bucket.bucketStartMs);
+            entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, resolveUsageMeasuredTokens(leader.tokens).total));
         }
         for (const part of leader.sources ?? []) {
             if (part.execution !== 'outside') entry.allOutside = false;
@@ -206,11 +210,27 @@ export function usageSourceTimelineSeries(input: Readonly<{
     const recorded = timeline.map(bucket => bucket.bucketStartMs);
     const starts = input.range ? walkUsageCalendar(input.range, recorded) ?? recorded : recorded;
     const buckets = new Map(timeline.map(bucket => [bucket.bucketStartMs, bucket]));
-    const dimensionIndexes = new Map<string, number>();
-    for (const entry of parts.values()) if (!dimensionIndexes.has(entry.key)) dimensionIndexes.set(entry.key, dimensionIndexes.size);
-    return [...parts].map(([id, entry]) => ({ id, dimensionKey: entry.key, label: entry.label,
+    const { leaders, other } = rankUsageTimelineSeries([...parts.values()].map(entry => ({ key: entry.key, entry,
+        total: [...entry.values.values()].reduce(addUsageMeasurements, null) })));
+    const displayed = leaders.map(item => item.entry);
+    if (other.length > 0) {
+        const tail: Series = { key: USAGE_MODEL_MIX_OTHER_KEY, label: t('usage.modelMix.other'), values: new Map(),
+            allOutside: other.every(item => item.entry.allOutside), details: {} };
+        for (const { entry } of other) {
+            for (const [startMs, value] of entry.values) {
+                tail.values.set(startMs, addUsageMeasurements(tail.values.get(startMs) ?? null, value));
+            }
+            for (const [bucket, details] of Object.entries(entry.details)) {
+                const tailDetails = tail.details[bucket] ?? new Map<string, UsageSourceDetail>();
+                for (const [id, detail] of details) tailDetails.set(id, detail);
+                tail.details[bucket] = tailDetails;
+            }
+        }
+        displayed.push(tail);
+    }
+    return displayed.map((entry, index) => ({ id: entry.key, dimensionKey: entry.key, label: entry.label,
         sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()]])),
-        color: input.color(dimensionIndexes.get(entry.key)!, entry.key),
+        color: input.color(index, entry.key),
         ...(entry.allOutside ? { fillPattern: 'hatch' as const } : {}),
         points: starts.map(startMs => {
             const bucket = buckets.get(startMs);

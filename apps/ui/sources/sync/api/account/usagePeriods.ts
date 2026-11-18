@@ -1,7 +1,8 @@
 import type { UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageAnalyticsGranularity } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 export type UsagePeriod = UsageRelativePeriod;
-export type UsagePeriodGranularity = 'hour' | 'day' | 'month';
+export type UsagePeriodGranularity = UsageAnalyticsGranularity;
 export type UsageLegacyPeriodGranularity = 'hour' | 'day';
 
 export type UsagePeriodDefinition = Readonly<{
@@ -52,7 +53,7 @@ const usagePeriodDefinitions = {
         translationKey: 'usage.lastYear',
         shortTranslationKey: 'usage.periodYearShort',
         rangeDayCount: 365,
-        granularity: 'month',
+        granularity: 'week',
         legacyGranularity: 'day',
     },
     // Everything retained; the accounting owner resolves the observed calendar span.
@@ -61,7 +62,7 @@ const usagePeriodDefinitions = {
         translationKey: 'usage.allTime',
         shortTranslationKey: 'usage.periodAllShort',
         rangeDayCount: Number.POSITIVE_INFINITY,
-        granularity: 'month',
+        granularity: 'week',
         legacyGranularity: 'day',
     },
 } satisfies Record<UsagePeriod, UsagePeriodDefinition>;

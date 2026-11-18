@@ -5,6 +5,7 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
@@ -31,17 +32,17 @@ async function renderControls(children: React.ReactNode) {
 const day = 86_400_000;
 // Friday midnight in UTC+14, so weekend classification cannot use the UTC weekday.
 const start = Date.UTC(2026, 9, 8, 10);
-function fixture(values: readonly (number | null)[], endMs: number, byAgent = true) {
-  const query = normalizeUsageQuery({ period: { startMs: start, endMs }, timeZoneOffsetMinutes: 840, granularity: 'day', metric: 'tokens' });
+function fixture(values: readonly (number | null)[], endMs: number, byAgent = true, granularity: 'day' | 'week' = 'day') {
+  const query = normalizeUsageQuery({ period: { startMs: start, endMs }, timeZoneOffsetMinutes: 840, granularity, metric: 'tokens' });
+  const step = granularity === 'week' ? 7 * day : day;
+  const bucket = (index: number) => resolveUsageBucketBounds(granularity, start + index * step, query.timeZoneOffsetMinutes);
   const tokens = (value: number) => ({ input: value, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: value });
   const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
   const total = values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
   const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
     v: 1, totals: { tokens: tokens(total), cost, eventCount: values.filter(value => value !== null).length },
-    series: values.flatMap((value, index) => value === null ? [] : [{ bucketStartMs: start + index * day,
-      bucketEndMs: start + (index + 1) * day, eventCount: 1, tokens: tokens(value), cost }]),
-    engineTimeline: byAgent ? values.flatMap((value, index) => value === null ? [] : [{ bucketStartMs: start + index * day,
-      bucketEndMs: start + (index + 1) * day, leaders: [{ key: 'codex:local', eventCount: 1, tokens: tokens(value), cost,
+    series: values.flatMap((value, index) => value === null ? [] : [{ ...bucket(index), eventCount: 1, tokens: tokens(value), cost }]),
+    engineTimeline: byAgent ? values.flatMap((value, index) => value === null ? [] : [{ ...bucket(index), leaders: [{ key: 'codex:local', eventCount: 1, tokens: tokens(value), cost,
         sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens: tokens(value), cost }] }] }]) : [],
     coverage: { status: 'partial', reasons: ['incomplete_history'], sources: [], missingDimensions: [], ranked: [],
       range: { startMs: start, endMs, complete: false } },
@@ -52,6 +53,18 @@ function fixture(values: readonly (number | null)[], endMs: number, byAgent = tr
 }
 
 describe('Daily period chart', () => {
+  it('conserves admitted weekly amounts and calls out both clipped weeks', async () => {
+    const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
+    const screen = await renderScreen(<UsageDailyWidget {...props} />);
+    const points = screen.findByType(StackedSeriesChart).props.series[0].points;
+    const shortDate = (date: number) => formatUsageCalendarDate(date, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' });
+    expect(points.map((point: { y: number }) => point.y)).toEqual([10, 30, 20]);
+    expect(points.map((point: { label: string }) => point.label)).toEqual([
+      t('usage.board.charts.partialWeek', { from: shortDate(start), to: shortDate(start + 2 * day) }),
+      shortDate(start + 3 * day),
+      t('usage.board.charts.partialWeek', { from: shortDate(start + 10 * day), to: shortDate(start + 13 * day) }),
+    ]);
+  });
   it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
     const props = fixture([10, 30], start + 2 * day);
     const first = await renderScreen(<UsageDailyWidget {...props} />);

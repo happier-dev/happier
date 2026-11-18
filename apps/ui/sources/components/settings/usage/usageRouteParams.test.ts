@@ -71,7 +71,8 @@ describe('Usage route filter owner', () => {
             projects: [[]], sources: [[]], session: [null], costBasis: ['auto'] });
         const today = resolveUsageWidgetPeriod('today', Date.parse('2026-10-09T00:30:00Z'), 120);
         expect(today).toEqual({ period: { relative: 'today' }, granularity: 'hour' });
-        expect(resolveUsageWidgetPeriod('year', Date.parse('2026-10-09T12:00:00Z'), 120).granularity).toBe('month');
+        expect(resolveUsageWidgetPeriod('year', Date.parse('2026-10-09T12:00:00Z'), 120).granularity).toBe('week');
+        expect(resolveUsageWidgetPeriod('all', Date.parse('2026-10-09T12:00:00Z'), 120).granularity).toBe('week');
     });
 
     it('requests the real series, rhythm, insights and model timeline facts consumed by the widget inventory', () => {

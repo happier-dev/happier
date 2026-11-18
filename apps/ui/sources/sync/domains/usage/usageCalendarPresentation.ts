@@ -68,6 +68,15 @@ export function formatUsageCalendarDate(timestampMs: number, timeZoneOffsetMinut
     return formatSharedUsageCalendarDate(timestampMs, timeZoneOffsetMinutes, options, locales ?? getPreferredLanguage(), formatWithCachedDateTimeFormatter);
 }
 
+export function formatUsageWeeklyBucketLabel(startMs: number, range: UsageCalendarRange): string {
+    const { bucketEndMs } = resolveUsageBucketBounds('week', startMs, range.timeZoneOffsetMinutes);
+    const from = Math.max(startMs, range.startMs ?? startMs);
+    const end = Math.min(bucketEndMs, range.endMs);
+    const label = (ms: number) => formatUsageCalendarDate(ms, range.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' });
+    return from < end && (from > startMs || end < bucketEndMs)
+        ? t('usage.board.charts.partialWeek', { from: label(from), to: label(end - 1) }) : label(startMs);
+}
+
 /** Observation clocks use the viewer's local calendar, not the queried accounting bucket offset. */
 export function formatUsageObservedAt(timestampMs: number, nowMs = Date.now(), locales?: Intl.LocalesArgument): string {
     const observed = new Date(timestampMs);
