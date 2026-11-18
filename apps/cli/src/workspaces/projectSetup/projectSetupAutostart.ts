@@ -9,7 +9,9 @@ import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/project
 import type { ProjectSetupExecutionOutcome } from './projectSetupExecution';
 
 /** Original admitted Action and its host-only child ingress; never a launch operand. */
-export type ProjectSetupAutostartContext = Readonly<{ parent: HostReviewedParentV1; context: ActionExecutorContext }>;
+export type ProjectSetupAutostartContext = Readonly<{ parent: HostReviewedParentV1; context: ActionExecutorContext;
+    /** The receiving ingress that admitted setup, retained for the child Machine hop. */
+    callerInputAuthorization?: ExternalActionExecutionAuthorizationV1 }>;
 
 /** Consume successful setup settlement through ordinary reviewed Service Start children. */
 export async function startProjectSetupAutostartServices(input: Readonly<{
@@ -17,6 +19,7 @@ export async function startProjectSetupAutostartServices(input: Readonly<{
     manifest: ProjectManifestV1 | null;
     parent: HostReviewedParentV1;
     context: ActionExecutorContext;
+    callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
     /** A Service Start already owns this declaration's pending launch. */
     excludeServiceName?: string;
 }>): Promise<ActionExecuteFailure | null> {
@@ -29,7 +32,9 @@ export async function startProjectSetupAutostartServices(input: Readonly<{
     if (!execute) return { ok: false, errorCode: 'project_service_action_context_unavailable', error: 'project_service_action_context_unavailable' };
     for (const [name] of services) {
         const selection = { kind: 'manifest' as const, name };
-        const result = await invokeHostReviewedChildV1({ parent: input.parent, context: input.context,
+        const childContext = input.callerInputAuthorization === undefined ? input.context
+            : { ...input.context, callerInputAuthorization: input.callerInputAuthorization };
+        const result = await invokeHostReviewedChildV1({ parent: input.parent, context: childContext,
             // The settled setup was admitted against the lifecycle review, including these executable service effects.
             reviewAdmitted: true,
             child: { action: 'localServices.launcher.start', role: 'project.setup.autostart',

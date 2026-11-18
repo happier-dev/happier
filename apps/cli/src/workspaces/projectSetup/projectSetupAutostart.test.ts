@@ -30,6 +30,28 @@ it('starts declared autostart services as reviewed children after successful set
         declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' } } })]);
 });
 
+it('retains the admitted caller authorization on the automatic Service child', async () => {
+    const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+        accountId: 'person', custodianAccountId: 'person', authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+        actionId: 'projects.prepare', requestId: 'setup-request', target: { kind: 'machine', machineId: 'machine' },
+        requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    let childContext: ActionExecutorContext | undefined;
+    const executor = createActionExecutor({
+        runtimeActionExecute: async ({ context }) => {
+            childContext = context;
+            return { protocolVersion: 1, machineId: 'machine', targetId: 'started', status: 'succeeded',
+                snapshot: { v: 1, machineId: 'machine', updatedAt: 1, targets: [] } };
+        },
+    });
+    const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'person',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'localServices.launcher.start': { approvalRequiredSurfaces: ['agent'] } } }),
+        executeHostReviewedChildAction: (actionId, input, current) => executor.execute(actionId, input, current) };
+    expect(await startProjectSetupAutostartServices({ outcome: finished, manifest, context, callerInputAuthorization, parent })).toBeNull();
+    expect(Reflect.get(childContext, 'callerInputAuthorization')).toBe(callerInputAuthorization);
+});
+
 it.each([
     { kind: 'no_launch' as const, result: { ok: true as const, result: {} } },
     { ...finished, result: { ok: false as const, errorCode: 'setup_failed', error: 'setup_failed' },

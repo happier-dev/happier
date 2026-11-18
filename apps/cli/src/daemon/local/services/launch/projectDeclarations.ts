@@ -878,7 +878,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (!outcome.result.ok) throw new ServiceStartRefusal(outcome.result.errorCode);
             if (!setupInput) throw new ServiceStartRefusal('project_setup_operation_unavailable');
             const autostartFailure = await startProjectSetupAutostartServices({ outcome, manifest: current.plan.manifest,
-                context, parent: { actionId: 'localServices.launcher.start', input: projectNativeJsonValueForTransport(request) as Record<string, JsonValue> },
+                context, callerInputAuthorization: ingress.callerInputAuthorization,
+                parent: { actionId: 'localServices.launcher.start', input: projectNativeJsonValueForTransport(request) as Record<string, JsonValue> },
                 ...(request.declaration.selection.kind === 'manifest' ? { excludeServiceName: request.declaration.selection.name } : {}) });
             if (autostartFailure) throw new ServiceStartRefusal(autostartFailure.errorCode);
             current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);

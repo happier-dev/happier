@@ -197,7 +197,8 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 if (setupState.outcome?.setupSettlement?.outcome === 'finished') {
                     const autostart = input.setupAutostart ?? operation.setupAutostart;
                     if (autostart) {
-                        const refusal = await startProjectSetupAutostartServices({ outcome: setupState.outcome, manifest: baseline.manifest, ...autostart });
+                        const refusal = await startProjectSetupAutostartServices({ outcome: setupState.outcome, manifest: baseline.manifest, ...autostart,
+                            callerInputAuthorization: autostart.callerInputAuthorization ?? ingress.callerInputAuthorization });
                         if (refusal) return fail(refusal.errorCode);
                     } else if (Object.values(baseline.manifest?.services ?? {}).some(service => service.runtime?.autostart === true)) {
                         return fail('project_service_action_context_unavailable');
