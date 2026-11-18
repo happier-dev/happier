@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { parse } from 'yaml';
+import { isMap, parse, parseDocument } from 'yaml';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
@@ -40,6 +40,10 @@ it('authors the reviewed Connect patch for every consumer while retaining source
     expect(allConsumers.kind).toBe('ready');
     if (allConsumers.kind !== 'ready') throw new Error(allConsumers.reason);
     const allServices = parse(allConsumers.patch.definition.document).services;
+    const reviewedDocument = parseDocument(allConsumers.patch.definition.document);
+    expect(isMap(reviewedDocument.contents) && reviewedDocument.contents.flow !== true).toBe(true);
+    expect(allConsumers.patch.definition.document).toContain('${DB_MOVE_PORT}');
+    expect(allConsumers.patch.definition.document).not.toMatch(/\$\{[^}]*[\r\n]/u);
     expect(allServices.worker.environment).toEqual(['DATABASE_URL=postgres://app:${DB_MOVE_PASSWORD}@${DB_MOVE_HOST}:${DB_MOVE_PORT}/app']);
     expect(allServices.worker.depends_on).toEqual({ cache: { condition: 'service_started' } });
     expect(allServices.other.environment.DATABASE_URL).toBe('postgres://user:password@cache:5432/other');

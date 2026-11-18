@@ -21,6 +21,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         projectSourceName: z.optional(z.nullable(z.string())),
         /** Saved configuration, independent of backup runs; omitted by older readers or unreadable content. */
         backupConfigured: z.optional(z.boolean()),
+        /** Dedicated PostgreSQL on a native data target; omission is unknown, not eligible. */
+        databaseMoveCandidate: z.optional(z.boolean()),
         /** Actual opened template configuration; omitted when the private Artifact is unavailable. */
         previewTemplateConfigured: z.optional(z.boolean()),
         /** The catalog listing an App was installed from (its pointer only), opened from the private template provenance. */
@@ -61,6 +63,8 @@ export type DeploymentReceiptHistoryV1 = z.infer<typeof DeploymentReceiptHistory
 /** Artifact bodies serialize ContentV1 directly. The Artifact owner opens its mode-aware envelope. */
 export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
     environment: DeploymentEnvironmentHeaderV1Schema,
+    /** The same dedicated native destination decision as the collection; backup admission settles separately. */
+    databaseMoveCandidate: z.optional(z.boolean()),
     savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
     secretScope: z.optional(DeploymentEnvironmentSecretScopeV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),

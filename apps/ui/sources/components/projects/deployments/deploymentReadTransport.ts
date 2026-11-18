@@ -26,7 +26,7 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
-    deploymentDataTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+    deploymentDataTargetOperands, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -354,6 +354,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 items.push({ environment, title: label.title, projectSourceName,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
+                        databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined,
                         ...(opened.content.template ? { catalogTemplate: { sourceId: opened.content.template.templateRef.sourceId,
                             itemId: opened.content.template.templateRef.itemId, version: opened.content.template.templateRef.version } } : {}) } : {}),
@@ -405,6 +406,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (row) row.content = opened.content;
             }
             return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks,
+                databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(environment.content, runtime),
                 ...(pendingDeployment === undefined ? {} : { pendingDeployment }),
                 ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
                 ...(detail.controller ? { controller: detail.controller } : {}) } };

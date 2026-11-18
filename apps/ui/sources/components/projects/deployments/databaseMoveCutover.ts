@@ -3,6 +3,7 @@ import type { DeploymentSecretBindingSourceV1 } from '@happier-dev/protocol/depl
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import type { DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isMap, isSeq, parseDocument } from 'yaml';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 export type DatabaseMoveCutoverSelection = Readonly<{
     sourceService: string; destinationEnvironmentId: string; exportKey: string;
@@ -94,7 +95,7 @@ export function authorDatabaseMoveCutoverPatch(content: DeploymentEnvironmentCon
     const reference = { kind: 'reference' as const, environmentId: selection.destinationEnvironmentId,
         export: selection.exportKey, via: 'auto' as const };
     const patch = {
-        definition: { from: 'compose' as const, document: document.toString(), profiles: definition.profiles,
+        definition: { from: 'compose' as const, document: storedComposeDocumentText(document), profiles: definition.profiles,
             services: definition.services.filter(service => service !== selection.sourceService),
             ...(definition.primaryService && definition.primaryService !== selection.sourceService ? { primaryService: definition.primaryService } : {}),
             ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) },

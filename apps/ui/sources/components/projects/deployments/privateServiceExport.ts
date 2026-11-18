@@ -3,6 +3,7 @@ import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments
 import { isMap, isSeq, parseDocument } from 'yaml';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import { DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 /** How other Machines reach the shared service: Happier's own network, or a network this Machine joined. */
 export type PrivateServiceExportReach =
@@ -101,7 +102,7 @@ export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentCon
     ? { ...shared, exposure: 'loopback', transport: { kind: 'iroh' } }
     : { ...shared, exposure: 'privateNetwork', privateNetwork: reach.privateNetwork });
   const patch = {
-    definition: { from: 'compose' as const, document: document.toString(),
+    definition: { from: 'compose' as const, document: storedComposeDocumentText(document),
       profiles: definition.profiles, services: definition.services,
       ...(definition.primaryService ? { primaryService: definition.primaryService } : {}),
       ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) },

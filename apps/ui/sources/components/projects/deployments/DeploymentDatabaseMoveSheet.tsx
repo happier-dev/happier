@@ -27,6 +27,7 @@ import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
 import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
 import { useDeploymentMoveWorkflow } from './useDeploymentMoveWorkflow';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 type MoveInput = Extract<Parameters<ReturnType<typeof useDeploymentMoveWorkflow>['run']>[0], { kind: 'stateful' }>;
 type Writers = Extract<ReturnType<typeof prepareDatabaseMoveWriters>, { kind: 'ready' }>;
@@ -129,7 +130,8 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
       <DeploymentEnvironmentChooser controller={props.controller} testID="project-deployments.move.destination"
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
-        eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage}
+        eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
+          && row.databaseMoveCandidate === true}
         loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
         emptyTitle={t('projects.deployments.databaseMoveEmptyTitle')} emptyBody={t('projects.deployments.databaseMoveEmptyBody')} />
       {selectedId && !selection ? <SurfaceStateCard testID={`project-deployments.move.destination.${selected.snapshot.status === 'ready'
@@ -200,7 +202,7 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
         {props.prepared.patch.bindings.set.map(binding => <Item key={binding.name} title={binding.name} mode="info" />)}
       </ItemGroup>
       <ItemGroup title={t('projects.deployments.databaseMoveDefinition')}>
-        <CodeBlockView code={props.prepared.patch.definition.document} language="yaml" showCopyButton showHeaderRow={false} wrap />
+        <CodeBlockView code={storedComposeDocumentText(props.prepared.patch.definition.document)} language="yaml" showCopyButton showHeaderRow={false} />
       </ItemGroup>
       {setChrome ? null : footer}
     </View>

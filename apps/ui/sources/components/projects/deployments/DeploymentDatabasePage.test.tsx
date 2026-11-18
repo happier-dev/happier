@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1, isDeploymentDatabaseMoveCandidateV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
@@ -157,6 +157,7 @@ async function renderDatabase(
     /** The Environment shares the database on a private network (its saved export). */
     shared?: boolean;
     moveDestination?: boolean;
+    moveDestinationWithApp?: boolean;
     sourceMultiMachine?: boolean;
     moveWritersUnavailable?: boolean;
     moveDestinationUnprotected?: boolean;
@@ -274,7 +275,10 @@ async function renderDatabase(
       backup: input.moveDestinationUnprotected ? undefined : { ...backup,
         ownership: { environmentId: 'database-dedicated', prefix: 'dedicated/' } },
       definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
-        document: 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: ['postgres'], primaryService: 'postgres' },
+        document: input.moveDestinationWithApp
+          ? 'services:\n  app:\n    image: shop:1\n  postgres:\n    image: postgres:17\n'
+          : 'services:\n  postgres:\n    image: postgres:17\n', profiles: [],
+        services: input.moveDestinationWithApp ? ['app', 'postgres'] : ['postgres'], primaryService: 'postgres' },
       bindings: [
         { purpose: 'variable', phase: 'runtime', name: 'POSTGRES_USER', source: { kind: 'value', value: 'shop' } },
         { purpose: 'variable', phase: 'runtime', name: 'POSTGRES_DB', source: { kind: 'value', value: 'shop' } },
@@ -287,6 +291,7 @@ async function renderDatabase(
         variables: { username: 'POSTGRES_USER', password: 'POSTGRES_PASSWORD', database: 'POSTGRES_DB' } }] },
     },
   });
+  const moveCandidate = await isDeploymentDatabaseMoveCandidateV1(moved.content, selectDeploymentRuntimeTargetLinkV1(moved));
   const plain = createDeploymentReceiptDetailV1();
   const receipt = input.retainedBackup
     ? createDeploymentReceiptDetailV1({
@@ -523,10 +528,11 @@ async function renderDatabase(
           { environment: detail.environment, title: 'Shop database' },
           { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4,
             serverId, projectSourceId: detail.environment.projectSourceId }), title: 'Shop web' },
-          ...(input.moveDestination ? [{ environment: moved.environment, title: 'Dedicated Postgres' }] : []),
+          ...(input.moveDestination ? [{ environment: moved.environment, title: 'Dedicated Postgres', databaseMoveCandidate: moveCandidate }] : []),
         ], nextCursor: null },
       }),
-      readEnvironment: async (_scope, id) => ({ ok: true, value: id === moved.environment.id ? moved : detail }),
+      readEnvironment: async (_scope, id) => ({ ok: true,
+        value: id === moved.environment.id ? { ...moved, databaseMoveCandidate: moveCandidate } : detail }),
       listHistory: async () => ({
         ok: true,
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
@@ -574,6 +580,7 @@ async function renderDatabase(
     environmentId,
     serverIdentityId,
     machineId,
+    moveDestination: moved,
     readScheduleSets: async () => {
       const { createDeploymentActions } = await import('./deploymentActions');
       return createDeploymentActions(account.accountLifetime).backupScheduleSets({ environmentId });
@@ -714,6 +721,25 @@ describe('Environment → Database → Workbench', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it('does not offer an app-plus-database destination and refuses a stale selection without effects', async () => {
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const view = await renderDatabase({ moveDestination: true, moveDestinationWithApp: true, storedDefinition: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      const { DeploymentEnvironmentChooser } = await import('./DeploymentEnvironmentCollection');
+      const chooser = view.screen.findAllByType(DeploymentEnvironmentChooser)[0]!;
+      expect(view.screen.findByTestId('project-deployments.move.destination:database-dedicated')).toBeNull();
+      // A row selected before its refreshed content is classified still reaches the same destination owner.
+      await act(async () => chooser.props.onSelect({ environment: view.moveDestination.environment, title: 'App and database' }));
+      await view.settle('project-deployments.move.destination.unavailable');
+      expect(view.screen.findAllByType(SurfaceStateCard)
+        .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported');
+      expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
+      expect(view.screen.findByTestId('project-deployments.move.save')).toBeNull();
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
+    } finally { await view.dispose(); }
+  });
   it('explains that a database-only Environment has no connected services without admitting a Move', async () => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { t } = await import('@/text');
@@ -749,8 +775,10 @@ describe('Environment → Database → Move', () => {
     try {
       await view.settle(`${page}.move`);
       await view.screen.pressByTestIdAsync(`${page}.move`);
-      await view.settle('project-deployments.move.destination:database-dedicated');
-      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      const { DeploymentEnvironmentChooser } = await import('./DeploymentEnvironmentCollection');
+      expect(view.screen.findByTestId('project-deployments.move.destination:database-dedicated')).toBeNull();
+      const chooser = view.screen.findAllByType(DeploymentEnvironmentChooser)[0]!;
+      await act(async () => chooser.props.onSelect({ environment: view.moveDestination.environment, title: 'Managed database' }));
       await view.settle('project-deployments.move.destination.unavailable');
       await waitForHomeGovernance(() => expect(view.screen.findAllByType(SurfaceStateCard)
         .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported'));
@@ -791,6 +819,16 @@ describe('Environment → Database → Move', () => {
         .findAll(node => typeof node.props?.children === 'string').map(node => node.props.children);
       expect(writerTexts).toContain('app');
       expect(writerTexts).not.toContain('instance/app');
+      const { CodeBlockView } = await import('@/components/ui/code/blocks/CodeBlockView');
+      const { isMap, parseDocument } = await import('yaml');
+      const compose = view.screen.findAllByType(CodeBlockView).find(block => block.props.language === 'yaml');
+      expect(compose).toBeDefined();
+      const document = parseDocument(compose!.props.code);
+      expect(document.errors).toEqual([]);
+      expect(isMap(document.contents) && document.contents.flow !== true).toBe(true);
+      expect(compose!.props.code).toContain('${DB_MOVE_PORT}');
+      expect(compose!.props.code).not.toMatch(/\$\{[^}]*[\r\n]/u);
+      expect(compose!.props.wrap).not.toBe(true);
       expect(view.effects.filter(effect => effect.actionId === 'machines.services.list')).toHaveLength(1);
       expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
       await view.screen.pressByTestIdAsync('project-deployments.move.save');

@@ -50,18 +50,18 @@ type DatabaseMoveDestination = Readonly<{ kind: 'ready'; selection: DatabaseMove
 
 /** Copy admission owns destination support; Create/Link and saved connections are not an import. */
 export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnvironmentReadDetailV1,
-  'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks'> | null): DatabaseMoveDestination | null {
+  'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks' | 'databaseMoveCandidate'> | null): DatabaseMoveDestination | null {
   if (!detail) return null;
-  const data = detail.content.template?.data;
-  if (!deploymentDataTargetOperands(detail) || data?.length !== 1 || data[0]?.engine !== 'postgres') {
+  if (!deploymentDataTargetOperands(detail)) {
     // The current dataV1 contract declares no restore/import role. Never substitute an empty provider database.
     return detail.targetLinks.some(({ targetLink }) => targetLink.role === 'data' && targetLink.source.kind === 'plugin'
       && targetLink.detachedAtMs === undefined && targetLink.deletedAtMs === undefined)
       ? { kind: 'unavailable', reason: 'unsupported' } : null;
   }
+  if (detail.databaseMoveCandidate !== true) return { kind: 'unavailable', reason: 'unsupported' };
   if (!detail.content.backup || !('configRevision' in detail.content.backup))
     return { kind: 'unavailable', reason: 'backup_required' };
-  const database = data[0];
+  const database = detail.content.template!.data![0]!;
   const shared = detail.content.ownServer?.serviceExports?.find(entry => entry.service === database.service && isPrivateServiceExport(entry));
   const publicValue = (name: string | undefined) => detail.content.bindings.find(binding => binding.purpose === 'variable'
     && binding.phase === 'runtime' && binding.name === name && binding.source.kind === 'value');

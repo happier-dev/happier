@@ -831,7 +831,7 @@ describe('deployment scoped read transport', () => {
         const beforeDetail = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
         expect(await transport.readEnvironment(scope, environmentHeader.id, options)).toEqual({ ok: true, value: {
             environment: environmentHeader, content: detail.content, targetLinks: targetLinks.map(targetLink => ({ targetLink })),
-            controller: controllerAvailability,
+            controller: controllerAvailability, databaseMoveCandidate: false,
         } });
         expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(beforeDetail).map(request => request.input))
             .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
@@ -900,6 +900,16 @@ describe('deployment scoped read transport', () => {
         const notNeeded = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
             serverId, id: 'not-needed', contentArtifactId: 'not-needed-content' }) });
         notNeeded.content.backup = { notNeeded: true };
+        for (const candidate of [unconfigured, notNeeded]) {
+            candidate.content.definition = { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+                document: candidate === unconfigured ? 'services:\n  postgres:\n    image: postgres:17\n'
+                    : 'services:\n  app:\n    image: shop:1\n  postgres:\n    image: postgres:17\n',
+                profiles: [], services: [] };
+            candidate.content.template = { ...detail.content.template!, definition: { kind: 'stored',
+                contentRevision: candidate.content.definition.contentRevision, composeDigest: candidate.content.definition.composeDigest },
+                services: candidate === unconfigured ? ['postgres'] : ['app', 'postgres'],
+                data: [{ engine: 'postgres', service: 'postgres' }] };
+        }
         const configurationWriter = await captureLazyActionAccountContext(serverId);
         try {
             for (const candidate of [unconfigured, notNeeded]) await configurationWriter.createArtifactDocument({
@@ -909,13 +919,15 @@ describe('deployment scoped read transport', () => {
             });
         } finally { configurationWriter.dispose(); }
         // No receipts or backup history exist for this page. Configured membership is independent of runs.
+        const candidateRuntimeLinks = [unconfigured, notNeeded].map(candidate => ({ ...candidate.targetLinks[0]!.targetLink,
+            environmentId: candidate.environment.id }));
         homes.answer(serverId, root, { body: { ok: true,
-            items: [environmentHeader, unconfigured.environment, notNeeded.environment], nextCursor: null } });
+            items: [environmentHeader, unconfigured.environment, notNeeded.environment], runtimeTargetLinks: candidateRuntimeLinks, nextCursor: null } });
         const beforeMembership = homes.requests.length;
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true, value: { items: [
             { environment: environmentHeader, backupConfigured: true, previewTemplateConfigured: false },
-            { environment: unconfigured.environment, backupConfigured: false, previewTemplateConfigured: true },
-            { environment: notNeeded.environment, backupConfigured: false, previewTemplateConfigured: false },
+            { environment: unconfigured.environment, backupConfigured: false, previewTemplateConfigured: true, databaseMoveCandidate: true },
+            { environment: notNeeded.environment, backupConfigured: false, previewTemplateConfigured: false, databaseMoveCandidate: false },
         ] } });
         const membershipRequests = homes.requests.slice(beforeMembership);
         expect(membershipRequests.filter(request => request.path.split('?')[0] === root)).toHaveLength(1);
@@ -924,6 +936,12 @@ describe('deployment scoped read transport', () => {
                 unconfigured.environment.contentArtifactId, notNeeded.environment.contentArtifactId] }]);
         expect(membershipRequests.filter(request => request.path.includes('/backups')
             || request.path.startsWith(`${root}/`))).toEqual([]);
+        for (const candidate of [unconfigured, notNeeded]) {
+            homes.answer(serverId, `${root}/${candidate.environment.id}`, { body: { ok: true,
+                environment: candidate.environment, targetLinks: [candidateRuntimeLinks.find(link => link.environmentId === candidate.environment.id)!] } });
+            expect(await transport.readEnvironment(scope, candidate.environment.id, options)).toMatchObject({ ok: true,
+                value: { databaseMoveCandidate: candidate === unconfigured } });
+        }
         homes.answer(serverId, '/v1/artifacts/read', { status: 503, body: { error: 'artifact_content_unavailable' } });
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: false,
             failure: { code: 'artifact_content_unavailable' } });
