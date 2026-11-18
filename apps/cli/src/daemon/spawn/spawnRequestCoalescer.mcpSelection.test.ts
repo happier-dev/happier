@@ -13,6 +13,17 @@ describe('spawn MCP tool delivery identity', () => {
     expect(first.key).not.toBe(other.key);
   });
 
+  it('keeps split Team model resources distinct when a spawn has no nonce', () => {
+    const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, teamId: 'team',
+      resourceId: 'first', expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+      providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model' },
+    };
+    const first = { directory: '/project', teamCredentialBindings: [binding] };
+    const other = { ...first, teamCredentialBindings: [{ ...binding, resourceId: 'other' }] };
+    expect(computeDaemonSpawnRequestKey(first).key).not.toBe(computeDaemonSpawnRequestKey(other).key);
+    expect(computeDaemonSpawnRequestKey(first).key).toBe(computeDaemonSpawnRequestKey(structuredClone(first)).key);
+  });
+
   it('keeps built-in opt-out distinct while preserving the enabled default', () => {
     const options = { directory: '/tmp/project', capabilitySelection: { mcp: {
       v: 1 as const, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [],

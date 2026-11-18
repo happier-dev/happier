@@ -145,6 +145,9 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
     nativeSandbox: options.nativeSandbox ?? null,
     agentModeId: normalizeNonEmptyString(options.agentModeId),
     modelSelection: normalizeModelSelectionForFingerprint(options.modelSelection),
+    teamCredentialBindingsHash: options.teamCredentialBindings === undefined
+      ? null
+      : sha256Hex(stableJsonStringify(options.teamCredentialBindings)),
     // The Agent's own opaque session id: two requests that differ only in its
     // whitespace name different sessions and must not share one spawn.
     resume: readNonBlankOpaqueIdentifier(options.resume),
