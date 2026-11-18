@@ -231,9 +231,7 @@ export type IntentStartActionInputById = {
                 kind: 'engine';
                 engineId: string;
                 includeSessionTranscript?: boolean | undefined;
-                options?: undefined | {
-                    [x: string]: unknown;
-                };
+                options?: Record<string, JsonValue> | undefined;
                 modelId?: string | undefined;
                 modelSelection?: null | undefined | {
                     agentTargetKey: string;
@@ -273,7 +271,7 @@ export type IntentStartActionInputById = {
                     immutableGenerationId: string;
                     installSource: 'archive' | 'localPath' | 'npm';
                 };
-                connectedServices?: unknown;
+                connectedServices?: JsonValue | undefined;
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -616,9 +614,7 @@ export type IntentStartActionInputById = {
                     kind: 'engine';
                     engineId: string;
                     includeSessionTranscript?: boolean | undefined;
-                    options?: undefined | {
-                        [x: string]: unknown;
-                    };
+                    options?: Record<string, JsonValue> | undefined;
                     modelId?: string | undefined;
                     modelSelection?: null | undefined | {
                         agentTargetKey: string;
@@ -658,7 +654,7 @@ export type IntentStartActionInputById = {
                         immutableGenerationId: string;
                         installSource: 'archive' | 'localPath' | 'npm';
                     };
-                    connectedServices?: unknown;
+                    connectedServices?: JsonValue | undefined;
                     secretReferenceOverlay?: undefined | {
                         v: 1;
                         bindings: Record<string, {
@@ -1020,9 +1016,7 @@ export type IntentStartActionInputById = {
                 [x: string]: unknown;
                 kind: 'none';
             };
-            engines?: Record<string, {
-                [x: string]: unknown;
-            }> | undefined;
+            engines?: Record<string, Record<string, JsonValue>> | undefined;
             scmReviewScope?: undefined | {
                 [x: string]: unknown;
                 kind: 'review_scm_scope.v1';
@@ -1581,9 +1575,7 @@ export type IntentStartActionInputById = {
             kind: 'engine';
             engineId: string;
             includeSessionTranscript?: boolean | undefined;
-            options?: undefined | {
-                [x: string]: unknown;
-            };
+            options?: Record<string, JsonValue> | undefined;
             modelId?: string | undefined;
             modelSelection?: null | undefined | {
                 agentTargetKey: string;
@@ -1623,7 +1615,7 @@ export type IntentStartActionInputById = {
                 immutableGenerationId: string;
                 installSource: 'archive' | 'localPath' | 'npm';
             };
-            connectedServices?: unknown;
+            connectedServices?: JsonValue | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -1966,9 +1958,7 @@ export type IntentStartActionInputById = {
                 kind: 'engine';
                 engineId: string;
                 includeSessionTranscript?: boolean | undefined;
-                options?: undefined | {
-                    [x: string]: unknown;
-                };
+                options?: Record<string, JsonValue> | undefined;
                 modelId?: string | undefined;
                 modelSelection?: null | undefined | {
                     agentTargetKey: string;
@@ -2008,7 +1998,7 @@ export type IntentStartActionInputById = {
                     immutableGenerationId: string;
                     installSource: 'archive' | 'localPath' | 'npm';
                 };
-                connectedServices?: unknown;
+                connectedServices?: JsonValue | undefined;
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -2370,9 +2360,7 @@ export type IntentStartActionInputById = {
             [x: string]: unknown;
             kind: 'none';
         };
-        engines?: Record<string, {
-            [x: string]: unknown;
-        }> | undefined;
+        engines?: Record<string, Record<string, JsonValue>> | undefined;
         scmReviewScope?: undefined | {
             [x: string]: unknown;
             kind: 'review_scm_scope.v1';

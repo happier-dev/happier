@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema } from './reviewStart.js';
 
 describe('ordered Review reviewer admission', () => {
+  it('preserves JSON engine options and refuses values that cannot cross the Action transport', () => {
+    const options = { nested: { focus: ['security', null], enabled: true, threshold: 0.5 } };
+    const ordered = { reviewers: [{ kind: 'engine', engineId: 'codex', options }], instructions: 'Review.' };
+    const historical = { engineIds: ['codex'], engines: { codex: options }, instructions: 'Review.' };
+    expect(ReviewStartInputSchema.parse(ordered).reviewers?.[0]).toEqual(ordered.reviewers[0]);
+    expect(ReviewStartInputSchema.parse(historical).engines).toEqual(historical.engines);
+    for (const invalid of [{ callback: () => undefined }, { nested: { value: undefined } }, { value: Number.NaN }]) {
+      expect(ReviewStartInputSchema.safeParse({ ...ordered, reviewers: [{ ...ordered.reviewers[0], options: invalid }] }).success).toBe(false);
+      expect(ReviewStartInputSchema.safeParse({ ...historical, engines: { codex: invalid } }).success).toBe(false);
+    }
+  });
+
   it('retains independent selections when the same engine reviews twice beside a Session and person', () => {
     const reviewers = [
       { kind: 'engine', engineId: 'codex', modelId: 'first-model', options: { focus: 'security' } },

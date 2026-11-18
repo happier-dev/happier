@@ -13,6 +13,8 @@ import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverl
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { ReviewOutputSelectionSchema } from './reviewNarration.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { defineProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionSessionAddressV1Schema } from '../actions/sessionAddressV1.js';
 import type { SessionTranscriptGetItem } from '../actions/specs/session/transcript.js';
 import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
@@ -46,7 +48,8 @@ export type ReviewBase = z.infer<typeof ReviewBaseSchema>;
 export const ReviewEngineIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 export type ReviewEngineId = z.infer<typeof ReviewEngineIdSchema>;
 
-export const ReviewEngineInputSchema = lazyZodSchema(() => z.looseObject({}));
+const ReviewJsonInputSchema = lazyZodSchema(() => asProtocolZod(defineProtocolJsonValue()));
+export const ReviewEngineInputSchema = lazyZodSchema(() => z.record(z.string(), ReviewJsonInputSchema));
 export type ReviewEngineInput = z.infer<typeof ReviewEngineInputSchema>;
 
 export const ReviewEngineInputsSchema = lazyZodSchema(() => z._default(z.record(ReviewEngineIdSchema, ReviewEngineInputSchema), {}));
@@ -68,7 +71,7 @@ export const ReviewEngineReviewerSelectionV1Schema = lazyZodSchema(() => z.stric
   approvalProfileId: ExecutionRunStartRequestBaseSchema.shape.approvalProfileId,
   profileId: ExecutionRunStartRequestBaseSchema.shape.profileId,
   profileSourceCustody: ExecutionRunStartRequestBaseSchema.shape.profileSourceCustody,
-  connectedServices: z.optional(StrictJsonValueSchema),
+  connectedServices: z.optional(ReviewJsonInputSchema),
   secretReferenceOverlay: ExecutionRunStartRequestBaseSchema.shape.secretReferenceOverlay,
   teamCredentialModel: ExecutionRunStartRequestBaseSchema.shape.teamCredentialModel,
   teamCredentialSessionBindingConsent: ExecutionRunStartRequestBaseSchema.shape.teamCredentialSessionBindingConsent,
