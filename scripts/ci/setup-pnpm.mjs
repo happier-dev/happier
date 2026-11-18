@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { resolveNpmCommandInvocation, resolvePnpmCommandInvocation } from '../workspaces/execPnpmCommand.mjs';
@@ -23,19 +23,51 @@ function run(invocation, stdio = 'inherit', cwd = repoDir, env = process.env) {
   });
 }
 
-function installedVersionMatches() {
+const darwinSwitchDir = process.platform === 'darwin'
+  ? join(process.env.PNPM_HOME || (process.env.XDG_DATA_HOME
+    ? join(process.env.XDG_DATA_HOME, 'pnpm')
+    : join(homedir(), 'Library', 'pnpm')), '.tools', 'pnpm', version)
+  : undefined;
+
+function executableMatches(invocation) {
   try {
     // Query outside the workspace so a different manager cannot switch itself
     // to the declared version and conceal the executable that is installed.
-    return run(resolvePnpmCommandInvocation(['--version'], { preferPath: true }), 'pipe', temporaryDir).trim() === version;
+    return run(invocation, 'pipe', temporaryDir).trim() === version;
   } catch {
     return false;
   }
 }
 
+function installedVersionMatches() {
+  return executableMatches(resolvePnpmCommandInvocation(['--version'], { preferPath: true }));
+}
+
+function darwinSwitchNeedsRepair() {
+  if (!darwinSwitchDir || !lstatSync(darwinSwitchDir, { throwIfNoEntry: false })) return false;
+  return !executableMatches({ command: join(darwinSwitchDir, 'bin', 'pnpm'), args: ['--version'] });
+}
+
+function repairDarwinSwitch(installEnv) {
+  // pnpm 10 publishes the selected version as a symlink to its staged
+  // package, but skips install scripts. Run pnpm's own atomic native
+  // promotion for that published package. Ignore unreferenced stages.
+  const wrapper = join(darwinSwitchDir, 'node_modules', 'pnpm');
+  const manifest = JSON.parse(readFileSync(join(wrapper, 'package.json'), 'utf8'));
+  if (manifest.name !== 'pnpm' || manifest.version !== version) {
+    throw new Error(`Expected pnpm ${version} in the published Darwin switch cache`);
+  }
+  run({ command: process.execPath, args: [join(wrapper, 'install.js')] }, 'inherit', wrapper, {
+    ...installEnv, npm_lifecycle_event: 'preinstall',
+  });
+  if (darwinSwitchNeedsRepair()) throw new Error(`Expected executable pnpm ${version} in the Darwin switch cache`);
+}
+
 try {
-  if (!installedVersionMatches()) {
-    const installPinnedPnpm = installEnv => {
+  if (darwinSwitchNeedsRepair() || !installedVersionMatches()) {
+    const preparePinnedPnpm = installEnv => {
+      if (darwinSwitchNeedsRepair()) repairDarwinSwitch(installEnv);
+      if (installedVersionMatches()) return;
       // npm ships with Node even where Corepack does not (Node 25+). Verify
       // the registry archive against the root pin before installing it.
       const packed = JSON.parse(run(resolveNpmCommandInvocation([
@@ -57,12 +89,10 @@ try {
       // Admission precedes the canonical dependency writer; warm launches need
       // neither the unused archive nor mutation custody.
       await runHostAdmittedTask({ className: 'dependency-install', repoDir }, admittedEnv =>
-        withDependencyRefreshLock({ installDir: repoDir, env: admittedEnv }, async context => {
-          if (installedVersionMatches()) return;
-          installPinnedPnpm(resolveLockedInstallEnv(admittedEnv, context));
-        }));
+        withDependencyRefreshLock({ installDir: repoDir, env: admittedEnv }, async context =>
+          preparePinnedPnpm(resolveLockedInstallEnv(admittedEnv, context))));
     } else {
-      installPinnedPnpm(process.env);
+      preparePinnedPnpm(process.env);
     }
   }
   console.log(`pnpm ${version} ready`);

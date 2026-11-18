@@ -999,6 +999,9 @@ when native prerequisites are absent, and verifies `cc`, `c++`, `make`, `ar`, an
 Go and ripgrep; already ready hosts skip installation. Source dependency bootstrap
 installs the exact, integrity-checked pnpm version from the root `packageManager`
 pin after synchronization through `scripts/ci/setup-pnpm.mjs`.
+On macOS, setup also verifies the published switch entry for that version. If
+older pnpm left its native promotion incomplete, setup runs the pinned package’s
+installer and verifies the entry directly before reporting readiness.
 The controller streams that installer and the package's `rust-toolchain.toml`
 pin to the selected SSH account, including after `--create-user`; Rust installation
 runs without elevation and adds no mobile or WASM targets. A ready pinned compiler

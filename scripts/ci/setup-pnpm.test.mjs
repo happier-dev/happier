@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,7 +46,7 @@ async function fixture(t, { corrupt = false } = {}) {
     : '#!/bin/sh\n[ -f "$SETUP_TEST_INSTALLED" ] || exit 1\nprintf "12.14.0\\n"\n');
   await chmod(pnpmPath, 0o755);
   return { root, env: { ...process.env, npm_execpath: npmPath, PATH: `${root}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH}`,
-    HAPPIER_STACK_HOME_DIR: root, SETUP_TEST_CALLS: join(root, 'calls'), SETUP_TEST_INSTALLED: join(root, 'installed') } };
+    PNPM_HOME: join(root, 'pnpm-home'), HAPPIER_STACK_HOME_DIR: root, SETUP_TEST_CALLS: join(root, 'calls'), SETUP_TEST_INSTALLED: join(root, 'installed') } };
 }
 
 test('setup installs the exact integrity-checked root pin without Corepack', async (t) => {
@@ -173,6 +173,42 @@ async function dockerSetupPath(root) {
   }
   return join(root, 'scripts/ci/setup-pnpm.mjs');
 }
+
+test('Darwin setup completes an active pnpm switch while leaving an unpublished stage alone',
+  { skip: process.platform !== 'darwin' }, async t => {
+    const { root, env } = await fixture(t);
+    const imageSetup = await dockerSetupPath(root);
+    await writeFile(env.SETUP_TEST_INSTALLED, 'ready');
+
+    const tools = join(env.PNPM_HOME, '.tools', 'pnpm');
+    const stage = join(tools, '12.14.0_tmp_active');
+    const wrapper = join(stage, 'node_modules', 'pnpm');
+    const published = join(tools, '12.14.0', 'bin', 'pnpm');
+    const unpublished = join(tools, '12.14.0_tmp_unpublished', 'bin');
+    const placeholder = "# pnpm's native binary replaces this file during installation\nexit 71\n";
+    await mkdir(wrapper, { recursive: true });
+    await mkdir(join(stage, 'bin'));
+    await mkdir(unpublished, { recursive: true });
+    await writeFile(join(wrapper, 'package.json'), JSON.stringify({ name: 'pnpm', version: '12.14.0' }));
+    await writeFile(join(wrapper, 'pnpm'), placeholder, { mode: 0o755 });
+    await writeFile(join(unpublished, 'pnpm'), placeholder, { mode: 0o755 });
+    await symlink('../node_modules/pnpm/pnpm', join(stage, 'bin', 'pnpm'));
+    await symlink('12.14.0_tmp_active', join(tools, '12.14.0'));
+    // Boundary stand-in for the upstream installer, which atomically replaces
+    // the placeholder using the already-installed native dependency.
+    await writeFile(join(wrapper, 'install.js'), `
+      const fs = require('node:fs');
+      const bin = __dirname + '/pnpm';
+      fs.writeFileSync(bin + '.pnpm-tmp', '#!/bin/sh\\nprintf "12.14.0\\\\n"\\n', { mode: 0o755 });
+      fs.renameSync(bin + '.pnpm-tmp', bin);
+    `);
+
+    assert.throws(() => execFileSync(published, ['--version'], { stdio: 'pipe' }), { code: 'ENOEXEC' });
+    execFileSync(process.execPath, [imageSetup, root], { env, stdio: 'pipe' });
+    assert.equal(execFileSync(published, ['--version'], { encoding: 'utf8' }).trim(), '12.14.0');
+    assert.equal(await readFile(join(unpublished, 'pnpm'), 'utf8'), placeholder);
+    await assert.rejects(readFile(env.SETUP_TEST_CALLS), { code: 'ENOENT' });
+  });
 
 test('Docker deps-stage files support cold and warm integrity-pinned setup without host tooling', async t => {
   const { root, env } = await fixture(t);
