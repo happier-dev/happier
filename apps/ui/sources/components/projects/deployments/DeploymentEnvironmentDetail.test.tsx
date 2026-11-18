@@ -2349,11 +2349,14 @@ describe('Project deployments page', () => {
       await screen.pressByTestIdAsync(`${id}.add`);
       // The port the stored Compose service declares fills Container port (PAGE-ACCEPT-176 D29).
       await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.containerPort`)?.props.value).toBe('5432'));
+      // Review sharing says what it still needs instead of staying disabled without a reason (D29).
+      expect(screen.findByTestId(`${id}.needs`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
       expect(screen.findByTestId(`${id}.reach:happierNetwork`)?.props.accessibilityState)
         .toMatchObject({ disabled: false, selected: true });
       expect(screen.findByTestId(`${id}.address`)).toBeNull();
       await fill('15432');
+      expect(screen.findByTestId(`${id}.needs`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.review`);
       expect(updates).toHaveLength(0);
       expect(screen.findByTestId(`${id}.reviewAddress`)).toBeNull();
