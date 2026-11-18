@@ -5,22 +5,46 @@ import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '../rev
 import { prepareReviewRoundV1 } from '../reviews/prepareReviewRoundV1.js';
 import { ReviewPrepareRoundInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
+import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1.js';
+import { resolveWorkflowActionFieldBinding } from '../../../../apps/cli/src/daemon/workflows/input.js';
 
 describe('Review round preparation', () => {
   it.each(['native', 'workflow'] as const)('seals the selected comparison address at %s admission', async mode => {
     const records = createInMemoryReviewRecordPortV1();
     const starts = vi.spyOn(records, 'start');
+    let preparedComparisonId: string | undefined;
     const executor = createActionExecutor({ reviewRecords: () => records,
       resolveSessionMachineId: async () => 'capture-machine',
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
       executionRunStart: async () => ({ runId: 'native-run', callId: 'call', sidechainId: 'sidechain' }),
-      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+      workflowAction: async invocation => {
+        const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        if (request.source.kind !== 'inline') throw new Error('Expected the actual inline Review graph');
+        const block = request.source.definition.blocks.find(block => block.kind === 'action' && block.id === 'prepare');
+        if (!block || block.kind !== 'action') throw new Error('Expected the first Review preparation Action');
+        const input = Object.fromEntries(await Promise.all(Object.entries(block.input ?? {}).map(async ([key, binding]) =>
+          [key, await resolveWorkflowActionFieldBinding(binding, { inputs: request.inputs ?? {},
+            resolveResult: async () => { throw new Error('Initial preparation has no earlier result'); },
+            resolveWorkspace: async () => { throw new Error('Preparation retains the original workspace'); },
+          })])));
+        const prepared = await prepareReviewRoundV1(ReviewPrepareRoundInputV1Schema.parse(input), {
+          reviewRecords: records, startedAt: 2,
+          captureComparison: async capture => {
+            expect(capture.comparisonId).toBe('a'.repeat(64));
+            return { id: 'a'.repeat(64), source: capture.source,
+              repository: { rootPath: capture.cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
+          },
+        });
+        preparedComparisonId = prepared.comparisonId;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
     });
     const result = await executor.execute('review.start', { sessionId: 'capture-session', cwd: '/original/worktree',
       reviewers: Array.from({ length: mode === 'native' ? 1 : 2 }, () => ({ kind: 'engine', engineId: 'codex' })),
       instructions: 'Inspect the selected comparison.', source: { kind: 'workingTree' }, comparisonId: 'a'.repeat(64),
     }, { surface: 'ui' });
     expect(result).toMatchObject(mode === 'native' ? { ok: true } : { ok: false, errorCode: 'content_unavailable' });
+    if (mode === 'workflow') expect(preparedComparisonId).toBe('a'.repeat(64));
     const admitted = starts.mock.calls[0]?.[0];
     if (!admitted) throw new Error('Expected the durable Review admission');
     expect((await records.read(admitted.reviewId))?.rounds[0]).toMatchObject({ comparisonCapture: {

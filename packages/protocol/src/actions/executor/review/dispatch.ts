@@ -315,7 +315,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               reviewedFingerprint: null, results: [] } };
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
-          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound);
+          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, undefined, comparisonCapture?.input);
           return executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
             source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
         }
