@@ -31,7 +31,6 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { flushHookEffects } from '@/dev/testkit';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox, replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 let bobInstallationPublicKey: string | null = null;
@@ -70,10 +69,12 @@ async function serveTerminalApprovalHome(serverUrl: string) {
         route: request => artifacts.handle(`${request.path}${request.url.search}`, { method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
             ?? serveBobMachine(request) });
-    return { ...home, artifacts, async decline(count = 1) {
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(count));
-        const result = await decideApprovalAsInbox(home.homes.session!.id, artifacts.list()[count - 1]!.id, 'cancel');
-        expect(result.ok).toBe(true);
+    // Since 02102e614e1 the person's own UI press answers an Ask preference through the native
+    // confirmation (declined by the modal boundary below), never an Inbox approval Artifact.
+    vi.mocked(Modal.confirm).mockClear();
+    return { ...home, artifacts, confirmations: () => vi.mocked(Modal.confirm).mock.calls.length, async decline(count = 1) {
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(count));
+        expect(artifacts.list()).toHaveLength(0);
     } };
 }
 
@@ -104,8 +105,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 describe('Project terminal admission through canonical Machine Actions', () => {
     it('does not connect while an Ask-first shell is awaiting consent', async () => {
         const home = await serveTerminalApprovalHome('https://terminal-consent.test');
-        const acknowledgement = createDeferred<void>();
-        home.artifacts.afterNextCreate(() => acknowledgement.promise);
+        const consent = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => consent.promise);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         rpc.mockReset();
         const terminalRef = { current: { write: vi.fn(), clear: vi.fn() } };
@@ -113,15 +114,14 @@ describe('Project terminal admission through canonical Machine Actions', () => {
             serverId: home.homes.session!.id, machineId: 'machine', cwd: '/tmp', terminalRef }));
         try {
             await act(async () => hook.getCurrent().onReady(80, 24));
-            await vi.waitFor(() => expect(home.artifacts.list()).toHaveLength(1));
-            expect(hook.getCurrent().status).toBe('connecting');
-            acknowledgement.resolve();
-            await vi.waitFor(() => expect(hook.getCurrent().approvalPending).toBe(true));
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
             expect(hook.getCurrent().status).toBe('connecting');
             expect(rpc).not.toHaveBeenCalled();
-            await home.decline();
+            await act(async () => consent.resolve(false));
             await vi.waitFor(() => expect(hook.getCurrent().status).toBe('not-open'));
-        } finally { acknowledgement.resolve(); await hook.unmount(); await home.dispose(); }
+            expect(rpc).not.toHaveBeenCalled();
+            expect(home.artifacts.list()).toHaveLength(0);
+        } finally { consent.resolve(false); await hook.unmount(); await home.dispose(); }
     });
     it('opens an explicitly requested machine shell directly with default settings', async () => {
         const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl: 'https://terminal-direct.test', accountId: 'bob', currentAccount: true }],
@@ -155,16 +155,15 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: workspace.workspaceId, serverId: workspace.serverId,
             machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }] });
         rpc.mockReset(); rpc.mockResolvedValue({ ok: false, errorCode: 'terminal_invalid_request', error: 'project_setup_consent_required' });
+        vi.mocked(Modal.confirm).mockClear();
+        if (requiresApproval) vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         const terminalRef = { current: { write: vi.fn(), clear: vi.fn() } };
         const hook = await renderHook(() => useMachineTerminalSession({ terminalKey: 'new-project-shell', workspace,
             machineId: workspace.machineId, serverId: workspace.serverId, cwd: workspace.rootPath, terminalRef }));
         try {
             await act(async () => hook.getCurrent().onReady(80, 24));
-            if (requiresApproval) {
-                await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-                await replayApprovedAsDaemon({ serverId: workspace.serverId, machineId: workspace.machineId,
-                    artifactId: artifacts.list()[0]!.id, decision: 'approve' });
-            }
+            // An Ask preference is answered by the person's native confirmation of this press.
+            if (requiresApproval) await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
             await vi.waitFor(() => expect(rpc.mock.calls, JSON.stringify({ status: hook.getCurrent().status,
                 error: hook.getCurrent().error })).toHaveLength(1));
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', error: 'project_setup_consent_required' }));
@@ -226,17 +225,13 @@ describe('Project terminal admission through canonical Machine Actions', () => {
             await measure();
             await vi.waitFor(async () => {
                 await measure();
-                expect(home.artifacts.list().length,
+                expect(home.confirmations(),
                     JSON.stringify(screen.findAllByType(EmbeddedTerminalPaneFrame).map(frame => ({
                         status: frame.props.controller.status, error: frame.props.controller.error,
                     })))).toBeGreaterThan(0);
             });
             await measure();
             expect(screen.findAllByType(EmbeddedTerminalPaneFrame)).toHaveLength(phoneFirst ? 2 : 1);
-            expect(home.artifacts.list()).toHaveLength(1);
-            for (const frame of screen.findAllByType(EmbeddedTerminalPaneFrame)) {
-                expect(frame.props.controller.status).not.toBe('connecting');
-            }
             await home.decline();
             const expectNotOpen = async () => vi.waitFor(() => {
                 const frames = screen.findAllByType(EmbeddedTerminalPaneFrame);
@@ -250,14 +245,13 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                 await screen.update(body());
                 await measure();
                 await expectNotOpen();
-                expect(home.artifacts.list()).toHaveLength(1);
+                expect(home.confirmations()).toBe(1);
             }
             await act(async () => {
                 for (const frame of screen.findAllByType(EmbeddedTerminalPaneFrame)) frame.props.controller.retryConnect();
             });
             await home.decline(2);
             await measure();
-            expect(home.artifacts.list()).toHaveLength(2);
             await expectNotOpen();
             expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)).toBe(false);
         } finally {
@@ -301,7 +295,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                 expect(screen.findByType(SurfaceStateCard).props).toMatchObject({ kind: 'empty',
                     action: { label: t('common.open'), onPress: hook.getCurrent().retryConnect },
                 });
-                expect(home.artifacts.list()).toHaveLength(1);
+                expect(home.confirmations()).toBe(1);
                 await act(async () => screen.findByType(SurfaceStateCard).props.action.onPress());
                 await home.decline(2);
                 await vi.waitFor(() => expect(hook.getCurrent().status).toBe('not-open'));
@@ -336,7 +330,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                 return mounted;
             };
             leaf = await mountLeaf();
-            expect(home.artifacts.list()).toHaveLength(1);
+            expect(home.confirmations()).toBe(1);
             // The AppPane member outlives both responsive leaf replacements.
             // Round-trip the real stored reader as well as preserving the mounted owner.
             const retained = readSessionTerminalWorkspaceForScope(scopeId)!;
@@ -355,7 +349,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                 const frame = await renderScreen(<EmbeddedTerminalPaneFrame title="Shell" controller={leaf.getCurrent()}
                     surface={null} chrome={chrome} testIdPrefix="cancelled-member" />);
                 expect(frame.findByType(SurfaceStateCard).props).toMatchObject({ kind: 'empty', action: { label: t('common.open') } });
-                expect(home.artifacts.list()).toHaveLength(1);
+                expect(home.confirmations()).toBe(1);
                 await frame.unmount();
             }
             await act(async () => leaf!.getCurrent().retryConnect());
@@ -365,7 +359,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { await leaf?.unmount(); await host.unmount(); await home.dispose(); }
     });
     it('requires the same Machine Action admission for a Session package-script process', async () => {
-        const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-terminal-admission.test', accountId: 'bob',
+        const home = await serveBobActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-terminal-admission.test', accountId: 'bob', currentAccount: true,
             settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
             route: serveBobMachine });
         try {
@@ -405,7 +399,7 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         } finally { await home.dispose(); }
     });
     it('opens one admitted requester shell and rejects retired Account interest before another open', async () => {
-        const home = await serveBobActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-admission.test', accountId: 'bob',
+        const home = await serveBobActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-admission.test', accountId: 'bob', currentAccount: true,
             settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
             route: serveBobMachine });
         try {

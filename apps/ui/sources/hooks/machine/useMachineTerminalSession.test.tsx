@@ -265,6 +265,8 @@ describe('useMachineTerminalSession', () => {
             { key: 'primary', serverUrl: 'https://terminal-primary.test', serverIdentityId: 'srv_terminal_primary', accountId: 'terminal-account', currentAccount: true, settings },
         ] as const;
         const machineIds = ['machine', 'machine-cancel', 'machine-1'];
+        // Addressable by row read and relay, but absent from the Home census: its presence stays unanswered.
+        const retainedMachineId = 'machine-retained';
         // Installed daemons publish their installation key; own-Machine open/restart/close/list
         // reach them through Home's real execution-authorization relay.
         const installationPublicKey = await servedMachineActionRelayInstallationPublicKey();
@@ -276,7 +278,7 @@ describe('useMachineTerminalSession', () => {
                 ? Response.json(machineIds.map(machineRow))
                 // Account Machine Actions resolve their target through the batched Machine row read.
                 : request.path === '/v1/machines/read-batch' && request.method === 'POST'
-                ? createMachineReadBatchResponseFixture(request.body, id => machineIds.includes(id) ? machineRow(id) : null)
+                ? createMachineReadBatchResponseFixture(request.body, id => machineIds.includes(id) || id === retainedMachineId ? machineRow(id) : null)
                 : request.path === '/v1/machines/managed/actions/list'
                 ? Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }))
                 : request.path === '/v1/account/project-rows/list'
@@ -290,7 +292,7 @@ describe('useMachineTerminalSession', () => {
         relay = await createServedTerminalActionRelay({
             homes: homeSpecs.map(home => ({ serverId: servedHomes.homes[home.key]!.id, serverUrl: home.serverUrl,
                 serverIdentityId: home.serverIdentityId, accountId: home.accountId })),
-            machineIds,
+            machineIds: [...machineIds, retainedMachineId],
             machineRpc: async request => (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')).machineRpcWithServerScope(request),
         });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
@@ -917,26 +919,24 @@ describe('useMachineTerminalSession', () => {
     it('keeps a workspace terminal waiting while its retained Machine presence is unknown, then opens on observation', async () => {
         const React = await import('react');
         const { storage } = await import('@/sync/domains/state/storage');
-        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
-        const { withdrawMachinePresenceForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const { WorkspaceEmbeddedTerminalPane } = await import('@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane');
         const { EmbeddedTerminalPane } = await import('@/components/terminal/embedded/EmbeddedTerminalPane');
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine', activeAt: Date.now() })]);
-        // Model the real transport-withdrawal edge: the row remains, its presence needs fresh observation.
-        withdrawMachinePresenceForScope({ serverId: homeIds.primary, accountId: 'terminal-account' });
+        const machine = createMachineFixture({ id: 'machine-retained', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        // A retained display row carries no presence answer until the Home's census answers it.
+        storage.getState().replaceMachineDisplays([{ ...machine }], { sourceServerId: homeIds.primary });
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'workspace-observed', reused: false });
         terminalOps.streamReadBytes.mockResolvedValue({ ok: true, terminalId: 'workspace-observed', frames: [],
             nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true });
         const screen = await renderScreen(React.createElement(AppPaneProvider, null,
             React.createElement(WorkspaceEmbeddedTerminalPane, {
-                scopeId: 'workspace-presence', machineId: 'machine', rootPath: '/repo',
+                scopeId: 'workspace-presence', machineId: 'machine-retained', rootPath: '/repo',
                 serverId: homeIds.primary, terminalKey: 'workspace-presence',
             })));
         expect(screen.findByType(EmbeddedTerminalPane).props.controller).toMatchObject({ status: 'not-open', error: null });
         for (const rpc of Object.values(terminalOps)) expect(rpc).not.toHaveBeenCalled();
-        await act(async () => { observeMachinePresenceForTest({ serverId: homeIds.primary, accountId: 'terminal-account' }, ['machine']); });
-        await vi.waitFor(() => expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine',
+        await act(async () => { storage.getState().applyMachines([machine], false, { sourceServerId: homeIds.primary }); });
+        await vi.waitFor(() => expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine-retained',
             expect.objectContaining({ terminalId: 'workspace-observed' }), expect.any(Object)));
         expect(screen.findByType(EmbeddedTerminalPane).props.controller.error).toBeNull();
         await screen.unmount();
@@ -3129,14 +3129,13 @@ describe('useMachineTerminalSession', () => {
 
     it('keeps two Account-bound renderers readable when a predecessor refuses holdForOutput', async () => {
         const terminalId = 'term-predecessor-viewers';
-        // Network peer vector: HEAD 323e6f98's closed byte-read request has no
-        // holdForOutput field. Keep the real Action/codec/carrier below this boundary.
-        terminalOps.streamReadBytes.mockImplementation((_machineId: string, request: { holdForOutput?: boolean }) => {
-            expect(request.holdForOutput).toBe(true);
-            return { ok: false, code: 'terminal_invalid_request', message: 'terminal_invalid_request' };
-        });
-        terminalOps.streamCreditRead.mockResolvedValue({ ok: true, terminalId, frames: [], nextByteOffset: 0,
-            availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true });
+        // Network peer vector: HEAD 323e6f98's strict byte-read request has controlCursor
+        // but no holdForOutput field. Keep the real Action/codec/carrier below this boundary.
+        const finished = { ok: true, terminalId, frames: [], nextByteOffset: 0,
+            availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true };
+        terminalOps.streamReadBytes.mockImplementation((_machineId: string, request: { holdForOutput?: boolean }) =>
+            request.holdForOutput === true ? { ok: false, code: 'terminal_invalid_request', message: 'terminal_invalid_request' } : finished);
+        terminalOps.streamCreditRead.mockResolvedValue(finished);
         const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
         const createViewer = (index: number) => {
             const terminalRef = { current: null };
@@ -3152,9 +3151,11 @@ describe('useMachineTerminalSession', () => {
             expect(viewer.getCurrent().error).toBeNull();
             expect(viewer.getCurrent().status).toBe('exited');
         }
-        // One accepted fallback per compatibility probe, including attempts
+        // One accepted held-free retry per refused held read, including attempts
         // superseded by initial renderer sizing; settled streams do not poll.
-        expect(terminalOps.streamCreditRead.mock.calls.length).toBe(terminalOps.streamReadBytes.mock.calls.length);
+        const heldReads = terminalOps.streamReadBytes.mock.calls.filter(([, request]) => request.holdForOutput === true).length;
+        expect(heldReads).toBeGreaterThan(0);
+        expect(terminalOps.streamReadBytes.mock.calls.length - heldReads).toBe(heldReads);
         const settledReads = terminalOps.streamReadBytes.mock.calls.length;
         await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
         expect(terminalOps.streamReadBytes.mock.calls.length).toBe(settledReads);
