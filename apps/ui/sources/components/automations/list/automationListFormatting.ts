@@ -11,7 +11,7 @@ import type {
     AutomationTriggerListItem,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { hasTranslation, t, tLoose, type TranslationKey } from '@/text';
-import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatTriggerSummary, readActionTriggerSummaryFacts } from '@/components/workflows/triggers/formatTriggerSummary';
 import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -135,41 +135,37 @@ const AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS = {
     sourceUnavailable: 'automations.detail.trigger.status.sourceUnavailable',
 } as const satisfies Record<AutomationSessionLifecycleTriggerStatus['state'], TranslationKey>;
 
-/** Shared presentation key for the sole immutable Run-cause union. */
-export function getAutomationRunCauseTranslationKey(
-    cause: AutomationRunCause,
-): 'automations.detail.runMeta.cause.schedule'
-    | 'automations.detail.runMeta.cause.pluginEvent'
-    | 'automations.detail.runMeta.cause.sessionLifecycle'
-    | 'automations.detail.runMeta.cause.manual'
-    | 'automations.detail.runMeta.cause.conversation' {
-    switch (cause.kind) {
-        case 'manual':
-            return 'automations.detail.runMeta.cause.manual';
-        case 'conversation':
-            return 'automations.detail.runMeta.cause.conversation';
-        case 'trigger':
-            if (cause.triggerKind === 'schedule') return 'automations.detail.runMeta.cause.schedule';
-            if (cause.triggerKind === 'pluginEvent') return 'automations.detail.runMeta.cause.pluginEvent';
-            return 'automations.detail.runMeta.cause.sessionLifecycle';
-    }
-}
-
 export function getAutomationRunCauseAt(cause: AutomationRunCause): number {
     return cause.kind === 'manual' ? cause.invokedAt : cause.occurredAt;
 }
 
 export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string {
-    if (cause.kind === 'trigger' && cause.triggerKind === 'pluginEvent') {
-        return t('automations.list.event', { eventId: cause.evidence.eventRef.localId });
+    switch (cause.kind) {
+        case 'manual':
+            return t('automations.detail.runMeta.cause.manual');
+        case 'conversation':
+            return t('automations.detail.runMeta.cause.conversation');
+        case 'trigger':
+            switch (cause.triggerKind) {
+                case 'schedule':
+                    return t('automations.detail.runMeta.cause.schedule');
+                case 'pluginEvent':
+                    return t('automations.list.event', { eventId: cause.evidence.eventRef.localId });
+                case 'sessionLifecycle':
+                    return [
+                        formatAutomationSessionLifecycleEventLabel(cause.evidence.event),
+                        formatAutomationSessionLifecyclePolicyLabel(cause.evidence.policy),
+                    ].join(' · ');
+                case 'runLifecycle':
+                    return formatTriggerSummary({ kind: 'runLifecycle', condition: cause.evidence.condition });
+                case 'action': {
+                    // Immutable provenance names the phase and Action, never an authored wait policy.
+                    const facts = readActionTriggerSummaryFacts({ phase: cause.evidence.phase, actionIds: [cause.evidence.actionId] });
+                    return t(facts.phase === 'before' ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction',
+                        { action: facts.actions[0]!.title });
+                }
+            }
     }
-    if (cause.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle') {
-        return [
-            formatAutomationSessionLifecycleEventLabel(cause.evidence.event),
-            formatAutomationSessionLifecyclePolicyLabel(cause.evidence.policy),
-        ].join(' · ');
-    }
-    return t(getAutomationRunCauseTranslationKey(cause));
 }
 
 /**

@@ -9,8 +9,10 @@ import {
 import {
     AutomationTriggerListItemSchema,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
+import { resolveActionTitle } from '@/text/actionTitles';
 import {
     formatAutomationNextRun,
     formatAutomationRunCauseLabel,
@@ -19,7 +21,6 @@ import {
     formatAutomationTriggerLabel,
     formatAutomationTriggerStatusLabel,
     getAutomationRunCauseAt,
-    getAutomationRunCauseTranslationKey,
 } from './automationListFormatting';
 
 afterEach(() => {
@@ -185,8 +186,6 @@ describe('immutable Run cause presentation', () => {
 
     it('derives time and kind from immutable cause instead of mutable Run timestamps', () => {
         expect(getAutomationRunCauseAt(retiredLifecycleCause)).toBe(90);
-        expect(getAutomationRunCauseTranslationKey(retiredLifecycleCause))
-            .toBe('automations.detail.runMeta.cause.sessionLifecycle');
         expect(getAutomationRunCauseAt({ kind: 'manual', invokedAt: 40 })).toBe(40);
         expect(getAutomationRunCauseAt({ kind: 'conversation', occurrenceKey, occurredAt: 50 }))
             .toBe(50);
@@ -207,6 +206,30 @@ describe('immutable Run cause presentation', () => {
                 sourceSelectorId: '11111111-1111-4111-8111-111111111111',
             },
         }))).toBe('Event: pull-request-opened-v1');
+    });
+
+    it.each(['before', 'after'] as const)('names an immutable %s Action cause without inventing its wait policy', phase => {
+        // QA-LIVE/repodev-d14-check-run.json: this evidence retains no authored mode/onFailure.
+        const cause = AutomationRunCauseSchema.parse({
+            kind: 'trigger', triggerId: 'retired-action-trigger', triggerRevision: 0,
+            triggerKind: 'action', occurrenceKey, occurredAt: 1794959086630,
+            evidence: { actionId: 'deployments.deploy', requestId: 'request-1', phase,
+                machineId: 'machine-1', ...(phase === 'after' ? { status: 'succeeded' } : {}) },
+        });
+        const action = resolveActionTitle('deployments.deploy', findActionSpec('deployments.deploy') ?? null);
+        expect(formatAutomationRunCauseLabel(cause)).toBe(t(phase === 'before'
+            ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction', { action }));
+    });
+
+    it.each(['terminal', 'needs_attention'] as const)('names an immutable source Run %s cause from its accepted condition', condition => {
+        // QA-B/design-run-ended-child-detail.json: Run provenance is not a Session turn event.
+        const cause = AutomationRunCauseSchema.parse({
+            kind: 'trigger', triggerId: 'retired-run-trigger', triggerRevision: 0,
+            triggerKind: 'runLifecycle', occurrenceKey, occurredAt: 1794930318129,
+            evidence: { source: { kind: 'workflow_run', runId: 'source-run-1' }, condition, sourceRevision: 12 },
+        });
+        expect(formatAutomationRunCauseLabel(cause)).toBe(t(condition === 'terminal'
+            ? 'workflows.triggers.kind.runEnds' : 'workflows.triggers.kind.runNeedsYou'));
     });
 });
 
