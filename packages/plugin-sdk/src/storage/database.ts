@@ -1,5 +1,6 @@
 /** @moduleRealm daemon */
 import type { StorageScopeService } from '../storage.js';
+export { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/daemonDatabaseLimitsV1';
 
 /** The closed scalar set admitted by the host-owned SQLite boundary. */
 export type DaemonDatabaseValue = null | string | number | bigint | Uint8Array;
