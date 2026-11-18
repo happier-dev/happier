@@ -9,7 +9,7 @@ import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetup
 import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
 import { readProjectEffectiveDefinition, type PendingProjectSharedSetupInput } from './projectEffectiveDefinition';
 import { readAcceptedProjectSetupForProject, readPublishedProjectSetup, type PublishedProjectSetupRead } from './projectAcceptedSetup';
-import { reviewProjectSharedSetupChangeV1, type ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import { compareProjectSharedSetupV1, reviewProjectSharedSetupChangeV1, type ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManifestInspectionSnapshot } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -46,16 +46,11 @@ export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<
             publishedSetupError = error;
         }
     }
+    const comparison = publishedSetup ? compareProjectSharedSetupV1({ acceptedSetup, publication: publishedSetup.publication }) : undefined;
     let pendingSharedSetup: PendingProjectSharedSetupInput | undefined;
-    if (publishedSetup && association.workspace.source?.sourceId === sourceId) {
-        const accepted = acceptedSetup.acceptedSharedSetup;
-        const publication = publishedSetup.publication;
-        const acceptedCurrent = accepted && accepted.sourceId === publication.sourceId
-            && accepted.digest === publication.digest
-            && accepted.contentRevision.headerVersion === publication.contentRevision.headerVersion
-            && accepted.contentRevision.bodyVersion === publication.contentRevision.bodyVersion;
-        if (!acceptedCurrent) pendingSharedSetup = { source: publishedSetup.source,
-            setup: publication, manifest: publication.manifest };
+    if (publishedSetup && association.workspace.source?.sourceId === sourceId && comparison?.kind === 'changed') {
+        pendingSharedSetup = { source: publishedSetup.source,
+            setup: publishedSetup.publication, manifest: publishedSetup.publication.manifest };
     }
     const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
         account, project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal,
@@ -68,7 +63,7 @@ export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<
             const publication = publishedSetup.publication;
             const change = reviewProjectSharedSetupChangeV1({ repositoryManifest: definition.snapshot.document?.status === 'valid'
                 ? definition.snapshot.document.manifest : null,
-                acceptedSetup: definition.acceptedSetup, publication });
+                acceptedSetup: definition.acceptedSetup, publication, comparison });
             if (change.kind === 'changed') {
                 const after = await inspectProjectSetupFromRuntime({ ...input,
                     acceptedSetup: { ...definition.acceptedSetup, acceptedSharedSetup: publication }, reviewSetupConsent: true });

@@ -86,6 +86,7 @@ import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/mach
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { inspectProjectSetupFromRuntime } from './projectSetupReadiness';
 import { readPublishedProjectSetup } from './projectAcceptedSetup';
+import { reviewProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { executeWaitActionV1 } from '../../../../../packages/protocol/src/actions/executor/waitAction';
@@ -1521,21 +1522,31 @@ describe('authenticated finite Project Action owner', () => {
         const control = await readPublishedProjectSetup({ account: { credentials: h.runtime.credentials },
             serverId: 'home', sourceId: 'source', serverHttpBaseUrl: h.runtime.serverHttpBaseUrl });
         expect(control.publication.manifest).toEqual(manifest);
+        const ownerReview = reviewProjectSharedSetupChangeV1({ repositoryManifest: null,
+            acceptedSetup: { kind: 'ready' }, publication: control.publication });
         sourceHttp.mockClear();
         h.get.mockClear();
         const inspect = () => action({ actionId: 'projects.inspect', input: { workspace: h.address, read: { kind: 'scripts' } }, context: { serverId: 'home' } });
         for (let request = 1; request <= 2; request++) {
             const result = ProjectDefinitionInspectOutputSchema.parse(await inspect());
-            expect(result.effectiveDefinition).toMatchObject({ pendingSharedSetup: {
+            expect(Boolean(result.effectiveDefinition?.pendingSharedSetup)).toBe(ownerReview.kind === 'changed');
+            if (ownerReview.kind === 'changed') expect(result.effectiveDefinition).toMatchObject({ pendingSharedSetup: {
                 source: { id: 'source', name: 'Shared setup' },
                 setup: { sourceId: 'source', contentRevision: { headerVersion: 1, bodyVersion: 2 } },
                 summary: [{ kind: 'scripts', count: 1 }],
             } });
             expect(result.effectiveDefinition?.effectiveManifest?.scripts).toBeUndefined();
-            expect(JSON.stringify(result.effectiveDefinition?.pendingSharedSetup)).not.toContain('private-command');
+            expect(JSON.stringify(result.effectiveDefinition?.pendingSharedSetup ?? null)).not.toContain('private-command');
             expect(sourceHttp).toHaveBeenCalledTimes(request);
             expect(artifactReads()).toBe(request);
         }
+        const reviewed = ProjectDefinitionInspectOutputSchema.parse(await action({ actionId: 'projects.inspect',
+            input: { workspace: h.address, read: { kind: 'scripts' }, reviewSharedSetup: { sourceId: 'source' } },
+            context: { serverId: 'home' } }));
+        expect(reviewed.sharedSetupChange?.kind).toBe(ownerReview.kind);
+        expect(Boolean(reviewed.effectiveDefinition?.pendingSharedSetup)).toBe(ownerReview.kind === 'changed');
+        expect(sourceHttp).toHaveBeenCalledTimes(3);
+        expect(artifactReads()).toBe(3);
         expect(h.spawned).toEqual([]);
     });
 
