@@ -61,7 +61,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Read a Bitbucket activity page',
       description: 'Reads one bounded page of the combined approval, update and comment activity'
         + ' of one pull request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: BitbucketActivityInputV1Schema.jsonSchema,
       resultSchema: BitbucketActivityResultV1Schema.jsonSchema,
@@ -73,7 +73,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
       title: 'Refresh a Bitbucket pull-request overview',
       description: 'Reads the pull request authoritatively from Bitbucket for the mounted Overview.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: BitbucketOverviewInputV1Schema.jsonSchema,
       resultSchema: BitbucketOverviewResultV1Schema.jsonSchema,
@@ -85,7 +85,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
       title: 'Read a Bitbucket pull-request diff',
       description: 'Reads the raw diff and its bounded diffstat projection without dropping the pull request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: BitbucketDiffInputV1Schema.jsonSchema,
       resultSchema: BitbucketDiffResultV1Schema.jsonSchema,
@@ -98,7 +98,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Read a Bitbucket build-status page',
       description: 'Reads one bounded page of the build statuses reported against one pull'
         + ' request, with a rollup only when that page is the whole collection.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: BitbucketBuildsInputV1Schema.jsonSchema,
       resultSchema: BitbucketBuildsResultV1Schema.jsonSchema,
@@ -111,7 +111,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Read a Bitbucket comment page',
       description: 'Reads one bounded page of the comments on one pull request, in provider'
         + ' order, with their real resolution tri-state.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: BitbucketCommentsInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentsResultV1Schema.jsonSchema,
@@ -124,7 +124,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Merge a Bitbucket pull request',
       description: 'Merges one pull request with the exact strategy and source-branch decision the'
         + ' user chose, only while its head is still the commit they saw.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
       confirmation: {
@@ -153,7 +153,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Decline a Bitbucket pull request',
       description: 'Declines one open pull request. Bitbucket has no reopen, so this cannot be'
         + ' undone through its API.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -181,7 +181,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Resolve a Bitbucket comment thread',
       description: 'Marks one comment thread on this pull request resolved, and confirms it from'
         + ' the comment itself.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -209,7 +209,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       title: 'Reopen a Bitbucket comment thread',
       description: 'Reopens one resolved comment thread on this pull request, and confirms it from'
         + ' the comment itself.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -236,7 +236,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
       title: 'Submit this Bitbucket pull-request review',
       description: 'Publishes the selected canonical Happier review comments in order, then applies the requested Bitbucket verdict against the exact base and head revisions shown.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -263,7 +263,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment]: {
       title: 'Publish this Bitbucket review comment',
       description: 'Publishes one canonical Happier proposal at its exact pinned Bitbucket diff anchor.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -281,7 +281,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment]: {
       title: 'Reply to this Bitbucket review comment',
       description: 'Publishes one canonical Happier proposal beneath one exact Bitbucket pull-request comment.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {

@@ -18,7 +18,7 @@ describe('Triage sources contribution protocol', () => {
         const operations = TriageSourcesContributionProtocolV1.operations;
         expect(Object.keys(operations).sort())
             .toEqual(['create', 'edit', 'get', 'linkSession', 'listCreationPlaces', 'listInstances', 'listScopeUnits', 'prepareReviewWorkspace', 'readAttention', 'readFixPullRequests', 'readPullRequestStatus', 'readSessionLinks', 'resolveResource', 'scan', 'transition', 'verifyReviewWorkspace']);
-        expect(operations.resolveResource.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin', 'ui'] });
+        expect(operations.resolveResource.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin', 'ui', 'agent'] });
         expect(operations.readAttention.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin'] });
         expect(operations.listInstances.declaration).toMatchObject({
             dangerLevel: 'safe',
@@ -30,7 +30,7 @@ describe('Triage sources contribution protocol', () => {
         });
         expect(operations.get.declaration).toMatchObject({
             dangerLevel: 'safe',
-            surfaces: ['plugin', 'ui'],
+            surfaces: ['plugin', 'ui', 'agent'],
         });
         expect(operations.prepareReviewWorkspace.declaration.dangerLevel).toBe('writesLocal');
         expect(operations.verifyReviewWorkspace.declaration.dangerLevel).toBe('safe');

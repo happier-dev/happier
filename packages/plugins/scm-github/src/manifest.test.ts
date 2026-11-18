@@ -291,7 +291,7 @@ describe('GitHub SCM manifest', () => {
       // They carry no Triage operation role: the aggregate never invokes them.
       // Native reads also reach agent-facing Actions; direct plugin code is
       // still refused and no generic host PR-management vocabulary is added.
-      expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       // The explicit empty list is the canonical mounted-only placement
       // decision: global placement discovery reads no destination from it.
       expect(action.placementBindings).toEqual([]);
@@ -435,7 +435,7 @@ describe('GitHub SCM manifest', () => {
 
       // Every native write reaches the shared approval owner on agent/MCP/CLI ingress.
       expect(action.surfaces).toEqual(taskRoles.has(id)
-        ? ['plugin', 'ui', 'agent', 'mcp', 'cli'] : ['ui', 'agent', 'mcp', 'cli']);
+        ? ['plugin', 'ui', 'agent', 'mcp', 'cli'] : ['ui', 'agent', 'mcp', 'cli', 'plugin']);
       // The one placement is the details panel the write lives in; global
       // placement discovery is offered no other destination.
       expect(action.placementBindings).toEqual(taskRoles.has(id) ? [] : ['detailsPanel']);

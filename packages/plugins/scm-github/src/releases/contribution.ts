@@ -86,7 +86,7 @@ export const GITHUB_RELEASE_ACTIONS_V1 = {
     [GITHUB_RELEASE_MOUNTED_ACTION_ID_V1]: {
         title: 'Control the mounted Releases editor', description: 'Read current UI context for the mountId and operandless commands. '
             + 'Typed operations change only the addressed mounted editor. Save and Publish are separate provider Actions.',
-        dangerLevel: 'safe' as const, surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'] as const, placementBindings: [],
+        dangerLevel: 'safe' as const, surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'] as const, placementBindings: [],
         execution: { target: 'client', client: { artifactId: 'github-forge-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] } as const,
         inputSchema: ForgeReleaseMountedIntentInputV1Schema.jsonSchema, resultSchema: ForgeReleaseMountedIntentResultV1Schema.jsonSchema,
     },

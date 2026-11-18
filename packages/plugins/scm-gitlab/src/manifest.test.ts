@@ -148,7 +148,7 @@ describe('GitLab plugin manifest', () => {
       expect(action, `${id} must be declared`).toBeDefined();
       // Native reads are reachable from UI and agent-facing Actions; direct
       // plugin execution remains unavailable.
-      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual([
         GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
@@ -179,7 +179,7 @@ describe('GitLab plugin manifest', () => {
       .toBe(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
     expect(action).toMatchObject({
       dangerLevel: 'writesLocal',
-      surfaces: ['plugin', 'ui'],
+      surfaces: ['plugin', 'ui', 'agent'],
       hostAccess: [
         GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
         GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
@@ -325,8 +325,8 @@ describe('GitLab merge-request mutation Actions', () => {
     for (const id of ids) {
       const surfaces = actions.get(id)?.surfaces;
       expect(surfaces, id).toContain('ui');
-      expect(surfaces, id).not.toContain('plugin');
-      expect(surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(surfaces, id).toContain('plugin');
+      expect(surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(surfaces, id).not.toContain('voice');
     }
   });

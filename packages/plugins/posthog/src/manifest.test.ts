@@ -276,7 +276,7 @@ describe('PostHog plugin manifest', () => {
 
     it('exposes the same purpose-bound configuration reader to UI, agent, MCP and CLI', () => {
         expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === POSTHOG_ACTION_IDS.configuration))
-            .toMatchObject({ surfaces: ['ui', 'agent', 'mcp', 'cli'], connectedAccountPurposeBindings: [{
+            .toMatchObject({ surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], connectedAccountPurposeBindings: [{
                 path: 'binding.account', purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
             }] });
     });
@@ -291,7 +291,7 @@ describe('PostHog plugin manifest', () => {
             execution: { target: 'account', account: { artifactId: 'posthog-account-runtime', exportName: 'activate' } },
             dangerLevel: 'safe',
             confirmation: { title: expect.anything(), body: expect.anything() },
-            surfaces: ['ui', 'agent', 'mcp', 'cli'],
+            surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
             hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, 'posthog-network'],
             connectedAccountPurposeBindings: [{
                 path: 'instance.binding.account',
@@ -373,7 +373,9 @@ describe('PostHog plugin manifest', () => {
             .toEqual(sources.operations.get.declaration.surfaces);
         for (const id of [POSTHOG_ACTION_IDS.issueEvents, POSTHOG_ACTION_IDS.issueActivity,
             POSTHOG_ACTION_IDS.codeVariables, POSTHOG_ACTION_IDS.nativeOverview]) {
-            expect(actions.get(id)?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+            expect(actions.get(id)?.surfaces, id).toEqual(id === POSTHOG_ACTION_IDS.issueEvents
+                ? ['ui', 'agent', 'mcp', 'cli', 'plugin']
+                : ['ui', 'agent', 'mcp', 'cli', 'plugin']);
             expect(actions.get(id)?.dangerLevel, id).toBe('safe');
         }
         // And the mounted-only list is exact.

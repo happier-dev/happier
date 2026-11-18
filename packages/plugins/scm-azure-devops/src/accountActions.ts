@@ -63,7 +63,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Read the Azure DevOps iterations of a pull request',
       description: 'Reads the pull request\u2019s iteration list once, and names the real'
         + ' current iteration the Files and Activity tabs both compare against.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: AzureIterationsInputV1Schema.jsonSchema,
       resultSchema: AzureIterationsResultV1Schema.jsonSchema,
@@ -76,7 +76,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Read an Azure DevOps commit page',
       description: 'Reads one bounded page of the commits of one pull request, positioned only'
         + ' by the continuation token Azure DevOps issued.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: AzureCommitsInputV1Schema.jsonSchema,
       resultSchema: AzureCommitsResultV1Schema.jsonSchema,
@@ -89,7 +89,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Read an Azure DevOps iteration change page',
       description: 'Reads one bounded page of the files one pull-request iteration changes,'
         + ' advancing only through the skip and top Azure DevOps issued.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: AzureIterationChangesInputV1Schema.jsonSchema,
       resultSchema: AzureIterationChangesResultV1Schema.jsonSchema,
@@ -102,7 +102,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Read the Azure DevOps policies of a pull request',
       description: 'Reads the statuses and policy evaluations of one pull request, with'
         + ' enforcement taken only from a returned evaluation.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: AzurePoliciesInputV1Schema.jsonSchema,
       resultSchema: AzurePoliciesResultV1Schema.jsonSchema,
@@ -115,7 +115,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Read the Azure DevOps threads of a pull request',
       description: 'Reads every review thread of one pull request in the one response the'
         + ' documented endpoint returns.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: [],
       inputSchema: AzureThreadsInputV1Schema.jsonSchema,
       resultSchema: AzureThreadsResultV1Schema.jsonSchema,
@@ -129,7 +129,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       description: 'Completes one active pull request with the branch decision the user chose,'
         + ' only while its merge source is still the commit they saw, and reports the polled'
         + ' terminal state rather than the accepted request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
       confirmation: {
@@ -154,7 +154,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Abandon an Azure DevOps pull request',
       description: 'Abandons one active pull request. Azure can reactivate an abandoned pull'
         + ' request later.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -177,7 +177,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Reactivate an Azure DevOps pull request',
       description: 'Reactivates one abandoned pull request, which is Azure’s reopen. A'
         + ' completed pull request is refused rather than reactivated.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -200,7 +200,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Request review on an Azure DevOps pull request',
       description: 'Adds the selected identities as reviewers of one active pull request through'
         + ' one additive request, leaving every existing reviewer and vote untouched.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -223,7 +223,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Set the status of an Azure DevOps review thread',
       description: 'Sets one review thread’s status and confirms it from the thread itself.'
         + ' The conversation in the thread is never rewritten.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -246,7 +246,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Submit an Azure DevOps pull request review',
       description: 'Publishes the selected canonical review comments in order and submits the'
         + ' viewer verdict last, only while the exact base and head remain current.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -265,7 +265,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Publish an Azure DevOps pull request review comment',
       description: 'Publishes one canonical Happier proposal as a new review thread at its exact'
         + ' preflighted Azure DevOps anchor.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -284,7 +284,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       title: 'Reply to an Azure DevOps pull request review thread',
       description: 'Publishes one canonical Happier proposal as a reply to the exact Azure DevOps'
         + ' thread and parent comment selected by the reader.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {

@@ -265,7 +265,9 @@ describe('Sentry plugin manifest', () => {
       SENTRY_ACTION_IDS.listTagValues,
     ]) {
       const action = actions.get(id);
-      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(action?.surfaces).toEqual(id === SENTRY_ACTION_IDS.readEvent
+        ? ['ui', 'agent', 'mcp', 'cli', 'plugin']
+        : ['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(action?.inputSchema).toBeDefined();
       expect(action?.resultSchema).toBeDefined();
       // Every detail read reaches the provider through the exact selected
@@ -301,7 +303,9 @@ describe('Sentry plugin manifest', () => {
       SENTRY_ACTION_IDS.readEvent,
       SENTRY_ACTION_IDS.listTagValues,
     ]) {
-      expect(actions.get(id)?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(actions.get(id)?.surfaces, id).toEqual(id === SENTRY_ACTION_IDS.readEvent
+        ? ['ui', 'agent', 'mcp', 'cli', 'plugin']
+        : ['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(actions.get(id)?.placementBindings, id).toEqual([]);
     }
     // `scan` remains a programmatic role: no `ui` surface, so the grammar asks

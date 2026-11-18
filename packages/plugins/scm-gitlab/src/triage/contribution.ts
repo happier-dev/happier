@@ -503,7 +503,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
-    surfaces: ['ui', 'agent', 'mcp', 'cli'] as const,
+    surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'] as const,
     execution: GITLAB_ACCOUNT_EXECUTION,
     dangerLevel: 'safe' as const,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
@@ -778,7 +778,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
-    surfaces: ['ui', 'agent', 'mcp', 'cli'] as const,
+    surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'] as const,
     placementBindings: ['detailsPanel'] as const,
     execution: GITLAB_ACCOUNT_EXECUTION,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],

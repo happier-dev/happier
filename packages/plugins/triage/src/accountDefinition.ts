@@ -115,7 +115,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           { path: 'itemId', title: 'Item', widget: 'text' },
           { path: 'transitionId', title: 'Target state', widget: 'text' },
         ] },
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'writesRemote', hostAccess: ['account-storage'],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [], dangerLevel: 'writesRemote', hostAccess: ['account-storage'],
         confirmation: { title: 'Change this task’s status?', body: 'This applies the selected status transition in its source.', confirmLabel: 'Change status' },
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         inputSchema: PluginWorkItemTransitionInputV1Schema, resultSchema: TriageTaskWriteResultV1Schema,
@@ -126,7 +126,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'List tasks',
         description: 'Reads the current task kinds from configured sources through the shared list window.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         inputSchema: TriageListEntriesInputV1Schema,
         resultSchema: TriageListEntriesResultV1Schema,
         hostAccess: ['account-storage'],
@@ -142,7 +142,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           { path: 'placeId', title: 'Place', widget: 'text' },
           { path: 'initialStatusId', title: 'Initial state', widget: 'text' },
         ] },
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         // The selected source Action owns the effect and its approval default.
         inputSchema: TriageCreateTaskActionInputV1Schema,
         resultSchema: TriageCreateTaskActionResultV1Schema,
@@ -166,7 +166,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: {
         title: 'Read a task origin error',
         description: 'Reads the exact origin error selected for this task.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         dangerLevel: 'safe', readOnly: true,
         inputSchema: TriageReadTaskOriginErrorInputV1Schema,
         resultSchema: TriageReadTaskOriginErrorResultV1Schema,
@@ -180,7 +180,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
           { path: 'fields', title: 'Changes', widget: 'json' },
         ] },
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         inputSchema: TriageEditTaskActionInputV1Schema,
         resultSchema: TriageTaskWriteResultV1Schema,
         hostAccess: ['account-storage'],
@@ -209,7 +209,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
           { path: 'sessionId', title: 'Session', widget: 'json' },
         ] },
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         dangerLevel: 'writesLocal',
         confirmationWhen: { presentUserUi: false },
         sessionTarget: { field: 'sessionId', cardinality: 'one' },
@@ -231,7 +231,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
         },
         // UI, Voice and automated callers share the same bounded read owner.
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         inputSchema: TriageListEntriesInputV1Schema,
         resultSchema: TriageListEntriesResultV1Schema,
@@ -248,7 +248,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         title: TRIAGE_DISPLAY_NAME,
         description: 'Search configured GitHub issues, pull requests and error groups by title or repository text. Each result.command.input contains entryRef and sourceInstance. For an exact GitHub issue URL, including before pin issue, unpin or subscribe, use entries/resolve-resource-v1 instead; it explains how to obtain instance, localRef and routingToken for source Actions. For a text-search result, call entries/read-detail-v1 for instance and entries/reobserve-v1 for the current observation.outcome.locator.routingToken, using its entryRef and sourceInstance.sourceInstanceId.',
         // Search and automated callers share the Account scan/fold owner.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         // The provider section IS the affordance. A query Action is not also a
         // command-palette entry, and the manifest owner refuses one that is.
         placementBindings: [],
@@ -264,7 +264,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         title: 'Pin or unpin an entry',
         description: 'Keeps one pull request, issue or error group at the top of the list, or removes that mark again.',
         // Every caller reaches the same reversible user-mark writer.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // Pins stay direct for agents too; session starts and configuration
         // writes keep Ask for agents while a present-user UI press is sufficient.
@@ -278,7 +278,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         title: 'Link or unlink a fix pull request',
         description: 'Records, or removes, the pull request that fixes one issue or error group.',
         // The caller is this plugin's own mounted detail affordance, like Pin.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // Default `safe`: durable user state whose exact inverse is one press
         // away, touching nothing outside Happier. It writes only `user-marks`.
@@ -292,7 +292,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'Read the fix pull requests',
         description: 'Reads the pull requests linked as fixes for one issue or error group.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         inputSchema: TriageReadFixPullRequestsInputV1Schema,
         resultSchema: TriageReadFixPullRequestsResultV1Schema,
@@ -305,7 +305,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'Read the pinned entries',
         description: 'Reads one bounded page of the entries the user pinned, newest first.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         inputSchema: TriageListPinnedEntriesInputV1Schema,
         resultSchema: TriageListPinnedEntriesResultV1Schema,
@@ -378,7 +378,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         title: 'Configure a source',
         description: 'Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.',
         // Settings and automated invocations share the configured-instance writer.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // It writes durable Account state — the record of which sources the user
         // configured — and nothing outside Happier.
@@ -433,7 +433,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: {
         title: 'Resolve a GitHub issue or other resource URL',
         description: 'Resolve a GitHub issue or pull request URL before pin issue, unpin, subscribe or other source Actions, without scanning the list. Pass v:1 and resource:{kind:"issue",url:"https://github.com/OWNER/REPO/issues/NUMBER"}; pull requests use kind:"pullRequest" and /pull/NUMBER. The resolved result contains entryRef, sourceInstance and locator.routingToken. Next call happier.triage/actions/entries/read-detail-v1 with v:1, entryRef and sourceInstanceId:sourceInstance.sourceInstanceId to obtain result.instance. For source Actions, use that instance, localRef:{kindId,collisionScope,entryId} from entryRef, and routingToken from locator.routingToken. Keep these returned values unchanged; do not invent routing fields. The returned instance.configuration.token is non-secret source-selection data required by source Actions; pass it unchanged rather than substituting [REDACTED], while keeping its contents out of user-facing prose. A missing route or unavailable result cannot be used for a write.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         dangerLevel: 'safe',
         readOnly: true,
@@ -473,7 +473,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'Read the saved views',
         description: 'Reads the saved filter and order views. Select one on this device with ui/mounted-v1 selectSavedView.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         inputSchema: TriageReadSavedViewsInputV1Schema,
         resultSchema: TriageReadSavedViewsResultV1Schema,
@@ -486,7 +486,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         description: 'Creates, renames, updates or removes one saved filter and order view. Selection uses ui/mounted-v1 selectSavedView on the addressed client.',
         // The same mounted UI surface as the list read: the caller is this plugin's
         // own mounted lens control, which holds no Settings member of its own.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
@@ -519,7 +519,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
         title: 'Add, change, remove, reorder or restore actions',
         description: 'Creates, renames, disables, reconfigures, removes or reorders one configured action, or restores the shipped defaults.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.

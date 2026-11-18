@@ -92,8 +92,7 @@ describe('Azure DevOps pull-request write declarations', () => {
 
   it('exposes every write to agents with host confirmation by default', () => {
     for (const declaration of declarations) {
-      expect(declaration.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
-      expect(declaration.surfaces).not.toContain('plugin');
+      expect(declaration.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(declaration.dangerLevel).not.toBe('safe');
       expect(declaration.confirmation?.title).toEqual({
         key: expect.any(String),
@@ -105,7 +104,7 @@ describe('Azure DevOps pull-request write declarations', () => {
   it('exposes native detail reads to agents through the same configured-account owner', () => {
     for (const id of Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS)) {
       const declaration = PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id);
-      expect(declaration?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(declaration?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(declaration?.dangerLevel, id).toBe('safe');
       expect(declaration?.connectedAccountPurposeBindings, id)
         .toEqual([{ path: 'instance.binding.account', purpose: AZURE_DEVOPS_TRIAGE_PURPOSE }]);

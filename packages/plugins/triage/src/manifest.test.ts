@@ -303,9 +303,9 @@ describe('Triage plugin manifest', () => {
     expect(read.pins.map((pin) => pin.entryRef)).toEqual([entryRef]);
   });
 
-  it('admits every public Triage action on the centrally authorized agent, MCP and CLI surfaces', () => {
+  it('admits every public Triage action on the centrally authorized agent surface', () => {
     for (const action of PLUGIN_MANIFEST.contributes.actions.filter(action => !action.surfaces.every(surface => surface === 'plugin'))) {
-      expect(action.surfaces, action.id).toEqual(expect.arrayContaining(['agent', 'mcp', 'cli']));
+      expect(action.surfaces, action.id).toContain('agent');
     }
   });
   it('offers mounted UI a safe exact-entry PR-status read without a global affordance', () => {
@@ -475,7 +475,7 @@ describe('Triage plugin manifest', () => {
     // Voice shares the same bounded read and source admission owner.
     expect(action).toMatchObject({
       id: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-      surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
+      surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'],
       execution: { target: 'account', account: { artifactId: 'triage-account-runtime', exportName: 'activate' } },
     });
   });

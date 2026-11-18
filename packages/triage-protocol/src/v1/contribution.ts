@@ -225,7 +225,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             required: false,
             input: { kind: 'protocolDefined', schema: TriageResolveResourceInputV1Schema },
             resultSchema: TriageResolveResourceResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         readAttention: {
             required: false,
@@ -249,7 +249,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             required: false,
             input: { kind: 'protocolDefined', schema: TriageSourceReadSessionLinksInputV1Schema },
             resultSchema: TriageSourceReadSessionLinksResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         create: {
             required: false,
@@ -285,19 +285,19 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             required: true,
             input: { kind: 'protocolDefined', schema: TriageGetInputV1Schema },
             resultSchema: TriageGetResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         readPullRequestStatus: {
             required: false,
             input: { kind: 'protocolDefined', schema: TriageGetInputV1Schema },
             resultSchema: TriagePullRequestStatusResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         readFixPullRequests: {
             required: false,
             input: { kind: 'protocolDefined', schema: TriageGetInputV1Schema },
             resultSchema: TriageSourceReadFixPullRequestsResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'safe' },
         },
         prepareReviewWorkspace: {
             required: false,
@@ -307,7 +307,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             },
             resultSchema: TriagePrepareReviewWorkspaceResultV1Schema,
             // Prepared New Session authoring invokes this role from mounted UI.
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'writesLocal' },
+            action: { surfaces: ['plugin', 'ui', 'agent'], dangerLevel: 'writesLocal' },
         },
         verifyReviewWorkspace: {
             required: false,
