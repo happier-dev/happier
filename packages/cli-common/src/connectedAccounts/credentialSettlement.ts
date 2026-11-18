@@ -153,8 +153,10 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                 if (rotations.length) {
                     // The credential envelope cannot prove an unacknowledged resource update.
                     // Do not replay it on reconciliation; the person can deliberately retry reconnect.
-                    if (reconciliation || !params.rotateCredentialSecrets) return { status: 'unavailable',
+                    if (reconciliation) return { status: 'unavailable',
                         code: 'connected_account_authentication_reconciliation_unavailable' };
+                    if (!params.rotateCredentialSecrets) return { status: 'unavailable',
+                        code: 'connected_account_credential_secret_rotation_unavailable' };
                     const heldRefs = new Map(rotations.map(secret => [secret.key, secret.ref]));
                     resources = resources.filter(([key]) => !heldRefs.has(key));
                     references = references.map(([key, reference]) => [key,
@@ -198,7 +200,13 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                     secrets: resources.map(([key, resource]) => ({ ...resource, kind: 'apiKey', value: request.stagedCredentials[key]! })) });
                 if (outcome.status !== 'applied') {
                     if (outcome.status === 'conflict') return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-                    if (outcome.status === 'unavailable' || outcome.status === 'invalid') return { status: 'unavailable', code: 'connected_account_credential_secret_promotion_refused' };
+                    if (outcome.status === 'unavailable' || outcome.status === 'invalid') {
+                        const code = 'connected_account_credential_secret_promotion_refused';
+                        return { status: 'unavailable', code, diagnostic: { code, severity: 'error', details: {
+                            failureCause: { phase: 'connected_account.credential.secret_promotion',
+                                errorClass: 'Error', errorCode: outcome.status, httpStatus: null },
+                        } } };
+                    }
                     throw new Error('connected_account_settlement_outcome_unknown');
                 }
                 if (!outcome.credential) throw new Error('connected_account_settlement_outcome_unknown');

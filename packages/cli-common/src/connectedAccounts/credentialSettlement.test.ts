@@ -126,7 +126,7 @@ describe('Connected Account credential settlement', () => {
         expect(credential.health?.status).toBe(outcome === 'health-conflict' ? 'needs_reauth' : 'connected');
         expect(published).toBe(outcome !== 'health-conflict');
     });
-    it.each(['applied', 'outcome_unknown', 'revision_conflict', 'unavailable', 'read_failed'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
+    it.each(['applied', 'outcome_unknown', 'revision_conflict', 'unavailable', 'read_failed', 'unconfigured'] as const)('rotates the held key in place and never blindly replays a %s rotation', async status => {
         const service = { pluginId: 'acme.cloud', localId: 'api' };
         const account = { service, accountId: 'held' };
         const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -143,7 +143,7 @@ describe('Connected Account credential settlement', () => {
             open: (kind, _accountMode, envelope) => openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', envelope }),
             parseConfigurationContent: value => value,
             mutateCredentialHealth: async () => {},
-            rotateCredentialSecrets: async ({ secrets }: Readonly<{ secrets: readonly Readonly<{ resourceId: string; value: string }>[] }>) => {
+            rotateCredentialSecrets: status === 'unconfigured' ? undefined : async ({ secrets }: Readonly<{ secrets: readonly Readonly<{ resourceId: string; value: string }>[] }>) => {
                 rotations.push(secrets);
                 if (status === 'revision_conflict' || status === 'read_failed') throw Object.assign(new Error(status), { code: status });
                 return status;
@@ -174,6 +174,11 @@ describe('Connected Account credential settlement', () => {
             await expect(owner.settle(request)).rejects.toThrow('connected_account_settlement_outcome_unknown');
             expect(await owner.reconcile(request)).toMatchObject({ status: 'unavailable' });
             expect(writes).toEqual([]);
+        } else if (status === 'unconfigured') {
+            await expect(owner.settle(request)).resolves.toEqual({ status: 'unavailable', code: 'connected_account_credential_secret_rotation_unavailable' });
+            expect(writes).toEqual([]);
+            expect(rotations).toEqual([]);
+            return;
         } else if (status === 'read_failed') {
             const result = await owner.settle(request);
             expect(result).toMatchObject({ status: 'unavailable', code: 'connected_account_credential_persistence_unavailable',
@@ -252,9 +257,12 @@ describe('Connected Account credential settlement', () => {
             displayName: 'Cloud', scopes: [] });
         expect(writes).toEqual([]);
         if (status !== 'applied') {
-            expect(result).toEqual({ status: 'unavailable', code: status === 'missing'
+            expect(result).toMatchObject({ status: 'unavailable', code: status === 'missing'
                 ? 'connected_account_credential_secret_promotion_unconfigured'
                 : 'connected_account_credential_secret_promotion_refused' });
+            if (status !== 'missing') expect(result).toMatchObject({ diagnostic: { details: {
+                failureCause: { phase: 'connected_account.credential.secret_promotion', errorCode: status },
+            } } });
             return;
         }
         expect(result).toEqual({ status: 'connected', account });
