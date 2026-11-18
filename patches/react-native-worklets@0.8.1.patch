@@ -263,47 +263,76 @@ diff --git a/lib/module/runLoop/uiRuntime/requestAnimationFrame.js b/lib/module/
 index 1780368..ed424d3 100644
 --- a/lib/module/runLoop/uiRuntime/requestAnimationFrame.js
 +++ b/lib/module/runLoop/uiRuntime/requestAnimationFrame.js
-@@ -11,6 +11,16 @@ export function setupRequestAnimationFrame() {
+@@ -5,12 +5,28 @@
+ 
+   const nativeRequestAnimationFrame = globalThis.requestAnimationFrame;
+   const callMicrotasks = globalThis.__callMicrotasks;
++  const enqueueMicrotask = globalThis.queueMicrotask;
+   let queuedCallbacks = [];
+   let queuedCallbacksBegin = 0;
+   let queuedCallbacksEnd = 0;
    let flushedCallbacks = queuedCallbacks;
    let flushedCallbacksBegin = 0;
    let flushedCallbacksEnd = 0;
-+  // The native frame is requested only while callbacks are queued, so an idle UI runtime does not
-+  // wake the main thread on every vsync. Every other entry point (scheduleOnUI, events through
-+  // __flushAnimationFrame) flushes microtasks itself.
-+  let nativeFramePending = false;
-+  function requestNativeFrame() {
-+    if (!nativeFramePending) {
-+      nativeFramePending = true;
-+      nativeRequestAnimationFrame(nativeFlushQueue);
++  // A native frame is requested only while work is queued, so an idle UI runtime does not wake the
++  // main thread on every vsync. Work is a queued callback, or a microtask queued outside a flush:
++  // shared-value side effects run as microtasks, so a write that arrives over JSI with no animation
++  // running (or a microtask left by a synchronous call) still gets the next frame, as it did with the
++  // always-on loop (software-mansion/react-native-reanimated#8900). Backport of the on-demand frames
++  // in #11372 / #11410 for 0.8.1; drop it when an upstream release ships them.
++  let frameRequested = false;
++  let isFlushing = false;
++  function requestFrame() {
++    if (frameRequested || isFlushing) {
++      return;
 +    }
++    frameRequested = true;
++    nativeRequestAnimationFrame(nativeFlushQueue);
 +  }
    function executeQueue(timestamp) {
      flushedCallbacks = queuedCallbacks;
      queuedCallbacks = [];
-@@ -26,6 +36,7 @@ export function setupRequestAnimationFrame() {
+@@ -26,6 +42,7 @@
    function requestAnimationFrame(callback) {
      const handle = queuedCallbacksEnd++;
      queuedCallbacks.push(callback);
-+    requestNativeFrame();
++    requestFrame();
      return handle;
    }
    function cancelAnimationFrame(handle) {
-@@ -39,10 +50,11 @@ export function setupRequestAnimationFrame() {
+@@ -39,25 +56,32 @@
      }
    }
    function nativeFlushQueue(timestamp) {
-+    nativeFramePending = false;
++    frameRequested = false;
      flushQueue(timestamp);
 -
 -    /* Schedule next frame */
 -    nativeRequestAnimationFrame(nativeFlushQueue);
-+    if (queuedCallbacks.length > 0) {
-+      requestNativeFrame();
-+    }
    }
    function flushQueue(timestamp) {
++    isFlushing = true;
      globalThis.__frameTimestamp = timestamp;
-@@ -56,8 +68,5 @@ export function setupRequestAnimationFrame() {
+-    executeQueue(timestamp);
+-    globalThis.__frameTimestamp = undefined;
++    try {
++      executeQueue(timestamp);
++    } finally {
++      globalThis.__frameTimestamp = undefined;
++      isFlushing = false;
++      if (queuedCallbacks.length > 0) {
++        requestFrame();
++      }
++    }
+   }
+   globalThis.requestAnimationFrame = requestAnimationFrame;
++  globalThis.queueMicrotask = callback => {
++    enqueueMicrotask(callback);
++    requestFrame();
++  };
+   globalThis.cancelAnimationFrame = cancelAnimationFrame;
+   globalThis.__flushAnimationFrame = eventTimestamp => {
+     // TODO: Remove this in the future.
      // Reanimated uses this method to trigger event synchronously.
      flushQueue(eventTimestamp);
    };
@@ -317,48 +346,81 @@ diff --git a/src/runLoop/uiRuntime/requestAnimationFrame.ts b/src/runLoop/uiRunt
 index 405e034..1923678 100644
 --- a/src/runLoop/uiRuntime/requestAnimationFrame.ts
 +++ b/src/runLoop/uiRuntime/requestAnimationFrame.ts
-@@ -13,6 +13,17 @@ export function setupRequestAnimationFrame() {
+@@ -4,6 +4,7 @@
+   'worklet';
+   const nativeRequestAnimationFrame = globalThis.requestAnimationFrame;
+   const callMicrotasks = globalThis.__callMicrotasks;
++  const enqueueMicrotask = globalThis.queueMicrotask;
+ 
+   let queuedCallbacks: ((timestamp: number) => void)[] = [];
+   let queuedCallbacksBegin = 0;
+@@ -13,6 +14,22 @@
    let flushedCallbacksBegin = 0;
    let flushedCallbacksEnd = 0;
  
-+  // The native frame is requested only while callbacks are queued, so an idle UI runtime does not
-+  // wake the main thread on every vsync. Every other entry point (scheduleOnUI, events through
-+  // __flushAnimationFrame) flushes microtasks itself.
-+  let nativeFramePending = false;
-+  function requestNativeFrame() {
-+    if (!nativeFramePending) {
-+      nativeFramePending = true;
-+      nativeRequestAnimationFrame(nativeFlushQueue);
++  // A native frame is requested only while work is queued, so an idle UI runtime does not wake the
++  // main thread on every vsync. Work is a queued callback, or a microtask queued outside a flush:
++  // shared-value side effects run as microtasks, so a write that arrives over JSI with no animation
++  // running (or a microtask left by a synchronous call) still gets the next frame, as it did with the
++  // always-on loop (software-mansion/react-native-reanimated#8900). Backport of the on-demand frames
++  // in #11372 / #11410 for 0.8.1; drop it when an upstream release ships them.
++  let frameRequested = false;
++  let isFlushing = false;
++  function requestFrame() {
++    if (frameRequested || isFlushing) {
++      return;
 +    }
++    frameRequested = true;
++    nativeRequestAnimationFrame(nativeFlushQueue);
 +  }
 +
    function executeQueue(timestamp: number) {
      flushedCallbacks = queuedCallbacks;
      queuedCallbacks = [];
-@@ -35,6 +46,7 @@ export function setupRequestAnimationFrame() {
+@@ -35,6 +52,7 @@
    ): number {
      const handle = queuedCallbacksEnd++;
      queuedCallbacks.push(callback);
-+    requestNativeFrame();
++    requestFrame();
      return handle;
    }
  
-@@ -51,10 +63,11 @@ export function setupRequestAnimationFrame() {
+@@ -51,19 +69,29 @@
    }
  
    function nativeFlushQueue(timestamp: number) {
-+    nativeFramePending = false;
++    frameRequested = false;
      flushQueue(timestamp);
 -
 -    /* Schedule next frame */
 -    nativeRequestAnimationFrame(nativeFlushQueue);
-+    if (queuedCallbacks.length > 0) {
-+      requestNativeFrame();
-+    }
    }
  
    function flushQueue(timestamp: number) {
-@@ -71,7 +84,4 @@ export function setupRequestAnimationFrame() {
++    isFlushing = true;
+     globalThis.__frameTimestamp = timestamp;
+-    executeQueue(timestamp);
+-    globalThis.__frameTimestamp = undefined;
++    try {
++      executeQueue(timestamp);
++    } finally {
++      globalThis.__frameTimestamp = undefined;
++      isFlushing = false;
++      if (queuedCallbacks.length > 0) {
++        requestFrame();
++      }
++    }
+   }
+ 
+   globalThis.requestAnimationFrame = requestAnimationFrame;
++  globalThis.queueMicrotask = (callback: () => void) => {
++    enqueueMicrotask(callback);
++    requestFrame();
++  };
+   globalThis.cancelAnimationFrame =
+     cancelAnimationFrame as typeof globalThis.cancelAnimationFrame;
+   globalThis.__flushAnimationFrame = (eventTimestamp: number) => {
+@@ -71,7 +99,4 @@
      // Reanimated uses this method to trigger event synchronously.
      flushQueue(eventTimestamp);
    };
