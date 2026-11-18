@@ -20,6 +20,12 @@ export async function prepareCliManagedMachinePresetAuthoring(
     custody: { accountId,
       open: params => hydrator.openRecipientProjection({ ...params, signal: request.context.signal }),
       withE2eeAccountKey: operation => hydrator.withE2eeAccountKey(operation, request.context.signal),
+      readRecipientCensus: async census => {
+        try { return await hydrator.readRecipientCensus(census, request.context.signal); } catch {
+          request.context.signal?.throwIfAborted();
+          return null;
+        }
+      },
     },
     readSelectedProvisioners: async pluginId => {
       const selected = await readCurrentAccountPluginExecutionDeclarations({ credentials, serverUrl: input.serverUrl,

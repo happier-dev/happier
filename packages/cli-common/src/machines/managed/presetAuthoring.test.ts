@@ -25,6 +25,7 @@ const descriptor = {
 const effectReview = { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64),
   effects: [{ scope: 'host' as const, kind: 'initialize' as const, title: 'Initialize workspace', details: ['Run authored setup'] }] };
 const contribution = { pluginId: 'test.compute', localId: 'container' };
+const plainCensus = { kind: 'ready' as const, contentEncryptionMode: 'plain' as const, recipients: [] };
 const controller = { machineId: 'author-computer', installationId: 'author-installation' };
 
 describe('preset author source review', () => {
@@ -34,7 +35,7 @@ describe('preset author source review', () => {
         schemaVersion: 1, name: 'Authored', choices: { source: 'file' } },
     } });
     const deps = { custody: { accountId: 'author',
-      open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+      open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon' as const,
         descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -66,7 +67,7 @@ describe('preset author source review', () => {
         launch: { provider: contribution, schemaVersion: 1, name: 'Authored', choices: { source: 'file' } } } } };
     const deps = {
       custody: { accountId: 'author', open: params =>
-        openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+        openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
     expect(await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.create', input,
@@ -93,7 +94,7 @@ describe('preset author source review', () => {
           dimensions: { size: [], image: [], location: [], network: [], duration: [] } } };
       },
     }, { custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
-      withE2eeAccountKey: () => null }, readSelectedProvisioners: async () => [{ contribution,
+      withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus }, readSelectedProvisioners: async () => [{ contribution,
       occurrenceId: 'installed', acquireExecutionTarget: 'daemon', descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }],
       randomBytes: length => new Uint8Array(length) });
     expect(prepared).not.toHaveProperty('ok');
@@ -118,7 +119,7 @@ describe('preset author source review', () => {
         actionId: 'machines.presets.create', input, context: { runtimeAccountId: 'author' }, invokeChild,
       }, {
         custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
-          withE2eeAccountKey: () => null },
+          withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
         readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon',
           descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }],
         randomBytes: length => new Uint8Array(length).fill(7),
@@ -165,7 +166,8 @@ describe('preset authored configuration counter', () => {
     const deps = { custody: { accountId: 'author', open: params => params.mode === 'plain'
       ? openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' })
       : openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'e2ee', accountId: 'author', accountKey }),
-      withE2eeAccountKey: operation => operation({ accountId: 'author', accountKey }) },
+      withE2eeAccountKey: operation => operation({ accountId: 'author', accountKey }),
+      readRecipientCensus: async () => ({ kind: 'ready' as const, contentEncryptionMode: mode, recipients: recipientCensus }) },
       readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon' as const,
         descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }], randomBytes,
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
@@ -232,7 +234,7 @@ describe('preset authored configuration counter', () => {
     const content = { v: 1 as const, name: 'Setup only', setup: { scripts: [{ body: 'echo setup', affects: 'none' as const }] } };
     const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content });
     const deps = { custody: { accountId: 'author', open: params =>
-      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
     const create = { id: 'preset', homeId: 'home', owner: { kind: 'account' as const, accountId: 'author' },
@@ -256,7 +258,7 @@ describe('preset authored configuration counter', () => {
       v: 1, name: 'Setup', setup: { scripts: [{ body: 'echo setup', affects: 'none' }] },
     } });
     const deps = { custody: { accountId: 'author', open: params =>
-      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
     // Network persistence is the boundary: authoring and Action admission remain real.
@@ -281,7 +283,7 @@ describe('preset authored configuration counter', () => {
 
   it('fails closed when the incumbent is unavailable and strips counter edits from Keep-only patches', async () => {
     const deps = { custody: { accountId: 'author', open: params =>
-      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
     const request = { actionId: 'machines.presets.update', input: { id: 'preset', homeId: 'home', expectedRevision: 7,
@@ -297,5 +299,59 @@ describe('preset authored configuration counter', () => {
         owner: { kind: 'account', accountId: 'author' }, contentEncryptionMode: 'plain',
         content: { t: 'plain', v: { invalidPrivateBody: true } }, recipients: [] } } }) }, deps))
       .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+});
+
+describe('preset author draft sealing', () => {
+  // An agent invokes Save with a plaintext draft; the persisted Account mode, reported by the
+  // Home's recipient census, decides the stored arm. Only the census transport is substituted.
+  const accountKey = new Uint8Array(32).fill(21);
+  const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
+  const recipientCensus = [{ account: { kind: 'account' as const, accountId: 'author', name: null, firstName: null,
+    lastName: null, username: null, avatarUrl: null }, readiness: { status: 'available' as const,
+    contentPublicKey: encodeBase64(publicKey), contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+    envelopeStatus: 'missing' as const }];
+  const owner = { kind: 'account' as const, accountId: 'author' };
+  const draft = { v: 1 as const, name: 'Agent draft', setup: { scripts: [
+    { body: 'echo one', affects: 'none' as const }, { body: 'echo two', affects: 'none' as const }] } };
+  const censusInputs: unknown[] = [];
+  let nonce = 50;
+  const deps = { custody: { accountId: 'author',
+    open: params => params.mode === 'plain' ? openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' })
+      : openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'e2ee', accountId: 'author', accountKey }),
+    withE2eeAccountKey: operation => operation({ accountId: 'author', accountKey }),
+    readRecipientCensus: async input => { censusInputs.push(input); return { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: recipientCensus }; } },
+    readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length).fill(nonce++),
+  } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
+  const openE2ee = (carrier: { content: unknown; recipients: readonly { accountId: string; envelope: unknown }[] }) =>
+    openManagedMachinePresetRecipientProjectionV1({ presetId: 'preset', mode: 'e2ee', accountId: 'author', accountKey,
+      projection: { content: carrier.content,
+        recipientEnvelope: carrier.recipients.find(recipient => recipient.accountId === 'author')?.envelope ?? null } });
+
+  it('seals a plaintext create draft for an E2EE Account before Save review', async () => {
+    const prepared = await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.create',
+      input: { id: 'preset', homeId: 'home', owner, contentEncryptionMode: 'plain', content: { t: 'plain', v: draft }, recipients: [] },
+      context: { runtimeAccountId: 'author' } }, deps);
+    if (!prepared || 'ok' in prepared) throw new Error(`Expected sealed Save: ${JSON.stringify(prepared)}`);
+    const input = prepared.input as { contentEncryptionMode: string; content: { t: string }; recipients: { accountId: string; envelope: unknown }[] };
+    expect(input).toMatchObject({ contentEncryptionMode: 'e2ee', content: { t: 'encrypted' }, configurationRevision: 0 });
+    expect(input.recipients.map(recipient => recipient.accountId)).toEqual(['author']);
+    expect(openE2ee(input)).toEqual(draft);
+    expect(censusInputs.at(-1)).toEqual({ homeId: 'home', owner });
+  });
+
+  it('seals a plaintext update draft against the E2EE incumbent and advances its setup revision', async () => {
+    const incumbent = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'e2ee', content: draft,
+      recipientCensus, randomBytes: length => new Uint8Array(length).fill(3) });
+    const next = { ...draft, setup: { scripts: [...draft.setup.scripts, { body: 'echo three', affects: 'none' as const }] } };
+    const prepared = await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.update',
+      input: { id: 'preset', homeId: 'home', expectedRevision: 2, patch: { content: { t: 'plain', v: next } } },
+      context: { runtimeAccountId: 'author' }, invokeChild: async () => ({ ok: true, result: { kind: 'found', preset: {
+        id: 'preset', homeId: 'home', revision: 2, owner, contentEncryptionMode: 'e2ee', ...incumbent } } }) }, deps);
+    if (!prepared || 'ok' in prepared) throw new Error(`Expected sealed update: ${JSON.stringify(prepared)}`);
+    const { patch } = ManagedMachinePresetUpdateInputV1Schema.parse(prepared.input);
+    expect(patch).toMatchObject({ contentEncryptionMode: 'e2ee', content: { t: 'encrypted' }, setupRevision: 1 });
+    expect(openE2ee({ content: patch.content, recipients: patch.recipients ?? [] })).toEqual(next);
+    expect(censusInputs.at(-1)).toEqual({ homeId: 'home', presetId: 'preset', owner });
   });
 });

@@ -12,7 +12,7 @@ import { bindManagedMachineRoleCredentials, ManagedMachineControllerError, proje
     readManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { openManagedMachineReadSnapshots, requestManagedMachinePresetRecipientCensusInContext } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { readUiConnectedAccountActionFormOptions } from '@/sync/ops/connectedAccounts/connectedAccountFormOptions';
 import { captureManagedMachinePresetCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -77,7 +77,9 @@ export async function prepareUiManagedProvisionerAdmission(
         try {
             return await prepareManagedMachinePresetAuthoringV1(request, {
                 custody: { accountId: custody.accountId, open: params => custody.open(params),
-                    withE2eeAccountKey: operation => custody.mode === 'e2ee' ? custody.withAccountKey(operation) : null },
+                    withE2eeAccountKey: operation => custody.mode === 'e2ee' ? custody.withAccountKey(operation) : null,
+                    readRecipientCensus: census => requestManagedMachinePresetRecipientCensusInContext({ homeId: census.homeId,
+                        account, signal: request.context.signal }, census) },
                 readSelectedProvisioners: async pluginId => {
                     const selected = await readUiManagedProvisioners(account, pluginId);
                     return 'ok' in selected ? null : selected;

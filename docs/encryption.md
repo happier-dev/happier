@@ -1784,6 +1784,12 @@ setup and optional controller display label belong to its private `content`.
 Plain Account writes use `{t:'plain',v}` without Account encryption material;
 E2EE writes use `{t:'encrypted',c}`. The persisted author's Account mode decides
 the write arm. A mismatch is refused before mutation, without a plaintext fallback.
+An Action caller that cannot know the Account mode, such as an agent, may submit
+a plaintext draft. The host's authoring preparation
+(`prepareManagedMachinePresetAuthoringV1`) reads the Home's recipient census, which
+reports the persisted mode, and seals an E2EE Account's draft before Save review: a
+fresh key for a new or formerly Plain row, or the incumbent-authenticating author
+replacement for an E2EE row. The Save request then carries only the sealed carrier.
 The existing JSON storage carries this content, its explicit author-mode binding
 and Account recipient envelopes. Readers use that stored binding, including
 opaque setup references, rather than inferring mode from a content tag or the

@@ -391,13 +391,14 @@ type ManagedMachinePresetSavedSecretCaptureContext = Readonly<{
     signal?: AbortSignal;
 }>;
 
-function assertManagedMachinePresetSavedSecretCaptureCurrent(context: ManagedMachinePresetSavedSecretCaptureContext) {
+function assertManagedMachinePresetSavedSecretCaptureCurrent(context: Pick<ManagedMachinePresetSavedSecretCaptureContext, 'account' | 'signal'>) {
     context.signal?.throwIfAborted();
     context.account.assertCurrent();
 }
 
-async function requestManagedMachinePresetRecipientCensusInContext(context: ManagedMachinePresetSavedSecretCaptureContext,
-    input: unknown) {
+/** The Home's current preset audience and persisted Account mode for one captured Action Account. */
+export async function requestManagedMachinePresetRecipientCensusInContext(
+    context: Pick<ManagedMachinePresetSavedSecretCaptureContext, 'homeId' | 'account' | 'signal'>, input: unknown) {
     const parsed = ManagedMachinePresetRecipientCensusInputV1Schema.safeParse(input);
     if (!parsed.success || parsed.data.homeId !== context.homeId) return null;
     assertManagedMachinePresetSavedSecretCaptureCurrent(context);

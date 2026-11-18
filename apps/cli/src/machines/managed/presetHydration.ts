@@ -1,4 +1,5 @@
-import { ManagedMachinePresetRecipientCensusResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetRecipientCensusResultV1Schema, type ManagedMachinePresetRecipientCensusInputV1,
+    type ManagedMachinePresetRecipientCensusResultV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -258,6 +259,18 @@ export function createManagedPresetHydrator(input: Readonly<{
         return full;
     }
 
+    /** The Home's current preset audience and persisted Account mode; null when it is unreadable. */
+    async function readRecipientCensus(body: ManagedMachinePresetRecipientCensusInputV1,
+        signal?: AbortSignal): Promise<ManagedMachinePresetRecipientCensusResultV1 | null> {
+        const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/u, '')}/v1/machines/presets/recipient-census`, body, {
+            headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}` },
+            ...(signal ? { signal } : {}), validateStatus: () => true,
+        });
+        signal?.throwIfAborted();
+        const census = ManagedMachinePresetRecipientCensusResultV1Schema.safeParse(response.data);
+        return response.status === 200 && census.success ? census.data : null;
+    }
+
     /** Run one opaque rewrite while the existing E2EE custody boundary holds its ephemeral Account key. */
     async function withE2eeAccountKey<T>(read: (account: Readonly<{
         accountId: string;
@@ -380,18 +393,11 @@ export function createManagedPresetHydrator(input: Readonly<{
             // The keyholder already opened this retained key. The source preset
             // may now use another key, so census and rewrap target this Machine.
             try {
-                const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/u, '')}/v1/machines/presets/recipient-census`,
-                    { homeId: machine.homeId, managedId: machine.id }, {
-                        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}` },
-                        ...(signal ? { signal } : {}), validateStatus: () => true,
-                    });
-                signal?.throwIfAborted();
-                const census = ManagedMachinePresetRecipientCensusResultV1Schema.safeParse(response.data);
-                if (response.status !== 200 || !census.success || census.data.kind !== 'ready'
-                    || census.data.contentEncryptionMode !== 'e2ee') return prepared;
+                const census = await readRecipientCensus({ homeId: machine.homeId, managedId: machine.id }, signal);
+                if (census?.kind !== 'ready' || census.contentEncryptionMode !== 'e2ee') return prepared;
                 const recipients = rewrapManagedMachinePresetRecipientsV1({ recipients: snapshot.recipients,
                     accountId: account.accountId, accountKey: account.accountKey,
-                    recipientCensus: census.data.recipients, randomBytes });
+                    recipientCensus: census.recipients, randomBytes });
                 return recipients && !sameStrictJsonValue(recipients, snapshot.recipients)
                     ? { ...prepared, presetRecipients: recipients } : prepared;
             } catch {
@@ -585,7 +591,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         return projectManagedEnrollmentCorrelationV1(structural(machine), correlation);
     }
 
-    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
+    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, readRecipientCensus, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
         replacePreparation, rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
 }
 

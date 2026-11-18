@@ -2,7 +2,8 @@ import type { ActionExecutorDeps, ActionExecuteFailure, HostReviewedChildrenPrep
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { captureManagedMachinePresetAuthorEffectReviewV1, projectManagedMachinePresetForRecipientV1,
-  type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+  replaceManagedMachinePresetAuthorContentV1, sealManagedMachinePresetContentV1,
+  type ManagedMachinePresetContentSealV1, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
   readMachineProvisionerSelectionForLaunchV1, requiresMachineProvisionerEffectReviewV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -20,7 +21,7 @@ function readAuthoredConfiguration(content: ManagedMachinePresetContentV1) {
 export async function prepareManagedMachinePresetAuthoringV1(
   request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
   deps: Readonly<{
-    custody: Pick<ManagedMachinePresetSavedSecretPromotionReaderV1, 'accountId' | 'open' | 'withE2eeAccountKey'>;
+    custody: Pick<ManagedMachinePresetSavedSecretPromotionReaderV1, 'accountId' | 'open' | 'withE2eeAccountKey' | 'readRecipientCensus'>;
     readSelectedProvisioners: ManagedProvisionerSelectionRead;
     randomBytes(length: number): Uint8Array;
   }>,
@@ -49,9 +50,39 @@ export async function prepareManagedMachinePresetAuthoringV1(
     if (found.data.preset.revision !== input.expectedRevision) return failure('request_conflict');
     incumbent = found.data.preset;
   }
-  const mode = value.contentEncryptionMode ?? incumbent?.contentEncryptionMode ?? (value.content.t === 'plain' ? 'plain' : 'e2ee');
-  const recipients = value.recipients ?? incumbent?.recipients ?? [];
-  const projection = projectManagedMachinePresetForRecipientV1({ content: value.content, recipients,
+  const controller = value.controller === undefined ? incumbent?.controller : value.controller;
+  const controllerPoolId = value.controllerPoolId === undefined ? incumbent?.controllerPoolId : value.controllerPoolId;
+  let mode = value.contentEncryptionMode ?? incumbent?.contentEncryptionMode ?? (value.content.t === 'plain' ? 'plain' : 'e2ee');
+  let recipients = value.recipients ?? incumbent?.recipients ?? [];
+  let authored = value.content;
+  if (authored.t === 'plain') {
+    // A plaintext carrier is the author's draft (an agent cannot know the Account mode). The
+    // Home's census reports the persisted Account mode; E2EE drafts are sealed here, before review.
+    // Like the UI's create, a new preset's census names no preset id; an update names the incumbent.
+    const census = await deps.custody.readRecipientCensus({ homeId: input.homeId,
+      ...('patch' in input ? { presetId: input.id, owner: incumbent!.owner } : { owner: input.owner }),
+      ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) });
+    if (!census) return failure('content_unavailable');
+    if (census.kind === 'refused') return failure(census.code);
+    if (census.contentEncryptionMode === 'e2ee') {
+      const draft = authored.v;
+      let sealed: ManagedMachinePresetContentSealV1 | null;
+      try {
+        sealed = incumbent?.contentEncryptionMode === 'e2ee'
+          ? await deps.custody.withE2eeAccountKey(key => replaceManagedMachinePresetAuthorContentV1({ presetId: input.id,
+            mode: 'e2ee', projection: projectManagedMachinePresetForRecipientV1({ content: incumbent!.content,
+              recipients: incumbent!.recipients, recipientAccountId: deps.custody.accountId }),
+            content: draft, ...key, recipientCensus: census.recipients, randomBytes: deps.randomBytes }))
+          : sealManagedMachinePresetContentV1({ presetId: input.id, mode: 'e2ee', content: draft,
+            recipientCensus: census.recipients, randomBytes: deps.randomBytes });
+      } catch { return failure('invalid_request'); }
+      if (!sealed) return failure('content_unavailable');
+      mode = 'e2ee';
+      authored = sealed.content;
+      recipients = [...sealed.recipients];
+    }
+  }
+  const projection = projectManagedMachinePresetForRecipientV1({ content: authored, recipients,
     recipientAccountId: deps.custody.accountId });
   const content = await deps.custody.open({ presetId: input.id, mode, projection });
   if (!content) return failure('content_unavailable');
@@ -64,8 +95,9 @@ export async function prepareManagedMachinePresetAuthoringV1(
       { omitUndefinedObjectMembers: true }) ? 0 : 1) : 0;
   const setupRevision = incumbent && previous ? (incumbent.setupRevision ?? 0)
     + (sameStrictJsonValue(previous.setup ?? {}, content.setup ?? {}, { omitUndefinedObjectMembers: true }) ? 0 : 1) : 0;
-  const preparedInput = 'patch' in input ? { ...input, patch: { ...input.patch, configurationRevision, setupRevision } }
-    : { ...input, configurationRevision, setupRevision };
+  const sealedDraft = authored === value.content ? {} : { contentEncryptionMode: mode, content: authored, recipients };
+  const preparedInput = 'patch' in input ? { ...input, patch: { ...input.patch, ...sealedDraft, configurationRevision, setupRevision } }
+    : { ...input, ...sealedDraft, configurationRevision, setupRevision };
   const prepared: HostReviewedChildrenPreparationV1 = { children: [], input: preparedInput };
   if (!content.launch) return prepared;
   if (content.authorEffectReview) {
@@ -78,7 +110,6 @@ export async function prepareManagedMachinePresetAuthoringV1(
   if (!descriptor) return failure('provider_unavailable');
   if (!requiresMachineProvisionerEffectReviewV1(descriptor, content.launch.choices)) return prepared;
   if (!request.invokeChild) return failure('admission_unavailable');
-  const controller = value.controller === undefined ? incumbent?.controller : value.controller;
   const native = await request.invokeChild({ action: 'machines.provisioners.options', role: 'preset-authoring-review', input: {
     homeId: input.homeId, contribution: content.launch.provider,
     ...(controller ? { controller } : {}),
@@ -90,7 +121,7 @@ export async function prepareManagedMachinePresetAuthoringV1(
   if (!options.success) return failure('managed_response_invalid');
   const optionProjection = projectMachineProvisionerSelectionV1({ options: options.data,
     selection: readMachineProvisionerSelectionForLaunchV1(options.data, content.launch.choices), launchSchema: descriptor.launchSchema });
-  const capture = { presetId: input.id, content: value.content, optionProjection };
+  const capture = { presetId: input.id, content: authored, optionProjection };
   const captured = mode === 'plain' ? captureManagedMachinePresetAuthorEffectReviewV1({ ...capture, mode })
     : await deps.custody.withE2eeAccountKey(key => captureManagedMachinePresetAuthorEffectReviewV1({ ...capture,
       mode: 'e2ee', recipients, ...key, randomBytes: deps.randomBytes }));
