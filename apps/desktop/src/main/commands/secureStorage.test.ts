@@ -64,3 +64,48 @@ test('Linux safeStorage basic_text fallback is rejected as unprotected', async (
 
     await assert.rejects(storage.write('key', 'plaintext'), /no protected OS credential backend/i);
 });
+
+test('a key is decrypted once per launch, and writes and removes in this process replace what later reads return', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'happier-desktop-secure-storage-'));
+    let decryptions = 0;
+    const crypto = {
+        isEncryptionAvailable: () => true,
+        encryptString: (value: string) => Buffer.from(`cipher:${Buffer.from(value).toString('base64')}`),
+        decryptString: (value: Buffer) => {
+            decryptions += 1;
+            return Buffer.from(value.toString().slice('cipher:'.length), 'base64').toString();
+        },
+    };
+    await new ElectronSecureStorage({ userDataPath: () => userData, crypto }).write('token', 'first');
+    const storage = new ElectronSecureStorage({ userDataPath: () => userData, crypto });
+
+    const reads = await Promise.all(Array.from({ length: 5 }, () => storage.read('token')));
+    assert.deepEqual(reads, Array(5).fill('first'));
+    assert.equal(await storage.read('token'), 'first');
+    assert.equal(decryptions, 1);
+
+    await storage.write('token', 'second');
+    assert.equal(await storage.read('token'), 'second');
+    await storage.remove('token');
+    assert.equal(await storage.read('token'), null);
+    assert.equal(await storage.read('absent'), null);
+    assert.equal(await storage.read('absent'), null);
+    assert.equal(decryptions, 1);
+});
+
+test('a cached read still fails closed once safeStorage becomes unavailable', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'happier-desktop-secure-storage-'));
+    let available = true;
+    const storage = new ElectronSecureStorage({
+        userDataPath: () => userData,
+        crypto: {
+            isEncryptionAvailable: () => available,
+            encryptString: (value: string) => Buffer.from(value),
+            decryptString: (value: Buffer) => value.toString(),
+        },
+    });
+    await storage.write('token', 'value');
+    assert.equal(await storage.read('token'), 'value');
+    available = false;
+    await assert.rejects(storage.read('token'), /unavailable/i);
+});
