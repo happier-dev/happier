@@ -112,6 +112,7 @@ export async function catchUpSessionMessagesAfterSeq(params: {
                         throw createAuthenticationHttpStatusError(
                             status,
                             `Authentication failed during session message catch-up (HTTP ${status})`,
+                            axios.isAxiosError(error) ? error.response?.data : undefined,
                         );
                     }
                     rethrowSessionTranscriptStoredContentUnavailableResponse(error);
@@ -122,6 +123,7 @@ export async function catchUpSessionMessagesAfterSeq(params: {
                     throw createAuthenticationHttpStatusError(
                         status,
                         `Authentication failed during session message catch-up (HTTP ${status})`,
+                        response?.data,
                     );
                 }
 

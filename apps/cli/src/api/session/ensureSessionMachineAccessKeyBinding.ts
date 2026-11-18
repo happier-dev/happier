@@ -94,7 +94,7 @@ async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<t
         const existing = await axios.get(accessKeyUrl, requestConfig('GET'));
         if (existing.status === 200 && existing.data?.accessKey) return;
         if (isAuthenticationStatus(existing.status)) {
-            throw createAuthenticationHttpStatusError(existing.status, 'Authentication failed while binding session machine control');
+            throw createAuthenticationHttpStatusError(existing.status, 'Authentication failed while binding session machine control', existing.data);
         }
         if (existing.status !== 200) throw createHttpStatusError(existing.status, 'Session machine access-key lookup failed');
     }
@@ -104,7 +104,7 @@ async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<t
     };
     const created = await axios.post(accessKeyUrl, body, requestConfig('POST', body));
     if (isAuthenticationStatus(created.status)) {
-        throw createAuthenticationHttpStatusError(created.status, 'Authentication failed while binding session machine control');
+        throw createAuthenticationHttpStatusError(created.status, 'Authentication failed while binding session machine control', created.data);
     }
     if (created.status === 200 || created.status === 409) return;
     throw createHttpStatusError(created.status, 'Session machine access-key binding failed');

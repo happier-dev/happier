@@ -66,6 +66,14 @@ describe('sessionControl.sessionSystemRecordsHttp', () => {
       .rejects.toMatchObject({ code: 'not_authenticated' });
   });
 
+  it('retains the Home refusal when a legacy Host record is forbidden', async () => {
+    const { fetchSessionSystemRecordsPage } = await import('./sessionSystemRecordsHttp');
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 403, data: { error: 'Forbidden' } });
+
+    await expect(fetchSessionSystemRecordsPage({ token: 'token', sessionId: 'session' }))
+      .rejects.toMatchObject({ response: { status: 403 }, code: 'Forbidden' });
+  });
+
   it('rejects V1 records outside the requested address before any consumer opens them', async () => {
     const { readSessionSystemRecordV1, listSessionSystemRecordsV1 } = await import('./sessionSystemRecordsHttp');
     const address = { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'wanted' } as const;

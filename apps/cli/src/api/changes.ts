@@ -37,6 +37,7 @@ export async function fetchChangesAccountId(opts: {
     throw createAuthenticationHttpStatusError(
       response.status,
       `Authentication failed while fetching account profile (${response.status})`,
+      response.data,
     );
   }
 
@@ -91,7 +92,7 @@ export async function fetchChanges(opts: { token: string; after: number; limit?:
       if (isAuthenticationStatus(response.status)) {
         return {
           status: 'error',
-          error: createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching changes (${response.status})`),
+          error: createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching changes (${response.status})`, response.data),
         };
       }
       return { status: 'error', error: { status: response.status, body: response.data } };

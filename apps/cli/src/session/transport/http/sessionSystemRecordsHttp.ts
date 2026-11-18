@@ -21,8 +21,8 @@ function encodeSessionIdPathSegment(sessionId: string): string {
   return encodeURIComponent(String(sessionId ?? ''));
 }
 
-function throwAuthenticationStatusError(status: 401 | 403, message = `Unauthorized (${status})`): never {
-  throw createAuthenticationHttpStatusError(status, message);
+function throwAuthenticationStatusError(status: 401 | 403, body: unknown): never {
+  throw createAuthenticationHttpStatusError(status, `Unauthorized (${status})`, body);
 }
 
 function throwUnexpectedHttpStatusError(status: number, message: string): never {
@@ -79,9 +79,9 @@ function appendQuery(path: string, query: Readonly<Record<string, unknown>>): st
   return suffix ? `${path}?${suffix}` : path;
 }
 
-function handleCommonStatus(status: number, route: string): void {
+function handleCommonStatus(status: number, route: string, data: unknown): void {
   if (isAuthenticationStatus(status)) {
-    throwAuthenticationStatusError(status);
+    throwAuthenticationStatusError(status, data);
   }
   if (status === 404) {
     const err = new Error('Session not found');
@@ -99,7 +99,7 @@ function throwV1PluginRecordStatus(status: number, data: unknown): never {
   const typedCode = readSessionSystemRecordErrorCodeV1(data);
   if (typedCode === null) {
     if (isAuthenticationStatus(status)) {
-      throwAuthenticationStatusError(status);
+      throwAuthenticationStatusError(status, data);
     }
     throw createHttpStatusError(
       status,
@@ -330,7 +330,7 @@ export async function upsertSessionSystemRecord(params: Readonly<{
     ...(params.signal ? { signal: params.signal } : {}),
   });
 
-  handleCommonStatus(response.status, route);
+  handleCommonStatus(response.status, route, response.data);
   return parseOrThrow(SessionSystemRecordUpsertResponseSchema, response.data, `Unexpected ${route} response shape`).record;
 }
 
@@ -361,7 +361,7 @@ export async function fetchSessionSystemRecordsPage(params: Readonly<{
     ...(params.signal ? { signal: params.signal } : {}),
   });
 
-  handleCommonStatus(response.status, route);
+  handleCommonStatus(response.status, route, response.data);
   const parsed: LegacyHostSessionSystemRecordPageResponse = parseOrThrow(
     SessionSystemRecordPageResponseSchema,
     response.data,
@@ -392,7 +392,7 @@ export async function fetchLatestSessionSystemRecord(params: Readonly<{
     ...(params.signal ? { signal: params.signal } : {}),
   });
 
-  handleCommonStatus(response.status, route);
+  handleCommonStatus(response.status, route, response.data);
   return parseOrThrow(LegacyHostSessionSystemRecordLatestResponseSchema, response.data, `Unexpected ${route} response shape`).record;
 }
 
@@ -412,6 +412,6 @@ export async function fetchSessionSystemRecord(params: Readonly<{
     validateStatus: () => true,
   });
 
-  handleCommonStatus(response.status, route);
+  handleCommonStatus(response.status, route, response.data);
   return parseOrThrow(LegacyHostSessionSystemRecordLookupResponseSchema, response.data, `Unexpected ${route} response shape`).record;
 }

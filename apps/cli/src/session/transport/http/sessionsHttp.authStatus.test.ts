@@ -55,6 +55,16 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     });
   });
 
+  it('retains the Home refusal when a Session metadata patch needs authentication', async () => {
+    const { patchSessionMetadata } = await import('./sessionsHttp');
+    vi.spyOn(axios, 'patch').mockResolvedValueOnce({
+      status: 403, data: { error: 'session_access_authentication_required' },
+    });
+
+    await expect(patchSessionMetadata({ token: 'token-1', sessionId: 'sess-1', ciphertext: 'ciphertext', expectedVersion: 1 }))
+      .rejects.toMatchObject({ response: { status: 403 }, code: 'session_access_authentication_required' });
+  });
+
   it('throws a stable auth status error for fetchSessionsPage', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
     vi.resetModules();

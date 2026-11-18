@@ -183,6 +183,7 @@ async function executeAccountSecurityAction<TInputSchema extends z.ZodMiniType, 
     throw createAuthenticationHttpStatusError(
       response.status,
       `Authentication failed while executing Account Security Action (${response.status})`,
+      response.data,
     );
   }
   if (response.status < 200 || response.status >= 300) {
@@ -219,6 +220,7 @@ async function executeAccountSecurityGet<TOutputSchema extends z.ZodMiniType>(
     throw createAuthenticationHttpStatusError(
       response.status,
       `Authentication failed while executing Account Security Action (${response.status})`,
+      response.data,
     );
   }
   if (response.status < 200 || response.status >= 300) {
@@ -922,7 +924,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         sideEffectClass: spec.sideEffectClass, ...(signal ? { signal } : {}) });
       if (!dispatch.ok) return dispatch;
       const { response } = dispatch;
-      if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Machine access Action authentication failed');
+      if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Machine access Action authentication failed', response.data);
       if (response.status < 200 || response.status >= 300) {
         const refused = MachineAccessRefusalV1Schema.safeParse(response.data);
         if (refused.success) return refused.data;
@@ -1057,7 +1059,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           return { ok: false, errorCode: confirmedRollback.code, error: confirmedRollback.code };
         }
         if (isAuthenticationStatus(response.status)) {
-          throw createAuthenticationHttpStatusError(response.status, 'Managed Machine Action authentication failed');
+          throw createAuthenticationHttpStatusError(response.status, 'Managed Machine Action authentication failed', response.data);
         }
         if ([404, 405, 501].includes(response.status)) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -1120,7 +1122,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         const output = MachinePresetActionOutputSchemasV1[actionId].safeParse(response.data);
         if (output.success && (output.data.kind === 'conflict' || output.data.kind === 'refused')) return output.data;
         if (isAuthenticationStatus(response.status)) {
-          throw createAuthenticationHttpStatusError(response.status, 'Machine preset Action authentication failed');
+          throw createAuthenticationHttpStatusError(response.status, 'Machine preset Action authentication failed', response.data);
         }
         if ([404, 405, 501].includes(response.status)) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -1153,7 +1155,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (!dispatch.ok) return dispatch;
       const { response } = dispatch;
       if (isAuthenticationStatus(response.status)) {
-        throw createAuthenticationHttpStatusError(response.status, `Authentication failed while executing Machine Pool Action (${response.status})`);
+        throw createAuthenticationHttpStatusError(response.status, `Authentication failed while executing Machine Pool Action (${response.status})`, response.data);
       }
       if (response.status >= 400) {
         const error = MachinePoolErrorV1Schema.safeParse(response.data);
@@ -1236,7 +1238,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             if (named) return { ok: false, errorCode: named.code, error: named.code };
             const error = z.strictObject({ error: z.string() }).safeParse(response.data);
             if (error.success) return { ok: false, errorCode: error.data.error, error: error.data.error };
-            if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Section authentication failed');
+            if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Section authentication failed', response.data);
             return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
           if (method === 'GET') await assertCurrent();
@@ -1329,6 +1331,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           throw createAuthenticationHttpStatusError(
             response.status,
             `Authentication failed while executing Home Action (${response.status})`,
+            response.data,
           );
         }
         // An older or feature-disabled Home has no such operation at all.
@@ -1551,7 +1554,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         if (isAuthenticationStatus(response.status)) {
-          throw createAuthenticationHttpStatusError(response.status, 'Session access Action authentication failed');
+          throw createAuthenticationHttpStatusError(response.status, 'Session access Action authentication failed', response.data);
         }
         throw createHttpStatusError(response.status, 'Session access Action request failed');
       }
@@ -1621,7 +1624,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       const { response } = dispatch;
       if (isAuthenticationStatus(response.status)) {
-        throw createAuthenticationHttpStatusError(response.status, 'Sign-out-everywhere Action authentication failed');
+        throw createAuthenticationHttpStatusError(response.status, 'Sign-out-everywhere Action authentication failed', response.data);
       }
       if (response.status < 200 || response.status >= 300) {
         throw createHttpStatusError(response.status, `Failed to execute sign-out-everywhere Action (${response.status})`);

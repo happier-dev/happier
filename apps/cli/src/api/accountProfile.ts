@@ -36,7 +36,7 @@ export async function fetchAccountProfile(opts: AccountProfileReadOptions & { pr
                 details: failure.details, failureCause: failure.failureCause,
             });
         }
-        throw createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching account profile (${response.status})`);
+        throw createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching account profile (${response.status})`, response.data);
     }
     if (response.status < 200 || response.status >= 300) {
         const upgrade = response.status === CLIENT_UPGRADE_REQUIRED_HTTP_STATUS

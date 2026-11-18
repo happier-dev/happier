@@ -198,7 +198,7 @@ export function createSessionFollowActionDeps(input: Readonly<{
           : SessionFollowSourcesErrorResponseSchema.safeParse(response.data);
         if (failure.success) return { ok: false, errorCode: failure.data.error, error: failure.data.error };
         if ([404, 405, 501].includes(response.status)) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-        if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Follow Action authentication failed');
+        if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Follow Action authentication failed', response.data);
         throw createHttpStatusError(response.status, 'Follow Action request failed');
       }
       if (ruleTarget && storage && (actionId === 'follow.get' || actionId === 'follow.set')) {

@@ -48,7 +48,7 @@ export async function resolveForkCutoffSeqInclusive(params: Readonly<{
   });
 
   if (isAuthenticationStatus(response.status)) {
-    throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while resolving fork cutoff');
+    throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while resolving fork cutoff', response.data);
   }
   throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
   if (response.status !== 200) {

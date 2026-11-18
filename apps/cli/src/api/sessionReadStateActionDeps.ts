@@ -73,7 +73,7 @@ export function createSessionReadStateActionDeps(input: Readonly<{
       if (response.status < 200 || response.status >= 300) {
         const failure = projectSessionReadStateActionTransportFailure(response.status, response.data);
         if (failure.errorCode === 'unavailable') {
-          if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Read-state Action authentication failed');
+          if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Read-state Action authentication failed', response.data);
           throw createHttpStatusError(response.status, 'Read-state Action request failed');
         }
         return { ok: false, errorCode: failure.errorCode, error: failure.errorCode, ...(failure.viewer ? { details: { viewer: failure.viewer } } : {}) };

@@ -88,6 +88,7 @@ export async function readMachineOperationProtocolCapabilitiesV1(params: Readonl
     throw createAuthenticationHttpStatusError(
       response.status,
       `Authentication failed while reading Machine capability snapshot (${response.status})`,
+      response.data,
     );
   }
   if (response.status !== 200) {

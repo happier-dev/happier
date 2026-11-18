@@ -147,7 +147,7 @@ export async function fetchEncryptedTranscriptMessagesPage(params: FetchEncrypte
     });
 
     if (isAuthenticationStatus(response.status)) {
-      throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while fetching transcript messages');
+      throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while fetching transcript messages', response.data);
     }
     throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
     if (response.status !== 200) {

@@ -85,7 +85,7 @@ export async function setSessionOrganizationPin(params: Readonly<{
   if (response.status === 409 && error === 'session-pin-limit-exceeded') {
     return { ok: false, errorCode: 'session_pin_limit_exceeded', error: 'session_pin_limit_exceeded' };
   }
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
   const result = SetSessionPinResponseSchema.safeParse(response.data);
   if (!result.success) throw new Error('Unexpected Session pin response shape');
@@ -123,7 +123,7 @@ export async function setSessionManager(params: SessionManagerSetActionInputV1 &
     }
     return result.data;
   }
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
   throw new Error('Unexpected manager response shape');
 }
@@ -152,7 +152,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
   const scopeDenial = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
   if (scopeDenial) return scopeDenial;
   if (response.status === 404) return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
   const result = SessionAttentionSetResultV1Schema.safeParse(response.data);
   if (!result.success) throw new Error('Unexpected attention standing response shape');
@@ -198,7 +198,7 @@ export async function fetchSessionTurnsProjection(params: Readonly<{
     validateStatus: () => true,
   });
   if (response.status === 404) return null;
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status < 200 || response.status >= 300) {
     throwUnexpectedStatusError(path, response.status);
   }
@@ -218,8 +218,8 @@ function encodeSessionIdPathSegment(sessionId: string): string {
   return encodeURIComponent(String(sessionId ?? ''));
 }
 
-function throwAuthenticationStatusError(status: 401 | 403, message = `Unauthorized (${status})`): never {
-  throw createAuthenticationHttpStatusError(status, message);
+function throwAuthenticationStatusError(status: 401 | 403, body: unknown): never {
+  throw createAuthenticationHttpStatusError(status, `Unauthorized (${status})`, body);
 }
 
 function throwUnexpectedStatusError(path: string, status: number): never {
@@ -459,7 +459,7 @@ export async function fetchSessionById(params: Readonly<{
     return null;
   }
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status === 426) {
     const upgradeRequired = readCliClientUpgradeRequired(response.data);
@@ -536,7 +536,7 @@ export async function lookupSessionsByTags(params: Readonly<{
     return { state: 'unavailable' };
   }
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status !== 200) {
     throwUnexpectedStatusError(path, response.status);
@@ -596,7 +596,7 @@ export async function claimSessionExternalIdentity(params: Readonly<{
     ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status === 409) {
     const conflict = SessionExternalIdentityClaimConflictV1Schema.safeParse(response.data);
     if (conflict.success) return { status: 'conflict', reason: conflict.data.reason };
@@ -673,7 +673,7 @@ export async function* fetchSessionOrganizationPlacementBatches(
         timeout: remainingMs,
         validateStatus: () => true,
       });
-      if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+      if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
       if (response.status !== 200) throwUnexpectedStatusError(request.path, response.status);
       const snapshot = parseOrThrow(SessionOrganizationSnapshotResponseSchema, response.data,
         'Unexpected /v2/session-organization response shape').snapshot;
@@ -789,7 +789,7 @@ export async function patchSessionMetadata(params: Readonly<{
   );
 
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status === 404) {
     const error = new Error('Session not found');
@@ -947,7 +947,7 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
   );
 
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status === 404) {
     const error = Object.assign(new Error('Session not found'), {
@@ -1320,7 +1320,7 @@ export async function fetchSessionListPage(params: Readonly<{
   });
 
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status !== 200) {
     throwUnexpectedStatusError(path, response.status);
@@ -1423,7 +1423,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
       parts.set(part.sessionId, part);
     };
     params.signal?.throwIfAborted();
-    if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+    if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
     if (response.status === 404) {
       const details: OperationUpdateRequiredV1 = { kind: 'update_required', operation: 'session.detail',
         component: 'server', reason: 'session_read_batch_unsupported' };
@@ -1520,7 +1520,7 @@ async function fetchSessionsQueryPagePayload(params: SessionListQueryHttpParams)
       validateStatus: () => true,
     },
   );
-  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status, response.data);
   if (response.status === 404) {
     const unavailable = SessionListUnavailableQueryV1Schema.safeParse(response.data);
     if (unavailable.success) {
@@ -1630,7 +1630,7 @@ export async function commitSessionStoredMessage(params: Readonly<{
   });
 
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status === 404) {
     throw createHttpStatusError(404, 'Session not found', 'session_not_found');
@@ -1716,7 +1716,7 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
     }
 
     if (isAuthenticationStatus(response.status)) {
-      throwAuthenticationStatusError(response.status);
+      throwAuthenticationStatusError(response.status, response.data);
     }
     if (response.status === 404) {
       const currentServerSessionMiss = response.data !== null
@@ -1797,7 +1797,7 @@ async function postArchiveMutation(params: Readonly<{
   });
 
   if (isAuthenticationStatus(response.status)) {
-    throwAuthenticationStatusError(response.status);
+    throwAuthenticationStatusError(response.status, response.data);
   }
   if (response.status === 404) {
     const err = new Error('Session not found');
