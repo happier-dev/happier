@@ -138,14 +138,14 @@ function readSessionListIndexSessionIds(
 function createLinkedOpenCodeSession(serverId: string): Session {
     const source = { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: '/repo' } as const;
     const runtimeDescriptorV1 = { v: 1, agentId: 'opencode', agent: { backendMode: 'server' } } as const;
-    const metadata = buildLinkedExternalSessionMetadataV1({ path: '/repo', host: 'box' }, {
+    const metadata = buildLinkedExternalSessionMetadataV1({}, {
         v: 1, agentId: 'opencode', machineId: 'machine-1', remoteSessionId: 'opencode-session-1', source,
         qualifiedIdentity: buildLinkedExternalSessionQualifiedIdentityV1({
             agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, sourceKind: source.kind,
         }),
         linkData: { runtimeDescriptorV1 }, linkedAtMs: 1, runtimeDescriptorV1,
     });
-    return createSessionFixture({ id: 'linked-opencode', serverId, metadata });
+    return createSessionFixture({ id: 'linked-opencode', serverId, metadata: { ...metadata, path: '/repo', host: 'box' } });
 }
 
 describe('sessions domain: unchanged writes', () => {

@@ -123,7 +123,7 @@ export function NewSessionComposerCard(input: Readonly<{
         hostNavigation.openDraft({ draftId, draftOrigin: null });
     }, [hostNavigation]);
     const backgroundLaunchStatus = useNewSessionBackgroundLaunchStatus({ openSession: openStartedSession, openDraft: openStartedDraft });
-    const connectionStatus = backgroundLaunchStatus !== undefined && composerEmpty && !props.isCreating
+    const connectionStatus: typeof props.connectionStatus = backgroundLaunchStatus !== undefined && composerEmpty && !props.isCreating
         ? backgroundLaunchStatus : props.connectionStatus;
     // A chosen workflow swaps the composer, not the host: the same status line, inset and width carry over.
     const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup,
