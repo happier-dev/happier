@@ -21,6 +21,7 @@ import {
   type MachineProcessesActionScope,
 } from '@/sync/domains/machines/processes/machineProcessesActions';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
@@ -364,15 +365,16 @@ export function useProcessesController(
         const result = readActionResult(outcome, (value) =>
           MachineProcessesCheckResultV1Schema.safeParse(value),
         );
-        const check =
-          result.kind === 'ok'
-            ? result.value.checks.find((entry) => entry.ref === ref)
-            : undefined;
+        const check = result.kind === 'ok' ? result.value.checks.find((entry) => entry.ref === ref) : undefined;
+        if (!check) {
+          const fallback = t('common.requestFailed');
+          return { kind: 'blocked', line: outcome.ok ? fallback : resolveActionExecutionErrorMessage(outcome, fallback) };
+        }
         const fresh = readActionResult(detail, (value) => MachineProcessesGetResultV1Schema.safeParse(value));
         const freshRow = fresh.kind === 'ok' && fresh.value.row && 'level' in fresh.value.row ? fresh.value.row : null;
         const met = freshRow?.evidence?.find((entry) => entry.state === 'met');
         const evidence = met ? { title: t(`machineProcesses.detail.evidence.${met.kind}`), detail: t(`machineProcesses.detail.reasons.${met.reason}`) } : null;
-        if (!check || !check.present)
+        if (!check.present)
           return {
             kind: 'blocked',
             line: t('machineProcesses.kill.recheckedGone'),

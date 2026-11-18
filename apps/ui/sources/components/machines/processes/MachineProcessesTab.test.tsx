@@ -803,6 +803,25 @@ describe('MachineProcessesTab', () => {
     expect(screen.findByTestId('machine-processes-kill-ask-first-confirm')).toBeNull();
   });
 
+  it('shows a refused identity check as a permission failure and leaves the process alone', async () => {
+    retirePresentationNotice();
+    const { screen } = await mount({
+      reply: rpc => {
+        if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_GET) return { row: null };
+        if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_CHECK) throw new RpcError('Private diagnostic', RPC_ERROR_CODES.FORBIDDEN);
+        return undefined;
+      },
+    });
+    try {
+      await act(async () => { screen.pressByTestId('machine-processes-row-o:session:refactor'); });
+      await act(async () => { chooseMenuItem(screen, 'p:vite', 'kill'); });
+      await vi.waitFor(() => expect(readPresentationNotice()).toMatchObject({
+        key: 'machine-processes:kill:p:vite', severity: 'warning', message: t('errors.permissionDenied'),
+      }));
+      expect(transport.rpc.mock.calls.some(([rpc]) => rpc.method === RPC_METHODS.MACHINES_PROCESSES_KILL)).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
   it('opens filtered to Left behind from a link (filter=leftBehind), and Show all returns the whole list', async () => {
     const { parseMachineProcessesParams } = await import('./MachineProcessesTab');
     expect(parseMachineProcessesParams({ filter: 'leftBehind', sort: 'cpu' })).toEqual({ id: 'processes', sort: 'cpu', filter: 'leftBehind' });
