@@ -109,3 +109,26 @@ describe('an unreadable Source', () => {
     } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
   });
 });
+
+describe('a Home that is not answering', () => {
+  it('does not call the Source unavailable to you: the Home being away is said once, by the list (R2-D3)', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://source-away.test', accountId: 'erin', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const controller = createDeploymentReadControllerV1({ scope: { ...account.accountLifetime.scope, projectSourceId: 'source-app' },
+      transport: createDeploymentReadTransport(account.accountLifetime) });
+    try {
+      const away = { select: () => { throw new TypeError('Failed to fetch'); } };
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', away);
+      homes.answer(serverId, 'GET /v1/deployments/environments', away);
+      const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
+        controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="erin" serverId={serverId}
+        actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.error'), node => node !== null);
+      const { t } = await import('@/text');
+      expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
+      expect(screen.getTextContent()).not.toContain(t('projects.sources.unavailable'));
+      await screen.unmount();
+    } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
+  });
+});

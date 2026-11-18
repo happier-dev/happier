@@ -209,7 +209,9 @@ const ProjectDeploymentsPage = React.memo(
       diagnosticCode={code}
       action={{ label: t('projects.open.chooseSource'), onPress: () => router.push(projectSourceRoute(null)) }}
     />;
-    const preparation = !sourceAvailable && sourceRead.issue ? sourceUnavailable('line', sourceRead.issue) : newWorkEnabled && sourceAvailable && props.lifetime ? <>
+    // Only a refusal is "no longer available to you"; a Home that isn't answering is said once, by the list (R2-D3).
+    const sourceRefused = sourceRead.issue === 'source_unavailable' || sourceRead.issue === 'source_access_denied';
+    const preparation = !sourceAvailable && sourceRead.issue ? (sourceRefused ? sourceUnavailable('line', sourceRead.issue) : null) : newWorkEnabled && sourceAvailable && props.lifetime ? <>
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
     </> : null;
@@ -395,7 +397,7 @@ const ProjectDeploymentsPage = React.memo(
     if (!selection.defaults && !environmentId && !retained && status === 'unavailable') {
       const failureCode = collection.snapshot.failure?.code ?? null;
       // Retrying cannot change a refused read; only a transient failure offers Retry.
-      if ((!sourceAvailable && sourceRead.issue) || failureCode === 'deployment_unavailable') {
+      if ((!sourceAvailable && sourceRefused) || failureCode === 'deployment_unavailable') {
         return <ItemList testID="project-deployments.error">{sourceUnavailable(pageStateSize, sourceRead.issue ?? failureCode)}</ItemList>;
       }
       return (
