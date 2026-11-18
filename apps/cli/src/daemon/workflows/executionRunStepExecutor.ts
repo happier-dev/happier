@@ -41,6 +41,7 @@ import { withWorkflowRoleInstructions } from './sessionStepExecutor';
 import { buildWorkflowActionContext } from './workflowActionContext';
 import { projectActionWorkflowSelectionInputV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 type WorkflowExecutionRunConversation = Readonly<{
   runId: string;
@@ -208,7 +209,7 @@ function projectObservation(
   observation: Exclude<WorkflowDetachedExecutionRunObservation, { kind: 'pending' }>,
 ): WorkflowStepExecutionResult {
   switch (observation.kind) {
-    case 'completed': return { kind: 'completed', result: observation.result, resultEncoding: 'typed' };
+    case 'completed': return { kind: 'completed', result: redactTranscriptSecrets(observation.result), resultEncoding: 'typed' };
     case 'failed':
     case 'needs_attention': return observation;
     case 'cancelled': return { kind: 'cancelled', ...(observation.code ? { code: observation.code } : {}) };

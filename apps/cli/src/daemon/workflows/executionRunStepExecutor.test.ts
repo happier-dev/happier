@@ -26,6 +26,7 @@ import {
   createWorkflowStepExecutorDispatcher,
   prepareWorkflowDetachedExecutionRunStep,
 } from './executionRunStepExecutor';
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 const CLAUDE_TARGET = {
   kind: 'agent' as const,
@@ -728,6 +729,24 @@ describe('workflow detached Execution Run step executor', () => {
     await expect(prepareWorkflowDetachedExecutionRunStep(deps, params)).resolves.toMatchObject({ kind: 'workflow_detached_execution_run' });
     await expect(execute(params)).resolves.toMatchObject({ kind: 'completed', result: 'original-result' });
     expect(actions).toEqual(['execution.run.get']);
+  });
+
+  it('redacts registered host secrets from a detached result before Workflow storage receives it', async () => {
+    const unregister = registerTranscriptSecret('native-host-secret');
+    try {
+      const execute = createWorkflowDetachedExecutionRunStepExecutor({
+        actionExecutor: { execute: async () => ({ ok: true as const,
+          result: completedRun('exact-native', 'exact-input', { answer: 'native-host-secret' }) }) },
+        workDepth: 0, buildActionContext,
+        resolveSharedRunConversation: async () => null,
+        resolveProducerConversation: async () => null,
+      });
+      await expect(execute(baseParams({
+        invocation: { ...baseParams().invocation, execution: { kind: 'detached_run', runId: 'exact-native', localInputId: 'exact-input' } },
+      }))).resolves.toMatchObject({ kind: 'completed', result: { answer: '[redacted]' }, resultEncoding: 'typed' });
+    } finally {
+      unregister();
+    }
   });
 
   it('fresh-agent recovery ignores a prior native target and a shared pointer while preserving its workspace', async () => {
