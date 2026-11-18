@@ -84,14 +84,6 @@ export function supportsCurrentProjectedAgentConversationRollback(
     return currentAgent?.capabilities.sessions?.conversationRollback === true;
 }
 
-export function supportsCurrentProjectedAgentUsageLimitRecovery(
-    currentAgent: CurrentProjectedAgentCapabilities | null | undefined,
-    activity: 'active' | 'inactive',
-    operation: CurrentProjectedAgentUsageLimitRecoveryOperation,
-): boolean {
-    return currentAgent?.capabilities.sessions?.usageLimitRecovery?.[activity]?.includes(operation) === true;
-}
-
 export function supportsCurrentProjectedAgentSurface(
     currentAgent: CurrentProjectedAgentCapabilities | null | undefined,
     surface: CurrentProjectedAgentCapabilitySurface,
@@ -102,7 +94,7 @@ export function supportsCurrentProjectedAgentSurface(
 /**
  * The lifecycle questions UI surfaces ask about the Agent behind a Session.
  *
- * Fork, rollback, usage-limit recovery and the terminal surface used to be
+ * Fork, rollback and the terminal surface used to be
  * decided inline at each call site, and each site picked its evidence by
  * testing the Agent id against the bundled list. That made every surface a
  * capability decision-maker in its own right. The vocabulary below is the one
@@ -114,7 +106,6 @@ export type AgentLifecycleCapability =
     | 'sessionFork.fromMessage'
     | 'sessionRollback.conversation'
     | 'usageReporting'
-    | 'usageLimitRecovery.checkNow'
     | 'surface.terminal';
 
 export type AgentLifecycleCapabilityQuery = Readonly<{
@@ -122,19 +113,34 @@ export type AgentLifecycleCapabilityQuery = Readonly<{
     capability: AgentLifecycleCapability;
     /** Owner metadata for the exact Session being asked about, when there is one. */
     metadata?: unknown;
-    /** Session activity, which V2 declares separate recovery operations for. */
-    sessionActive?: boolean;
     /** Exact declaration from a ready daemon V2 projection. */
     currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>;
+
+function readLifecycleAgentId(query: Pick<AgentLifecycleCapabilityQuery, 'agentId' | 'metadata'>): string | null {
+    const agentId = normalizeAgentId(query.agentId);
+    const descriptor = readRuntimeDescriptorV1FromMetadata(query.metadata);
+    return descriptor && descriptor.agentId !== agentId ? null : agentId;
+}
+
+const NO_USAGE_LIMIT_RECOVERY_OPERATIONS: readonly CurrentProjectedAgentUsageLimitRecoveryOperation[] = Object.freeze([]);
+
+/** The exact declaration is authoritative for executable recovery operations. */
+export function readAgentSessionUsageLimitRecoveryOperations(
+    query: Omit<AgentLifecycleCapabilityQuery, 'capability'> & Readonly<{ sessionActive: boolean }>,
+): readonly CurrentProjectedAgentUsageLimitRecoveryOperation[] {
+    const agentId = readLifecycleAgentId(query);
+    const current = query.currentAgentCapabilities;
+    if (!agentId || current?.agentId !== agentId) return NO_USAGE_LIMIT_RECOVERY_OPERATIONS;
+    const activity = query.sessionActive ? 'active' : 'inactive';
+    return current.capabilities.sessions?.usageLimitRecovery?.[activity] ?? NO_USAGE_LIMIT_RECOVERY_OPERATIONS;
+}
 
 /** The shared compaction owner resolves both declaration and opened-runtime evidence. */
 export function readAgentSessionCompactionAvailability(
     query: Omit<AgentLifecycleCapabilityQuery, 'capability'>,
 ): AgentSessionCompactionAvailabilityV1 {
-    const descriptor = readRuntimeDescriptorV1FromMetadata(query.metadata);
-    const requestedAgentId = normalizeAgentId(query.agentId);
-    const agentId = descriptor && descriptor.agentId !== requestedAgentId ? null : requestedAgentId;
+    const agentId = readLifecycleAgentId(query);
     const current = query.currentAgentCapabilities?.agentId === agentId
         ? query.currentAgentCapabilities : null;
     return evaluateAgentSessionCompactionAvailability({
@@ -177,10 +183,8 @@ function supportsSessionCapability(
  * Provider-owned runtime descriptors remain opaque to generic UI code.
  */
 export function supportsAgentLifecycleCapability(query: AgentLifecycleCapabilityQuery): boolean {
-    const agentId = normalizeAgentId(query.agentId);
+    const agentId = readLifecycleAgentId(query);
     if (!agentId) return false;
-    const descriptor = readRuntimeDescriptorV1FromMetadata(query.metadata);
-    if (descriptor && descriptor.agentId !== agentId) return false;
 
     const currentAgent = query.currentAgentCapabilities?.agentId === agentId
         ? query.currentAgentCapabilities
@@ -215,17 +219,6 @@ export function supportsAgentLifecycleCapability(query: AgentLifecycleCapability
                 agentId,
                 'sessionRollback.conversation',
                 supportsCurrentProjectedAgentConversationRollback(currentAgent),
-            );
-        case 'usageLimitRecovery.checkNow':
-            return supportsSessionCapability(
-                query,
-                agentId,
-                'usageLimitRecovery.checkNow',
-                supportsCurrentProjectedAgentUsageLimitRecovery(
-                    currentAgent,
-                    query.sessionActive === true ? 'active' : 'inactive',
-                    'checkNow',
-                ),
             );
         case 'surface.terminal': {
             const published = readPublishedLocalControlSupport(query.metadata);

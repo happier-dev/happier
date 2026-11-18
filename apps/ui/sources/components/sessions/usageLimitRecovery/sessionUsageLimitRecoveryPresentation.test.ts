@@ -396,6 +396,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
                 },
             }),
             checkNowSupported: true,
+            canConsumeResetCredit: true,
             settings: { v: 1, mode: 'ask' },
             nowMs: 1_700_000_060_000,
             translate: translateUsageLimitRecoveryKeyForTest,

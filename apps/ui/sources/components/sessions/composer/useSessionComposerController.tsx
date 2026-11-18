@@ -124,7 +124,7 @@ import { buildRolesRailPickerOption } from "@/components/roles/rail/buildRolesRa
 import { useSessionRolesRailParams } from "@/components/roles/session/sessionRole";
 import { useDaemonMergedProjectionInputs } from "@/agents/backendCatalog/useDaemonMergedProjectionInputs";
 import { COMPOSER_HOST_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
-import { readAgentSessionCompactionAvailability, readCurrentProjectedAgentCapabilities, supportsAgentLifecycleCapability } from "@/agents/backendCatalog/currentAgentCapabilities";
+import { readAgentSessionCompactionAvailability, readAgentSessionUsageLimitRecoveryOperations, readCurrentProjectedAgentCapabilities, supportsAgentLifecycleCapability } from "@/agents/backendCatalog/currentAgentCapabilities";
 import { parsePermissionIntentAlias, readExternalSessionOperationState, resolveAgentIdFromSessionMetadata } from "@happier-dev/agents";
 import { useInSessionAgentPickerControls } from "@/components/sessions/agentPicker/useInSessionAgentPickerControls";
 import { isAskHappierStatusOfferState } from "@/components/sessions/bots/askHappierEntry";
@@ -1872,25 +1872,14 @@ export function useSessionComposerController({
     const usageLimitRecoveryActionsDisabled = usageLimitRecoveryPendingAction !== null;
     const [resolvedUsageLimitRecoveryIssueFingerprint, setResolvedUsageLimitRecoveryIssueFingerprint] = React.useState<string | null>(null);
     const handleUsageLimitRecoveryResumeNowRef = React.useRef<((opts?: { silent?: boolean }) => Promise<boolean>) | null>(null);
-    const usageLimitRecoveryCheckNowAgentId = React.useMemo(() => (
-        resolveAgentIdFromFlavor(session.lastRuntimeIssue?.agentId)
-        ?? lifecycleAgentId
-        ?? null
-    ), [lifecycleAgentId, session.lastRuntimeIssue?.agentId]);
-    const usageLimitRecoveryCheckNowSupported = React.useMemo(() => (
-        supportsAgentLifecycleCapability({
-            agentId: usageLimitRecoveryCheckNowAgentId,
-            capability: 'usageLimitRecovery.checkNow',
-            metadata: ownerMetadata,
-            sessionActive: session.active === true,
-            currentAgentCapabilities: currentLifecycleAgentCapabilities,
-        })
-    ), [
-        currentLifecycleAgentCapabilities,
-        ownerMetadata,
-        session.active,
-        usageLimitRecoveryCheckNowAgentId,
-    ]);
+    const usageLimitRecoveryOperations = React.useMemo(() => readAgentSessionUsageLimitRecoveryOperations({
+        agentId: resolveAgentIdFromFlavor(session.lastRuntimeIssue?.agentId) ?? lifecycleAgentId,
+        metadata: ownerMetadata,
+        sessionActive: session.active === true,
+        currentAgentCapabilities: currentLifecycleAgentCapabilities,
+    }), [currentLifecycleAgentCapabilities, lifecycleAgentId, ownerMetadata, session.active, session.lastRuntimeIssue?.agentId]);
+    const canCheckUsageLimitNow = usageLimitRecoveryOperations.includes('checkNow');
+    const canConsumeRuntimeResetCredit = usageLimitRecoveryOperations.includes('consumeResetCredit');
     React.useEffect(() => {
         const refreshNow = () => setUsageLimitRecoveryNowMs(nowServerMs());
         refreshNow();
@@ -1924,6 +1913,8 @@ export function useSessionComposerController({
         recoveryCredits: usageLimitRecoveryCredits,
         applyRecoveryCreditSnapshot,
     } = sessionProviderUsage;
+    const canConsumeSessionResetCredit = canConsumeRuntimeResetCredit
+        || Boolean(connectedServiceQuotaProfileIdentity && connectedServiceQuotaProfileKey);
     // Runtime facts come from the live runtime source: the shell Session keeps its identity across a turn's activity.
     const baseUsageLimitRecoveryPresentation = React.useMemo(() => buildSessionUsageLimitRecoveryPresentation({
         machineReachable: isMachineReachable,
@@ -1932,7 +1923,8 @@ export function useSessionComposerController({
         latestTurnStatus: sessionRuntimeStatusSource.latestTurnStatus ?? null,
         recoveryState: usageLimitRecoveryState,
         operationStatus: null,
-        checkNowSupported: usageLimitRecoveryCheckNowSupported,
+        checkNowSupported: canCheckUsageLimitNow,
+        canConsumeResetCredit: canConsumeSessionResetCredit,
         recoveryCredits: usageLimitRecoveryCredits,
         runtimeWorking: sessionStatus.state === 'thinking',
         hasActivityAfterRuntimeIssue: sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
@@ -1948,7 +1940,8 @@ export function useSessionComposerController({
         sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         sessionStatus.state,
         hasInterruptedWorkToResume,
-        usageLimitRecoveryCheckNowSupported,
+        canCheckUsageLimitNow,
+        canConsumeSessionResetCredit,
         usageLimitRecoveryFeatureEnabled,
         usageLimitRecoveryNowMs,
         usageLimitRecoveryCredits,
@@ -1975,7 +1968,8 @@ export function useSessionComposerController({
         latestTurnStatus: sessionRuntimeStatusSource.latestTurnStatus ?? null,
         recoveryState: usageLimitRecoveryState,
         operationStatus: activeUsageLimitRecoveryOperationStatus,
-        checkNowSupported: usageLimitRecoveryCheckNowSupported,
+        checkNowSupported: canCheckUsageLimitNow,
+        canConsumeResetCredit: canConsumeSessionResetCredit,
         recoveryCredits: usageLimitRecoveryCredits,
         runtimeWorking: sessionStatus.state === 'thinking',
         hasActivityAfterRuntimeIssue: sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
@@ -1992,7 +1986,8 @@ export function useSessionComposerController({
         sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         sessionStatus.state,
         hasInterruptedWorkToResume,
-        usageLimitRecoveryCheckNowSupported,
+        canCheckUsageLimitNow,
+        canConsumeSessionResetCredit,
         usageLimitRecoveryFeatureEnabled,
         usageLimitRecoveryIssueResolved,
         usageLimitRecoveryNowMs,
@@ -2339,7 +2334,7 @@ export function useSessionComposerController({
                 markCurrentUsageLimitRecoveryOperationStatus('checking');
             }
             if (kind === 'resume_now') {
-                if (usageLimitRecoveryCheckNowSupported) {
+                if (canCheckUsageLimitNow) {
                     const result = await executeUsageLimitRecoveryAction('session.usageLimit.checkNow', {
                         sessionId,
                         ...(session.lastRuntimeIssue?.agentId ? { agentId: session.lastRuntimeIssue.agentId } : {}),
@@ -2490,7 +2485,7 @@ export function useSessionComposerController({
         router,
         sessionViewCaller,
         usageLimitRecoveryCredits,
-        usageLimitRecoveryCheckNowSupported,
+        canCheckUsageLimitNow,
         usageLimitRecoveryPresentation,
         usageLimitRecoverySettings.mode,
         usageLimitRecoverySettings.resumePromptMode,
@@ -2556,7 +2551,7 @@ export function useSessionComposerController({
         usageLimitRecoveryPresentation,
     ]);
     const providerUsageRecoveryCreditAction = providerUsageGauge?.recoveryCreditSummary
-        && (providerUsageConnectedServiceQuotaProfileRef || usageLimitRecoveryCheckNowSupported)
+        && (providerUsageConnectedServiceQuotaProfileRef || canConsumeRuntimeResetCredit)
         ? handleProviderUsageRecoveryCreditPress
         : undefined;
     const providerUsageRecoveryCreditActionPending =

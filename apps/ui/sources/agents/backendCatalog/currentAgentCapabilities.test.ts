@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
     readCurrentProjectedAgentCapabilities,
     readAgentSessionCompactionAvailability,
+    readAgentSessionUsageLimitRecoveryOperations,
     supportsAgentLifecycleCapability,
     supportsCurrentProjectedAgentConversationRollback,
     supportsCurrentProjectedAgentSessionOpen,
     supportsCurrentProjectedAgentSurface,
-    supportsCurrentProjectedAgentUsageLimitRecovery,
 } from './currentAgentCapabilities';
 
 const projection = {
@@ -101,7 +101,6 @@ describe('readCurrentProjectedAgentCapabilities', () => {
         });
         expect(supportsCurrentProjectedAgentSessionOpen(current, 'resume')).toBe(true);
         expect(supportsCurrentProjectedAgentConversationRollback(current)).toBe(true);
-        expect(supportsCurrentProjectedAgentUsageLimitRecovery(current, 'inactive', 'consumeResetCredit')).toBe(true);
         expect(supportsCurrentProjectedAgentSurface(current, 'terminal')).toBe(true);
     });
 
@@ -134,6 +133,37 @@ describe('readCurrentProjectedAgentCapabilities', () => {
             } as any,
             agentId: 'acme-lifecycle',
         })).toBeNull();
+    });
+});
+
+describe('readAgentSessionUsageLimitRecoveryOperations', () => {
+    it('exposes the exact recovery kinds for the matching Agent and Session activity', () => {
+        const read = (agentId: string) => readCurrentProjectedAgentCapabilities({
+            projection: projection as any,
+            agentId,
+        });
+        const native = { agentId: 'codex', currentAgentCapabilities: read('codex') };
+        const external = { agentId: 'acme-lifecycle', currentAgentCapabilities: read('acme-lifecycle') };
+        expect(readAgentSessionUsageLimitRecoveryOperations({ ...native, sessionActive: true })).toEqual(['checkNow']);
+        expect(readAgentSessionUsageLimitRecoveryOperations({ ...external, sessionActive: true })).toEqual(['checkNow']);
+        expect(readAgentSessionUsageLimitRecoveryOperations({ ...external, sessionActive: false }))
+            .toEqual(['checkNow', 'consumeResetCredit']);
+        expect(readAgentSessionUsageLimitRecoveryOperations({ ...external, agentId: 'codex', sessionActive: true })).toEqual([]);
+        expect(readAgentSessionUsageLimitRecoveryOperations({
+            agentId: 'claude',
+            currentAgentCapabilities: read('claude'),
+            sessionActive: true,
+            metadata: {
+                agentRuntimeCapabilitiesV1: { sessionCapabilities: { usageLimitRecovery: { checkNow: 'supported' } } },
+            },
+        })).toEqual([]);
+        expect(readAgentSessionUsageLimitRecoveryOperations({
+            ...native,
+            sessionActive: true,
+            metadata: {
+                agentRuntimeCapabilitiesV1: { sessionCapabilities: { usageLimitRecovery: { checkNow: 'unsupported' } } },
+            },
+        })).toEqual(['checkNow']);
     });
 });
 
@@ -299,50 +329,6 @@ describe('supportsAgentLifecycleCapability', () => {
             },
             currentAgentCapabilities: externalAgent,
         })).toBe(false);
-    });
-
-    it('separates active from inactive usage-limit recovery for an external Agent', () => {
-        expect(supportsAgentLifecycleCapability({
-            agentId: 'acme-lifecycle',
-            capability: 'usageLimitRecovery.checkNow',
-            metadata: {},
-            sessionActive: true,
-            currentAgentCapabilities: externalAgent,
-        })).toBe(true);
-        // A declaration without an executable readiness operation fails closed
-        // for either origin.
-        expect(supportsAgentLifecycleCapability({
-            agentId: 'claude',
-            capability: 'usageLimitRecovery.checkNow',
-            metadata: {
-                agentRuntimeCapabilitiesV1: {
-                    sessionCapabilities: {
-                        usageLimitRecovery: { checkNow: 'supported' },
-                    },
-                },
-            },
-            sessionActive: true,
-            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
-                projection: projection as any,
-                agentId: 'claude',
-            }),
-        })).toBe(false);
-        expect(supportsAgentLifecycleCapability({
-            agentId: 'codex',
-            capability: 'usageLimitRecovery.checkNow',
-            metadata: {
-                agentRuntimeCapabilitiesV1: {
-                    sessionCapabilities: {
-                        usageLimitRecovery: { checkNow: 'unsupported' },
-                    },
-                },
-            },
-            sessionActive: true,
-            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
-                projection: projection as any,
-                agentId: 'codex',
-            }),
-        })).toBe(true);
     });
 });
 

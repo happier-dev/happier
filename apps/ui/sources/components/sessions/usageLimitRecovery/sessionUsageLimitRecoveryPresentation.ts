@@ -348,6 +348,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     recoveryState: SessionUsageLimitRecoveryState | null;
     operationStatus?: UsageLimitRecoveryOperationStatus | null;
     checkNowSupported?: boolean;
+    canConsumeResetCredit?: boolean;
     recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     runtimeWorking?: boolean;
     machineReachable?: boolean;
@@ -458,7 +459,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
             actionAccessibilityLabel: actionLabel,
             mode,
             secondaryActions: [
-                ...(recoveryCreditSummary && !ready && checkNowSupported ? [{
+                ...(recoveryCreditSummary && !ready && params.canConsumeResetCredit === true ? [{
                     kind: 'consume_reset_credit' as const,
                     label: consumeResetCreditLabel,
                     accessibilityLabel: consumeResetCreditLabel,

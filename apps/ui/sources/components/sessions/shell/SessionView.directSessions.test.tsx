@@ -4419,7 +4419,7 @@ describe('SessionView (direct sessions)', () => {
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
   });
 
-  it('does not expose connected-service reset-credit consumption for native provider account usage refs', async () => {
+  it('shows native Codex credits without offering a reset on the quota gauge', async () => {
     installCodexAgentProjection({ capabilities: { sessions: { open: ['resume'], delivery: ['newTurn'], cancel: true, usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] } } } });
     featureEnabledState['connectedServices.quotas'] = true;
     featureEnabledState['sessions.usageLimitRecovery'] = true;
@@ -4453,24 +4453,16 @@ describe('SessionView (direct sessions)', () => {
     expect(findProviderUsageGauge(screen)).toEqual(expect.objectContaining({
       recoveryCreditSummary: expect.objectContaining({ availableCount: 1 }),
     }));
-    await act(async () => {
-      await findProviderUsageRecoveryAction(screen)();
-    });
+    expect(findProviderUsageRecoveryAction(screen)).toBeUndefined();
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
-    expect(connectedServiceQuotaRecoveryCreditConsumeSpy).not.toHaveBeenCalled();
-    expect(sessionUsageLimitConsumeResetCreditSpy).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({
-        serverId: 'server-route-1',
-        refreshMachineTargets: expect.any(Function),
-      }),
-    );
   });
 
-  it('falls back to session consume-reset-credit when provider usage has no connected-service profile ref', async () => {
+  it.each([false, true])('offers native reset-credit consumption only when declared (consume support: %s)', async (supportsConsume) => {
     installCodexAgentProjection({ capabilities: { sessions: {
       open: ['resume'], delivery: ['newTurn'], cancel: true,
-      usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
+      usageLimitRecovery: supportsConsume
+        ? { active: ['consumeResetCredit'], inactive: ['consumeResetCredit'] }
+        : { active: ['checkNow'], inactive: ['checkNow'] },
     } } });
     featureEnabledState['connectedServices.quotas'] = true;
     featureEnabledState['sessions.usageLimitRecovery'] = true;
@@ -4530,6 +4522,12 @@ describe('SessionView (direct sessions)', () => {
       recoveryCreditSummary: expect.objectContaining({ availableCount: 1 }),
     }));
 
+    if (!supportsConsume) {
+      expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
+      expect(findProviderUsageRecoveryAction(screen)).toBeUndefined();
+      return;
+    }
+    expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeTruthy();
     await act(async () => {
       await findProviderUsageRecoveryAction(screen)();
     });
