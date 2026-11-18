@@ -116,7 +116,7 @@ export function setModelFavoriteV1(raw: Readonly<Record<string, unknown>>, input
     const rawFavorites: RetainedFavoriteModelSelectionsV1 = Array.isArray(raw.favoriteModelSelectionsV1) ? raw.favoriteModelSelectionsV1 : [];
     const parsedFavorites = rawFavorites.flatMap((value, index) => {
         const parsed = StoredFavoriteModelSelectionV1Schema.safeParse(value);
-        return parsed.success ? [parsed.data] : [];
+        return parsed.success ? [{ index, favorite: parsed.data }] : [];
     });
     const identity = favoriteSelectionIdentityKey(intent.selection);
     const existing = parsedFavorites.find(({ favorite }) => favoriteSelectionIdentityKey(favorite) === identity);
