@@ -33,7 +33,6 @@ import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/com
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useDeploymentInventory } from './useDeploymentProject';
-import { useDeploymentCollection } from './useDeploymentReads';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentEnvironmentRowState } from './deploymentPresentation';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
@@ -210,11 +209,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
   }, []);
   const pagedRead = read.hasNextPage || read.hasPreviousPage;
-  // The count line's own read: the first page with the Account-wide total. The Home counts per includeTotal page, so
-  // the list's own pages never ask for it and paging never recounts (b7049368e1f); absent means unknown.
-  const counted = useDeploymentCollection(view === 'apps' && props.demand ? props.controller ?? null : null,
-    props.demand ?? NO_DEMAND, COUNT_QUERY);
-  const total = counted.snapshot.value?.totalCount;
+  const total = snapshot.value?.totalCount;
   // What the filters keep (the saved view's conditions, Not backed up): the rows shown and the count line both say it.
   const { isVisible, narrowing } = servicesView;
   const narrowed = narrowing || filtering;
@@ -227,9 +222,15 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     item.title.toLocaleLowerCase().includes(needle)
       || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle)),
   [keptItems, needle]);
-  // Counts describe these same rows; an Account total cannot answer a narrowed or searched collection.
-  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(shownItems, pagedRead, narrowed || needle !== '' ? undefined : total) : null,
-    [shownItems, narrowed, needle, pagedRead, total, view]);
+  // Opening Apps shares the column's first page. Once continuing, the page read can carry the exact total it displays.
+  const showsAccountCount = !narrowed && needle === '';
+  const { nextPage } = read;
+  const nextAppsPage = React.useCallback(() => {
+    nextPage(showsAccountCount && !read.hasPreviousPage ? 'includeTotal' : undefined);
+  }, [nextPage, read.hasPreviousPage, showsAccountCount]);
+  const appsCount = React.useMemo(() => view === 'apps'
+    ? describeAppsCount(shownItems, pagedRead, showsAccountCount ? total : undefined) : null,
+  [shownItems, showsAccountCount, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   // Apps' one Columns menu (D35): the page head's ⋯ on a wide page; a phone draws no columns and has no menu.
   // Unmeasured: the device decides; then the rows' own column decision (`null`: no columns drawn) does.
@@ -378,7 +379,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
           openBackups={filtering} columns={appsColumns} />
       )}
-      <ServicesPaging testID="all-deployments.paging" page={read} onNewer={read.previousPage} onOlder={read.nextPage} />
+      <ServicesPaging testID="all-deployments.paging" page={read} onNewer={read.previousPage} onOlder={nextAppsPage} />
     </ItemList>
     </>
   );
@@ -455,9 +456,6 @@ function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
-const COUNT_QUERY = Object.freeze({ includeTotal: true });
-const NO_DEMAND: DeploymentReadDemandV1 = Object.freeze({ mounted: false, visible: false, focused: false });
-
 function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, total: number | undefined): readonly HappierPageCountPart[] {
   let needYou = 0;
   let deploying = 0;

@@ -83,8 +83,7 @@ function controllerFor(list: (cursor: string | undefined) => ListResult, extra: 
   const calls: (string | undefined)[] = [];
   const transport: DeploymentReadTransportV1 = {
     listEnvironments: async (_scope, query) => {
-      // The list's own page reads; the count line's one counted read (includeTotal) is not a page of the list.
-      if (!query?.includeTotal) calls.push(query?.cursor);
+      calls.push(query?.cursor);
       return list(query?.cursor);
     },
     readEnvironment: async () => ({
@@ -223,28 +222,46 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
-  it('says the Account-wide total from its own counted read, never "on this page", and paging never recounts', async () => {
-    const counted: (string | undefined)[] = [];
+  it('shares one cold Apps read with the column and requests the total on the visible continuation', async () => {
+    const calls: { cursor: string | undefined; counted: boolean }[] = [];
     const first = page([environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' })], { nextCursor: 'env-later' });
-    const later = page([environment('env-later', 'source-later', 'Later', { projectSourceName: 'later' })]);
+    const later = page([environment('env-later', 'source-later', 'Later', { projectSourceName: 'later' })], { nextCursor: 'env-oldest' });
+    const oldest = page([environment('env-oldest', 'source-oldest', 'Oldest')]);
     const { controller } = controllerFor(() => first, {
       listEnvironments: async (_scope, query) => {
-        if (query?.includeTotal) counted.push(query.cursor);
-        const result = query?.cursor ? later : first;
+        calls.push({ cursor: query?.cursor, counted: query?.includeTotal === true });
+        const result = query?.cursor === 'env-later' ? later : query?.cursor === 'env-oldest' ? oldest : first;
         return query?.includeTotal && result.ok ? { ...result, value: { ...result.value, totalCount: 2417 } } : result;
       },
     });
-    const screen = await render(controller, 'all-deployments');
+    function ColumnBorrower() {
+      useDeploymentCollection(controller, shown);
+      return null;
+    }
+    const screen = await renderScreen(<><ColumnBorrower /><Page controller={controller} /></>);
     await act(async () => {
-      await waitForTestEvent(screen.subscribe, () => screen.getTextContent().includes('2417'), (found) => found);
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-shop'), (node) => node !== null);
     });
-    expect(screen.getTextContent()).not.toContain('on this page');
+    expect(calls).toEqual([{ cursor: undefined, counted: false }]);
+    expect(screen.getTextContent()).toContain('on this page');
     await screen.pressByTestIdAsync('all-deployments.paging.older');
     await act(async () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-later'), (node) => node !== null);
     });
     expect(screen.getTextContent()).toContain('2417');
-    expect(counted).toEqual([undefined]);
+    expect(calls).toEqual([
+      { cursor: undefined, counted: false },
+      { cursor: 'env-later', counted: true },
+    ]);
+    await act(async () => { await controller.refreshDemanded(); });
+    expect(calls.filter((call) => call.counted)).toEqual([{ cursor: 'env-later', counted: true }]);
+    expect(screen.getTextContent()).toContain('on this page');
+    await screen.pressByTestIdAsync('all-deployments.paging.older');
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-oldest'), (node) => node !== null);
+    });
+    expect(calls.at(-1)).toEqual({ cursor: 'env-oldest', counted: false });
+    expect(calls.filter((call) => call.counted)).toHaveLength(1);
     controller.retire();
   });
 
@@ -254,11 +271,15 @@ describe('Projects → All deployments', () => {
       environment('env-api', 'source-api', 'API', { projectSourceName: 'payments' })];
     const { controller } = controllerFor(() => page(items, { nextCursor: 'later' }), {
       listEnvironments: async (_scope, query) => ({ ok: true, value: {
-        items, nextCursor: 'later', ...(query?.includeTotal ? { totalCount: 2417 } : {}),
+        items, nextCursor: query?.cursor ? null : 'later', ...(query?.includeTotal ? { totalCount: 2417 } : {}),
       } }),
     });
     try {
       const screen = await render(controller, 'all-deployments');
+      await screen.pressByTestIdAsync('all-deployments.paging.older');
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.getTextContent().includes('2417'), (found) => found);
+      });
       const head = () => screen.root.findAll((node) => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
       await act(async () => { head().props.search.onChangeText('payments'); });
       expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();

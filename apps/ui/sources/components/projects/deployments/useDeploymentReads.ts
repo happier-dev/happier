@@ -37,12 +37,13 @@ export function projectDeploymentEnvironmentTabResult<T>(snapshot: Pick<Deployme
 }
 
 /** The controller spends private continuation state only for explicit navigation intent. */
-function useDeploymentPage<T extends DeploymentReadPageFactsV1>(
-    acquire: (() => DeploymentReadPageLeaseV1<T>) | null, demand: DeploymentReadDemandV1,
+function useDeploymentPage<T extends DeploymentReadPageFactsV1, PageOption extends string>(
+    acquire: (() => DeploymentReadPageLeaseV1<T, PageOption>) | null, demand: DeploymentReadDemandV1,
 ) {
     const lease = useDeploymentLeaseBinding(acquire);
     const read = useDeploymentSnapshot<T>(lease, demand);
-    const nextPage = React.useCallback(() => lease?.nextPage(), [lease]);
+    // Button callers may pass a native press event. Only the explicit page option is navigation state.
+    const nextPage = React.useCallback((option?: PageOption) => lease?.nextPage(typeof option === 'string' ? option : undefined), [lease]);
     const previousPage = React.useCallback(() => lease?.previousPage(), [lease]);
     return { ...read, hasNextPage: read.snapshot.status === 'ready' && (read.snapshot.value?.hasNextPage ?? false),
         hasPreviousPage: read.snapshot.value?.hasPreviousPage ?? false, nextPage, previousPage };

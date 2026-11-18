@@ -481,30 +481,42 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const environmentIds = suppliedEnvironmentIds === undefined ? undefined : [...new Set(suppliedEnvironmentIds)].sort();
             const previewPullRequestIds = suppliedPreviewPullRequestIds === undefined ? undefined : [...new Set(suppliedPreviewPullRequestIds)].sort();
             const previewIds = new Set(previewPullRequestIds);
-            const key = (cursor: string | undefined) => JSON.stringify(['collection', cursor ?? null, filters.machineId ?? null, environmentIds ?? null,
-                filters.previewRepositoryId ?? null, previewPullRequestIds ?? null, filters.previewTemplateEnvironmentId ?? null,
-                filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null, filters.includeDeleted ?? false,
-                filters.includeTotal ?? false]);
-            return createDeploymentReadPageLease<DeploymentEnvironmentReadCollectionV1>({ initialCursor, demand,
-                nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
-                acquire: (cursor, pageDemand) => acquire<DeploymentEnvironmentReadCollectionV1>({
-                key: key(cursor), kind: 'collection',
-                ...(environmentIds === undefined ? {} : { environmentIds: new Set(environmentIds) }), previousPage: cursor !== undefined,
-                read: signal => transport.listEnvironments(scope, { ...filters,
-                    ...(environmentIds === undefined ? {} : { environmentIds }),
-                    ...(previewPullRequestIds === undefined ? {} : { previewPullRequestIds }),
-                    ...(cursor === undefined ? {} : { cursor }) }, { signal }),
-                admit(value) {
-                    const page = DeploymentEnvironmentCollectionV1Schema.parse(value);
-                    if (!page.items.every(row => environmentMatches(row.environment))) throw new Error('Foreign Environment');
-                    if (filters.previewRepositoryId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
-                        && environment.previewRepositoryId === filters.previewRepositoryId
-                        && previewIds.has(environment.previewPullRequestId!))) throw new Error('Foreign preview');
-                    if (filters.previewTemplateEnvironmentId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
-                        && environment.previewTemplateEnvironmentId === filters.previewTemplateEnvironmentId)) throw new Error('Foreign preview template');
-                    return page;
+            const key = (cursor: string | undefined, option?: 'includeTotal') => JSON.stringify(['collection', cursor ?? null,
+                filters.machineId ?? null, environmentIds ?? null, filters.previewRepositoryId ?? null, previewPullRequestIds ?? null,
+                filters.previewTemplateEnvironmentId ?? null, filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null,
+                filters.includeDeleted ?? false, filters.includeTotal ?? option ?? false]);
+            return createDeploymentReadPageLease<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>({
+                initialCursor, demand,
+                nextCursor: (cursor, option) => entries.get(key(cursor, option))?.nextCursor ?? null,
+                acquire: (cursor, pageDemand, option) => {
+                    // A navigation opt-in applies to the visible continuation read once. Push reconciliation
+                    // can run after the count line is hidden, so it follows the collection's ordinary query.
+                    let includeTotalOnRead = option === 'includeTotal';
+                    return acquire<DeploymentEnvironmentReadCollectionV1>({
+                        key: key(cursor, option), kind: 'collection',
+                        ...(environmentIds === undefined ? {} : { environmentIds: new Set(environmentIds) }), previousPage: cursor !== undefined,
+                        read(signal) {
+                            const includeTotal = includeTotalOnRead || filters.includeTotal;
+                            includeTotalOnRead = false;
+                            return transport.listEnvironments(scope, { ...filters,
+                                ...(includeTotal ? { includeTotal } : {}),
+                                ...(environmentIds === undefined ? {} : { environmentIds }),
+                                ...(previewPullRequestIds === undefined ? {} : { previewPullRequestIds }),
+                                ...(cursor === undefined ? {} : { cursor }) }, { signal });
+                        },
+                        admit(value) {
+                            const page = DeploymentEnvironmentCollectionV1Schema.parse(value);
+                            if (!page.items.every(row => environmentMatches(row.environment))) throw new Error('Foreign Environment');
+                            if (filters.previewRepositoryId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
+                                && environment.previewRepositoryId === filters.previewRepositoryId
+                                && previewIds.has(environment.previewPullRequestId!))) throw new Error('Foreign preview');
+                            if (filters.previewTemplateEnvironmentId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
+                                && environment.previewTemplateEnvironmentId === filters.previewTemplateEnvironmentId)) throw new Error('Foreign preview template');
+                            return page;
+                        },
+                    }, pageDemand);
                 },
-            }, pageDemand) });
+            });
         },
         acquireEnvironment(environmentId, demand, options) {
             return acquire<DeploymentEnvironmentReadDetailV1>({

@@ -3,23 +3,28 @@ import type { DeploymentReadDemandV1, DeploymentReadLeaseV1, DeploymentReadPageF
     DeploymentReadPageLeaseV1 } from './deploymentReadControllerTypes.js';
 
 /** Navigation retains request positions, not page content; records remain owned by the controller. */
-export function createDeploymentReadPageLease<T extends DeploymentReadPageFactsV1>(input: Readonly<{
-    acquire(cursor: string | undefined, demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<T>;
-    nextCursor(cursor: string | undefined): string | null;
+export function createDeploymentReadPageLease<T extends DeploymentReadPageFactsV1, PageOption extends string = never>(input: Readonly<{
+    acquire(cursor: string | undefined, demand: DeploymentReadDemandV1, option?: PageOption): DeploymentReadLeaseV1<T>;
+    nextCursor(cursor: string | undefined, option?: PageOption): string | null;
     initialCursor: string | undefined;
     demand: DeploymentReadDemandV1;
-}>): DeploymentReadPageLeaseV1<T> {
-    const cursors: (string | undefined)[] = input.initialCursor === undefined ? [undefined] : [undefined, input.initialCursor];
+}>): DeploymentReadPageLeaseV1<T, PageOption> {
+    const positions: { cursor: string | undefined; option?: PageOption | undefined }[] = [{ cursor: undefined }];
+    if (input.initialCursor !== undefined) positions.push({ cursor: input.initialCursor });
     let demand = input.demand;
-    let held = input.acquire(cursors.at(-1), demand);
+    let held = acquireCurrentPage();
     let released = false;
     const listeners = new Set<() => void>();
     const notify = () => { for (const listener of listeners) listener(); };
     let unsubscribe = held.subscribe(notify);
+    function acquireCurrentPage() {
+        const { cursor, option } = positions.at(-1)!;
+        return input.acquire(cursor, demand, option);
+    }
     function move() {
         unsubscribe();
         held.release();
-        held = input.acquire(cursors.at(-1), demand);
+        held = acquireCurrentPage();
         unsubscribe = held.subscribe(notify);
         notify();
     }
@@ -32,16 +37,17 @@ export function createDeploymentReadPageLease<T extends DeploymentReadPageFactsV
         },
         refresh: options => held.refresh(options),
         setDemand(next) { demand = next; held.setDemand(next); },
-        nextPage() {
+        nextPage(option) {
             if (released || !isDeploymentReadDemandActiveV1(demand) || held.getSnapshot().status !== 'ready') return;
-            const cursor = input.nextCursor(cursors.at(-1));
+            const current = positions.at(-1)!;
+            const cursor = input.nextCursor(current.cursor, current.option);
             if (cursor === null) return;
-            cursors.push(cursor);
+            positions.push({ cursor, option });
             move();
         },
         previousPage() {
-            if (released || !isDeploymentReadDemandActiveV1(demand) || cursors.length === 1) return;
-            cursors.pop();
+            if (released || !isDeploymentReadDemandActiveV1(demand) || positions.length === 1) return;
+            positions.pop();
             move();
         },
         release() {

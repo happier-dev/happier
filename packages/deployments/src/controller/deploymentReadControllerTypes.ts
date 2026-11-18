@@ -115,8 +115,8 @@ export type DeploymentEnvironmentReadCollectionV1 = Omit<DeploymentEnvironmentCo
 }>;
 export type DeploymentReceiptReadDetailV1 = DeploymentReceiptDetailV1 & Readonly<{ chip: DeploymentChipV1; facts: DeploymentReceiptFactsV1 }>;
 export type DeploymentHistoryPageV1 = Omit<DeploymentReceiptHistoryV1, 'nextCursor'> & DeploymentReadPageFactsV1;
-export type DeploymentReadPageLeaseV1<T> = DeploymentReadLeaseV1<T> & Readonly<{
-    nextPage(): void;
+export type DeploymentReadPageLeaseV1<T, PageOption extends string = never> = DeploymentReadLeaseV1<T> & Readonly<{
+    nextPage(option?: PageOption): void;
     previousPage(): void;
 }>;
 export type DeploymentReadOptionsV1 = Readonly<{ signal: AbortSignal }>;
@@ -161,7 +161,8 @@ export type DeploymentReadControllerV1 = Readonly<{
     acquireDomainPage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentAccountDomainReadPageV1>;
     acquireDataServicePage(query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDataServiceReadPageV1>;
     acquireDomains(environmentId: string, query: DeploymentHistoryQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDomainReadPageV1>;
-    acquireCollection(query: DeploymentCollectionQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1>;
+    acquireCollection(query: DeploymentCollectionQueryV1, demand: DeploymentReadDemandV1):
+        DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>;
     acquireActivity(demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentActivityV1>;
     acquireEnvironment(environmentId: string, demand: DeploymentReadDemandV1,
         options?: Readonly<{ health?: boolean }>): DeploymentReadLeaseV1<DeploymentEnvironmentReadDetailV1>;
