@@ -1794,6 +1794,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 correlationId: params.correlationId,
                 ...(params.processOwner ? { processOwner: params.processOwner } : {}),
                 surface: 'agent' as const,
+                ...(params.actionTarget ? { approvalContext: { externalActionTarget: params.actionTarget } } : {}),
                 ...(params.session
                     ? {
                         session: Object.freeze({

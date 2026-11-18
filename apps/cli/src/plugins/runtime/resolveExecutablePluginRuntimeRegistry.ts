@@ -6618,6 +6618,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             correlationId: agentParams.correlationId,
             surface: 'agent' as const,
             ...(agentParams.workflowActionContext ? { workflowActionContext: agentParams.workflowActionContext } : {}),
+            ...(agentParams.actionTarget ? { approvalContext: { externalActionTarget: agentParams.actionTarget } } : {}),
             ...(agentParams.readApprovalProfileId ? { readApprovalProfileId: agentParams.readApprovalProfileId } : {}),
             ...(agentParams.processOwner ? { processOwner: agentParams.processOwner } : {}),
             ...(agentParams.readActiveTurnAdmissionWitness

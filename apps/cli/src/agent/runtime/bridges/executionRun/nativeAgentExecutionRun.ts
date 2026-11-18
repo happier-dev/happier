@@ -6,7 +6,7 @@ import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/in
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
-import type { AccountSettings, SessionCapabilitySelectionV1 } from '@happier-dev/protocol';
+import type { AccountSettings, ActionExecutorContext, SessionCapabilitySelectionV1 } from '@happier-dev/protocol';
 import type {
     AgentExecutionRunEvent,
     AgentExecutionRunConversationEventV1,
@@ -268,6 +268,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     refreshRuntimeAuthViaDaemon?: CreateCliExecutionRunBackendParams['connectedServiceRuntimeAuthRefresh'];
     createInvocationServices?: (params: Readonly<{
         currentSession: HostCurrentSessionUiServices;
+        actionTarget: NonNullable<ActionExecutorContext['externalActionTarget']>;
         signal: AbortSignal;
         readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
         actionRequestAttributionV1?: ActionRequestAttributionV1;
@@ -402,6 +403,8 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         const boundServices = params.createInvocationServices
             ? await params.createInvocationServices({
                 currentSession,
+                actionTarget: { kind: 'machine', machineId: params.machineId,
+                    project: { machineId: params.machineId, directory: params.directory } },
                 signal,
                 ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
                 ...(!readActiveTurnAdmissionWitness && actionRequestAttributionV1 ? { actionRequestAttributionV1 } : {}),

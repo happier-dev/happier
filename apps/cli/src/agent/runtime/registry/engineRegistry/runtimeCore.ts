@@ -1085,6 +1085,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                     ? {
                                         createInvocationServices: async ({
                                             currentSession,
+                                            actionTarget,
                                             signal,
                                             readActiveTurnAdmissionWitness,
                                             actionRequestAttributionV1,
@@ -1095,6 +1096,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             occurrenceId: invocationIdentity.occurrenceId,
                                             correlationId: options.runId!,
                                             processOwner: { kind: 'run', runId: options.runId! },
+                                            actionTarget,
                                             cwd: options.cwd,
                                             ...(options.isolation?.env
                                                 ? { environment: options.isolation.env }

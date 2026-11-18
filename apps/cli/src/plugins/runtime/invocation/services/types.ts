@@ -256,6 +256,8 @@ export type CreateAgentInvocationServices = (
         readApprovalProfileId?: PluginInvocationServicesSeed['readApprovalProfileId'];
         workflowActionContext?: WorkflowAgentActionContext;
         actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
+        /** Host-owned execution placement; conveys no approval or caller authority. */
+        actionTarget?: ActionExecutorContext['externalActionTarget'];
         processOwner?: ProcessOwnerRef;
         pluginId: string;
         pluginVersion: string;

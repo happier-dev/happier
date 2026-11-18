@@ -226,8 +226,10 @@ export function createSessionBoundScmAction(
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
       const root = sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
-      const inputRecord = root && context.defaultSessionId && context.actionCaller?.kind === 'session'
+      const sessionInput = root && context.defaultSessionId && context.actionCaller?.kind === 'session'
         ? bindScmActionToSessionWorkspace(actionId, selectedInput, root, context.defaultSessionId) : selectedInput;
+      const inputRecord = root && !machineInventory && actionId !== 'scm.repository.clone' && sessionInput.cwd === undefined
+        ? { ...sessionInput, cwd: root } : sessionInput;
       const cwd = normalizeStringValue(actionId === 'scm.repository.clone'
         ? inputRecord.destinationParentPath
         : inputRecord.cwd);

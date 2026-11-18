@@ -35,6 +35,8 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../../../packages/plugins/scm-git/src/backend';
 import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 it('publishes admitted detached Run Action discovery without granting hands-off writes', async () => {
     const lifetime = new AbortController();
@@ -63,22 +65,26 @@ it('publishes admitted detached Run Action discovery without granting hands-off 
         controllerOccurrenceId: 'controller', callId: 'call', sidechainId: 'sidechain', runtimeRegistry: null,
         directory: rootPath, machineId: 'machine-1', accountSettings: null,
         permissionMode: 'read_only', workspaceWrites: 'deny', start: { intent: 'delegate' },
-        async createInvocationServices({ signal, readActiveTurnAdmissionWitness }) {
+        async createInvocationServices({ signal, readActiveTurnAdmissionWitness, actionTarget }) {
             return { ...unavailable, exec: selectedExec, actions: createPluginInvocationActionsService({
                 seed: { plugin: { id: pluginId, version: '1.0.0' },
                     contribution: { id: 'default', qualifiedId: `${pluginId}/agents/default` },
                     ...createPluginActionCallerMaterializationFixture(pluginId),
                     occurrenceId: lease.occurrenceId, surface: 'agent', signal, processOwner: { kind: 'run', runId },
+                    approvalContext: { externalActionTarget: actionTarget },
                     isOccurrenceCurrent: lease.isCurrent, readActiveTurnAdmissionWitness },
                 actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                    scmActionExecute: async ({ actionId, input, context }) => {
-                        expect(context.runtimeRunId).toBe(runId);
-                        expect(context).not.toHaveProperty('defaultSessionId');
-                        return await executeScmActionOperation({
-                        actionId, input, workingDirectory: rootPath,
-                        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] }, registry,
-                        ...(context.signal ? { signal: context.signal } : {}),
-                    }); },
+                    scmActionExecute: createCliActionDeps({ token: 'detached-fixture', credentials: { token: 'detached-fixture', encryption: null },
+                        sessionId: '', mode: 'plain', ctx: null,
+                        // Substitute Machine RPC, keeping its actual targeted envelope,
+                        // repository selection, filesystem policy and Git execution real.
+                        machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (method, request) => {
+                            if (method !== 'scm.log.list') throw new Error(`Unexpected Machine RPC: ${method}`);
+                            const { input } = TargetedActionRpcRequestV1Schema.parse(request);
+                            return executeScmActionOperation({ actionId: 'scm.log.list', input, workingDirectory: rootPath,
+                                accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] }, registry });
+                        } },
+                    }).scmActionExecute,
                 }),
                 async invokeContributedAction() { throw new Error('No contributed Action is used'); },
             }) };
@@ -107,7 +113,10 @@ it('publishes admitted detached Run Action discovery without granting hands-off 
         });
         const call = (toolName: string, args: unknown) => callSessionMcpTool({ source: 'happier', toolName, args, sessionContext });
         await expect(call('action_spec_get', { id: 'scm.log.list' })).resolves.toMatchObject({ ok: true });
-        await expect(call('action_execute', { actionId: 'scm.log.list', input: { cwd: repository.rootPath, limit: 1, skip: 0 } }))
+        const explicitLog = await call('action_execute', { actionId: 'scm.log.list', input: { cwd: repository.rootPath, limit: 1, skip: 0 } });
+        expect(explicitLog, JSON.stringify(explicitLog))
+            .toMatchObject({ ok: true, result: { success: true, entries: [expect.objectContaining({ sha: repository.headCommit })] } });
+        await expect(call('action_execute', { actionId: 'scm.log.list', input: { limit: 20 } }))
             .resolves.toMatchObject({ ok: true, result: { success: true, entries: [expect.objectContaining({ sha: repository.headCommit })] } });
         await expect(call('action_execute', { actionId: 'settings.set', input: { anchor: 'voiceConversations.minSpeechMs', value: 1100 } }))
             .resolves.toMatchObject({ ok: false });
@@ -120,6 +129,9 @@ it('publishes admitted detached Run Action discovery without granting hands-off 
             ...JSON.parse(await readFile(siblingConfig.env![SESSION_MCP_CONTEXT_FILE_ENV]!, 'utf8')),
             bearerToken: siblingConfig.env![SESSION_MCP_BEARER_ENV],
         });
+        await expect(callSessionMcpTool({ source: 'happier', toolName: 'action_execute',
+            args: { actionId: 'scm.log.list', input: { limit: 20 } }, sessionContext: siblingContext }))
+            .resolves.toMatchObject({ ok: true, result: { success: true, entries: [expect.objectContaining({ sha: siblingRepository.headCommit })] } });
         // A sibling bearer selects sibling authority, even at the shared endpoint.
         await expect(callSessionMcpTool({ source: 'happier', toolName: 'action_execute',
             args: { actionId: 'scm.log.list', input: { cwd: repository.rootPath, limit: 1, skip: 0 } },
