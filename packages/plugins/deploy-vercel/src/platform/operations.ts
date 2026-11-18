@@ -151,6 +151,24 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
 }
 export { endpoint as vercelEndpoint, send as vercelRequest };
 
+/** A lost deployment or traffic reply leaves the effect uncertain. Retain the observed cause for the Action adapter. */
+export async function sendVercelDeploymentMutation(context: VercelPlatformContext, url: string,
+  content?: Parameters<typeof send>[3], repositoryKind?: Repository['kind']): Promise<HttpResponse | DeploymentTargetRoleFailureV1> {
+  const phase = 'deployment.provider.send';
+  let response: HttpResponse;
+  try { response = await send(context, url, 'POST', content, 'send', repositoryKind); }
+  catch (error) {
+    if (isPluginError(error)) throw error;
+    return Object.defineProperty(failure('outcome_unknown', 'send'), 'failureCause', {
+      value: projectActionFailureCauseV1(error, phase),
+    });
+  }
+  if (response.status < 500) return response;
+  return Object.defineProperty(failure('outcome_unknown', 'send'), 'failureCause', {
+    value: { phase, errorClass: 'Error', errorCode: null, httpStatus: response.status },
+  });
+}
+
 export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id: string, context: VercelPlatformContext) {
   return send(context, endpoint(`/v13/deployments/${encodeURIComponent(id)}`, providerIdentity.providerAccountId), 'GET');
 }
@@ -282,7 +300,6 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
 
 function observation(response: HttpResponse, context: VercelPlatformContext, phase: Phase,
   expectedId?: string, expectedProject?: string, promotion = false): Outcome {
-  if (phase === 'send' && response.status >= 500) return failure('outcome_unknown', phase);
   const denied = rejected(response, phase);
   if (denied) return denied;
   const value = body(response);
@@ -379,21 +396,17 @@ export async function createVercelDeployment(input: UploadSelection, source: Rea
   const environment = input.providerEnvironment;
   const target = environment.kind === 'production' ? { target: 'production' }
     : environment.kind === 'custom' ? { customEnvironmentSlugOrId: environment.id } : {};
-  try {
-    // A project's first deployment otherwise needs explicit projectSettings (400 missing_project_settings).
-    // Vercel's documented opt-in keeps its framework auto-detection, as the Vercel CLI does with --yes.
-    const url = new URL(endpoint('/v13/deployments', input.providerIdentity.providerAccountId));
-    url.searchParams.set('skipAutoDetectionConfirmation', '1');
-    const response = await send(context, url.href, 'POST',
-      { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({
-        name: input.projectName, project: input.providerIdentity.providerResourceId, ...target,
-        ...source,
-      })) }, 'send', repositoryKind);
-    return observation(response, context, 'send', undefined, input.providerIdentity.providerResourceId);
-  } catch (error) {
-    if (isPluginError(error)) throw error;
-    return failure('outcome_unknown', 'send');
-  }
+  // A project's first deployment otherwise needs explicit projectSettings (400 missing_project_settings).
+  // Vercel's documented opt-in keeps its framework auto-detection, as the Vercel CLI does with --yes.
+  const url = new URL(endpoint('/v13/deployments', input.providerIdentity.providerAccountId));
+  url.searchParams.set('skipAutoDetectionConfirmation', '1');
+  const response = await sendVercelDeploymentMutation(context, url.href,
+    { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({
+      name: input.projectName, project: input.providerIdentity.providerResourceId, ...target,
+      ...source,
+    })) }, repositoryKind);
+  if ('code' in response) return response;
+  return observation(response, context, 'send', undefined, input.providerIdentity.providerResourceId);
 }
 
 /**

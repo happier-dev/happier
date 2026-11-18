@@ -1,7 +1,7 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRollbackInputV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
-import { createVercelDeployment, observeVercelDeployment, requestVercelDeployment, vercelEndpoint, vercelRequest,
+import { createVercelDeployment, observeVercelDeployment, requestVercelDeployment, sendVercelDeploymentMutation, vercelEndpoint, vercelRequest,
   type VercelPlatformContext } from './operations.js';
 import { readVercelBuiltInUrls } from './addresses.js';
 
@@ -55,7 +55,8 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
     ...(builtInUrls === undefined ? {} : { builtInUrls }) };
 }
 
-export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
+export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1, operation: Operation, context: VercelPlatformContext)
+  : Promise<DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1> {
   context.signal.throwIfAborted();
   if (input.providerEnvironment.kind !== 'production') return fail('unsupported_action', 'admission');
   if (input.providerDeploymentId) return observeVercelTraffic(input, operation, context);
@@ -77,18 +78,17 @@ export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1
       const deployment = await createVercelDeployment({ providerIdentity: input.providerIdentity,
         providerEnvironment: input.providerEnvironment, projectName: source.name },
         { deploymentId: providerDeploymentId, meta: { action: 'promote' } }, context);
-      if ('code' in deployment) return fail(deployment.code, deployment.phase);
+      if ('code' in deployment) return deployment;
       // Persist the returned native id even when the build is already READY. Traffic still needs observation.
       return deployment.state === 'succeeded' ? { ...deployment, state: 'running' } : deployment;
     }
   }
-  let response;
-  try { response = await vercelRequest(context, vercelEndpoint(`/v${operation === 'promote' ? '10' : '1'}/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}/${operation}/${encodeURIComponent(providerDeploymentId)}`,
-    input.providerIdentity.providerAccountId), 'POST', undefined, 'send'); }
-  catch (error) { if (isPluginError(error)) throw error; return fail('outcome_unknown', 'send'); }
+  const response = await sendVercelDeploymentMutation(context, vercelEndpoint(`/v${operation === 'promote' ? '10' : '1'}/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}/${operation}/${encodeURIComponent(providerDeploymentId)}`,
+    input.providerIdentity.providerAccountId));
+  if ('code' in response) return response;
   if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403 ? 'deployment_access_denied'
     : response.status === 404 ? 'deployment_unavailable' : response.status === 409 ? 'deployment_conflict'
-      : response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', 'send');
+      : 'provider_request_failed', 'send');
   // The write was acknowledged. A failed following read must retain the exact native id for recovery.
   try { return await observeVercelTraffic({ ...input, providerDeploymentId }, operation, context); }
   catch { return { v: 1, state: 'outcome_unknown', providerDeploymentId, observedAtMs: context.now() }; }

@@ -106,17 +106,27 @@ it.each(['promote', 'rollback'] as const)('requests %s once and reports the prov
   } finally { await kit.dispose(); }
 });
 
-it.each(['promote', 'rollback'] as const)('does not repeat an ambiguous %s write', async operation => {
+it.each([
+  { operation: 'promote', target: 'production', status: null },
+  { operation: 'rollback', target: 'production', status: null },
+  { operation: 'promote', target: null, status: null },
+  { operation: 'promote', target: 'production', status: 503 },
+  { operation: 'promote', target: null, status: 503 },
+] as const)('retains an uncertain $operation cause for target $target and status $status without repeating the write', async ({ operation, target, status }) => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
-    if (request.method === 'GET') return jsonResponse(200, nativeDeployment('production'));
-    throw new Error('provider transport lost');
+    if (request.method === 'GET') return jsonResponse(200, nativeDeployment(target));
+    if (status !== null) return { status, headers: {}, body: new Uint8Array() };
+    throw Object.assign(new Error('provider transport lost'), { code: 'ECONNRESET' });
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction(operation, input)).rejects.toMatchObject({ code: 'outcome_unknown' });
+    await expect(kit.invokeAction(operation, input)).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+      failureCause: { phase: 'deployment.provider.send', errorCode: status === null ? 'ECONNRESET' : null, httpStatus: status },
+    } });
     expect(requests.map(request => request.method)).toEqual(operation === 'promote' ? ['GET', 'POST'] : ['POST']);
+    if (target === null) expect(new URL(requests[1]!.url).pathname).toBe('/v13/deployments');
   } finally { await kit.dispose(); }
 });
 
