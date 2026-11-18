@@ -19742,6 +19742,8 @@ settingsSession: {
         groupYours: "Twoje",
         groupFrom: ({ team }: { team: string }) => `Od ${team}`,
         groupShared: "Udostępnione Tobie",
+        noAddress: "Brak adresu",
+        ownedByTeam: "Należy do zespołu",
         dashboardsTitle: "Pulpity",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Pulpity, które ${team} widzi wśród pulpitów ${project} po otwarciu. Każdy jest udostępniany osobno; odłączenie jednego nie zmienia pozostałych ani ich udostępniania.`,
         dashboardsDescriptionPersonal: "Każdy pulpit jest udostępniany osobno; odłączenie jednego nie zmienia pozostałych ani ich udostępniania.",

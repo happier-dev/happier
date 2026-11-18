@@ -19919,6 +19919,8 @@ settingsSession: {
         groupYours: "Tue",
         groupFrom: ({ team }: { team: string }) => `Da ${team}`,
         groupShared: "Condivise con te",
+        noAddress: "Nessun indirizzo",
+        ownedByTeam: "Di proprietà del team",
         dashboardsTitle: "Dashboard",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Dashboard che ${team} vede tra quelle di ${project} quando lo apre. Ognuna è condivisa a sé; scollegarne una lascia invariate le altre e la loro condivisione.`,
         dashboardsDescriptionPersonal: "Ogni dashboard è condivisa a sé; scollegarne una lascia invariate le altre e la loro condivisione.",

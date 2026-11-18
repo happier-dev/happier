@@ -23321,6 +23321,8 @@ const enProjects = {
     groupYours: 'Yours',
     groupFrom: ({ team }: { team: string }) => `From ${team}`,
     groupShared: 'Shared with you',
+    noAddress: 'No address',
+    ownedByTeam: 'Owned by the Team',
     dashboardsTitle: 'Dashboards',
     dashboardsDescription: ({
       team,

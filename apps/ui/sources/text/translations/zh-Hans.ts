@@ -19536,6 +19536,8 @@ settingsSession: {
         groupYours: "你的",
         groupFrom: ({ team }: { team: string }) => `来自 ${team}`,
         groupShared: "与你共享",
+        noAddress: "无地址",
+        ownedByTeam: "归团队所有",
         dashboardsTitle: "仪表板",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `${team} 打开 ${project} 时在其仪表板中看到的仪表板。每个都单独共享；分离其中一个不会影响其他仪表板及其共享。`,
         dashboardsDescriptionPersonal: "每个仪表板都单独共享；分离其中一个不会影响其他仪表板及其共享。",

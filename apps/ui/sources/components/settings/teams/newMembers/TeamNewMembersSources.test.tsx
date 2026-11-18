@@ -183,6 +183,26 @@ it.each([true, false])(
   },
 );
 
+it('tells two same-named Sources without a repository apart by their row line', async () => {
+  const personal = ProjectSourceListItemV1Schema.parse({
+    id: 'source-personal', revision: 1, name: 'Sandbox', audience: teamAudience, createdByAccountId: 'admin',
+    owner: { kind: 'account', accountId: 'admin' },
+  });
+  const teamOwned = ProjectSourceListItemV1Schema.parse({
+    id: 'source-team', revision: 1, name: 'Sandbox', audience: [], createdByAccountId: 'admin',
+    owner: { kind: 'team', teamId: 'team-1' },
+  });
+  const { screen } = await renderNewMembers([personal, teamOwned], true);
+  await waitForHomeGovernance(() =>
+    expect(screen.findByTestId('team-new-members-repository:source-team')).not.toBeNull(),
+  );
+  const rowText = (id: string) => JSON.stringify(screen.findByTestId(`team-new-members-repository:${id}`)
+    ?.findAll(node => typeof node.props.children === 'string').map(node => node.props.children));
+  expect(rowText('source-personal')).toContain('No address');
+  expect(rowText('source-team')).toContain('Owned by the Team');
+  expect(rowText('source-personal')).not.toEqual(rowText('source-team'));
+});
+
 it('says nothing is shared yet and that no first task is suggested', async () => {
   const { screen } = await renderNewMembers([], true);
   await waitForHomeGovernance(() =>

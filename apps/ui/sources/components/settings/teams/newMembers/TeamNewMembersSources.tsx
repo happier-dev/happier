@@ -137,9 +137,8 @@ const RepositoryRow = React.memo(function RepositoryRow(
   props: Readonly<{ row: TeamNewMembersSourceRows[number] }>,
 ) {
   const { source, taskReference } = props.row;
-  const address = source.repository ? describeProjectSourceRow(source) : null;
   const subtitle = [
-    address,
+    describeProjectSourceRow(source),
     taskReference ? t('teams.newMembers.repositories.hasFirstTask') : null,
   ]
     .filter(Boolean)

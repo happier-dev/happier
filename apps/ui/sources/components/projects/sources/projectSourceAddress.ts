@@ -3,6 +3,7 @@ import {
   type ProjectSourceRepositorySelectorV1,
   type ProjectSourceV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { t } from '@/text';
 
 /**
  * The repository address a person reads and types on a Source ("github.com/happier-dev/happier").
@@ -61,11 +62,18 @@ export function formatRepositoryIdentityAddress(
 /**
  * "happier-dev/happier · v0.3 · apps/ios": the facts a list row needs to tell Sources apart. The whole
  * repository is the quiet default and stays unsaid; a folder is named only when one is chosen.
+ *
+ * The row's title is already the name. A Source without a repository says it has no address (a ref or folder
+ * means nothing without one) and names a Team owner, the identity it has left: "No address · Owned by the Team".
  */
 export function describeProjectSourceRow(
-  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'name'>>,
+  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'owner'>>,
 ): string {
-  if (!source.repository) return source.name ?? '';
+  if (!source.repository) {
+    return [t('projects.sources.noAddress'), source.owner?.kind === 'team' ? t('projects.sources.ownedByTeam') : null]
+      .filter(Boolean)
+      .join(' · ');
+  }
   return [
     source.repository.repository.nameWithOwner,
     source.defaultRef,

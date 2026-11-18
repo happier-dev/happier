@@ -19791,6 +19791,8 @@ settingsSession: {
         groupYours: "Les tiennes",
         groupFrom: ({ team }: { team: string }) => `De ${team}`,
         groupShared: "Partagées avec toi",
+        noAddress: "Pas d’adresse",
+        ownedByTeam: "Appartient à l’équipe",
         dashboardsTitle: "Tableaux de bord",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Tableaux de bord que ${team} voit parmi ceux de ${project} en l’ouvrant. Chacun est partagé séparément ; en détacher un laisse les autres et leur partage tels quels.`,
         dashboardsDescriptionPersonal: "Chaque tableau de bord est partagé séparément ; en détacher un laisse les autres et leur partage tels quels.",

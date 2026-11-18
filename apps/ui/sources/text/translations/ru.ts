@@ -19870,6 +19870,8 @@ settingsSession: {
         groupYours: "Ваши",
         groupFrom: ({ team }: { team: string }) => `От ${team}`,
         groupShared: "Доступные вам",
+        noAddress: "Нет адреса",
+        ownedByTeam: "Принадлежит команде",
         dashboardsTitle: "Дашборды",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Дашборды, которые ${team} видит среди дашбордов ${project}, открыв его. Каждый открыт отдельно; если отсоединить один, остальные и их доступ не изменятся.`,
         dashboardsDescriptionPersonal: "Каждый дашборд открыт отдельно; если отсоединить один, остальные и их доступ не изменятся.",

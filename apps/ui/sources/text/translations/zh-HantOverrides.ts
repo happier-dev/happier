@@ -14591,6 +14591,8 @@ settingsSession: {
             groupYours: "你的",
             groupFrom: ({ team }: { team: string }) => `來自 ${team}`,
             groupShared: "與你共享",
+            noAddress: "無地址",
+            ownedByTeam: "歸團隊所有",
             dashboardsTitle: "儀表板",
             dashboardsDescription: ({ team, project }: { team: string; project: string }) => `${team} 開啟 ${project} 時在其儀表板中看到的儀表板。每個都單獨共享；分離其中一個不會影響其他儀表板及其共享。`,
             dashboardsDescriptionPersonal: "每個儀表板都單獨共享；分離其中一個不會影響其他儀表板及其共享。",

@@ -19917,6 +19917,8 @@ settingsSession: {
         groupYours: "Tuyas",
         groupFrom: ({ team }: { team: string }) => `De ${team}`,
         groupShared: "Compartidas contigo",
+        noAddress: "Sin dirección",
+        ownedByTeam: "Propiedad del equipo",
         dashboardsTitle: "Paneles",
         dashboardsDescription: ({ team, project }: { team: string; project: string }) => `Paneles que ${team} ve entre los paneles de ${project} al abrirlo. Cada uno se comparte por separado; desvincular uno deja los demás y su uso compartido como están.`,
         dashboardsDescriptionPersonal: "Cada panel se comparte por separado; desvincular uno deja los demás y su uso compartido como están.",
