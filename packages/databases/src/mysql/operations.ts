@@ -316,9 +316,19 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             let inserted = 0n; let updated = 0n; let deleted = 0n;
             for (const [index, statement] of statements.entries()) {
                 const result = await query(statement); const change = input.changes[index]!;
-                if (String(result.affectedRows) !== '1') throw new MysqlOperationError(String(result.affectedRows) === '0'
-                    ? { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: index, reason: change.kind === 'delete' ? 'row_missing' : 'row_changed' }
-                    : { ok: false, status: 'failed', code: 'database_edit_row_count', reason: 'The edit did not affect exactly one row' });
+                if (String(result.affectedRows) !== '1') {
+                    if (String(result.affectedRows) === '0' && change.kind === 'update') {
+                        const keyStatement: MysqlCompiledStatement = { text: '', values: [] };
+                        const key = change.key.map(item => `${quoteMysqlIdentifier(item.column)} <=> ${bind(keyStatement, item.value)}`);
+                        keyStatement.text = `SELECT 1 FROM ${qualified(input.relation)} WHERE ${key.join(' AND ')} LIMIT 1`;
+                        const keyResult = await query(keyStatement);
+                        throw new MysqlOperationError({ ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: index,
+                            reason: keyResult.rows.length === 0 ? 'row_missing' : 'row_changed' });
+                    }
+                    throw new MysqlOperationError(String(result.affectedRows) === '0'
+                        ? { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: index, reason: change.kind === 'delete' ? 'row_missing' : 'row_changed' }
+                        : { ok: false, status: 'failed', code: 'database_edit_row_count', reason: 'The edit did not affect exactly one row' });
+                }
                 if (change.kind === 'insert') inserted++; else if (change.kind === 'update') updated++; else deleted++;
             }
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };

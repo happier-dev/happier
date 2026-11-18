@@ -13,7 +13,6 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
-    DeploymentTargetPreparationBaseV1ProtocolSchema,
     isPluginError,
     type JsonValue,
     PluginError,
@@ -22,9 +21,8 @@ import {
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import * as supabaseQueryPlugin from '@happier-dev/plugins-deployment-supabase';
-import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as actionContractProducer from '../../../../../../packages/plugin-sdk/examples/action-contract-producer/src/index';
 import type { MessageActionAvailableSnapshotV1, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import type {
@@ -200,56 +198,11 @@ describe('target action invocation registry', () => {
         } finally { registry.dispose(); }
     });
 
-    it('admits the qualified Supabase read-only query for an agent under default policy without an approval', async () => {
+    it('keeps provider deployment contributions data-only after the generic database Action migration', () => {
         const manifest = normalizePluginManifestV2(supabaseQueryPlugin.manifest);
-        const localId = manifest.contributes.deploymentTargets[0]?.dataV1?.query?.readOnly;
-        const declaration = manifest.contributes.actions.find(candidate => candidate.id === localId);
-        if (!declaration || !localId) throw new Error('Missing qualified Supabase query declaration');
-        const plugin = await createPluginTestkit({ manifest: supabaseQueryPlugin.manifest, module: supabaseQueryPlugin });
-        const handler = plugin.registration('actions', localId);
-        if (!handler) throw new Error('Missing registered Supabase query runtime');
-        const requests: HttpRequest[] = [];
-        // Provider HTTP is the boundary; the real manifest, registered handler,
-        // target registry and shared current-intent policy remain in the path.
-        const http = createPluginHttpFixture({ async request(request) {
-            requests.push(request);
-            return { status: 201, headers: {}, body: new TextEncoder().encode(JSON.stringify([{ value: 'hello' }])) };
-        } });
-        const unavailable = createUnavailablePluginServicesFactory();
-        const registry = createRegistry({
-            actions: [{ ...action(), pluginId: manifest.id, localId,
-                definition: { ...declaration, inputSchema: declaration.inputSchema ?? undefined,
-                    hostAccessRequests: manifest.hostAccess.required.map(request => ({ request, required: true })) },
-                handler,
-            }],
-            createServices: (seed, binding) => ({ ...unavailable(seed, binding), http }),
-        });
-        const qualifiedId = formatQualifiedPluginActionId({ pluginId: manifest.id, localId });
-        let settings = normalizeActionsSettingsV1({ v: 1 });
-        const credentialRef = { service: { pluginId: manifest.id, localId: 'supabase' }, accountId: 'connected' };
-        const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'production',
-            expectedRevision: 1, targetLinkId: 'database', expectedTargetLinkRevision: 1, credentialRef,
-            credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: manifest.id, localId }, purpose: 'deploy-manage' },
-                target: { kind: 'account', account: credentialRef } },
-            providerIdentity: { providerAccountId: 'org', providerResourceId: 'parent', providerEnvironment: 'preview' },
-            providerEnvironment: { kind: 'custom', id: 'preview' } }), sql: 'select $1::text as value', params: { '1': 'hello' } };
-        const invocation = { pluginId: manifest.id, localId, surface: 'agent' as const, invocationAuthority: 'account_automation' as const,
-            requiredReadOnly: true as const, input,
-            isApprovalRequiredByActionSettings: (manifestDefault: boolean, normalizedInput?: unknown) =>
-                isApprovalRequiredByActionsSettings(qualifiedId, settings, { surface: 'agent' }, undefined, manifestDefault, normalizedInput),
-        };
-        try {
-            // No current-intent presenter exists: an accidental default Ask
-            // settles unavailable before the provider, rather than passing.
-            expect(await registry.invoke(invocation)).toMatchObject({ status: 'executed',
-                value: { ok: true, columns: [{ name: 'value' }], rows: [['hello']] } });
-            expect(requests).toHaveLength(1);
-            expect(requests[0]).toMatchObject({ method: 'POST', url: 'https://api.supabase.com/v1/projects/preview/database/query/read-only',
-                credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy-manage' } });
-            settings = normalizeActionsSettingsV1({ v: 1, actions: { [qualifiedId]: { approvalRequiredSurfaces: ['agent'] } } });
-            expect(await registry.invoke(invocation)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
-            expect(requests).toHaveLength(1);
-        } finally { registry.dispose(); await plugin.dispose(); }
+        const dataTarget = manifest.contributes.deploymentTargets.find(target => target.role === 'data');
+        expect(dataTarget?.dataV1?.query).toBeUndefined();
+        expect(manifest.contributes.actions.some(candidate => candidate.id.includes('query'))).toBe(false);
     });
 
     it('refuses an Environment-scoped contributed Action before its handler without admitted owner facts', async () => {

@@ -297,9 +297,19 @@ export function executeSqliteOperation(input: DatabaseOperationInputV1, query: S
             let inserted = 0n; let updated = 0n; let deleted = 0n;
             for (const [changeIndex, change] of input.changes.entries()) {
                 const result = query(compileEdit(input.relation, change, metadata));
-                if (result.changes !== 1n) throw new SqliteOperationError(result.changes === 0n
-                    ? { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex, reason: change.kind === 'delete' ? 'row_missing' : 'row_changed' }
-                    : { ok: false, status: 'failed', code: 'database_edit_row_count', reason: 'The edit did not affect exactly one row' });
+                if (result.changes !== 1n) {
+                    if (result.changes === 0n && change.kind === 'update') {
+                        const keyStatement: SqliteCompiledStatement = { text: '', values: [] };
+                        const key = change.key.map(item => `${quoteSqliteIdentifier(item.column)} IS ${bind(keyStatement, item.value)}`);
+                        keyStatement.text = `SELECT 1 FROM ${qualified(input.relation)} WHERE ${key.join(' AND ')} LIMIT 1`;
+                        const keyResult = query(keyStatement);
+                        throw new SqliteOperationError({ ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex,
+                            reason: keyResult.rows.length === 0 ? 'row_missing' : 'row_changed' });
+                    }
+                    throw new SqliteOperationError(result.changes === 0n
+                        ? { ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex, reason: change.kind === 'delete' ? 'row_missing' : 'row_changed' }
+                        : { ok: false, status: 'failed', code: 'database_edit_row_count', reason: 'The edit did not affect exactly one row' });
+                }
                 if (change.kind === 'insert') inserted++; else if (change.kind === 'update') updated++; else deleted++;
             }
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };
