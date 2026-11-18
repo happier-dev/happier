@@ -27,6 +27,7 @@ import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/crea
 import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
+import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
   'executionTarget' | 'agentTarget' | 'projectContext' | 'approvalProfileId' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'teamCredentialBindings' | 'identity' | 'attestedContext' | 'isolationOverride' | 'sourceContext' | 'sessionPlacement'>
@@ -184,11 +185,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
       ?.machineApprovalProfiles?.[input.executionTarget.machineId] });
   const explicitPermission = input.permissionMode ?? input.configuration?.permissionIntent.value ?? undefined;
-  const explicitModelBinding = input.teamCredentialBindings?.find(intent => intent.slot.kind === 'provider_model');
-  const explicitAutomatic = input.configuration?.model.value === null && input.configuration.model.selectionSource !== 'inherited';
-  const explicitModel = input.modelSelection ?? (input.configuration?.model.value ? { v: 1 as const,
-    updatedAt: input.configuration.model.updatedAtMs, ref: { agentTargetKey: targetKey, providerConnectionId: null,
-      modelId: input.configuration.model.value } } : explicitAutomatic || explicitModelBinding ? null : undefined);
+  const explicitModel = readSessionSpawnModelChoice(input, targetKey);
   const authoredPlacement = params.authoredChoices?.sessionPlacement
     ?? (params.authoredChoices ? undefined : input.sessionPlacement);
   const explicitPlacement = authoredPlacement && authoredPlacement.kind !== 'managed' ? authoredPlacement

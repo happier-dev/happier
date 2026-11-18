@@ -19,6 +19,7 @@ import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineId
 import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
+import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 import { resolveSessionCreationAgentTarget } from './resolveSessionCreationAgentTarget';
 import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -147,7 +148,8 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       // choice just as it carries its resolved Agent and placement. Leaving a
       // Team resource model in the private defaults context makes the receiver
       // resolve a different provider/runtime tuple from an explicit request.
-      ...(!input.modelSelection && !modelSelectionInput && selected.model.value
+      ...(!modelSelectionInput && readSessionSpawnModelChoice(input, buildBackendTargetKeyV2(agentTarget)) === undefined
+        && selected.model.value
         ? { modelSelection: selected.model.value } : {}),
       ...(modelSelectionInput && modelSelectionRef ? { modelSelection: { v: 1, ref: modelSelectionRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
       ...(sessionConfiguration ? { configuration: sessionConfiguration } : {}),

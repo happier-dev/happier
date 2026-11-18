@@ -13,7 +13,7 @@ import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
 // HTTP is the boundary. Preparation, context loading, custody and precedence stay real.
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-box defaults while preserving private preset custody (%s)', async placement => {
+it.each(['machine', 'preset', 'unavailable-team', 'automatic', 'authored-model'] as const)('prepares public no-box defaults while preserving private preset custody (%s)', async placement => {
   const token = `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
   const keys = nacl.sign.keyPair();
   const projectContext = { projectRef: { serverId: 'home', projectKey: 'private' }, sourceRef: { serverId: 'home', sourceId: 'selected' } };
@@ -69,7 +69,11 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
     spawnConnectedServicesList: async () => { throw new Error('no connected-services intent'); },
   });
   const preparation = prepare({ ...(placement !== 'preset' ? { executionTarget: { serverId: 'home', machineId: 'machine' } } : {}),
-    directory: { kind: 'path', path: '/repo' }, projectContext }, { surface: 'rpc', authority: 'account_automation', externalActionExecutionAuthorization: authorization,
+    directory: { kind: 'path', path: '/repo' }, projectContext,
+    ...(placement === 'automatic' || placement === 'authored-model' ? { configuration: {
+      mode: { value: null, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 }, options: {},
+      model: { value: placement === 'automatic' ? null : 'my-model', updatedAtMs: 7, selectionSource: 'explicit' },
+    } } : {}) }, { surface: 'rpc', authority: 'account_automation', externalActionExecutionAuthorization: authorization,
     externalActionTarget: authorization.binding.target });
   if (placement === 'preset') {
     await expect(preparation).rejects.toMatchObject({ errorCode: 'client_required' });
@@ -78,7 +82,12 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
   }
   const prepared = await preparation;
   expect(prepared.input.agentTarget).toMatchObject({ identity: { localId: 'codex' } });
-  if (placement !== 'unavailable-team') expect(prepared.input.modelSelection).toEqual({ v: 2, updatedAt: 7, ref: { source: 'team_resource',
+  if (placement === 'automatic' || placement === 'authored-model') {
+    expect(prepared.input.modelSelection).toBeUndefined();
+    expect(prepared.input.configuration).toMatchObject({ model: {
+      value: placement === 'automatic' ? null : 'my-model', selectionSource: 'explicit',
+    } });
+  } else if (placement !== 'unavailable-team') expect(prepared.input.modelSelection).toEqual({ v: 2, updatedAt: 7, ref: { source: 'team_resource',
       teamId: 'team', resourceId: 'model-resource', expectedResourceRevision: 3, deliveryMode: 'brokered',
       agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-spark-1.3-contributor' } });
   expect(prepared.defaults.context.personalProjectDefaults).toBeNull();
