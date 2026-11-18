@@ -46,11 +46,15 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
-  it('applies accepted durable Review findings beyond the first page exactly once', async () => {
+  it.each(['body-only', 'typed-edited'] as const)('applies accepted durable Review findings beyond the first page exactly once (%s)', async content => {
+    const finding = content === 'typed-edited' ? { id: 'finding', title: 'Preserve the typed finding', summary: 'Original engine explanation',
+      severity: 'high', category: 'security', evidence: 'Typed engine evidence', patch: 'A complete suggested patch',
+      scopeAttribution: 'in_selected_changes', extensions: { 'acme.review-engine': { evidence: 'Plugin evidence' } } } : undefined;
     const comment = ReviewCommentV1Schema.parse({
       v: 1, id: 'accepted', accountId: 'account', reviewId: 'review', workspace: { machineId: 'machine', path: '/repo' },
       runId: 'review-run', findingId: 'finding', findingIdentity: 'a'.repeat(64),
-      body: 'The accepted defect beyond the first page', bodyVersion: 1, edits: [], flags: {}, dispositions: {},
+      body: 'The current accepted explanation beyond the first page', bodyVersion: finding ? 2 : 1, finding,
+      edits: [], flags: {}, dispositions: {},
       threadId: 'accepted', transitions: [], anchor: { kind: 'file', filePath: 'reader.ts' },
       snapshot: { kind: 'none', capturedAt: 1 }, author: { kind: 'workflow', runId: 'workflow' },
       state: 'open', reviewTriageStatus: 'accept', serverRevision: 7, createdAt: 1, updatedAt: 1,
@@ -79,6 +83,13 @@ describe('createActionExecutor (review comments)', () => {
       expect.objectContaining({ reviewId: 'review', cursor: 'second-page' })]);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain(comment.body);
+    if (finding) {
+      const data = sent[0]!.match(/\n(\[[\s\S]*\])$/)?.[1];
+      expect(data).toBeDefined();
+      expect(JSON.parse(data!)).toMatchObject([{ title: finding.title, summary: comment.body,
+        severity: finding.severity, category: finding.category, evidence: finding.evidence, patch: finding.patch,
+        scopeAttribution: finding.scopeAttribution, extensions: finding.extensions }]);
+    }
     expect(sent[0]).toContain('"expectedServerRevision": 7');
     expect(sent[0]).not.toContain('Rejected finding');
     expect(sent[0]).not.toContain('Accepted discussion reply');

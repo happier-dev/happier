@@ -166,7 +166,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
           }
           const reviews = 'reviewId' in apply ? comments.filter(comment => reviewCommentFindingScopeV1(comment) !== null).map(comment => ({ runId: comment.runId ?? comment.id,
-            findings: [{ id: comment.findingId ?? comment.id, title: 'Review finding',
+            findings: [{ ...comment.finding, id: comment.findingId ?? comment.id, title: comment.finding?.title ?? 'Review finding',
               summary: typeof comment.body === 'string' ? comment.body : '',
               engineId: comment.engineId, anchor: comment.anchor,
               comment: { id: comment.id, serverRevision: comment.serverRevision, state: comment.state,

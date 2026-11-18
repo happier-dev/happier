@@ -75,6 +75,8 @@ export type ReviewFindingForVerifyV1 = Readonly<{
   patch?: string;
   engineId?: string;
   attributionConfidence?: string;
+  scopeAttribution?: ReviewFinding['scopeAttribution'];
+  extensions?: ReviewFinding['extensions'];
   flags?: ReviewCommentV1['flags'];
   threadRefs?: readonly string[];
   anchor?: ReviewCommentAnchorV1 | WorkspaceAnchorV1;
@@ -102,6 +104,8 @@ export function renderReviewFindingsForVerifyV1(findings: readonly ReviewFinding
     patch: finding.patch,
     engineId: finding.engineId,
     attributionConfidence: finding.attributionConfidence,
+    scopeAttribution: finding.scopeAttribution,
+    extensions: finding.extensions,
     flags: finding.flags,
     threadRefs: finding.threadRefs,
     anchor: finding.anchor,
