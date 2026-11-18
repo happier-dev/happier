@@ -2763,6 +2763,42 @@ describe('shared Account workflow run owner', () => {
       .resolves.toMatchObject({ observation: 'not_matched_terminal', run: { state: 'cancelled' } });
   });
 
+  it('projects a failed child from an interrupted automatic check for D14 override', async () => {
+    const failedChildRun = {
+      ...runSnapshot().run,
+      state: 'interrupted' as const,
+      stepProgress: {
+        completed: 0, total: 1,
+        destinations: [{ sourceKey: 'inline', blockId: 'check', sessionIds: ['session'],
+          observation: { recordId: '66666666-6666-4666-8666-666666666666', sequence: '0', attempt: '0',
+            contentRevision: '0', lifecycle: 'failed' as const, blockKind: 'action' as const } }],
+      },
+    };
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'wait') throw new Error(`unexpected_storage_operation:${operation.operation}`);
+      return { observation: 'waiting', run: failedChildRun };
+    } }));
+    await expect(owner.waitAutomaticCheck({
+      run: { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'account-1',
+        workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait',
+        onFailure: 'ask', runId },
+      context: { surface: 'agent', authority: 'present_user' },
+    })).resolves.toMatchObject({ state: 'failed' });
+  });
+
+  it('keeps an interrupted automatic check unavailable without failed-child evidence', async () => {
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'wait') throw new Error(`unexpected_storage_operation:${operation.operation}`);
+      return { observation: 'terminal', run: { ...runSnapshot().run, state: 'interrupted' as const } };
+    } }));
+    await expect(owner.waitAutomaticCheck({
+      run: { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'account-1',
+        workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait',
+        onFailure: 'ask', runId },
+      context: { surface: 'agent', authority: 'present_user' },
+    })).resolves.toMatchObject({ state: 'interrupted' });
+  });
+
   it('streams ordered summary snapshots, catches up reconnects, and cancels only the observer without idle reads', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();

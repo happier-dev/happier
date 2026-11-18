@@ -75,6 +75,10 @@ import { areServerProfileIdentifiersEquivalent } from '../../features/payload/ca
 import { FollowPolicyV1Schema, type FollowPolicyV1 } from '../../sessions/follow/sessionFollowPolicyV1.js';
 import { readWorkflowCurrentInvocationAncestryV1, readWorkflowInvocationMembersV1 } from '../../workflows/workflowInvocationMembersV1.js';
 
+function hasFailedAutomaticCheckChild(run: WorkflowRunSummaryV1): boolean {
+  return run.stepProgress?.destinations?.some(destination => destination.observation?.lifecycle === 'failed') === true;
+}
+
 export type WorkflowAccountRunEncryption = AvailableAutomationAccountEncryptionV1;
 
 type RunActionId = Extract<WorkflowActionIdV1, `workflow.run.${string}`>;
@@ -3137,12 +3141,22 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (failure !== undefined) throw failure;
         }
         if (raw.observation === 'changed') continue;
-        const run = record(raw.run);
+        const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
+        const run = automaticRun ?? record(raw.run);
         const pendingCombinedSettlement = combined !== undefined && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
             || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
+        // An automatic check owns a single settled observation. A failed leaf
+        // is durable evidence even when its parent Run is interrupted before
+        // the server can publish the ordinary terminal projection; expose it
+        // to the approval continuation as a failed check. Other interrupted
+        // Runs remain unavailable and therefore retain the refusal path.
+        const automaticCheckFailedChild = automaticRun?.state === 'interrupted' && hasFailedAutomaticCheckChild(automaticRun);
+        const automaticCheckTerminal = automaticCheck !== undefined
+          && ((typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)) || automaticCheckFailedChild);
         // A passive observer does not settle when a condition or terminal state
         // is seen. Keep the same feed until its cancellation/authored deadline.
         if (!onSnapshot && (combined !== undefined && run.state === 'interrupted'
+          || automaticCheckTerminal
           || raw.observation !== 'waiting' && !pendingCombinedSettlement)) break;
         if (deadline !== undefined && Date.now() >= deadline) {
           stored = { observation: 'timeout', run: raw.run };
@@ -3173,7 +3187,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       }
       const { resultEnvelope: _ignored, keyCensus: _keyCensus, ...base } = raw;
       const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
-      const automaticObservation = automaticRun && { state: automaticRun.state,
+      const automaticCheckFailedChild = automaticRun?.state === 'interrupted' && hasFailedAutomaticCheckChild(automaticRun);
+      const automaticObservation = automaticRun && { state: automaticCheckFailedChild ? 'failed' as const : automaticRun.state,
         ...(automaticRun.errorCode === undefined ? {} : { errorCode: automaticRun.errorCode }) };
       if (typeof raw.resultEnvelope !== 'string') return automaticObservation ?? WorkflowActionOutputSchemasV1[args.actionId].parse(base);
       const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);
