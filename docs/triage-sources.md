@@ -987,6 +987,15 @@ scope producer as manual review start and captures the pinned comparison.
 The prepared result carries that comparison and final-start continuation;
 review execution remains a separate Action. Cancellation follows the invoking
 workflow's existing signal throughout.
+
+In unreleased 0.3, GitLab's authenticated Merge Request Hook supplies the
+reviewable lifecycle Event for opened, reopened and code-updated occurrences pinned to
+`last_commit.id`; an ordinary metadata update without `oldrev` is ignored. The
+MR's `author_id` supplies the author identity, independently of the webhook actor;
+unavailable login, account kind and association facts remain unknown, so the
+ordinary workflow approval hold applies. GitLab's existing push and completed
+merge Events retain their separate meanings.
+
 Authentication/import and provider writes retain their existing placement and
 approval contracts. This placement change does not authorize a fallback from a
 failed Account credential to a machine's login.

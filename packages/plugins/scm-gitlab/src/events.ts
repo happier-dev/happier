@@ -1,11 +1,14 @@
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, ScmHostingPullRequestLifecycleV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
-import { GITLAB_PLUGIN_ID } from './triage/contribution.js';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { TriagePullRequestReviewTargetV1Schema } from '@happier-dev/triage-protocol/v1';
+import { GITLAB_PLUGIN_ID, GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID } from './triage/contribution.js';
 import { normalizeGitlabConfiguredBaseUrl } from './triage/origin.js';
-import { buildGitlabProjectCollisionScope } from './triage/identity.js';
+import { buildGitlabComparisonRepositoryKey, buildGitlabEntryIdentity, buildGitlabProjectCollisionScope } from './triage/identity.js';
 
 export const GITLAB_WEBHOOK_CONTRIBUTION_ID = 'gitlab-events';
-export const GITLAB_EVENT_LOCAL_IDS = { push: 'automation/repository-pushed-v1', merge: 'automation/pull-request-merged-v1' } as const;
+export const GITLAB_EVENT_LOCAL_IDS = { push: 'automation/repository-pushed-v1', merge: 'automation/pull-request-merged-v1',
+  pullRequestLifecycle: 'automation/pull-request-lifecycle-v1' } as const;
 const Identifier = defineProtocolString({ minLength: 1, pattern: '^[1-9][0-9]*$' });
 const Sha = defineProtocolString({ pattern: '^[a-fA-F0-9]{40}$' });
 export const GitlabEventRepositorySchema = defineProtocolObject({ repositoryId: Identifier,
@@ -24,11 +27,16 @@ const GitlabMergePayloadSchema = defineProtocolObject({ repository: GitlabEventR
   pullRequest: defineProtocolObject({ id: Identifier, number: defineProtocolNumber({ integer: true, minimum: 1 }),
     mergeCommitSha: Sha, authorAssociation: defineProtocolLiteral('unknown') }, { policy: 'closed' }),
 }, { policy: 'closed' });
+const GitlabPullRequestLifecyclePayloadSchema = defineProtocolObject({ repository: GitlabEventRepositorySchema,
+  pullRequest: ScmHostingPullRequestLifecycleV1ProtocolSchema, reviewTarget: TriagePullRequestReviewTargetV1Schema,
+}, { policy: 'closed' });
 export const GITLAB_EVENT_CATALOG = [
   { localId: GITLAB_EVENT_LOCAL_IDS.push, title: 'GitLab repository pushed',
     description: 'A branch received a push.', payloadSchema: GitlabPushPayloadSchema.jsonSchema },
   { localId: GITLAB_EVENT_LOCAL_IDS.merge, title: 'GitLab merge request merged',
     description: 'A merge request was merged.', payloadSchema: GitlabMergePayloadSchema.jsonSchema },
+  { localId: GITLAB_EVENT_LOCAL_IDS.pullRequestLifecycle, title: 'GitLab merge request changed',
+    description: 'A merge request was opened, reopened, or received code changes.', payloadSchema: GitlabPullRequestLifecyclePayloadSchema.jsonSchema },
 ] as const;
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
@@ -57,6 +65,32 @@ export function normalizeGitlabWebhookDelivery(input: Readonly<{ eventType?: str
       payload: GitlabPushPayloadSchema.parse({ repository, ref: body.ref, before: body.before, after: body.after }) };
   }
   const mr = record(body.object_attributes);
+  const action = mr.state !== 'opened' ? null : mr.action === 'open' ? 'opened'
+    : mr.action === 'reopen' ? 'reopened' : mr.action === 'update' && mr.oldrev != null ? 'synchronize' : null;
+  if (action !== null) {
+    // GitLab emits oldrev only for code updates; ordinary metadata updates are not new review work.
+    if (action === 'synchronize') Sha.parse(mr.oldrev);
+    if (positiveId(mr.target_project_id) !== repository.repositoryId) throw new TypeError('gitlab_payload_invalid');
+    const identity = buildGitlabEntryIdentity({ kindId: 'merge-request', origin,
+      row: { project_id: mr.target_project_id, iid: mr.iid, references: { full: `${repository.nameWithOwner}!${positiveId(mr.iid)}` } } });
+    if (identity.kind !== 'built') throw new TypeError('gitlab_payload_invalid');
+    const baseRepository = normalizeScmHostingRepositoryIdentity({ kind: 'gitlab', deployment: origin.normalized,
+      repository: repository.nameWithOwner });
+    const headRepository = mr.source_project_id == null ? null : normalizeScmHostingRepositoryIdentity({ kind: 'gitlab',
+      deployment: origin.normalized, repository: record(mr.source).path_with_namespace });
+    const headSha = Sha.parse(record(mr.last_commit).id);
+    return { eventRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_EVENT_LOCAL_IDS.pullRequestLifecycle }, sourceInstanceId,
+      occurrenceId: input.providerDeliveryId, occurredAtMs: input.receivedAtMs,
+      payload: GitlabPullRequestLifecyclePayloadSchema.parse({ repository,
+        pullRequest: { id: positiveId(mr.id), number: Number(positiveId(mr.iid)), action, headSha,
+          headRef: mr.source_branch, baseRef: mr.target_branch, baseRepository, headRepository,
+          // The webhook user is the actor, not necessarily the MR author. No author login or membership is supplied.
+          author: { id: positiveId(mr.author_id), login: null, kind: 'unsupported' }, authorAssociation: 'unknown' },
+        reviewTarget: { entryRef: { source: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID }, ...identity.identity },
+          lastKnownLocator: { v: 1, routingToken: identity.locator.routingToken },
+          comparisonSource: { kind: 'pullRequest', locator: { providerId: 'gitlab',
+            repository: buildGitlabComparisonRepositoryKey(origin, identity.locator.repositoryKey), number: Number(positiveId(mr.iid)), headOid: headSha } } } }) };
+  }
   if (mr.action !== 'merge' || mr.state !== 'merged') return null;
   if (positiveId(mr.target_project_id) !== repository.repositoryId) throw new TypeError('gitlab_payload_invalid');
   return { eventRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_EVENT_LOCAL_IDS.merge }, sourceInstanceId,

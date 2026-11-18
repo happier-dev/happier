@@ -56,6 +56,7 @@ describe('GitLab plugin manifest', () => {
           setupActionRef: { pluginId: 'happier.scm.forge.gitlab', localId: 'gitlab/setup-repository-event' } }),
       }) }),
       expect.objectContaining({ id: 'automation/pull-request-merged-v1' }),
+      expect.objectContaining({ id: 'automation/pull-request-lifecycle-v1' }),
     ]));
     expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'gitlab/setup-repository-event'))
       .toMatchObject({ surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe' });

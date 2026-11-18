@@ -3,8 +3,9 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { gitlabRepositoryEventSourceInstanceId } from '@happier-dev/plugin-sdk/scm';
 import { receiveGitlabWebhook, setupGitlabRepositoryEvent } from './eventActions.js';
-import { GITLAB_EVENT_LOCAL_IDS, GITLAB_WEBHOOK_CONTRIBUTION_ID } from './events.js';
+import { GITLAB_EVENT_LOCAL_IDS, GITLAB_WEBHOOK_CONTRIBUTION_ID, GitlabEventSourceConfigSchema } from './events.js';
 import { GITLAB_PLUGIN_ID } from './triage/contribution.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 import { createStubGitlabTransport, GITLAB_TEST_ACCOUNT } from './triage/testkit/gitlabTriage.test-support.js';
 
 const baseUrl = 'https://forge.example/gitlab';
@@ -36,6 +37,60 @@ function webhookContext(execute: (id: string, input: unknown) => Promise<unknown
 }
 
 describe('GitLab repository Event Actions', () => {
+  it.each(['open', 'reopen', 'update'] as const)('admits the configured reviewable %s head through the authenticated durable bridge', async action => {
+    const transport = createStubGitlabTransport({ origin: baseUrl, respond: () => ({
+      status: 200, body: { id: 77, path_with_namespace: 'acme/widgets' },
+    }) });
+    const setup = await setupGitlabRepositoryEvent({ credentialRef: GITLAB_TEST_ACCOUNT, baseUrl,
+      repository: 'acme/widgets' }, transport.context);
+    const sourceConfig = GitlabEventSourceConfigSchema.parse(setup.sourceConfig);
+    const eventRef = { pluginId: GITLAB_PLUGIN_ID, localId: 'automation/pull-request-lifecycle-v1' };
+    const declared = PLUGIN_MANIFEST.contributes.events.find(event => event.id === eventRef.localId);
+    expect(declared?.automation?.source).toMatchObject({ supportedObservationTransports: ['durablePush'],
+      setupActionRef: { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab/setup-repository-event' },
+      webhookContributionRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_WEBHOOK_CONTRIBUTION_ID },
+    });
+    const definition = { ...sourceDefinition, eventRef, sourceInstanceId: setup.sourceInstanceId, sourceConfig: setup.sourceConfig };
+    const admissions: unknown[] = [];
+    const context = webhookContext(async (id, input) => {
+      if (id === 'automation.event.sources.list') return { kind: 'page', revision: '1', definitions: [definition], nextCursor: null };
+      if (id === 'automation.event.source.status.report') return {};
+      if (id === 'automation.event.admit') {
+        admissions.push(input);
+        return { results: [{ kind: 'admitted', runId: 'review-run', checkpointSafe: true }] };
+      }
+      throw new Error(`Unexpected Action ${id}`);
+    });
+    const body = new TextEncoder().encode(JSON.stringify({ project: { id: 77, path_with_namespace: 'acme/widgets' },
+      user: { id: 99, username: 'maintainer' }, object_attributes: { id: 123, iid: 4, action, state: 'opened', author_id: 12,
+        source_project_id: 88, target_project_id: 77, source_branch: 'feature', target_branch: 'main',
+        source: { id: 88, path_with_namespace: 'contributor/widgets' }, last_commit: { id: 'b'.repeat(40) },
+        ...(action === 'update' ? { oldrev: 'a'.repeat(40) } : {}) } }));
+    const input = webhookInput();
+    expect(await receiveGitlabWebhook({ ...input,
+      request: { ...input.request, headers: [{ name: 'x-gitlab-event', value: 'Merge Request Hook' }],
+        rawBodyBytes: body.byteLength, rawBodyBase64: encodeBase64(body, 'base64') },
+      verified: { verifier: 'gitlab_token_v1', eventType: 'Merge Request Hook' },
+    }, context)).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(admissions).toEqual([expect.objectContaining({ eventRef,
+      occurrenceId: 'gitlab-delivery-1', payload: { repository: sourceConfig.repository,
+        pullRequest: { id: '123', number: 4, action: action === 'open' ? 'opened' : action === 'reopen' ? 'reopened' : 'synchronize',
+          headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'main',
+          baseRepository: { kind: 'gitlab', deployment: baseUrl, repository: 'acme/widgets' },
+          headRepository: { kind: 'gitlab', deployment: baseUrl, repository: 'contributor/widgets' },
+          author: { id: '12', login: null, kind: 'unsupported' }, authorAssociation: 'unknown' },
+        reviewTarget: {
+          lastKnownLocator: { v: 1, routingToken: 'acme/widgets' },
+          entryRef: { source: { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab-forge' }, kindId: 'merge-request',
+            collisionScope: sourceInstanceId, entryId: '4' },
+          comparisonSource: { kind: 'pullRequest', locator: { providerId: 'gitlab',
+            repository: `${baseUrl}/acme/widgets`, number: 4, headOid: 'b'.repeat(40) } },
+        } },
+      definitions: [{ automationId: definition.automationId, triggerId: definition.triggerId,
+        triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId }] })]);
+    expect(transport.requests).toHaveLength(1);
+  });
+
   it('resolves the exact account and configured deployment through one authenticated project read', async () => {
     const transport = createStubGitlabTransport({ origin: baseUrl, respond: request => {
       expect(request.url).toBe(`${baseUrl}/api/v4/projects/acme%2Fwidgets`);
