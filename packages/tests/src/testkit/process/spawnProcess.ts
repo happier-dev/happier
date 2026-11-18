@@ -133,7 +133,23 @@ type RunLoggedCommandParams = {
   // null lets an enclosing operation or canonical publisher own completion.
   timeoutMs?: number | null;
   abortSignal?: AbortSignal;
+  // Lines the caller's console should see as they arrive (for example the
+  // launcher's admission progress); every line still goes to stderrPath.
+  echoStderrLine?: (line: string) => boolean;
 };
+
+function echoSelectedLines(source: NodeJS.ReadableStream, select: (line: string) => boolean): void {
+  let pending = '';
+  source.on('data', (chunk: Buffer | string) => {
+    pending += String(chunk);
+    let end;
+    while ((end = pending.indexOf('\n')) !== -1) {
+      const line = pending.slice(0, end);
+      pending = pending.slice(end + 1);
+      if (select(line)) process.stderr.write(`${line}\n`);
+    }
+  });
+}
 
 function describeCapturedCommandLogs(params: Pick<RunLoggedCommandParams, 'stdoutPath' | 'stderrPath'>): string {
   return `(stdout=${params.stdoutPath} stderr=${params.stderrPath})`;
@@ -159,6 +175,7 @@ export async function runLoggedCommandWithOutcome(
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
+  if (params.echoStderrLine && child.stderr) echoSelectedLines(child.stderr, params.echoStderrLine);
 
   const timeoutMs = params.timeoutMs === null ? null : params.timeoutMs ?? 120_000;
   const streamDrainTimeoutMs = Math.max(10_000, Math.min(timeoutMs ?? 120_000, 120_000));

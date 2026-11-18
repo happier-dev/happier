@@ -64,6 +64,9 @@ export async function ensureUiWebWorkspacePrebuild(params: {
       stdoutPath: prebuildStdoutPath,
       stderrPath: prebuildStderrPath,
       timeoutMs: null,
+      // The launcher's placement/admission progress belongs on the caller's console:
+      // otherwise a queued nested publisher looks like a hung test.
+      echoStderrLine: (line) => line.startsWith('[preferred-execution] '),
     });
     await appendFile(
       params.stderrPath,

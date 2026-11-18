@@ -528,6 +528,33 @@ describe('runLoggedCommand', () => {
     }
   });
 
+  it('echoes selected stderr lines to the caller console while logging every line', async () => {
+    // TRIAGE-W1-WRITES (2026-11-18): a nested prebuild's admission wait lines reached only its
+    // log file, so the Playwright console showed bare heartbeats for 27 minutes.
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-echo-'));
+    const echoed: string[] = [];
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      echoed.push(String(chunk));
+      return true;
+    });
+    try {
+      const stderrPath = join(rootDir, 'stderr.log');
+      await runLoggedCommand({
+        command: process.execPath,
+        args: ['-e', "process.stderr.write('noise\\n[progress] waiting (position=3)\\nmore'); setTimeout(() => process.stderr.write(' noise\\n[progress] admitted\\n'), 20)"],
+        cwd: rootDir,
+        stdoutPath: join(rootDir, 'stdout.log'),
+        stderrPath,
+        echoStderrLine: (line) => line.startsWith('[progress] '),
+      });
+      expect(echoed).toEqual(['[progress] waiting (position=3)\n', '[progress] admitted\n']);
+      expect(await readFile(stderrPath, 'utf8')).toBe('noise\n[progress] waiting (position=3)\nmore noise\n[progress] admitted\n');
+    } finally {
+      stderrWrite.mockRestore();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([undefined, null])('attaches the actual nonzero exit tuple to command failures (timeoutMs=%s)', async (timeoutMs) => {
     const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-failure-'));
 
