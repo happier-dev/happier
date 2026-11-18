@@ -1278,9 +1278,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             sheetHeader="none"
             sheetMaterial="solid"
             accessibilityLabel={t('workflows.page.inspector.stepOptions')}
-            // The editor pane is the boundary and already stands in from the window, so the panel carries no side
-            // gutter: its visible right edge is the "…"'s, not the gutter's.
-            edgePadding={{ horizontal: 0, vertical: 12 }}
+            // The shared Popover puts the visible surface, not its gutter, on the anchor's edge (b279c7f2d24).
+            edgePadding={{ horizontal: 12, vertical: 12 }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             maxWidthCap={settingsWidth}
             maxHeightCap={STEP_OPTIONS_MAX_HEIGHT_PX}
