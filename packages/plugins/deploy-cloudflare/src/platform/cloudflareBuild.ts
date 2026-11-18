@@ -63,7 +63,7 @@ async function buildInContainer<T>(input: CloudflareBuildInput, context: Cloudfl
     args: ['run', '--rm', '--name', `happier-${product}-${createHash('sha256').update(input.actionOperationId).digest('hex')}`,
       '--user', `${owner.uid}:${owner.gid}`, '--interactive', '--mount', `type=bind,source=${scratch},target=/workspace`,
       '--workdir', posix.join('/workspace/project', input.rootDirectory ?? '.'), CLOUDFLARE_BUILD_IMAGE,
-      'node', '--input-type=module'], stdin: new TextEncoder().encode(program) }, { signal: context.signal });
+      'node', '--input-type=module'], stdin: new TextEncoder().encode(program) }, { signal: context.signal, outputDelivery: 'invocation' });
   try {
     const result = await process.wait();
     context.signal.throwIfAborted();

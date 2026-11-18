@@ -1018,9 +1018,10 @@ export async function executeContributedAction(params: Readonly<{
       ...(exactPurposeBindingSubjectId === undefined
         ? {}
         : { exactPurposeBindingSubjectId }),
-      ...(params.admittedManagedProviderOperation?.onProcessOutput === undefined
+      ...((params.admittedManagedProviderOperation?.onProcessOutput ?? params.approvalContext?.invocationServices?.deploymentBuildOutput) === undefined
         ? {}
-        : { execOutputObserver: params.admittedManagedProviderOperation.onProcessOutput }),
+        : { execOutputObserver: params.admittedManagedProviderOperation?.onProcessOutput
+            ?? params.approvalContext?.invocationServices?.deploymentBuildOutput }),
       ...(params.admittedManagedProviderOperation?.bindProcessInput === undefined
         ? {}
         : { execChannelInput: params.admittedManagedProviderOperation.bindProcessInput }),

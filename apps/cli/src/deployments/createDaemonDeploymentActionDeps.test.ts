@@ -1394,16 +1394,18 @@ describe('installed deployment storage and target composition', () => {
         const sourceRequesters: { identity: Awaited<ReturnType<typeof resolveOwnerRequesterIdentity>>; hasAccountContext: boolean; sameHomeUrl: boolean }[] = [];
         const rootSourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
         if (rootSourceIntent.kind !== 'repository') throw new Error('Repository source fixture required');
+        const controllerBuildFailure = scenario === 'controller build failure';
+        const controllerBuildOutput = controllerBuildFailure || scenario === 'controller build success';
         const sourceAdmissionFailure = scenario === 'source admission failure';
-        const roleFails = scenario === 'provider failure' || scenario === 'Home source read refusal' || sourceAdmissionFailure;
-        const roleErrorCode = sourceAdmissionFailure ? 'agent_isolation_unavailable'
+        const roleFails = controllerBuildFailure || scenario === 'provider failure' || scenario === 'Home source read refusal' || sourceAdmissionFailure;
+        const roleErrorCode = controllerBuildFailure ? 'deployment_failed' : sourceAdmissionFailure ? 'agent_isolation_unavailable'
             : scenario === 'Home source read refusal' ? 'plugin_action_execution_failed' : 'provider_request_failed';
         const sourceAdmission = { phase: 'deployment_source_admission', reason: 'requester_authority_unavailable',
             requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } as const;
         const sdkBackgroundObservation = scenario === 'SDK background receipt observe';
         const backgroundObservation = scenario === 'background receipt observe' || scenario === 'uncertain receipt observe' || sdkBackgroundObservation;
         const settlementPointerChanged = scenario === 'settlement pointer changed';
-        if (scenario === 'upload source') {
+        {
             // Saved-profile persistence is the OS boundary, as in the native materialization fixture below.
             const settings = await persistence.readSettings();
             vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
@@ -1525,7 +1527,7 @@ describe('installed deployment storage and target composition', () => {
                 entrypoints: { daemon: './daemon.mjs' }, hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts',
                     reason: 'Use the linked deployment account.', scope: { serviceRefs: ['service'],
                         operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
-                contributes: { ...(sdkBackgroundObservation ? { backgroundServices: [{ id: 'observer', title: 'Platform observer' }] } : {}),
+                contributes: { ...(controllerBuildOutput ? { systemTools: [{ id: 'build-fixture', title: 'Build fixture', executableNames: ['git'] }] } : {}), ...(sdkBackgroundObservation ? { backgroundServices: [{ id: 'observer', title: 'Platform observer' }] } : {}),
                     connectedAccountDescriptors: [{ id: 'service', title: 'Platform account', authentication: {
                     defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
                         fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] } }],
@@ -1611,6 +1613,17 @@ describe('installed deployment storage and target composition', () => {
                         || !retainedSource.manifestFingerprint) throw new Error('Wrong exact source');
                     await retainedSource.assertCurrent();
                     await retainedSource.commit();
+                    ` : ''}
+                    ${controllerBuildOutput && role === 'uploadDeploy' ? `
+                    const tool = await context.services.exec.systemTools.resolve({ toolId: 'build-fixture', purpose: 'Reproduce controller build output' });
+                    const child = await context.services.exec.spawn({ executable: tool.executable, cwd: ${JSON.stringify(configuration.happyHomeDir)},
+                        args: ['-c', 'alias.controller-build=!echo controller build stdout; echo controller build stderr >&2; exit ${controllerBuildFailure ? 1 : 0}', 'controller-build'] },
+                        { outputDelivery: 'invocation', signal: context.signal });
+                    try { const result = await child.wait();
+                        if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== ${controllerBuildFailure ? 1 : 0})
+                            throw new Error('Unexpected build fixture termination');
+                    } finally { await child.dispose(); }
+                    ${controllerBuildFailure ? `throw new PluginError({ code: 'deployment_failed', details: { phase: 'build' } });` : ''}
                     ` : ''}
                     ${roleFails ? `throw new PluginError({ code: '${roleErrorCode}', details: ${JSON.stringify(sourceAdmissionFailure ? sourceAdmission : { phase: 'send' })} });` : `return {v:1,state:'succeeded',providerDeploymentId:'${role === 'observe' ? 'existing-provider-deployment' : 'provider-deployment'}',observedAtMs:1,steps:[{id:'build',label:'Provider build',state:'succeeded',streamRef:'masked-provider-stream'}],urls:['https://app.example.test']};`}
                 }${role === 'logs.runtime' ? `, { observeRead(input, observation, context) {
@@ -2371,7 +2384,7 @@ describe('installed deployment storage and target composition', () => {
                         headerVersion: transition.contentUpdate.expectedHeaderVersion + 1,
                         bodyVersion: transition.contentUpdate.expectedBodyVersion + 1 });
                     transitionWrites++;
-                    if (backgroundObservation) {
+                    if (backgroundObservation || controllerBuildOutput) {
                         expect(transition.actionOperationId).toBe('platform-operation');
                         expect(transition.machineId).toBe('machine-a');
                         receipt.state = transition.state;
@@ -2505,7 +2518,7 @@ describe('installed deployment storage and target composition', () => {
                 expect(transitionWrites).toBe(0);
                 return;
             }
-            if (!sdkBackgroundObservation && (backgroundObservation || rootSource || scenario === 'requester revoked' || scenario === 'reviewed child' || scenario === 'upload source' || scenario === 'retained receipt observe' || roleFails || settlementPointerChanged)) {
+            if (!sdkBackgroundObservation && (controllerBuildOutput || backgroundObservation || rootSource || scenario === 'requester revoked' || scenario === 'reviewed child' || scenario === 'upload source' || scenario === 'retained receipt observe' || roleFails || settlementPointerChanged)) {
                 const target = { kind: 'machine' as const, machineId: 'machine-a' };
                 const rootActionId = backgroundObservation ? 'deployments.receipts.observe' as const : 'deployments.deploy' as const;
                 const rootInput = candidate.input;
@@ -2815,6 +2828,31 @@ describe('installed deployment storage and target composition', () => {
                 execute: operationContext => executor.execute('deployments.deploy', candidate.input, operationContext) });
             const result = await invokeRoot();
             expect(reserved).toBe(!requiresChildApproval);
+            if (controllerBuildOutput) {
+                if (controllerBuildFailure) expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'deployment_failed', details: { failure: { phase: 'build' } } });
+                else expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+                const stored = documents.get(receipt.contentArtifactId)!;
+                const body = decodePlainArtifactStoredContent(String(stored.body));
+                if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string')
+                    throw new Error('Expected the retained failed receipt');
+                const persisted = DeploymentPlatformContentV1Schema.parse(JSON.parse(body.body));
+                if (controllerBuildFailure) expect(persisted.platform.observation).not.toHaveProperty('providerDeploymentId');
+                else expect(persisted.platform.observation.providerDeploymentId).toBe('provider-deployment');
+                expect(persisted.platform.stageLogs?.[0]?.excerpt?.text).toContain('controller build stdout\n');
+                expect(persisted.platform.stageLogs?.[0]?.excerpt?.text).toContain('controller build stderr\n');
+                const readInput = { serverId: 'home', environmentId: receipt.environmentId, deploymentId: receipt.id,
+                    targetLinkId: receipt.targetLinkId, kind: 'build' as const, machineId: 'machine-a', installationId: 'installation-a' };
+                const page = await executor.execute('deployments.logs.read', readInput, { ...ownerContext, surface: 'cli', authority: 'present_user',
+                    actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'home' });
+                expect(page, JSON.stringify(page)).toMatchObject({ ok: true, result: { logs: { kind: 'page', page: {
+                    text: expect.stringContaining('controller build stdout\n'),
+                } } } });
+                expect(JSON.stringify(page)).toContain('controller build stderr\\n');
+                expect(childInvocations).toBe(1);
+                expect(providerSends).toBe(0);
+                return;
+            }
+
             if (scenario === 'admission cause retained approval' || roleFails) {
                 const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
                     createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.deploy',

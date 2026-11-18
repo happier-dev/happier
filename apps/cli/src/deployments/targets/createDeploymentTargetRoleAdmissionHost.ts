@@ -184,6 +184,7 @@ export function createDeploymentTargetRoleSourceAdmissionForHost(admission: Depl
         return { environmentId: environment.environment.id, environmentInstanceId: identity.environmentInstanceId,
             deploymentId: receipt.deployment.id, machineId: controller.machineId, installationId: controller.installationId,
             deploymentRoot: identity.deploymentRoot, artifactDirectory: join(configuration.happyHomeDir, 'tmp', 'deployment-source'),
+            ...(context.invocationServices?.deploymentBuildOutput ? { operationLog: true } : {}),
             ...(source.sourceIntent.kind === 'stored' ? { definition: source.sourceIntent }
                 : { sourcePath: source.workspace!.rootPath, commitSha: source.sourceIntent.sha,
                     ...(source.sourceIntent.pullRequestHead ? { pullRequestHead: source.sourceIntent.pullRequestHead,

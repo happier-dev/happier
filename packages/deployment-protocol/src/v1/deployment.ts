@@ -111,15 +111,8 @@ z.refine(basis => basis.runtimeProjections === undefined
             && projection.installationId === basis.members[index].installationId),
 { message: 'Runtime projections must cover the exact ordered admitted installations.' }));
 export type OwnServerDeploymentInputBasisV1 = z.infer<typeof OwnServerDeploymentInputBasisV1Schema>;
-export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
-    approvedInputBasis: OwnServerDeploymentInputBasisV1Schema,
-    previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema),
-    referenceAddresses: z.optional(z.array(DeploymentReferenceAddressV1Schema)),
-    preMigrationBackup: z.optional(DeploymentPreMigrationBackupV1Schema),
-    sources: z.optional(z.array(OwnServerDeploymentSourceV1Schema)),
-    imageArchives: z.optional(z.array(OwnServerDeploymentImageArchiveV1Schema)),
-    /** Exact sanitized operation file, never arbitrary manifest-external app data. */
-    stageLogs: z.optional(z.array(z.strictObject({
+/** Exact already-masked deployment output retained by its producing installation. */
+export const DeploymentStageLogsV1Schema = z.array(z.strictObject({
         machineId: id, installationId: id, relativePath: z.literal('.happier/deploy.log'),
         /** Captured only from the masked stage-output sink, never subprocess errors. */
         excerpt: z.optional(z.strictObject({ text: z.string(), truncated: z.boolean() })),
@@ -129,7 +122,16 @@ export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
             end: z.nullable(z.number().check(z.int(), z.nonnegative())),
         }) }))),
     })).check(z.refine(values => new Set(values.map(value =>
-        JSON.stringify([value.machineId, value.installationId]))).size === values.length))),
+        JSON.stringify([value.machineId, value.installationId]))).size === values.length));
+export type DeploymentStageLogV1 = z.infer<typeof DeploymentStageLogsV1Schema>[number];
+export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
+    approvedInputBasis: OwnServerDeploymentInputBasisV1Schema,
+    previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema),
+    referenceAddresses: z.optional(z.array(DeploymentReferenceAddressV1Schema)),
+    preMigrationBackup: z.optional(DeploymentPreMigrationBackupV1Schema),
+    sources: z.optional(z.array(OwnServerDeploymentSourceV1Schema)),
+    imageArchives: z.optional(z.array(OwnServerDeploymentImageArchiveV1Schema)),
+    stageLogs: z.optional(DeploymentStageLogsV1Schema),
     /** Display snapshot of the incumbent already admitted by the rollout owner; not rollback authorization. */
     rollbackTarget: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
     /** Presence records a completed build even when later rollout fails. Empty
@@ -182,6 +184,8 @@ export type DeploymentOwnServerContentV1 = z.infer<typeof DeploymentOwnServerCon
 export const DeploymentPlatformProvenanceV1Schema = z.extend(DeploymentTargetLinkProviderContentV1Schema, {
     targetLinkRevision: revision,
     observation: DeploymentTargetRoleResultV1Schema,
+    /** Controller output survives failed uploads without a provider deployment id. */
+    stageLogs: z.optional(DeploymentStageLogsV1Schema),
 });
 export type DeploymentPlatformProvenanceV1 = z.infer<typeof DeploymentPlatformProvenanceV1Schema>;
 export const DeploymentPlatformContentV1Schema = z.strictObject({

@@ -71,6 +71,26 @@ describe('receipt facts', () => {
         expect(projectDeploymentReceiptFactsV1(receipt).builtInUrls).toBeNull();
     });
 
+    it('projects failed controller build output before a provider deployment exists', async () => {
+        const { DeploymentContentV1Schema } = await import('@happier-dev/deployment-protocol');
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.deployment.state = 'failed';
+        receipt.content = DeploymentContentV1Schema.parse({ sourceIntent: receipt.content.sourceIntent, sourceMethod: 'upload',
+            machines: [], images: [], machineResults: [], steps: [], failure: { code: 'deployment_failed', phase: 'build' },
+            platform: { targetLinkRevision: 1, providerEnvironment: { kind: 'production' },
+                credentialPrincipal: { kind: 'account', accountId: 'actor',
+                    purpose: { consumer: { pluginId: 'acme.alpha', localId: 'upload' }, purpose: 'deploy' },
+                    target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
+                providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+                observation: { v: 1, state: 'queued', observedAtMs: 1 }, stageLogs: [{ machineId: 'controller', installationId: 'install',
+                    relativePath: '.happier/deploy.log', excerpt: { text: 'stdout\\nstderr\\n', truncated: false },
+                    steps: [{ ref: 'build', range: { start: 0, end: null } }] }] } });
+        expect(projectDeploymentReceiptFactsV1(receipt)).toMatchObject({ failure: { phase: 'build' },
+            logs: [{ excerpt: { text: 'stdout\\nstderr\\n', truncated: false }, reference: {
+                kind: 'build', machineId: 'controller', installationId: 'install', deploymentId: receipt.deployment.id } }],
+            stageLogs: [{ ref: 'build', reference: { ref: 'build', machineId: 'controller' } }] });
+    });
+
     it('says where a receipt ran from its target kind: a platform keeps its own releases, so no Machine keep count (COR4B ui-60)', () => {
         const machine = createDeploymentReceiptDetailV1();
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'serving' });

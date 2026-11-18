@@ -130,7 +130,8 @@ export function projectDeploymentReceiptUrlFactsV1(content: DeploymentReceiptDet
 export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetailV1,
     retainedHistory?: Omit<DeploymentReceiptRetainedHistoryV1, 'placement'>): DeploymentReceiptFactsV1 {
     const { deployment, content } = receipt;
-    const logs: DeploymentReceiptLogFactV1[] = (content.ownServer?.stageLogs ?? []).map(log => ({
+    const retainedStageLogs = content.platform?.stageLogs ?? content.ownServer?.stageLogs ?? [];
+    const logs: DeploymentReceiptLogFactV1[] = retainedStageLogs.map(log => ({
         scope: 'operation', reference: { kind: 'build', environmentId: deployment.environmentId, deploymentId: deployment.id,
             targetLinkId: deployment.targetLinkId, machineId: log.machineId, installationId: log.installationId },
         excerpt: log.excerpt ?? null,
@@ -143,7 +144,7 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
     const memberLogs = new Map(logs.map(log => [JSON.stringify([
         log.reference.machineId, log.reference.installationId,
     ]), [log]]));
-    const stageLogs = (content.ownServer?.stageLogs ?? []).flatMap((log, index) => (log.steps ?? []).map(step => ({
+    const stageLogs = retainedStageLogs.flatMap((log, index) => (log.steps ?? []).map(step => ({
         ...step, reference: { ...logs[index]!.reference, ref: step.ref },
     })));
     const byStep = new Map<string, typeof stageLogs>();

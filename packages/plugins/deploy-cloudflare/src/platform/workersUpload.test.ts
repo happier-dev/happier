@@ -156,6 +156,7 @@ it.each(['buildFailure', 'cancel', 'uncompiled'] as const)('settles %s before an
       data: { details: { phase: 'build' }, failureCause: { phase: 'deployment.cloudflare.build', errorClass: 'Error' } } });
     expect(h.requests).toEqual([]);
     expect(h.disposeProcess).toHaveBeenCalledOnce();
+    expect(h.spawn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ outputDelivery: 'invocation' }));
   } finally { await h.dispose(); }
 });
 
