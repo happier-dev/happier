@@ -15,7 +15,11 @@ import { ACTION_PHASE_GLYPHS, resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
-export const WORKFLOW_SESSION_EVENT_KINDS = Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as SessionEventKind[];
+/** The Session starts in menu order: "A session starts" leads its group (lab round 1116c), the rest as declared. */
+export const WORKFLOW_SESSION_EVENT_KINDS: readonly SessionEventKind[] = Object.freeze([
+    'sessionStarts' satisfies SessionEventKind,
+    ...(Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as SessionEventKind[]).filter((kind) => kind !== 'sessionStarts'),
+]);
 
 /** A plugin-declared Event on the trigger set's Machine, as the trigger-event catalog presents it. */
 export type WorkflowTriggerEventOption = Readonly<{
@@ -148,8 +152,9 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
 
 /**
  * Every start in menu order, decided once here. Built-in triggers come first, grouped by resource kind in
- * the approved fixed order (Time, Actions, Sessions, Deployments, Health checks, Machines, Databases and
- * backups, Workflows; lab `actrig:v:amenu`; today Happier ships Time, Actions and Sessions), then each plugin's
+ * the fixed order of lab round 1116c "Add a trigger, grouped once" (Time, Sessions, Projects, Machines,
+ * Deployments, Health checks, Databases and backups, Sites, Workflows, Accounts, Actions; today Happier ships
+ * Time, Sessions and Actions), then each plugin's
  * Events grouped by plugin and sorted by plugin name, in declaration order within a plugin. A resource
  * context moves its own starts to the front under its name. `current` keeps a saved start that the
  * catalog no longer offers (an Event whose plugin is gone, "A session starts") choosable as it is.
@@ -161,11 +166,6 @@ export function buildWorkflowTriggerStartOptions(
 ): readonly WorkflowTriggerStartOption[] {
     const options: WorkflowTriggerStartOption[] = [
         { id: SCHEDULE_ID, group: t('workflows.triggers.card.groupTime'), section: 'builtin', title: t('workflows.triggers.card.schedule'), glyph: 'clock' },
-        // Before and after an Action (PROGRAM D1–D3): the Action and its subject are chosen on the trigger's own rows.
-        { id: actionStartId('before'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
-            title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
-        { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
-            title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
         ...WORKFLOW_SESSION_EVENT_KINDS.map((kind): WorkflowTriggerStartOption => ({
             id: sessionId(kind), group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
             title: t(`workflows.triggers.card.sessionStart.${kind}`), glyph: TRIGGER_LIFECYCLE_GLYPHS[kind],
@@ -174,6 +174,12 @@ export function buildWorkflowTriggerStartOptions(
             kind === 'prComment' || kind === 'ciFailed' ? [{
                 group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
                 ...resolveTriggerEventGroup({ kind }), id: `session:${kind}` }] : [])),
+        // Before and after an Action (PROGRAM D1–D3), the built-ins' last group: the Action and its subject are
+        // chosen on the trigger's own rows.
+        { id: actionStartId('before'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
+        { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
     ];
     // Grouped by plugin, by plugin name; a plugin keeps its declaration order.
     const plugins = [...new Map(events.map((event) => [event.eventRef.pluginId, event.pluginName])).entries()]
