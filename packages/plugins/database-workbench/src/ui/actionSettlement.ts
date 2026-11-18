@@ -1,9 +1,10 @@
 import { DatabaseOperationResultV1Schema, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
+import type { PluginTranslate } from '@happier-dev/plugin-ui';
 import { projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 
-const text = (key: string, fallback?: string) => fallback ?? key;
+const text: PluginTranslate = (key, fallback) => fallback ?? key;
 /** The host owns transport uncertainty and approval; this only opens its business result. */
 export function databaseActionSettlement(execution: PluginUiActionControlExecution,
     operation: Extract<DatabaseOperationResultV1, { ok: true }>['operation']): PluginActionExecution<DatabaseOperationResultV1> {
