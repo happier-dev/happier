@@ -152,6 +152,9 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     env: { CI: '1' },
   };
 
+  const sourceEntrypoint = String(env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+    ?? env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ?? '').trim().toLowerCase();
+  const usesSourceEntrypoint = ['1', 'true', 'yes', 'y'].includes(sourceEntrypoint);
   const e2eStep = {
     kind: 'e2e',
     command: 'pnpm',
@@ -160,6 +163,13 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
       '--config', 'vitest.core.slow.config.ts', ...e2eFiles,
     ],
     env: {
+      // Core fixtures launch the server with the workspace source loader too.
+      // Apply their skip before global setup, which runs before fixture creation.
+      ...(usesSourceEntrypoint ? {
+        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD:
+          env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD
+          ?? env.HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD ?? '1',
+      } : {}),
       HAPPIER_E2E_DB_PROVIDER: db,
       HAPPIER_DB_PROVIDER: db,
       DATABASE_URL: String(databaseUrl),
@@ -172,9 +182,6 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
         : { HAPPIER_TEST_MYSQL_DATABASE_URL: String(databaseUrl) }),
     },
   };
-  const sourceEntrypoint = String(env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
-    ?? env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ?? '').trim().toLowerCase();
-  const usesSourceEntrypoint = ['1', 'true', 'yes', 'y'].includes(sourceEntrypoint);
   const uiStep = {
     kind: 'ui',
     command: 'pnpm',

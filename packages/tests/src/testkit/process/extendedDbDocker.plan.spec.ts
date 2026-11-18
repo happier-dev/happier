@@ -111,6 +111,16 @@ describe('DB contract worker databases', () => {
 });
 
 describe('extended db docker plan', () => {
+  it('carries source server preparation into global setup while preserving an explicit build request', () => {
+    for (const skip of [undefined, '0', '1']) {
+      const plan = buildExtendedDbCommandPlan({ db: 'postgres', mode: 'e2e',
+        databaseUrl: 'postgresql://localhost/disposable', e2eFile: 'suites/core-e2e/teamSetup.B.slow.e2e.test.ts',
+        env: { HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          ...(skip === undefined ? {} : { HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: skip }) } });
+      expect(plan[0]?.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD).toBe(skip ?? '1');
+    }
+  });
+
   it('isolates every provider contract step while leaving its migrated template untouched', () => {
     const containerId = 'a'.repeat(64);
     for (const db of ['postgres', 'mysql'] as const) {
