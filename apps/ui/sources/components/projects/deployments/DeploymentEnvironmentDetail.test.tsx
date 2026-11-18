@@ -391,7 +391,7 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
   },
 );
 
-// Deploy from CI configures the Environment, so it lives on Settings, never at rest on the Overview (PAGE-ACCEPT-176 D6).
+// Deploy from CI closes the Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
 it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s Environment', async kind => {
   const { ModalProvider } = await import('@/modal');
   const base = environmentDetailForHome();
@@ -405,8 +405,8 @@ it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s E
   try {
     const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
       demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
-      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} destination={{ tab: 'settings', section: null }} /></ModalProvider>);
-    await waitForContent(screen, 'project-deployments.environment.settings.lead');
+      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.services');
     if (kind === 'stored') {
       expect(screen.findByTestId('project-deployments.environment.ci')).toBeNull();
     } else {
@@ -1449,7 +1449,7 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('keeps the stored definition off Overview so Settings owns its editor', async () => {
+  it('shows the stored definition on Overview in the kept order (dEnvOv KEEP item 3, owner-approved 11-13)', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, content: { ...base.content, definition: {
       kind: 'stored' as const, contentRevision: 4, composeDigest: `sha256:${'a'.repeat(64)}`,
@@ -1460,14 +1460,14 @@ describe('Project deployments page', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
         review={noReview} onOpenReceipt={() => {}} />);
-      await waitForContent(screen, 'project-deployments.environment.header');
-      expect(screen.findByTestId('project-deployments.environment.definition')).toBeNull();
+      await waitForContent(screen, 'project-deployments.environment.definition');
+      expect(screen.findByTestId('project-deployments.environment.definition')).not.toBeNull();
       await screen.unmount();
     } finally { await act(async () => { controller.retire(); }); }
   });
 
   it.each([false, true].flatMap(phone => ['edit', 'move'].map(entry => ({ phone, entry }))))(
-    'opens the one stored editor from Settings without saving or deploying (phone=$phone entry=$entry)', async ({ phone, entry }) => {
+    'opens the one stored editor from Overview without saving or deploying (phone=$phone entry=$entry)', async ({ phone, entry }) => {
     const base = environmentDetailForHome();
     const definition = { kind: 'stored' as const, contentRevision: 4, composeDigest: `sha256:${'a'.repeat(64)}`,
       document: 'services:\n  app:\n    image: nginx:2\n', profiles: [], services: ['app'] };
@@ -1481,9 +1481,8 @@ describe('Project deployments page', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
         review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
-        environmentActions={createDeploymentActions(lifetime, detail.environment.projectSourceId)}
-        destination={{ tab: 'settings', section: null }} />);
-      await waitForContent(screen, 'project-deployments.environment.settings.lead');
+        environmentActions={createDeploymentActions(lifetime, detail.environment.projectSourceId)} />);
+      await waitForContent(screen, 'project-deployments.environment.header');
       const summary = screen.findByTestId('project-deployments.environment.definition');
       expect(summary).not.toBeNull();
       const { t } = await import('@/text');
@@ -1536,8 +1535,6 @@ describe('Project deployments page', () => {
       }
       const screen = await renderScreen(<EditorPage />);
       await waitForContent(screen, 'project-deployments.environment.settings.lead');
-      // Settings summarizes the definition; its editor opens on demand (PAGE-ACCEPT-176 D7).
-      await screen.pressByTestIdAsync('project-deployments.environment.definition.edit');
       const field = screen.findByTestId('project-deployments.definition.document');
       expect(field).not.toBeNull();
       expect(submitted).toBeUndefined();
@@ -1554,9 +1551,7 @@ describe('Project deployments page', () => {
       })));
       expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(document);
       await screen.pressByTestIdAsync('project-deployments.definition.cancel');
-      // Cancel drops the draft; with nothing left to save the editor folds back into the definition's summary.
-      expect(screen.findByTestId('project-deployments.definition.document')).toBeNull();
-      expect(screen.findByTestId('project-deployments.environment.definition')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(definition.document);
     } finally { await act(async () => { controller.retire(); }); }
   });
 
@@ -1572,8 +1567,6 @@ describe('Project deployments page', () => {
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
         destination={{ tab: 'settings', section: null }} review={noReview} onOpenReceipt={() => {}} />);
       await waitForContent(screen, 'project-deployments.environment.settings.lead');
-      // Settings summarizes the definition; its editor opens on demand (PAGE-ACCEPT-176 D7).
-      await screen.pressByTestIdAsync('project-deployments.environment.definition.edit');
       expect(screen.findByTestId('project-deployments.definition.document')?.props.editable).toBe(false);
       expect(screen.findByTestId('project-deployments.definition.save')).toBeNull();
     } finally { await act(async () => { controller.retire(); }); }
@@ -1592,8 +1585,6 @@ describe('Project deployments page', () => {
         destination={{ tab: 'settings', section: null }} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
         environmentActions={createDeploymentActions(lifetime, detail.environment.projectSourceId)} />);
       await waitForContent(screen, 'project-deployments.environment.settings.lead');
-      // Settings summarizes the definition; its editor opens on demand (PAGE-ACCEPT-176 D7).
-      await screen.pressByTestIdAsync('project-deployments.environment.definition.edit');
       expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe('services:\n  app:\n    image: nginx:1\n');
       expect(screen.findByTestId('project-deployments.definition.save')?.props.disabled).toBe(true);
       expect(screen.findByTestId('project-deployments.definition.cancel')).toBeNull();
@@ -2457,19 +2448,12 @@ describe('Project deployments page', () => {
     const beforeRead = homes.requests.length;
     const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(context.accountLifetime) });
     const deploy = vi.fn(async () => { throw Object.assign(new Error('content unavailable'), { code: 'deployment_content_unavailable' }); });
-    // How a platform Environment deploys is configuration: it reads on Settings (PAGE-ACCEPT-176 D8); Deploy leads the Overview.
-    let navigate: (tab: DeploymentEnvironmentTabV1) => void = () => {};
-    function MethodPage() {
-      const [tab, setTab] = React.useState<DeploymentEnvironmentTabV1>('overview');
-      navigate = setTab;
-      return <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
-        demand={shown} lifetime={context.accountLifetime} accountId={scope.accountId} serverId={scope.serverId}
-        phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} destination={{ tab, section: null }} />;
-    }
-    const screen = await renderScreen(<MethodPage />);
+    // The shipped Overview keeps how a platform Environment deploys above Serving now (dEnvOv KEEP, owner-approved 11-13).
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} lifetime={context.accountLifetime} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />);
     try {
-      await waitForContent(screen, 'project-deployments.environment.deploy');
-      expect(screen.findByTestId('project-deployments.environment.sourceMethod')).toBeNull();
+      await waitForContent(screen, 'project-deployments.environment.sourceMethod');
       await screen.pressByTestIdAsync('project-deployments.environment.deploy');
       await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
         targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: recorded ?? 'gitIntegration' }));
@@ -2478,14 +2462,10 @@ describe('Project deployments page', () => {
         .toEqual([{ artifactIds: [detail.environment.contentArtifactId, detail.targetLinks[0]!.targetLink.contentArtifactId] }]);
       if (recorded) {
         const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
-        // Settings holds other segmented rows (Rollout); the method is the one this Environment's choice owns.
-        await act(async () => { navigate('settings'); });
-        await waitForContent(screen, 'project-deployments.environment.sourceMethod');
         const method = () => screen.root.findAllByType(SegmentedChoiceItem)
           .find(node => node.props.testID === 'project-deployments.environment.sourceMethod')!;
         await act(async () => method().props.onChange('gitIntegration'));
         await vi.waitFor(() => expect(method().props.value).toBe('gitIntegration'));
-        await act(async () => { navigate('overview'); });
         await screen.pressByTestIdAsync('project-deployments.environment.deploy');
         await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
           targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: 'gitIntegration' }));

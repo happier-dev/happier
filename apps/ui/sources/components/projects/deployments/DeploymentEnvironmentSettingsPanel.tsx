@@ -46,8 +46,7 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentPrivateServiceExports } from './DeploymentPrivateServiceExports';
 import { DeploymentFleetIngress } from './DeploymentFleetIngress';
 import { MoveDefinitionToRepository } from './MoveDefinitionToRepository';
-import { StoredDefinitionEditor, StoredDefinitionOverview, type StoredDefinitionDocument } from './StoredDefinitionEditor';
-import { storedComposeDocumentText } from './storedComposeDocumentText';
+import { StoredDefinitionEditor, type StoredDefinitionDocument } from './StoredDefinitionEditor';
 import {
   DeploymentBackupControls,
   DeploymentBackupSectionActions,
@@ -180,14 +179,6 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     ) : null;
     const checkLifetime = editing ? props.lifetime ?? null : null;
     const checkAnchor = React.useRef<View>(null);
-    // The stored definition reads as its summary until the person opens it (lab `envsettings-page`); the editor and
-    // Move to repository open together, so Settings never carries a full Compose editor at rest (D7).
-    const [definitionOpenPressed, setDefinitionOpen] = React.useState(false);
-    // A draft in progress stays open across tab changes (the page owns the typed document).
-    const storedDefinition = detail.content.definition.kind === 'stored' ? detail.content.definition : null;
-    const storedReadable = React.useMemo(() => storedDefinition ? storedComposeDocumentText(storedDefinition.document) : null,
-      [storedDefinition]);
-    const definitionOpen = definitionOpenPressed || (storedReadable !== null && props.definitionDocument.document !== storedReadable);
     const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
 
     return (
@@ -206,15 +197,10 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         {changeOutcome(null)}
         {/* The kept order (dEnvSettings KEEP): the stored definition and Move to repository, then where it runs. */}
-        {detail.content.definition.kind === 'stored' && !definitionOpen ? <StoredDefinitionOverview
-          revision={detail.content.definition.contentRevision}
-          editable={editing !== null && detail.environment.capabilities.role === 'manager'}
-          onOpen={() => setDefinitionOpen(true)}
-          onMove={editing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
-            ? () => setDefinitionOpen(true) : null} /> : null}
-        {detail.content.definition.kind === 'stored' && definitionOpen ? <StoredDefinitionEditor environment={detail.environment}
+        {/* The stored Compose editor, then Move to repository (pfc-redesign r4 dSettings KEEP items 2-3, owner-approved 11-13). */}
+        {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
           definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
-        {editing && (definitionOpen || detail.content.definition.kind !== 'stored') ? <MoveDefinitionToRepository detail={detail}
+        {editing ? <MoveDefinitionToRepository detail={detail}
           lifetime={props.lifetime ?? null} move={editing.actions.moveToRepository ?? null} review={editing.review}
           onChanged={editing.onChanged} machineName={machineName} /> : null}
         <View ref={revealHost('servers-build')} collapsable={false}>

@@ -18,6 +18,7 @@ import {
   deploymentSourceLabel,
 } from './deploymentPresentation';
 import type { useDeploymentReceipt } from './useDeploymentReads';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 export type DeploymentServingReceiptValue = NonNullable<
   ReturnType<typeof useDeploymentReceipt>['snapshot']['value']
@@ -191,8 +192,8 @@ function servingCells(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The hero lies flat on the page (lab `d1-d1d-populated`): its text stands in the page column, not in a card.
-  card: { minWidth: 0 },
+  // Serving now is one card with one padding all round (pfc-redesign r4 dEnvOv REFINE 2, owner 22:35Z).
+  card: { padding: PAGE_LIST_METRICS.cardPaddingPx, minWidth: 0 },
   top: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s16 },
   topText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   phoneActions: { marginTop: theme.space.s8, flexDirection: 'row' },

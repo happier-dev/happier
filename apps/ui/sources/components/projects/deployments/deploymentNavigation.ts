@@ -1,10 +1,10 @@
 import type { DeploymentEnvironmentDestinationV1, DeploymentEnvironmentSettingsSectionV1, DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 
 /**
- * Where an Environment's Automations live (lab envsettings: they configure the Environment). The Environment page
- * places them here and every link to them (Project defaults) opens here, so the two never disagree.
+ * Where an Environment's Automations live: they close its Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
+ * The Environment page places them here and every link to them (Project defaults) opens here, so the two never disagree.
  */
-export const ENVIRONMENT_AUTOMATIONS_DESTINATION: DeploymentEnvironmentDestinationV1 = { tab: 'settings', section: 'automations' };
+export const ENVIRONMENT_AUTOMATIONS_DESTINATION: DeploymentEnvironmentDestinationV1 = { tab: 'overview', section: 'automations' };
 
 /** The Services page: every app, database, domain and check this Account runs (formerly All deployments). */
 export const SERVICES_ROUTE = '/projects/deployments';

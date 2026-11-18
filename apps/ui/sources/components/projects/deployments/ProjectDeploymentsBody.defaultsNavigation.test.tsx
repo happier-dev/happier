@@ -39,7 +39,7 @@ afterEach(standardCleanup);
 const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 
 describe('Project deployment defaults navigation', () => {
-  it("opens an Environment's Automations on its Settings tab, not its Overview (WAVE-REVIEW F8, D16)", async () => {
+  it("opens an Environment where its Automations live, scrolled to them (WAVE-REVIEW F8, D16)", async () => {
     const detail = createDeploymentEnvironmentDetailV1();
     const scope = {
       serverId: 'home',
@@ -95,14 +95,16 @@ describe('Project deployment defaults navigation', () => {
       ) as Record<string, unknown>;
       expect(params).toMatchObject({
         deploymentEnvironment: detail.environment.id,
-        deploymentTab: 'settings',
+        deploymentTab: undefined,
         deploymentSection: 'automations',
       });
+      // The Automations close the Overview (dEnvOv KEEP), so the link opens the Overview, not Settings.
       await vi.waitFor(() =>
         expect(
-          screen.findByTestId('project-deployments.environment.settings.lead'),
+          screen.findByTestId('project-deployments.environment.overview.previewsSection'),
         ).not.toBeNull(),
       );
+      expect(screen.findByTestId('project-deployments.environment.settings.lead')).toBeNull();
     } finally {
       await screen.unmount();
       controller.retire();

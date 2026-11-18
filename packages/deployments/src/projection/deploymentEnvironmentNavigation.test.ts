@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1,
     DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1,
     DEPLOYMENT_ENVIRONMENT_TABS_V1,
     resolveDeploymentEnvironmentDestinationV1,
 } from './deploymentEnvironmentNavigation.js';
 
 describe('Environment navigation destinations', () => {
-    it('owns exactly seven tabs and the eight Settings sections, in page order', () => {
+    it('owns exactly seven tabs, the Settings sections and the Overview sections, in page order', () => {
         expect(DEPLOYMENT_ENVIRONMENT_TABS_V1).toEqual(['overview', 'history', 'variables', 'domains', 'telemetry', 'permissions', 'settings']);
         expect(DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)
-            .toEqual(['servers-build', 'sharing', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews', 'automations']);
+            .toEqual(['servers-build', 'sharing', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews']);
+        expect(DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1).toEqual(['automations']);
+        // A link to the Automations lands on the Overview that holds them; on another tab the section drops.
+        expect(resolveDeploymentEnvironmentDestinationV1({ tab: 'overview', section: 'automations' }))
+            .toEqual({ tab: 'overview', section: 'automations' });
+        expect(resolveDeploymentEnvironmentDestinationV1({ tab: 'settings', section: 'automations' }))
+            .toEqual({ tab: 'settings', section: null });
     });
 
     it('keeps Variables, Domains and Permissions as tabs and lands an unknown or removed section on Settings', () => {

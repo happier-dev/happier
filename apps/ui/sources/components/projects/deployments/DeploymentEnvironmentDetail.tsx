@@ -107,7 +107,8 @@ import { prepareDeploymentSourceCheckout } from './prepareDeploymentSourceChecko
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
-import { useStoredDefinitionDocument } from './StoredDefinitionEditor';
+import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
+import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
@@ -130,7 +131,7 @@ import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
 import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets, type DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { showDeploymentRestoreSheet, type DeploymentRestoreSheetInput } from './DeploymentRestoreSheet';
-import { deploymentDataTargetOperands } from '@happier-dev/deployments';
+import { deploymentDataTargetOperands, isDeploymentEnvironmentSettingsSectionV1 } from '@happier-dev/deployments';
 import { deploymentRestoreOperands, retainedBackupFromSummary } from './deploymentRestore';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { useDeploymentEnvironmentDeletion } from './useDeploymentEnvironmentDeletion';
@@ -1004,11 +1005,16 @@ export const DeploymentEnvironmentDetail = React.memo(
                   controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
                     active: props.demand.mounted && props.demand.visible && props.demand.focused }} />
               ) : null}
+              {sourceMethod && platform && runtime ? <ItemGroup header="none">
+                <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
+                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
+                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
+              </ItemGroup> : null}
               {/* Serving now (lab `envOv` hero, owner 22:35Z): the address, the serving version's labelled cells and the
                   last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}
               {activeReceipt ? (
                 <>
-                  <ItemGroup testID="project-deployments.environment.serving" surface="none">
+                  <ItemGroup testID="project-deployments.environment.serving">
                     <DeploymentServingReceipt receipt={activeReceipt}
                       still={attention?.kind === 'latestFailed'}
                       address={liveUrl ? {
@@ -1069,12 +1075,36 @@ export const DeploymentEnvironmentDetail = React.memo(
               )}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {ready ? null : environmentAgentActions}
-              {/* The definition is configuration: Settings summarizes it and opens its editor (PAGE-ACCEPT-176 D6/D7). */}
+              {/* The kept order (pfc-redesign r4 dEnvOv KEEP item 3, owner-approved 11-13): Definition and Needs a
+                  repository, Deployed definition, Data, Previews; what runs, triggers, push setup and CI follow. */}
+              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
+                revision={detail.content.definition.contentRevision}
+                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
+                onOpen={() => openTab('settings')}
+                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
+                  ? () => openTab('settings') : null} /> : null}
+              {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
+                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
+                workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
                 lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
+              {detail.environment.purpose !== 'preview' ? (
+                // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
+                <ItemGroup testID="project-deployments.environment.overview.previewsSection"
+                  title={t('projects.deployments.sectionPreviews')}
+                  description={t('projects.deployments.sectionPreviewsDescription')}>
+                  <Item testID="project-deployments.environment.overview.previews"
+                    icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                    title={t('projects.deployments.settingsSections.previewEditor.configure')}
+                    subtitle={detail.content.previewTemplate?.enabled
+                      ? t('projects.deployments.settingsSections.previewsOn')
+                      : t('projects.deployments.settingsSections.previewsOff')}
+                    onPress={() => openTab('settings', 'previews')} />
+                </ItemGroup>
+              ) : null}
               {services.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.services"
@@ -1176,6 +1206,38 @@ export const DeploymentEnvironmentDetail = React.memo(
               ) : null}
               {/* Once Deploy leads, they are a titled section of their own beside the Environment's other agent work. */}
               {ready ? environmentAgentActions : null}
+              {/* Triggers (with push setup) and Deploy from CI close the Overview (dEnvOv KEEP lede). */}
+              {triggerSubject ? (
+                <View ref={automationsReveal.hostRef} collapsable={false}>
+                <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
+                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: detail.environment.id }}
+                  deploymentSourceName={projectSource.source?.source.name}
+                  sourceAudience={projectSource.audience}
+                  controllerMachineId={detail.environment.controllerMachineId}
+                  pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
+                    environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                      environmentId: detail.environment.id },
+                    targetLinkId: detail.environment.runtimeTargetLinkId,
+                    project: { machineId: detail.environment.controllerMachineId, directory: '~' },
+                    protection: detail.environment.protection,
+                  } : undefined} />
+                </View>
+              ) : null}
+              {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
+              {ciInput ? (
+                <ItemGroup testID="project-deployments.environment.ci.section"
+                  title={t('projects.deployments.overviewStatus.ciTitle')}
+                  description={t('projects.deployments.overviewStatus.ciDescription', { name: detail.content.name })}>
+                  <Item title={t('projects.deployments.overviewStatus.ciTokensTitle')}
+                    subtitle={t('projects.deployments.overviewStatus.ciTokensBody')}
+                    showChevron={false} accessoryLayout="adaptive"
+                    rightElement={<RoundButton size="small" display="secondary" testID="project-deployments.environment.ci"
+                      title={t('projects.deployments.overviewStatus.manage')}
+                      onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
+                </ItemGroup>
+              ) : null}
             </>
           ) : tab === 'history' ? (
             <DeploymentHistoryPage
@@ -1251,12 +1313,6 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           ) : (
             <>
-            {/* How a platform Environment deploys is configuration: Settings, never ahead of what serves (lab d4d). */}
-              {sourceMethod && platform && runtime ? <ItemGroup header="none">
-                <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
-                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
-                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
-              </ItemGroup> : null}
             <DeploymentEnvironmentSettingsPanel
               detail={detail}
               previewBindings={previewBindings}
@@ -1266,7 +1322,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               demand={props.demand}
               machineName={machineName}
               environmentTitle={props.environmentTitle ?? noEnvironmentName}
-              focusSection={settingsSection}
+              focusSection={isDeploymentEnvironmentSettingsSectionV1(settingsSection) ? settingsSection : null}
               onUnlink={disposition.canDelete ? openDisposition : null}
               onLink={openLink}
               onManageServers={openFleet}
@@ -1284,38 +1340,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
               }) as never)}
             />
-            {/* Automations and Deploy from CI configure the Environment, so they live with its Settings (lab envsettings). */}
-              {triggerSubject ? (
-                <View ref={automationsReveal.hostRef} collapsable={false}>
-                <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
-                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
-                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
-                    environmentId: detail.environment.id }}
-                  deploymentSourceName={projectSource.source?.source.name}
-                  sourceAudience={projectSource.audience}
-                  controllerMachineId={detail.environment.controllerMachineId}
-                  pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
-                    environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
-                      environmentId: detail.environment.id },
-                    targetLinkId: detail.environment.runtimeTargetLinkId,
-                    project: { machineId: detail.environment.controllerMachineId, directory: '~' },
-                    protection: detail.environment.protection,
-                  } : undefined} />
-                </View>
-              ) : null}
-              {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
-              {ciInput ? (
-                <ItemGroup testID="project-deployments.environment.ci.section"
-                  title={t('projects.deployments.overviewStatus.ciTitle')}
-                  description={t('projects.deployments.overviewStatus.ciDescription', { name: detail.content.name })}>
-                  <Item title={t('projects.deployments.overviewStatus.ciTokensTitle')}
-                    subtitle={t('projects.deployments.overviewStatus.ciTokensBody')}
-                    showChevron={false} accessoryLayout="adaptive"
-                    rightElement={<RoundButton size="small" display="secondary" testID="project-deployments.environment.ci"
-                      title={t('projects.deployments.overviewStatus.manage')}
-                      onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
-                </ItemGroup>
-              ) : null}
             </>
           )}
         </ItemList>
