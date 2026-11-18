@@ -5,7 +5,7 @@ import { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import { createReviewCommentPrincipalSigningInputV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentActionIdV1Schema, ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import { buildReviewCommentPlainMutationTransportInputV1, ReviewCommentMutationActionIdV1Schema } from '@happier-dev/protocol/reviews/comments/content';
+import { buildReviewCommentPlainMutationTransportInputV1, ReviewCommentMutationActionIdV1Schema, REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from '@happier-dev/protocol/reviews/comments/content';
 import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import type { ReviewCommentPublicationCryptoContextV1, ReviewCommentClaimPublicationDispatchRequestV1, ReviewCommentPrincipalHeaderV1, ReviewCommentActionIdV1, ReviewCommentMutationActionIdV1, ReviewCommentPublicationPlanV1, ReviewCommentPrincipalProofV1, AccountScopedCryptoMaterial } from '@happier-dev/protocol';
@@ -19,6 +19,8 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { readSettings, type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import type { ReviewCommentResourceCryptoV1 } from '@happier-dev/protocol/reviews/comments/content';
 
 export type ReviewCommentActionExecutionOptions = Readonly<{
     signal?: AbortSignal;
@@ -342,18 +344,36 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         const parsedInput = asRecord(ReviewCommentActionInputSchemasV1[parsedActionId].parse(input));
         if (parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list'
             || isReviewCommentMutationAction(parsedActionId)) {
-            const mode = await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
+            const reviewId = typeof parsedInput.reviewId === 'string' ? parsedInput.reviewId : undefined;
+            let resource: ReviewCommentResourceCryptoV1 | undefined;
+            if (reviewId) {
+                const held = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(reviewId,
+                    { prepareRecipients: false, includeSharedAudience: false,
+                        ...(options?.signal ? { signal: options.signal } : {}) });
+                if (!held) throw Object.assign(new Error('review_comment_encryption_material_unavailable'), {
+                    code: 'review_comment_encryption_material_unavailable',
+                });
+                const binding = { artifactId: reviewId, expectedRevision: held.artifact.revision };
+                resource = { reviewId, mode: held.storageMode,
+                    open: async content => held.openAssociatedContent({ ...binding, content }),
+                    seal: async value => held.sealAssociatedContent({ ...binding, value }),
+                    commitment: (purpose, canonicalInput) => held.associatedContentCommitment(
+                        REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1, [purpose, canonicalInput]),
+                };
+            }
+            const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
             if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
-            if (mode === 'e2ee' || parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list') {
+            if (resource || mode === 'e2ee' || parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list') {
                 const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
                 const originalPrincipal = options?.principal;
-                if (mode === 'e2ee' && originalPrincipal?.currentIntent
+                if ((resource || mode === 'e2ee') && originalPrincipal?.currentIntent
                     && originalPrincipal.currentIntent.effectBodySha256Base64Url !== createReviewCommentPrincipalBodyHash(omitKeys(parsedInput, ['eventEnvelope']))) {
                     throw Object.assign(new Error('review_comment_permission_denied'), { code: 'review_comment_permission_denied' });
                 }
                 return executeReviewCommentTransportV1({
                     actionId: parsedActionId, input: parsedInput,
-                    context: { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) },
+                    context: resource ? { accountId, mode, material: null, resource }
+                        : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) },
                     actor: originalPrincipal?.actor ?? { kind: 'user', userId: accountId },
                     randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)),
                     request: async (request) => {
@@ -367,7 +387,7 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                             assertPrincipalCurrent: async () => { if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal); },
                         }) : undefined;
                         if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal);
-                        if (request.path === '/v1/reviews/comments/mutations/commit') {
+                        if (!resource && request.path === '/v1/reviews/comments/mutations/commit') {
                             await assertWriteMode(mode, options?.signal);
                         }
                         return executeReviewCommentHttpRequest({ credentials: params.credentials, request,

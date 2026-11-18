@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { encryptWithDataKey, encodeBase64 } from '@/api/encryption';
+import { sealReviewCommentSensitiveEnvelopeV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactHeaderV1Schema, ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { createCliReviewCommentActionExecutorFromCredentials } from './executor';
 import { ReviewCommentActionOutputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
@@ -32,6 +36,7 @@ const plainEventStorageParams = {
 
 vi.mock('axios', () => ({
     default: {
+        defaults: {},
         post: vi.fn(),
         get: vi.fn(),
         patch: vi.fn(),
@@ -129,6 +134,40 @@ function settlementResponseFor(body: unknown): unknown {
 describe('createCliReviewCommentActionExecutorFromCredentials', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('reads shared Review content through the admitted Artifact codec without a recipient census', async () => {
+        const credentials = { token: 'recipient-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) } };
+        const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
+        if (resource.mode !== 'e2ee') throw new Error('Expected encrypted resource fixture');
+        const source: ReviewCommentV1 = { v: 1, id: 'shared-comment', reviewId: 'shared-review', accountId: 'owner',
+            anchor: { kind: 'file', filePath: 'private.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'private shared finding',
+            bodyVersion: 1, edits: [], author: { kind: 'user', userId: 'owner' }, state: 'open', flags: {}, dispositions: {},
+            threadId: 'shared-comment', transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 };
+        const { structural, sensitive } = splitReviewCommentV1(source);
+        const plain = sealReviewCommentSensitiveEnvelopeV1({ structural, sensitive, mode: 'plain' });
+        if (plain.t !== 'plain') throw new Error('Expected logical fixture');
+        const encode = (value: unknown) => encodeBase64(encryptWithDataKey(value, resource.dataKey));
+        const artifact = { id: source.reviewId, ownerAccountId: 'owner', access: 'view', publicAudience: 'none', encryptionMode: 'e2ee',
+            dataEncryptionKey: resource.dataEncryptionKey,
+            header: encode(ReviewArtifactHeaderV1Schema.parse({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: source.reviewId, title: 'Review' })),
+            body: encode({ body: JSON.stringify(ReviewArtifactBodyV1Schema.parse({ v: 1, rounds: [] })) }),
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const stored = { v: 1, structural, sensitiveEnvelope: { t: 'encrypted', c: encode(plain.v) } };
+        const reads: string[] = [];
+        vi.mocked(axios.get).mockReset().mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            reads.push(path);
+            if (path === `/v1/artifacts/${source.reviewId}`) return { status: 200, data: artifact };
+            if (path === `/v1/reviews/comments/${source.id}`) return { status: 200, data: { comment: stored } };
+            throw new Error(`Unexpected resource read: ${path}`);
+        });
+        try {
+            const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials, resolveAccountId: () => 'recipient',
+                resolveAccountEncryptionMode: async () => { throw new Error('Comment reads use the admitted resource mode'); } });
+            await expect(execute('reviews.comments.get', { commentId: source.id, reviewId: source.reviewId })).resolves.toEqual({ comment: source });
+            expect(reads).toEqual([`/v1/artifacts/${source.reviewId}`, `/v1/reviews/comments/${source.id}`]);
+        } finally { vi.mocked(axios.get).mockReset(); }
     });
 
     it('creates an E2EE comment through authorized structure and sealed content without leaking sensitive HTTP bytes', async () => {

@@ -13,6 +13,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { computeCanonicalDomainSeparatedDigest, computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type UsageNoticeArtifactHeaderV1,
   ACCOUNT_NOTICE_ARTIFACT_KIND_V1, AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema,
@@ -1077,7 +1078,7 @@ export function createAccountArtifactStore(params: Readonly<{
         if (input.artifactId !== stored.id || input.expectedRevision.headerVersion !== stored.headerVersion
           || input.expectedRevision.bodyVersion !== stored.bodyVersion) throw new ArtifactEncryptionMaterialUnavailableError();
       };
-      return { artifact,
+      return { artifact, storageMode: codec.mode,
         /** Reuse this operation's admitted bytes/key; commit still checks current Account mode. */
         prepareJsonUpdate: (content: Pick<AccountArtifact, 'header'> & Readonly<{ body: ArtifactBodyV1; beforeWrite?: () => void | Promise<void> }>) =>
           prepareJsonUpdate({ ...content, artifactId: stored.id,
@@ -1102,6 +1103,10 @@ export function createAccountArtifactStore(params: Readonly<{
           assertAssociatedResource(input);
           return codec.mode === 'plain' ? { t: 'plain', v: input.value } : { t: 'encrypted', c: codec.encode(input.value) };
         },
+        /** Associated records use this admitted resource key for private equality as well as content. */
+        associatedContentCommitment: (domain: string, components: readonly string[]): string => codec.mode === 'plain'
+          ? computeCanonicalDomainSeparatedDigest(domain, [stored.id, ...components])
+          : computeCanonicalDomainSeparatedKeyedDigest(codec.dataKey!, domain, [stored.id, ...components]),
         update: (content: Pick<AccountArtifact, 'header'> & Readonly<{ body: ArtifactBodyV1 }>) => update({ ...content,
         artifactId: stored.id, expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
         ...(options?.signal ? { signal: options.signal } : {}),
