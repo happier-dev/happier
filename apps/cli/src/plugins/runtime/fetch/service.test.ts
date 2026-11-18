@@ -706,7 +706,7 @@ describe('createPluginHttpService', () => {
 
     it('separates traced HTTP policy and transport waits through the bound host without request content', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-        const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+        const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
         let releaseHttp!: () => void;
         let startedHttp!: () => void;
         const httpStarted = new Promise<void>(resolve => { startedHttp = resolve; });
