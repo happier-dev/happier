@@ -1,5 +1,5 @@
 import { backendProfileRolesForRun, compareRuns, isUnperturbedTimingRun } from './analysis.mjs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 const countSignals = ['requests', 'renders', 'commits', 'storeNotifications', 'socketFrames', 'sqlStatements', 'encodedBytes'];
@@ -129,10 +129,94 @@ export async function readProductionBundleSize(root) {
   return { bytes: files.reduce((sum, row) => sum + row.bytes, 0), files };
 }
 
+// Expo Router's root layout, the app layout and the Home page: what the browser
+// downloads and evaluates before Home can render. Other routes load on demand.
+const HOME_ROUTE_FILES = ['./_layout.tsx', './(app)/_layout.tsx', './(app)/index.tsx'];
+const exportPath = href => {
+  if (!/^\/[\w.@/-]+$/u.test(href) || href.includes('/../')) throw new Error(`Web export references a non-local asset: ${href}`);
+  return href.slice(1);
+};
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
+/**
+ * Find the chunk each Home route loads. Metro's production web output keeps
+ * the route context as getters `"./(app)/index.tsx":{…get:()=>r(d[1])(d[N],d.paths)}`
+ * and the module's dependency map `{"N":<moduleId>,…,"paths":{"<moduleId>":"/_expo/…js"}}`.
+ * A synchronous route (no `.paths` argument) is already inside the entry.
+ */
+function resolveHomeRouteChunks(entrySources) {
+  const chunks = new Map();
+  for (const key of HOME_ROUTE_FILES) {
+    let resolved = false;
+    for (const source of entrySources) {
+      const at = source.indexOf(`"${key}":{`);
+      if (at < 0) continue;
+      const getter = source.slice(at, at + 400).match(new RegExp(`^"${escapeRegExp(key)}":\\{[^}]*?\\((\\w+)\\[(\\d+)\\],\\1\\.paths\\)`, 'u'));
+      if (!getter) { resolved = true; break; }
+      // The route context module's dependency map follows its factory.
+      const pathsAt = source.indexOf('"paths":{', at);
+      const mapStart = source.lastIndexOf(',{"0":', pathsAt) + 1;
+      if (pathsAt < 0 || mapStart <= at) throw new Error(`Home route ${key} has no readable dependency map`);
+      let depth = 0, end = mapStart;
+      for (; end < source.length; end++) {
+        if (source[end] === '{') depth++;
+        else if (source[end] === '}' && --depth === 0) break;
+      }
+      const map = JSON.parse(source.slice(mapStart, end + 1));
+      const chunk = map.paths?.[map[getter[2]]];
+      if (typeof chunk !== 'string') throw new Error(`Home route ${key} does not resolve to an emitted chunk`);
+      chunks.set(key, exportPath(chunk));
+      resolved = true;
+      break;
+    }
+    if (!resolved) throw new Error(`Home route ${key} is not in the entry scripts`);
+  }
+  return chunks;
+}
+
+/**
+ * Deterministic weight of what loads before Home on web: index.html's scripts
+ * and stylesheets plus the Home route chunks. Modules are Metro `__d(`
+ * definitions. Served bytes are the precompression owner's brotli sidecar, or
+ * the raw file when no smaller sidecar was written; an export that was never
+ * precompressed has no served-bytes figure.
+ */
+export async function readWebBootWeight(root) {
+  const html = await readFile(join(root, 'index.html'), 'utf8');
+  const styles = [...html.matchAll(/<link\b[^>]*>/gu)].map(([tag]) => tag)
+    .filter(tag => /\brel="stylesheet"/u.test(tag)).map(tag => tag.match(/\bhref="([^"]+)"/u)?.[1]).filter(Boolean).map(exportPath);
+  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/gu)].map(match => exportPath(match[1]));
+  if (!scripts.length) throw new Error('Web export index.html has no entry scripts');
+  const sources = new Map();
+  for (const file of scripts) sources.set(file, await readFile(join(root, file), 'utf8'));
+  const routes = [...new Set(resolveHomeRouteChunks([...sources.values()]).values())];
+  for (const file of routes) sources.set(file, await readFile(join(root, file), 'utf8'));
+  const precompressed = (await readdir(join(root, '_expo/static'), { recursive: true }).catch(() => [])).some(name => name.endsWith('.br'));
+  const files = [];
+  for (const [kind, list] of [['style', styles], ['script', scripts], ['route', routes]]) {
+    for (const file of list) {
+      const bytes = (await stat(join(root, file))).size;
+      const sidecar = precompressed ? await stat(join(root, `${file}.br`)).then(info => info.size, () => bytes) : null;
+      files.push({ file, kind, bytes, brotliBytes: sidecar, modules: sources.get(file)?.split('__d(').length - 1 || 0 });
+    }
+  }
+  const sum = key => files.reduce((total, row) => total + row[key], 0);
+  return { files, modules: sum('modules'), bytes: sum('bytes'), brotliBytes: precompressed ? sum('brotliBytes') : null };
+}
+
+const BOOT_METRICS = [['modules', 'modules before Home'], ['bytes', 'JS/CSS bytes before Home'], ['brotliBytes', 'brotli transfer bytes before Home']];
+
 export function assessBundleBudget(baseline, candidate) {
   const available = finite(baseline?.bytes) && finite(candidate?.bytes);
-  return { status: !available ? 'UNAVAILABLE' : candidate.bytes > baseline.bytes ? 'FAIL' : 'PASS', baseline, candidate,
+  const boot = candidate?.boot || baseline?.boot ? BOOT_METRICS.map(([key, metric]) => {
+    const before = baseline?.boot?.[key], after = candidate?.boot?.[key];
+    const paired = finite(before) && finite(after);
+    return { metric, before: finite(before) ? before : null, after: finite(after) ? after : null, delta: paired ? after - before : null };
+  }) : [];
+  const grew = (available && candidate.bytes > baseline.bytes) || boot.some(row => row.delta > 0);
+  return { status: !available ? 'UNAVAILABLE' : grew ? 'FAIL' : 'PASS', baseline, candidate,
     deltaBytes: available ? candidate.bytes - baseline.bytes : null, changedNotably: available && candidate.bytes !== baseline.bytes, gating: false,
+    boot,
     budget: 'This run\'s baseline emitted JS/CSS bytes; zero noise margin; update by selecting a reviewed baseline ref, never by weekly snapshot editing.' };
 }
 
@@ -149,6 +233,7 @@ export function renderPerfComparison(report) {
   for (const row of report.timings ?? []) lines.push(`| ${row.group.join('/')} | paired timing ratio | 1 | ${row.pairedRatio} | ${row.pairedRatio - 1} | ${row.changedNotably ? 'Changed notably; ' : ''}baseline noise ratio ${row.noiseRatio} |`);
   for (const row of report.heap ?? []) lines.push(`| pair ${row.pair} | post-GC bytes/cycle | ${row.baselineBytesPerCycle ?? 'unavailable'} | ${row.candidateBytesPerCycle ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.changedNotably ? 'Changed notably; ' : ''}baseline noise ${row.noiseBytesPerCycle ?? 'unavailable'} bytes/cycle; noisy, informational |`);
   if (report.bundleSize) lines.push(`| production UI | emitted JS/CSS bytes | ${report.bundleSize.baseline?.bytes ?? 'unavailable'} | ${report.bundleSize.candidate?.bytes ?? 'unavailable'} | ${report.bundleSize.deltaBytes ?? 'unavailable'} | ${report.bundleSize.changedNotably ? 'Changed notably; ' : ''}informational pending stability proof |`);
+  for (const row of report.bundleSize?.boot ?? []) lines.push(`| production UI | ${row.metric} | ${row.before ?? 'unavailable'} | ${row.after ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.delta ? 'Changed; ' : ''}deterministic |`);
   for (const gap of report.gaps ?? []) lines.push('', `- Unavailable: ${gap}`);
   lines.push('', 'Profiles, raw captures and all available backend/process observations are retained beside this summary; see comparison.json and its bundle paths. No informational metric requires sign-off.', '');
   return lines.join('\n');

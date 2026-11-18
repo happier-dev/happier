@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createTempFixture } from '../../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
 import * as regression from '../../../apps/stack/scripts/perf/regression.mjs';
 
@@ -88,6 +89,68 @@ test('production bundle budget measures all emitted JS/CSS once and rejects a re
   assert.equal(regression.assessBundleBudget(baseline, after).deltaBytes, Buffer.byteLength('const unused = 2;'));
   await mkdir(temp.path('empty'));
   await assert.rejects(regression.readProductionBundleSize(temp.path('empty')));
+});
+
+// A minimal Metro/Expo web export: the shapes are copied from a real v0.3 export
+// (route context getters `(d[N],d.paths)` and a dependency map with `paths`).
+const module = body => `__d((function(g,r,i,a,m,e,d){${body}}),1,[]);`;
+const route = (key, index) => `"${key}":{enumerable:!0,get:()=>r(d[1])(d[${index}],d.paths)}`;
+async function writeWebExport(root, { entryModules = 2, homeBody = 'home', precompressed = true } = {}) {
+  const js = join(root, '_expo/static/js/web');
+  await mkdir(join(root, '_expo/static/css'), { recursive: true });
+  await mkdir(js, { recursive: true });
+  await writeFile(join(root, 'index.html'), '<link href="/_expo/static/css/theme.css" rel="stylesheet">'
+    + '<script src="/_expo/static/js/web/runtime.js"></script><script src="/_expo/static/js/web/entry.js"></script>');
+  const context = `__d((function(g,r,i,a,m,e,d){m.exports={${[route('./_layout.tsx', 2), route('./(app)/_layout.tsx', 3),
+    route('./(app)/index.tsx', 4), route('./(app)/settings/index.tsx', 5)].join(',')}}}),2,{"0":0,"1":7,"2":10,"3":11,"4":12,"5":13,`
+    + '"paths":{"10":"/_expo/static/js/web/_layout-a.js","11":"/_expo/static/js/web/_layout-b.js",'
+    + '"12":"/_expo/static/js/web/index-c.js","13":"/_expo/static/js/web/settings-d.js"}});';
+  const files = {
+    '_expo/static/css/theme.css': 'body{color:red}',
+    '_expo/static/js/web/runtime.js': 'var __d;',
+    '_expo/static/js/web/entry.js': module('entry').repeat(entryModules) + context,
+    '_expo/static/js/web/_layout-a.js': module('root layout'),
+    '_expo/static/js/web/_layout-b.js': module('app layout'),
+    '_expo/static/js/web/index-c.js': module(homeBody),
+    '_expo/static/js/web/settings-d.js': module('settings is not before Home').repeat(5),
+  };
+  for (const [file, text] of Object.entries(files)) {
+    await writeFile(join(root, file), text);
+    // The precompression owner writes a sidecar only when it is smaller.
+    if (precompressed && file !== '_expo/static/js/web/runtime.js') await writeFile(join(root, `${file}.br`), 'x'.repeat(3));
+  }
+  return files;
+}
+
+test('boot weight counts the entry, its styles and the async Home route chunks, never other routes', async t => {
+  const temp = await createTempFixture(t, { prefix: 'happier-perf-boot-' });
+  const files = await writeWebExport(temp.path('base'));
+  const boot = await regression.readWebBootWeight(temp.path('base'));
+  const beforeHome = ['_expo/static/css/theme.css', '_expo/static/js/web/runtime.js', '_expo/static/js/web/entry.js',
+    '_expo/static/js/web/_layout-a.js', '_expo/static/js/web/_layout-b.js', '_expo/static/js/web/index-c.js'];
+  assert.deepEqual(boot.files.map(row => row.file), beforeHome);
+  // Two entry modules + the route context + one module per Home route chunk.
+  assert.equal(boot.modules, 6);
+  assert.equal(boot.bytes, beforeHome.reduce((sum, file) => sum + Buffer.byteLength(files[file]), 0));
+  // Served bytes: the shipped brotli sidecar, or the raw file when no sidecar was worth writing.
+  assert.equal(boot.brotliBytes, 5 * 3 + Buffer.byteLength(files['_expo/static/js/web/runtime.js']));
+
+  await writeWebExport(temp.path('candidate'), { entryModules: 3, homeBody: 'a heavier home route' });
+  const candidate = await regression.readWebBootWeight(temp.path('candidate'));
+  const size = regression.assessBundleBudget({ bytes: 1, boot }, { bytes: 1, boot: candidate });
+  assert.equal(size.status, 'FAIL');
+  assert.deepEqual(size.boot.map(row => [row.metric, row.delta]), [
+    ['modules before Home', 1],
+    ['JS/CSS bytes before Home', candidate.bytes - boot.bytes],
+    ['brotli transfer bytes before Home', 0],
+  ]);
+  assert.match(regression.renderPerfComparison({ status: size.status, bundleSize: size }), /modules before Home \| 6 \| 7 \| 1 /);
+
+  await writeWebExport(temp.path('plain'), { precompressed: false });
+  assert.equal((await regression.readWebBootWeight(temp.path('plain'))).brotliBytes, null,
+    'an export the precompression owner never ran on has no served-bytes figure');
+  await writeFile(temp.path('plain/_expo/static/js/web/entry.js'), module('no router'));
+  await assert.rejects(regression.readWebBootWeight(temp.path('plain')), /Home route/);
 });
 
 test('comparison summary retains backend CPU, event-loop and long-task observations as noisy deltas', () => {
