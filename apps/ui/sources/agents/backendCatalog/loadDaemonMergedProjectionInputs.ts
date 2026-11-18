@@ -17,6 +17,7 @@ import {
     pluginUiProjectionAdmissionTargetKey,
     savePluginUiProjectionAdmissionSnapshot,
 } from '@/sync/domains/plugins/ui/projectionWarmCache';
+import { openDaemonProjectionSectionStore } from '@/sync/ops/machineProjectionSectionStore';
 
 import {
     publishDaemonMergedProjectionInputs,
@@ -601,7 +602,8 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             : held?.deferredProjection && heldInputs ? { deferredProjection: held.deferredProjection,
                 reuseManifest: params.reuseFreshReady === true && matchesRequest(held) && held.kind === 'ready'
                     && !daemonProjectionHasSections(held, sections) } : {}),
-            ...(sectionPool ? { sectionCache: sectionPool } : {}),
+            ...(sectionPool && routedAccount ? { sectionCache: sectionPool,
+                sectionStore: openDaemonProjectionSectionStore(routedAccount.scope, pluginUiProjectionAdmissionTargetKey(projectionScope)) } : {}),
         });
         if (requestAbort.signal.aborted) return null;
         if (routedAccount ? !routedAccount.currentness.isCurrent() : issuedDepartures !== readHomeAccountDepartures(params.serverId)) return null;

@@ -73,6 +73,38 @@ export async function readBrowserRecord(key: string): Promise<string | undefined
     });
 }
 
+/** Reads `keys` in one read-only transaction; absent keys are omitted. */
+export async function readBrowserRecords(keys: readonly string[]): Promise<Map<string, string>> {
+    const uniqueKeys = [...new Set(keys)];
+    if (isEmbedWindowContext()) {
+        return new Map(uniqueKeys.flatMap((key) => {
+            const value = memoryRecords.get(key);
+            return value === undefined ? [] : [[key, value] as const];
+        }));
+    }
+    const database = await openBrowserRecordDatabase();
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(STORE, 'readonly');
+        const store = transaction.objectStore(STORE);
+        const records = new Map<string, string>();
+        for (const key of uniqueKeys) {
+            const request = store.get(key);
+            request.onsuccess = () => {
+                if (request.result === undefined) return;
+                if (typeof request.result !== 'string') {
+                    transaction.abort();
+                    reject(new Error('Invalid browser record; stored data was preserved.'));
+                    return;
+                }
+                records.set(key, request.result);
+            };
+        }
+        transaction.oncomplete = () => resolve(records);
+        transaction.onabort = () => reject(transaction.error ?? new Error('Browser record read aborted.'));
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
 /** The synchronous callback runs within one transaction, including concurrent tabs. */
 export async function updateBrowserRecord<T>(
     key: string,

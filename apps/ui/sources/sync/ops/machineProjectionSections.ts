@@ -6,6 +6,7 @@ import { digest as platformDigest } from '@/platform/digest';
 import { parseDaemonContributionRegistryProjectionDescribeResponse } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { RpcError } from '@/sync/runtime/rpcErrors';
 import type { DaemonProjectionHydrationRejection } from './machineContributionRegistryProjection';
+import type { DaemonProjectionSectionStore } from './machineProjectionSectionStore';
 
 export type DeferredDaemonProjection = Readonly<{
     manifest: DaemonProjectionDeferredSectionsResponse;
@@ -55,10 +56,14 @@ export async function readDeferredProjection(params: Readonly<{
     sections?: readonly string[];
     held: ReadonlyMap<string, readonly string[]>;
     shared?: DaemonProjectionSectionCache;
+    /** The Account's device copy of bodies; a reload reads only digests it lacks. */
+    store?: DaemonProjectionSectionStore | null;
     signal?: AbortSignal;
     read(digest: string, offset: number, includeDigests: readonly string[]): Promise<unknown>;
 }>) {
     const bodies = new Map<string, readonly string[]>();
+    /** Bodies this hydration read from the Machine, for the device store. */
+    const fetched = new Map<string, readonly string[]>();
     const pendingReads = params.shared?.pendingReads ?? new Map<string, Promise<readonly string[] | undefined>>();
     const json = (text: string): unknown => {
         try { return JSON.parse(text); } catch { throw new InvalidDaemonProjectionSection('section-json'); }
@@ -105,6 +110,7 @@ export async function readDeferredProjection(params: Readonly<{
             if (extras.some((extra, index) => extraDigests[index] !== extra.digest)) throw new InvalidDaemonProjectionSection('included-section');
             for (const extra of extras) {
                 bodies.set(extra.digest, extra.body);
+                fetched.set(extra.digest, extra.body);
                 params.shared?.bodies.set(extra.digest, extra.body);
             }
             // The first frame has answered the peer inclusion question. An
@@ -120,8 +126,26 @@ export async function readDeferredProjection(params: Readonly<{
         }
         if (await computeSectionDigest(value) !== digest) throw new InvalidDaemonProjectionSection('section-digest');
         bodies.set(digest, value);
+        fetched.set(digest, value);
         params.shared?.bodies.set(digest, value);
         return value;
+    };
+    const isHeld = (digest: string) => bodies.has(digest) || params.held.has(digest)
+        || Boolean(params.shared?.bodies.has(digest)) || pendingReads.has(digest);
+    // Device-stored bodies join before any Machine read is packed, so held
+    // digests are never named as peers. A body whose bytes no longer hash to
+    // its digest is ignored and read from the Machine.
+    const restore = async (digests: readonly string[]) => {
+        const store = params.store;
+        const missing = store ? digests.filter(digest => !isHeld(digest)) : [];
+        if (!store || !missing.length) return;
+        const stored = await store.read(missing);
+        await Promise.all([...stored].map(async ([digest, value]) => {
+            if (isHeld(digest) || await computeSectionDigest(value) !== digest) return;
+            bodies.set(digest, value);
+            params.shared?.bodies.set(digest, value);
+        }));
+        params.signal?.throwIfAborted();
     };
     const body = async (digest: string, includeDigests: readonly string[] = [], frame = false): Promise<readonly string[]> => {
         const held = () => bodies.get(digest) ?? params.shared?.bodies.get(digest) ?? params.held.get(digest);
@@ -192,6 +216,8 @@ export async function readDeferredProjection(params: Readonly<{
     }
     const indexSections = [...pluginsBySection.keys()];
     const indexDigests = indexSections.map(section => params.manifest.sections[section]!);
+    // Without a device store hydration keeps its synchronous claim order.
+    if (params.store) await restore(indexDigests);
     const frames = new Map(await Promise.all(indexSections.map(async section => {
         const digest = params.manifest.sections[section]!;
         const index = await body(digest, indexDigests.filter(peer => peer !== digest), true);
@@ -213,6 +239,7 @@ export async function readDeferredProjection(params: Readonly<{
         const plugin = readDaemonProjectionSectionPartPlugin(frame, part);
         return !plugins || part.plugin === undefined || (plugin !== undefined && plugins.has(plugin)) ? [part.digest] : [];
     })))];
+    if (params.store) await restore(digests);
     await Promise.all(digests.map(digest => body(digest,
         digests.filter(peer => peer !== digest && !bodies.has(peer) && !params.held.has(peer)))));
     for (const [section, framed] of frames) {
@@ -246,5 +273,9 @@ export async function readDeferredProjection(params: Readonly<{
     }
     const parsed = parseDaemonContributionRegistryProjectionDescribeResponse(response);
     if (!parsed || parsed.projectionDigest !== params.manifest.projectionDigest) throw new InvalidDaemonProjectionSection('projection-admission');
+    // Only an admitted answer's bodies are stored; nothing new, nothing written.
+    if (params.store && fetched.size) {
+        void params.store.retain({ projectionDigest: params.manifest.projectionDigest, used: [...bodies.keys()], fetched });
+    }
     return { ...parsed, sectionBodies: bodies, deferredProjection: { manifest: params.manifest, loadedSections } };
 }

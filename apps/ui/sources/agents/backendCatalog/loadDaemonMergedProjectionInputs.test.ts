@@ -266,6 +266,80 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(parse).toHaveBeenCalledTimes(1);
     });
 
+    it('reloads the Account\'s unchanged catalogue sections from the device and forgets them on Account switch and sign-out', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const { forgetPluginAccountAvailabilityArtifacts } = await import('@/sync/domains/plugins/availability/projection');
+        // The browser's IndexedDB is the device boundary; this page has one.
+        const { IDBFactory } = await import('fake-indexeddb');
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+        const accountA = createAccountLifetime('account-a');
+        const accountB = createAccountLifetime('account-b');
+        onTestFinished(() => { accountA.retire(); accountB.retire(); });
+        storage.getState().applyMachines([createMachineFixture({ id: projectionScope.machineId })],
+            true, { sourceServerId: projectionScope.serverId });
+        // Enough unchanged plugin Actions to span several section frames.
+        const plugins = Array.from({ length: 6 }, (_, index) => `qa.catalogue-${index}`);
+        const snapshot = (generation: number, codexTitle: string) => buildDeferredDaemonProjectionSections(
+            DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                projectionDigest: String(generation).repeat(64), projection: { ...daemonProjection(generation),
+                    installedPackagesById: Object.fromEntries(plugins.map(id => [id, { id, displayName: id,
+                        enabled: true, source: { kind: 'local', locator: `/plugins/${id}` } }])),
+                    actionsById: Object.fromEntries(plugins.flatMap(pluginId => Array.from({ length: 4 }, (_, index) => {
+                        const id = `action-${index}`;
+                        return [`${pluginId}/${id}`, { id, pluginId, occurrenceId: `${pluginId}:1`, title: id,
+                            description: 'Action documentation '.repeat(512), scopes: ['global'], surfaces: ['ui'],
+                            placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true }];
+                    }))),
+                    agentsById: { codex: { id: 'codex', title: codexTitle }, claude: { id: 'claude', title: 'Claude' } },
+                } }));
+        let current = snapshot(1, 'Codex 1');
+        const bodyReads: string[] = [];
+        let manifests = 0;
+        network.setRpcAckResponder(async request => {
+            const section = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            if (section) bodyReads.push(section.digest); else manifests += 1;
+            return { ok: true, result: section ? current.read(section.digest, section.offset, section.includeDigests) : current.manifest };
+        });
+        const reload = async (lifetime: ActiveServerAccountScopeLifetime) => {
+            // A page reload drops every in-memory answer and section pool.
+            clearDaemonMergedProjectionCacheForTests();
+            bodyReads.length = 0;
+            manifests = 0;
+            return await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: lifetime, sections: 'complete' });
+        };
+        expect(await reload(accountA.lifetime)).toMatchObject({ kind: 'ready' });
+        const coldReads = bodyReads.length;
+        const coldDigests = new Set(bodyReads);
+        expect(coldReads).toBeGreaterThan(0);
+
+        // Unchanged catalogue: the manifest only.
+        expect(await reload(accountA.lifetime)).toMatchObject({ kind: 'ready',
+            inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex 1' } } } } });
+        expect({ manifests, bodyReads: bodyReads.length }).toEqual({ manifests: 1, bodyReads: 0 });
+
+        // One changed section: only the reads its new digests need.
+        current = snapshot(2, 'Codex 2');
+        expect(await reload(accountA.lifetime)).toMatchObject({ kind: 'ready',
+            inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex 2' } } } } });
+        expect(bodyReads.length).toBeGreaterThan(0);
+        expect(bodyReads.length).toBeLessThan(coldReads);
+        expect(bodyReads.filter(digest => coldDigests.has(digest))).toEqual([]);
+
+        // Another Account on this Home reads nothing the first one stored, and replaces it.
+        await network.setAccount('https://server-1', 'account-b');
+        expect(await reload(accountB.lifetime)).toMatchObject({ kind: 'ready' });
+        expect(bodyReads.length).toBe(coldReads);
+        await network.setAccount('https://server-1', 'account-a');
+        expect(await reload(accountA.lifetime)).toMatchObject({ kind: 'ready' });
+        expect(bodyReads.length).toBe(coldReads);
+
+        // Signing out forgets the Account's stored sections.
+        forgetPluginAccountAvailabilityArtifacts(accountA.lifetime.scope);
+        expect(await reload(accountA.lifetime)).toMatchObject({ kind: 'ready' });
+        expect(bodyReads.length).toBe(coldReads);
+    });
+
     it('publishes retained plugin Network Join choices through the passive section reader without unrelated catalog renders', async () => {
         const { act } = await import('react-test-renderer');
         const { renderHook } = await import('@/dev/testkit');

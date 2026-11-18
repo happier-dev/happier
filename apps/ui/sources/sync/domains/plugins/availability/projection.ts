@@ -19,6 +19,7 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import {
     forgetPluginUiProjectionAdmissionSnapshots,
 } from '@/sync/domains/plugins/ui/projectionWarmCache';
+import { forgetDaemonProjectionSectionStore } from '@/sync/ops/machineProjectionSectionStore';
 import type { PluginAccountAvailabilityInitialFailure } from './initialReadiness';
 
 import {
@@ -147,6 +148,7 @@ export function canMergePluginAccountAvailabilityRows(scope: ServerAccountScope)
 export function forgetPluginAccountAvailabilityArtifacts(scope: ServerAccountScope): void {
     clearPluginAccountAvailabilityProjection();
     forgetPluginUiProjectionAdmissionSnapshots(scope);
+    void forgetDaemonProjectionSectionStore(scope);
     // The Artifact custody owner fences the Account synchronously and owns the physical
     // deletion, its retry, and its quarantine. This adds no second cleanup
     // owner, timer or worker.

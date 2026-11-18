@@ -20,6 +20,10 @@ export function createBrowserRecordStorageModuleMock(): BrowserRecordStorageModu
         // This fixture substitutes record transactions; callers needing raw IndexedDB must install that OS boundary.
         openBrowserRecordDatabase: async () => { throw new Error('Raw IndexedDB is not configured by the browser record fixture'); },
         readBrowserRecord: async (key) => records.get(key),
+        readBrowserRecords: async (keys) => new Map(keys.flatMap((key) => {
+            const value = records.get(key);
+            return value === undefined ? [] : [[key, value] as const];
+        })),
         updateBrowserRecord,
         updateBrowserRecords,
         writeBrowserRecord: (key, value) => updateBrowserRecord(key, () => ({ value, result: undefined })),

@@ -51,6 +51,7 @@ import {
 import { buildProjectionDescribeRequest, readProjectionClientContext, type ProjectionDescribeSelection } from './machineProjectionRequest';
 import { InvalidDaemonProjectionSection, packSectionReadIncludeDigests, readDeferredProjection, type DeferredDaemonProjection, type DaemonProjectionSectionCache } from './machineProjectionSections';
 export type { DeferredDaemonProjection, DaemonProjectionSectionCache } from './machineProjectionSections';
+import type { DaemonProjectionSectionStore } from './machineProjectionSectionStore';
 import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -340,6 +341,8 @@ export async function machineContributionRegistryProjectionDescribe(
         /** Home/Account/locale-owned byte inventory supplied by the canonical loader. */
         sectionBodies?: ReadonlyMap<string, readonly string[]>;
         sectionCache?: DaemonProjectionSectionCache;
+        /** The Account's device copy of section bodies, supplied with its section cache. */
+        sectionStore?: DaemonProjectionSectionStore | null;
         sections?: readonly string[];
         deferredProjection?: DeferredDaemonProjection;
         /** Current manifest, fresh authority already established; hydrate new demand only. */
@@ -388,6 +391,7 @@ export async function machineContributionRegistryProjectionDescribe(
                         sections: opts?.sections,
                         held: opts?.sectionBodies ?? new Map(),
                         shared: opts?.sectionCache,
+                        store: opts?.sectionStore,
                         signal: abort.signal,
                         read: (digest, offset, candidates) => {
                             const request = (includeDigests: readonly string[]) => ({ ...payload,
