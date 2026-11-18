@@ -1209,6 +1209,32 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('admits only Home Session defaults for a signed no-Project terminal spawn', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const terminal = await auth.createToken(fixture.account.id, undefined, {
+            kind: 'terminal', authority: 'account_automation',
+        });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, homeGovernanceRoutes);
+        try {
+            const actionId = 'session.spawn_new';
+            const input = { executionTarget: { serverId: await getOrCreateServerIdentityId(), machineId: fixture.machine.id },
+                directory: { kind: 'path', path: '/repo' } };
+            const path = '/v1/home/governance/get';
+            const effectActionId = 'home.governance.get';
+            const root = await mint(app, fixture, actionId, { ...fixture.envelope, input }, terminal);
+            expect(root.binding).toMatchObject({ authentication: { kind: 'terminal' } });
+            expect(root.binding.projectSessionDefaultsAdmission).toBeUndefined();
+            const read = (authorizationToken: string, body: unknown) => app.inject({ method: 'POST', url: path, payload: JSON.stringify(body),
+                headers: { 'content-type': 'application/json', ...machineHeaders({ authorizationToken, effectActionId,
+                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) } });
+            const narrowed = await read(root.token, { projection: 'session_defaults' });
+            expect(narrowed.statusCode, narrowed.body).toBe(200);
+            expect(narrowed.json()).toHaveProperty('homeDefaults');
+            const admin = await read(root.token, {});
+            expect(admin.statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
     it('preserves terminal automation authority through admitted create-copy verification and HTTP', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
