@@ -26,6 +26,14 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createCommittedContributedActionInvoker } from './createCommittedContributedActionDeps';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createCliManagedAccountNativeInvocationForLaunch } from '@/machines/managed/accountNative';
+import { createPluginAccountBundledSelectionV1, resolvePluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
+import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 function executeContributedAction(request: Parameters<typeof dispatchContributedAction>[0]) {
     const localId = String(request.actionId).split('/').at(-1)!;
@@ -33,6 +41,70 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
+    it.each([
+        { signed: false, role: 'preparationDestroy', allowed: true },
+        { signed: true, role: 'preparationDestroy', allowed: true },
+        { signed: true, role: 'preparationBuild', allowed: false },
+    ])('enforces retained-image Archive admission through the original-host native adapter ($signed, $role)', async ({ signed, role, allowed }) => {
+        const authored = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
+        // The captured Lima Archive child permits CLI as well as plugin invocation.
+        const manifest = normalizePluginManifestV2({ ...authored, contributes: { ...authored.contributes,
+            actions: authored.contributes.actions.map(action => ({ ...action, surfaces: ['cli', 'plugin'] })),
+        } });
+        const f = fixture({ fixtureManifest: manifest, credentialPurposes: [],
+            actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async () => ({ kind: 'confirmed' })])) });
+        const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
+            bundled: createPluginAccountBundledSelectionV1({ packageName: '@fixture/preparation', manifest }) });
+        if (selected.kind !== 'available') throw new Error('Expected bundled preparation');
+        const provisioner = manifest.contributes.machineProvisioners[0]!;
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+            selectTarget: async () => null, resolveTarget: async () => null,
+            materializeAccount: async () => { throw new Error('Credential-free preparation'); },
+            projectTargetAccounts: async () => [], assertTargetAccountMaterializable: async () => {},
+        });
+        const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: f.runtimeRegistry,
+            source: 'ephemeral', durableRevision: -1, release: async () => {} }),
+            managedProviderOperationAuthority: createManagedProviderOperationAuthority({ purposeBindingOwner: owner }) });
+        const action = { pluginId: manifest.id, localId: provisioner.preparation!.actions.destroy };
+        let destroyed = false;
+        const executor = createActionExecutor({
+            prepareHostReviewedChildren: async request => request.actionId !== 'machines.presets.archive' ? null : {
+                children: [{ action, role: 'preparationDestroy' }],
+                executeAdmittedAction: async ({ context }) => {
+                    const destroy = createCliManagedAccountNativeInvocationForLaunch({ launch: { provider: { pluginId: manifest.id,
+                        localId: provisioner.id }, schemaVersion: 1, choices: { name: 'local' } }, credentialConfigurations: [],
+                        provisioner, selected, context, requestId: 'archive', originalMachineId: 'controller-1', executingMachineId: 'controller-1' });
+                    const result = await destroy('preparationDestroy', { artifact: { contributionRef: { pluginId: manifest.id,
+                        localId: provisioner.id }, schemaVersion: 1, value: { launch: { name: 'base' } } } });
+                    destroyed = result !== null && typeof result === 'object' && 'kind' in result && result.kind === 'confirmed';
+                    return { ok: true, result: { kind: 'refused', code: 'managed_not_found' } };
+                },
+            },
+            routeHostChildAction: async ({ input, context }) => {
+                if (!input || typeof input !== 'object' || !('input' in input)) throw new Error('Expected native envelope');
+                if (!signed) return invoke({ action, input: input.input, context });
+                const actionId = formatQualifiedPluginActionId(action);
+                return invokeHostAdmittedSignedReviewedChildV1({
+                    context: { surface: 'cli', authority: 'account_automation', actionRequestId: 'archive' },
+                    child: { actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, input.input),
+                        input: PluginJsonValueV2Schema.parse(input.input) },
+                    execute: (body, receivedContext) => invoke({ action, input: body, context: receivedContext }),
+                });
+            },
+        });
+        const archiveInput = { homeId: 'home', id: 'preset', expectedRevision: 5 };
+        const result = await executor.execute('machines.presets.archive', { homeId: 'home', id: 'preset', expectedRevision: 5 }, {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner', actionRequestId: 'archive',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+            presentUserConfirmation: { actionId: 'machines.presets.archive', inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput),
+                requestId: 'archive', accountId: 'owner', serverId: 'home' },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject(allowed ? { ok: true }
+            : { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid', effectAttempted: false });
+        expect(destroyed).toBe(allowed);
+    });
+
     it.each([true, false])('settles the original host SSH trust before a bootstrap handler opens its key (approved=%s)', async approved => {
         const order: string[] = [];
         const host = { kind: 'ssh' as const, address: '192.0.2.1', user: 'guest',
