@@ -75,6 +75,7 @@ describe('qualified usage day summaries', () => {
             const coalesced = await read(prior);
             expect(readProviderAccountUsageDayChangeV1(coalesced.changes)).toEqual({ recordId: first.recordId,
                 dayStartAtMs: nextDay, afterCursor: firstPublication, throughCursor: coalesced.nextCursor,
+                publication: { kind: 'observation', afterCursor: secondPublication },
                 history: { fromAtMs: third.fetchedAtMs, afterCursor: secondPublication } });
             expect(firstPublication).toBeGreaterThan(prior);
             expect(secondPublication).toBeGreaterThan(firstPublication);
@@ -87,7 +88,8 @@ describe('qualified usage day summaries', () => {
             expect(summaryReply.statusCode, summaryReply.body).toBe(200);
             const rewritten = await read(coalesced.nextCursor);
             expect(readProviderAccountUsageDayChangeV1(rewritten.changes)).toEqual({ recordId: first.recordId, dayStartAtMs: firstDay,
-                afterCursor: coalesced.nextCursor, throughCursor: rewritten.nextCursor });
+                afterCursor: coalesced.nextCursor, throughCursor: rewritten.nextCursor,
+                publication: { kind: 'summary', afterCursor: coalesced.nextCursor } });
         });
     });
 

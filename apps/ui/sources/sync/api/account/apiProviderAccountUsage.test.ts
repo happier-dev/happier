@@ -68,6 +68,113 @@ async function loadApi(options: Readonly<{ daySummaries?: boolean }> = {}) {
 }
 
 describe('apiProviderAccountUsage', () => {
+    it.each(['plain', 'e2ee'] as const)('conserves %s daily facts across a failed summary write and an independent rewrite', async accountMode => {
+        const { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, PROVIDER_ACCOUNT_USAGE_DAY_MS: day } =
+            await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const randomBytes = (length: number) => new Uint8Array(length).fill(9);
+        const at = (fetchedAtMs: number, used: number) => ProviderAccountUsageSnapshotV1Schema.parse({
+            ...makeSnapshot(), fetchedAtMs, observedAtMs: fetchedAtMs, staleAfterMs: 10_000,
+            meters: [{ meterId: 'weekly', label: 'Weekly', used, limit: 100, utilizationPct: used, unit: 'requests',
+                resetsAt: day + 7_000, windowDurationMs: 10_000, status: 'ok', details: {} }],
+        });
+        const first = at(day - 1, 30);
+        const second = at(day + 1, 31);
+        const third = at(day + 2, 32);
+        const recordId = first.recordId;
+        const previous = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: [first] });
+        let stored = [previous];
+        let accepted = [first];
+        let current = first;
+        let price: import('@happier-dev/protocol/connect/accountSubscription').ProviderAccountSubscriptionMonthlyPriceV1 | undefined =
+            { amount: 20, currency: 'USD', enteredAtMs: day - 1 };
+        let sourceReads = 0;
+        let summaryReads = 0;
+        const content = (snapshot: ProviderAccountUsageSnapshotV1) => {
+            if (accountMode === 'plain') return { t: 'plain', v: snapshot };
+            const sealed = sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes });
+            return { t: 'encrypted', c: sealed.ciphertext, subscription: sealed.subscription, recoveryCreditDetails: sealed.recoveryCreditDetails };
+        };
+        const record = (snapshot: ProviderAccountUsageSnapshotV1) => ({ content: content(snapshot),
+            metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [source] });
+        const request = async (raw: string) => {
+            const url = new URL(raw, 'https://test.invalid');
+            if (url.pathname.endsWith('/sources/resolve')) {
+                sourceReads++;
+                return Response.json({ source, recordId, providerAccountId: current.recordKey.accountSubjectId,
+                    fetchedAt: current.fetchedAtMs, staleAfterMs: current.staleAfterMs });
+            }
+            if (url.pathname.endsWith('/record')) return Response.json(record(current));
+            const query = JSON.parse(url.searchParams.get('query')!);
+            if (url.pathname.endsWith('/day-summaries')) {
+                summaryReads++;
+                const includes = (dayStartAtMs: number) => !query.range || query.range.startAtMs <= dayStartAtMs && dayStartAtMs < query.range.endAtMs;
+                const coverage = (dayStartAtMs: number, fetchedAtMs: number) => ({
+                    observationCount: accepted.filter(snapshot => dayStartAtMs <= snapshot.fetchedAtMs && snapshot.fetchedAtMs <= fetchedAtMs).length,
+                    frontier: { id: String(fetchedAtMs), observedAtMs: fetchedAtMs },
+                });
+                const pending = includes(day) && current.fetchedAtMs >= day && (stored.at(-1)?.lastSnapshot.fetchedAtMs ?? 0) < current.fetchedAtMs;
+                return Response.json({ summaries: stored.filter(summary => includes(summary.dayStartAtMs)).map(summary => ({
+                    dayStartAtMs: summary.dayStartAtMs,
+                    payload: { v: 1, coverage: coverage(summary.dayStartAtMs, summary.lastSnapshot.fetchedAtMs),
+                        content: accountMode === 'plain' ? { t: 'plain', v: summary }
+                            : sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes }) },
+                })), missingDays: pending ? [{ dayStartAtMs: day, coverage: coverage(day, current.fetchedAtMs) }] : [] });
+            }
+            return Response.json({ entries: accepted.filter(snapshot => query.history.range.startAtMs <= snapshot.fetchedAtMs
+                && snapshot.fetchedAtMs < query.history.range.endAtMs).map(snapshot => ({ id: String(snapshot.fetchedAtMs),
+                observedAtMs: snapshot.fetchedAtMs, record: record(snapshot) })), nextCursor: null });
+        };
+        const { getProviderAccountUsageQuota } = await loadApi({ daySummaries: true });
+        const projectionDocuments: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
+        const read = (dayChange?: import('@happier-dev/protocol/changes/providerAccountUsage').ProviderAccountUsageDayChangeV1) =>
+            getProviderAccountUsageQuota({ token: 'plain-token' }, { source,
+                projection: { range: { startAtMs: 0, endAtMs: day * 2 }, resolution: 'accepted_observations' } }, {
+                accountMode, material, request, projectionDocuments, nowMs: current.fetchedAtMs,
+                includePendingWork: false, historyView: 'daily', changesCursor: 10, dayChange,
+                readEnteredMonthlyPrice: async () => price,
+            });
+        await read();
+        const update = { recordId, dayStartAtMs: day, afterCursor: 10 };
+        // The daemon accepted the new day, but the summary write did not commit.
+        accepted.push(second);
+        current = second;
+        const raw = await read({ ...update, throughCursor: 12, history: { fromAtMs: second.fetchedAtMs, afterCursor: 10 },
+            publication: { kind: 'observation', afterCursor: 10 } });
+        expect(raw.current?.meters[0]?.used).toBe(31);
+        expect(raw.current?.subscription?.enteredMonthlyPrice).toEqual(price);
+        expect(raw.pageFacts?.historyStatus).toBe('complete');
+        expect(raw.pageFacts?.dayQuotaHistory?.at(-1)?.windows[0]?.peakUsed).toBe(31);
+        expect({ sourceReads, summaryReads }).toEqual({ sourceReads: 2, summaryReads: 1 });
+
+        // An independent same-coverage repair can change an otherwise retained peak.
+        const rewritten = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [second] });
+        stored = [previous, { ...rewritten, windows: rewritten.windows.map(window => ({ ...window, peakUsed: 75 })) }];
+        price = { amount: 50, currency: 'USD', enteredAtMs: day + 1 };
+        const repair = await read({ ...update, throughCursor: 14, history: { fromAtMs: second.fetchedAtMs, afterCursor: 10 },
+            publication: { kind: 'summary', afterCursor: 12 } });
+        expect(repair.current?.meters[0]?.used).toBe(31);
+        expect(repair.current?.subscription?.enteredMonthlyPrice).toEqual(price);
+        expect(repair.pageFacts?.dayQuotaHistory?.at(-1)?.windows[0]?.peakUsed).toBe(75);
+        expect({ sourceReads, summaryReads }).toEqual({ sourceReads: 2, summaryReads: 2 });
+
+        price = undefined;
+        const cleared = await read({ ...update, throughCursor: 16, publication: { kind: 'summary', afterCursor: 14 } });
+        expect(cleared.current?.subscription).toBeUndefined();
+        expect({ sourceReads, summaryReads }).toEqual({ sourceReads: 2, summaryReads: 3 });
+
+        // The reverse coalesced order includes an unconsumed rewrite, then a raw observation.
+        accepted.push(third);
+        current = third;
+        stored = [previous, { ...rewritten, windows: rewritten.windows.map(window => ({ ...window, peakUsed: 90 })) }];
+        const coalesced = await read({ ...update, throughCursor: 20, history: { fromAtMs: third.fetchedAtMs, afterCursor: 18 },
+            publication: { kind: 'observation', afterCursor: 18 } });
+        expect(coalesced.current?.meters[0]?.used).toBe(32);
+        expect(coalesced.pageFacts?.historyStatus).toBe('partial');
+        expect(coalesced.pageFacts?.dayQuotaHistory?.at(-1)?.windows[0]?.peakUsed).toBe(90);
+        expect({ sourceReads, summaryReads }).toEqual({ sourceReads: 3, summaryReads: 4 });
+    });
     it.each((['plain', 'e2ee'] as const).flatMap(accountMode => (['history', 'projection'] as const).map(readKind => ({ accountMode, readKind }))))(
         'opens retained $accountMode quota days through $readKind', async ({ accountMode, readKind }) => {
         const { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');

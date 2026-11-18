@@ -23,6 +23,7 @@ export function publishUsageRecordChange(tx: Tx, input: Readonly<{
             const previousCursor = Math.max(0, ...previous.map(row => row.cursor));
             changes = [...buildProviderAccountUsageMaterialChangesV1(recordId, {
                 dayStartAtMs, afterCursor: sameDay?.afterCursor ?? previousCursor,
+                publication: { kind: historyFromAtMs === undefined ? 'summary' : 'observation', afterCursor: previousCursor },
                 history: historyFromAtMs === undefined ? sameDay?.history
                     : { fromAtMs: historyFromAtMs, afterCursor: previousCursor },
             })];

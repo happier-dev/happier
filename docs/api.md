@@ -1520,8 +1520,12 @@ count only visible rows toward the page limit. A short or empty legacy page
 advances through the captured Account cursor. A paired hint can certify one
 changed UTC day for readers that already admitted history through the hint's
 starting cursor. If it also identifies a changed accepted-history suffix, its
-lower bound uses the server's stored observation timestamp. Missing hints or
-insufficiently current readers recover from the ordinary full record read.
+lower bound uses the server's stored observation timestamp. An optional
+`providerAccountUsageDayPublication` identifies the latest observation or
+summary write and the preceding publication cursor. A reader with admitted
+facts through that cursor can retain the other facet. A reader that missed
+multiple writes still opens both facets. Missing day hints or insufficiently
+current readers recover from the ordinary full record read.
 
 ## Endpoint catalog
 ### Automation definitions (0.3 development)

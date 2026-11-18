@@ -28,6 +28,10 @@ const DayScopeSchema = lazyZodSchema(() => z.object({
     fromAtMs: z.number().check(z.int(), z.nonnegative()),
     afterCursor: z.number().check(z.int(), z.nonnegative()),
   })),
+  providerAccountUsageDayPublication: z.optional(z.strictObject({
+    kind: z.enum(['observation', 'summary']),
+    afterCursor: z.number().check(z.int(), z.nonnegative()),
+  })),
 }));
 
 export type ProviderAccountUsageDayChangeV1 = Readonly<{
@@ -36,17 +40,19 @@ export type ProviderAccountUsageDayChangeV1 = Readonly<{
   afterCursor: number;
   throughCursor: number;
   history?: Readonly<{ fromAtMs: number; afterCursor: number }>;
+  publication?: Readonly<{ kind: 'observation' | 'summary'; afterCursor: number }>;
 }>;
 
 /** Publish both rows in the same transaction: old readers retain their existing key. */
 export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
-  day?: Pick<ProviderAccountUsageDayChangeV1, 'dayStartAtMs' | 'afterCursor' | 'history'>) {
+  day?: Pick<ProviderAccountUsageDayChangeV1, 'dayStartAtMs' | 'afterCursor' | 'history' | 'publication'>) {
   const id = ProviderAccountUsageRecordIdSchema.parse(recordId);
   return [
     { kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
       hint: { providerAccountUsageRecordId: id, ...(day ? {
         providerAccountUsageChangedDayStartAtMs: day.dayStartAtMs, providerAccountUsageChangedDayAfterCursor: day.afterCursor,
         ...(day.history ? { providerAccountUsageHistoryChange: day.history } : {}),
+        ...(day.publication ? { providerAccountUsageDayPublication: day.publication } : {}),
       } : {}) } },
     { kind: 'account', entityId: `${RECORD_PREFIX}${id}` },
   ] as const;
@@ -85,11 +91,13 @@ export function readProviderAccountUsageDayChangeV1(changes: readonly UsageChang
   const parsed = DayScopeSchema.safeParse(global.hint);
   if (!parsed.success) return undefined;
   const { providerAccountUsageChangedDayStartAtMs: dayStartAtMs, providerAccountUsageChangedDayAfterCursor: afterCursor,
-    providerAccountUsageHistoryChange: history } = parsed.data;
+    providerAccountUsageHistoryChange: history, providerAccountUsageDayPublication: publication } = parsed.data;
   if (afterCursor >= global.cursor || history && (history.afterCursor < afterCursor || history.afterCursor >= global.cursor
     || history.fromAtMs < dayStartAtMs || history.fromAtMs >= dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS)) return undefined;
   return { recordId: readProviderAccountUsageChangeRecordIdV1(exact.entityId)!, dayStartAtMs, afterCursor,
-    throughCursor: exact.cursor, ...(history ? { history } : {}) };
+    throughCursor: exact.cursor, ...(history ? { history } : {}),
+    ...(publication && publication.afterCursor >= afterCursor && publication.afterCursor < global.cursor
+      ? { publication } : {}) };
 }
 
 /** Undefined is unknown/full. A split page or a predecessor key cannot prove a narrow scope. */

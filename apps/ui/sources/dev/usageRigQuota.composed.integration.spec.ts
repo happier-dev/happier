@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'v
 import { pipeline, Readable, Transform, type Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { Fastify } from '../../../server/sources/app/api/types';
-import { setImmediate as nextTask } from 'node:timers/promises';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
@@ -216,6 +215,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
     const metadataTraffic: { path: string; bytes: number }[] = [];
     const changesPages: Array<{ after: number; count: number; full: boolean | undefined; recordIds?: readonly string[] }> = [];
     let heldChangesRead: Promise<void> | undefined;
+    let onChangesRequest: (() => void) | undefined;
+    let beforeSummaryWrite: (() => Promise<void>) | undefined;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-rig-quota-', initAuth: true, initEncrypt: true,
@@ -225,7 +226,13 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const began = new WeakMap<object, number>();
         app.addHook('onRequest', async request => {
             began.set(request, performance.now());
-            if (request.url.startsWith('/v2/changes?')) await heldChangesRead;
+            if (request.url.startsWith('/v2/changes?')) {
+                onChangesRequest?.();
+                await heldChangesRead;
+            }
+            if (request.method === 'PUT' && request.url === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+                await beforeSummaryWrite?.();
+            }
         });
         app.addHook('onSend', (request, reply, payload, done) => {
             const url = new URL(request.url, 'http://usage-rig.test');
@@ -510,7 +517,38 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     const current = quotaSnapshot(changed.provider, now, lastReset, 30 + tick);
                     const persist = () => runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token,
                         write: { ...changed.write, snapshot: current, fetchedAt: now }, nowMs: now }));
-                    const result = tick === WAKE_COUNT ? await (async () => {
+                    const seen = () => {
+                        const snapshot = plansEntry!.getSnapshot();
+                        if (snapshot.pending !== 'idle' || !snapshot.value) return undefined;
+                        const record = decodeUsageQueryResource(snapshot.value).results.find(row => row.key === getUsageQueryKey(projections))
+                            ?.quota?.find(row => row.current?.recordId === changed.write.recordId);
+                        return record?.pageFacts?.historyStatus === 'complete' ? {
+                            current: record.current?.meters[0]?.used,
+                            day: record.pageFacts.dayQuotaHistory?.find(day => day.dayStartAtMs === today)?.lastSnapshot.meters[0]?.used,
+                        } : undefined;
+                    };
+                    const expected = { current: 30 + tick, day: 30 + tick };
+                    const result = tick === 1 ? await (async () => {
+                        const allowSummaryWrite = createDeferred<void>();
+                        let summaryStarted = false;
+                        beforeSummaryWrite = () => {
+                            summaryStarted = true;
+                            return allowSummaryWrite.promise;
+                        };
+                        const running = persist();
+                        let completed: Awaited<typeof running>;
+                        try {
+                            await expect.poll(() => summaryStarted, { timeout: 20_000 }).toBe(true);
+                            await expect.poll(seen, { timeout: 60_000 }).toEqual(expected);
+                            expect(traffic.slice(begin).filter(row => row.method === 'GET' && row.kind === 'summary'
+                                && row.purpose !== 'connected-accounts:usage-persistence')).toEqual([]);
+                        } finally {
+                            beforeSummaryWrite = undefined;
+                            allowSummaryWrite.resolve();
+                            completed = await running;
+                        }
+                        return completed;
+                    })() : tick === WAKE_COUNT ? await (async () => {
                         // Let actual publications coalesce before the mounted
                         // client's socket-triggered HTTP read reaches the feed.
                         const allowChanges = createDeferred<void>();
@@ -530,14 +568,12 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     const through = await cursor();
                     await expect.poll(() => quotaChanges.slice(changesBeforeWake).some(change => change.through === through),
                         { timeout: 20_000 }).toBe(true);
-                    const seen = () => {
-                        const snapshot = plansEntry!.getSnapshot();
-                        if (snapshot.pending !== 'idle' || !snapshot.value) return undefined;
-                        const record = decodeUsageQueryResource(snapshot.value).results.find(row => row.key === getUsageQueryKey(projections))
-                            ?.quota?.find(row => row.current?.recordId === changed.write.recordId);
-                        return record?.pageFacts?.historyStatus === 'complete' ? record.current?.meters[0]?.used : undefined;
-                    };
-                    await expect.poll(seen, { timeout: 60_000 }).toBe(30 + tick);
+                    await expect.poll(seen, { timeout: 60_000 }).toEqual(expected);
+                    await expect.poll(() => ({
+                        pending: plansEntry!.isAllowanceReadPending(),
+                        currentDayBodies: traffic.slice(begin).filter(row => row.method === 'GET' && row.kind === 'summary'
+                            && row.purpose !== 'connected-accounts:usage-persistence' && row.days?.some(day => day.dayStartAtMs === today)).length,
+                    }), { timeout: 20_000 }).toEqual({ pending: false, currentDayBodies: 1 });
                     const clientHistoryReads = traffic.slice(begin).filter(row => row.method === 'GET' && row.status === 200
                         && row.purpose !== 'connected-accounts:usage-persistence' && row.kind !== 'other');
                     const siblingReads = clientHistoryReads.filter(row => row.recordId !== changed.write.recordId);
@@ -548,12 +584,15 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                         ({ recordId, kind, bytes, range, afterAtMs }));
                     console.info('quota-rig settled history', JSON.stringify({ tick, reads: reads(settledReads) }));
                     expect({ siblings: reads(siblingReads), settled: reads(settledReads) }).toEqual({ siblings: [], settled: [] });
+                    expect({
+                        currentDayBodies: clientHistoryReads.filter(row => row.kind === 'summary' && row.days?.some(day => day.dayStartAtMs === today)).length,
+                        sourceResolutions: traffic.slice(begin).filter(row => row.method === 'GET' && row.path.endsWith('/sources/resolve')).length,
+                    }).toEqual({ currentDayBodies: 1, sourceResolutions: 1 });
                     if (tick === WAKE_COUNT) {
                         expect(changesPages.slice(changePageStart)).toEqual(expect.arrayContaining([
                             { after: before, count: pageLimit - 1, full: true, recordIds: undefined },
                             { after: before + pageLimit - 1, count: 2, full: false, recordIds: [changed.write.recordId] },
                         ]));
-                        expect(traffic.slice(begin).filter(row => row.method === 'GET' && row.path.endsWith('/sources/resolve'))).toHaveLength(1);
                     }
                 });
             }
@@ -579,10 +618,18 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 if (!plansEntry) throw new Error('Plans entry is missing');
                 const retained = plansEntry.getSnapshot().value;
                 const begin = traffic.length;
+                const changePageStart = changesPages.length;
                 const { apiSocket } = await import('../sync/api/session/apiSocket');
+                const { sync } = await import('../sync/sync');
                 await expect.poll(() => socketTransports.size).toBeGreaterThan(0);
                 const firstSocketId = apiSocket.getSocketId();
                 expect(firstSocketId).toBeTruthy();
+                const allowCatchUp = createDeferred<void>();
+                let catchUpStarted = false;
+                heldChangesRead = allowCatchUp.promise;
+                onChangesRequest = () => { catchUpStarted = true; };
+                // Observe the real socket callback's promise without starting another resume.
+                const resumed = vi.spyOn(sync, 'resumeSync');
                 let reconnectObserved = false;
                 const release = subscribeHomeAccountChange(event => {
                     if (event.source === 'connected' && event.changesCatchUp) reconnectObserved = true;
@@ -592,11 +639,24 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     await expect.poll(() => reconnectObserved, { timeout: 20_000 }).toBe(true);
                     expect(apiSocket.getSocketId()).toBeTruthy();
                     expect(apiSocket.getSocketId()).not.toBe(firstSocketId);
-                    await nextTask();
+                    await expect.poll(() => catchUpStarted, { timeout: 20_000 }).toBe(true);
+                    expect(changesPages).toHaveLength(changePageStart);
+                    const reconnectRun = resumed.mock.calls.findIndex(([reason]) => reason === 'socket-reconnect');
+                    expect(reconnectRun).toBeGreaterThanOrEqual(0);
+                    allowCatchUp.resolve();
+                    await resumed.mock.results[reconnectRun]!.value;
+                    expect(changesPages.slice(changePageStart)).toContainEqual(expect.objectContaining({ count: 0, full: false }));
+                    await expect.poll(() => plansEntry!.getSnapshot().pending).toBe('idle');
                     expect(plansEntry.getSnapshot().pending).toBe('idle');
                     expect(plansEntry.getSnapshot().value === retained).toBe(true);
                     expect(summarizeTraffic(traffic.slice(begin)).httpReads).toBe(0);
-                } finally { release(); }
+                } finally {
+                    heldChangesRead = undefined;
+                    onChangesRequest = undefined;
+                    allowCatchUp.resolve();
+                    resumed.mockRestore();
+                    release();
+                }
             });
         } finally {
             observeChanges();
