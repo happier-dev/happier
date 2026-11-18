@@ -88,13 +88,13 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
           ),
       [props.summary.kinds],
     );
-    const settled = props.summary.status === 'ready';
+    const hasAnswer = props.summary.status === 'ready' || props.summary.status === 'refreshing';
     const failedWithNothing =
       props.summary.status === 'error' && props.summary.kinds.length === 0;
     const loadingWithNothing =
-      !settled && !failedWithNothing && props.summary.kinds.length === 0;
+      !hasAnswer && !failedWithNothing && props.summary.kinds.length === 0;
     // Last-known kinds stay in place while a refresh runs, including "nothing shared yet".
-    const empty = (settled || props.summary.kinds.length > 0) && rows.length === 0;
+    const empty = (hasAnswer || props.summary.kinds.length > 0) && rows.length === 0;
 
     return (
       <ItemGroup

@@ -17,8 +17,10 @@ import { CredentialCatalogPublication } from './credentialCatalogPublication';
 import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import {
+    readServerAccountScopeOwnerLifetime,
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
+    type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     serverAccountScopedTeamKey,
@@ -157,6 +159,7 @@ export type TeamCredentialResourcesSnapshot = Readonly<{
 export type TeamSharedResourcesSummarySnapshot = Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
+    lifetime: ServerAccountScopeLifetime;
     data: readonly TeamSharedResourceSummaryRowV1[] | null;
     status: 'loading' | 'ready' | 'error';
     error: HomeDomainFailure | null;
@@ -328,18 +331,21 @@ export function getTeamSharedResourcesSummarySnapshot(
     address: TeamAddress | null | undefined,
 ): TeamSharedResourcesSummarySnapshot | null {
     if (!scope || !address) return null;
-    return sharedResourceSummaries.get(sharedResourceSummaryKey(scope, address)) ?? null;
+    const snapshot = sharedResourceSummaries.get(sharedResourceSummaryKey(scope, address));
+    return snapshot?.lifetime.isCurrent() ? snapshot : null;
 }
 
 export function applyTeamSharedResourcesSummary(
     scope: ServerAccountScope,
     address: TeamAddress,
     data: readonly TeamSharedResourceSummaryRowV1[],
+    lifetime: ServerAccountScopeLifetime,
 ): void {
     const previous = getTeamSharedResourcesSummarySnapshot(scope, address);
     sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({
         scope,
         address,
+        lifetime: readServerAccountScopeOwnerLifetime(lifetime),
         data: retainKeyedRows(previous?.data ?? null, data, teamSharedResourceSummaryRowKeyV1),
         status: 'ready',
         error: null,
@@ -351,12 +357,14 @@ export function applyTeamSharedResourcesSummaryFailure(
     scope: ServerAccountScope,
     address: TeamAddress,
     error: HomeDomainFailure,
+    lifetime: ServerAccountScopeLifetime,
 ): void {
     const previous = getTeamSharedResourcesSummarySnapshot(scope, address);
     const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(error.kind);
     sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({
         scope,
         address,
+        lifetime: readServerAccountScopeOwnerLifetime(lifetime),
         data: withdrawn ? null : previous?.data ?? null,
         status: 'error',
         error,

@@ -27,17 +27,20 @@ export function useTeamSharedResourcesSummary(input: Readonly<{
     const serverId = scope?.serverId ?? '';
     const accountId = scope?.accountId ?? '';
     const teamId = address?.teamId ?? '';
-    const { binding } = useServerCredentialAccountScopeBinding(input.enabled ? serverId : null);
-    const enabled = input.enabled && scope !== null && address !== null && serverId === address.serverId
-        && binding !== null && binding.isCurrent() && areServerAccountScopesEqual(binding.scope, scope);
-    const retained = getTeamSharedResourcesSummarySnapshot(scope, address);
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(input.enabled ? serverId : null);
+    const requested = input.enabled && scope !== null && address !== null && serverId === address.serverId;
+    const enabled = requested && binding !== null && binding.isCurrent() && areServerAccountScopesEqual(binding.scope, scope);
+    // The existing snapshot follows the credential lifetime, so the first frame
+    // can show it while this observer binds. Reads still wait for the binding.
+    const retained = requested && (enabled || resolution.kind === 'resolving')
+        ? getTeamSharedResourcesSummarySnapshot(scope, address)?.data ?? undefined : undefined;
     const page = useTeamPagedList<TeamSharedResourceSummaryRowV1>({
         key: JSON.stringify([serverId, accountId, teamId, binding?.credentialKey]), enabled, getRowKey: teamSharedResourceSummaryRowKeyV1,
-        initialRows: enabled ? retained?.data ?? undefined : undefined,
+        initialRows: enabled ? retained : undefined,
         onStateChange: next => {
-            if (!scope || !address) return;
-            if (next.status === 'ready') applyTeamSharedResourcesSummary(scope, address, next.rows);
-            else if (next.status === 'error' && next.error) applyTeamSharedResourcesSummaryFailure(scope, address, next.error);
+            if (!enabled || !scope || !address || !binding?.isCurrent()) return;
+            if (next.status === 'ready') applyTeamSharedResourcesSummary(scope, address, next.rows, binding);
+            else if (next.status === 'error' && next.error) applyTeamSharedResourcesSummaryFailure(scope, address, next.error, binding);
         },
         accountChange: { serverId, affects: event => event.teamSharedResourcesAffect !== false },
         loadPage: async (_cursor, signal) => {
@@ -47,7 +50,10 @@ export function useTeamSharedResourcesSummary(input: Readonly<{
                 : { kind: 'succeeded', value: { items: outcome.value.kinds, nextCursor: null } };
         },
     });
-    const reload = page.reload;
-    return React.useMemo(() => ({ kinds: enabled ? page.rows : NO_KINDS, status: page.status, error: page.error, reload,
-        isCurrent: enabled && page.status === 'ready' }), [page.rows, page.status, page.error, reload, enabled]);
+    const { reload } = page;
+    const kinds = enabled ? page.rows : retained ?? NO_KINDS;
+    const status = enabled ? page.status : retained === undefined ? 'loading' : 'refreshing';
+    const error = enabled ? page.error : null;
+    return React.useMemo(() => ({ kinds, status, error, reload, isCurrent: enabled && status === 'ready' }),
+        [kinds, status, error, reload, enabled]);
 }

@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -65,24 +66,70 @@ it('never retargets a Team address to another Home credential', async () => {
     expect(home.requests.some(row => row.path.includes('/shared-resources/summary'))).toBe(false);
 });
 
-it('shows the retained summary rows immediately when the Team page is reopened', async () => {
+it.each([
+    { kinds: [] },
+    { kinds: [{ kind: 'sessions', status: 'available', count: 4 }] },
+] as const)('shows the retained summary on reopening with $kinds', async ({ kinds }) => {
     const serverId = await home.addHome({ name: 'Retained Home', serverUrl: 'https://retained-summary.example.test',
         accountId: 'retained-reader', teamsEnabled: true });
     const scope = { serverId, accountId: 'retained-reader' };
     const address = { serverId, teamId: 'selected-team' };
     const request = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
-    const first = { teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 4 }] } as const;
+    const first = { teamId: address.teamId, kinds };
     const second = { teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 5 }] } as const;
     home.answer(serverId, request.path, { body: first });
     const firstScreen = await renderHook(() => useTeamSharedResourcesSummary({ scope, address, enabled: true }));
     await waitForHomeGovernance(() => expect(firstScreen.getCurrent().isCurrent).toBe(true));
     await firstScreen.unmount();
 
-    const pending = new Promise<void>(() => {});
+    let releaseResponse!: () => void;
+    const pending = new Promise<void>(resolve => { releaseResponse = resolve; });
     home.answer(serverId, request.path, { body: second, respondAfter: pending });
-    const reopened = await renderHook(() => useTeamSharedResourcesSummary({ scope, address, enabled: true }));
+    const rendered: Array<ReturnType<typeof useTeamSharedResourcesSummary>> = [];
+    const reopened = await renderHook(() => {
+        const summary = useTeamSharedResourcesSummary({ scope, address, enabled: true });
+        useLayoutEffect(() => { rendered.push(summary); });
+        return summary;
+    });
+    expect(rendered[0]).toMatchObject({ kinds: first.kinds, status: 'refreshing', isCurrent: false });
     expect(reopened.getCurrent().kinds).toEqual(first.kinds);
-    expect(reopened.getCurrent().status).toBe('loading');
+    expect(reopened.getCurrent().status).toBe('refreshing');
+    expect(reopened.getCurrent().isCurrent).toBe(false);
+    await act(async () => { releaseResponse(); });
+    await waitForHomeGovernance(() => expect(reopened.getCurrent()).toMatchObject({
+        kinds: second.kinds, status: 'ready', isCurrent: true,
+    }));
+    await reopened.unmount();
+});
+
+it('does not render the retired summary on remount after the same Account replaces its credential', async () => {
+    const accountId = 'credential-reader';
+    const serverId = await home.addHome({
+        name: 'Credential Home', serverUrl: 'https://summary-credential.example.test', accountId, teamsEnabled: true,
+    });
+    const address = { serverId, teamId: 'selected-team' };
+    const request = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
+    home.answer(serverId, request.path, {
+        body: { teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 4 }] },
+    });
+    const read = () => useTeamSharedResourcesSummary({ scope: { serverId, accountId }, address, enabled: true });
+    const first = await renderHook(read);
+    await waitForHomeGovernance(() => expect(first.getCurrent().isCurrent).toBe(true));
+    await first.unmount();
+
+    await home.switchAccount(serverId, accountId, { currentAccount: true });
+    home.answer(serverId, request.path, {
+        body: { teamId: address.teamId, kinds: [] }, respondAfter: new Promise<void>(() => {}),
+    });
+    const rendered: Array<ReturnType<typeof useTeamSharedResourcesSummary>> = [];
+    const reopened = await renderHook(() => {
+        const summary = read();
+        useLayoutEffect(() => { rendered.push(summary); });
+        return summary;
+    });
+    await waitForHomeGovernance(() => expect(home.requestsFor(request.path)).toHaveLength(2));
+    expect(rendered[0]).toMatchObject({ kinds: [], status: 'loading', isCurrent: false });
+    expect(rendered.every(frame => frame.kinds.length === 0)).toBe(true);
     await reopened.unmount();
 });
 
