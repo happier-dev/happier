@@ -1857,8 +1857,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       if (originalCliCaller && actionId === 'session.spawn_new' && !context.sessionCreationDefaults
         && hasStoredSessionCredentialProvenance(credentials)) {
         const authored = SessionSpawnNewActionInputV2Schema.safeParse(admittedInput);
-        if (authored.success && authored.data.connectedServicesAuthIntent) {
-          // The saved profile belongs to the requester. A signed Machine root
+        if (authored.success) {
+          // Defaults and saved profiles belong to the requester. A signed Machine root
           // bypasses the local executor, so use its existing preparation owner
           // before binding the exact Machine and sealing the effective input.
           const signal = combineInvocationSignals(invocationSignal, context.signal);
@@ -2196,7 +2196,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                 const requesterTarget = target;
                 const invocation = accountId ? projectExternalActionRequesterInvocationV1({
                   actionId: parsedActionId.data,
-                  context: { ...originalContext, actionCaller: { kind: 'host' }, surface: 'cli',
+                  context: { ...originalContext, sessionCreationDefaults: context.sessionCreationDefaults,
+                    actionCaller: { kind: 'host' }, surface: 'cli',
                     // Stored CLI credentials establish presence before sealing;
                     // the canonical projector retains their exact host review.
                     authority: originalContext.authority ?? resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' }) },

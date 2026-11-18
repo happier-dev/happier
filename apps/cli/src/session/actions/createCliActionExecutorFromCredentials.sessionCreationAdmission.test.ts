@@ -4,6 +4,10 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
+import nacl from 'tweetnacl';
+import { TeamSummaryV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
+import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
@@ -710,6 +714,72 @@ describe('paired terminal Action admission', () => {
             expect(await executor.execute('widgets.area.layout.select', { surface }, { surface: 'cli', authority: 'account_automation' }))
                 .toEqual(own ? { ok: true, result: { surface } }
                     : { ok: false, errorCode: 'unavailable', error: 'noClient' });
+        });
+    });
+
+    it('carries inherited Team defaults to the receiving Machine without a connected-services intent', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-inherited-team-defaults-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            const keys = nacl.sign.keyPair();
+            const machine = { id: 'remote-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                installationId: 'installed', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+                dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' }) };
+            const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+            const agentTargetKey = 'agent:happier.agent.codex/codex';
+            const managedDefaults = { team: {
+                permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' },
+                modelByAgentTargetKey: { [agentTargetKey]: { v: 2, updatedAt: 1, ref: {
+                    source: 'team_resource', teamId: 'team', resourceId: '2eda983b-875b-4028-a0d1-f800449ec1f3',
+                    expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey, modelId: 'muse-spark-1.3-contributor' } } },
+            }, groups: {} };
+            const team = TeamSummaryV1Schema.parse({ id: 'team', name: 'Team', description: null, logo: null, archivedAt: null, recovery: null,
+                policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
+                    defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null,
+                    managedDefaults, homeDefaults: null }, managedDefaultsGroupIds: [], viewerRole: 'member',
+                capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true }, admission: resolveTeamAdmissionProjectionV1(), counts: null });
+            const input = { creationKey: 'inherited-team-model', executionTarget: { serverId: 'srv_home', machineId: machine.id },
+                directory: { kind: 'managed' as const }, agentTarget, primaryTeamId: team.id };
+            // Only Home HTTP is substituted. Requester preparation, Team projection,
+            // default precedence, root admission and sealed custody remain real.
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (url.endsWith('/v1/machines')) return { status: 200, data: [machine] };
+                if (url.endsWith(`/v1/machines/${machine.id}`)) return { status: 200, data: { machine } };
+                throw new Error(`Unexpected Home GET ${url}`);
+            });
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                const path = new URL(String(request.url)).pathname;
+                if (path === '/v1/teams/get') return { status: 200, data: team };
+                if (path === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: null } };
+                if (path === '/v1/machines/managed/actions/list') return { status: 200, data: { machines: [] } };
+                throw new Error(`Unexpected Home request ${path}`);
+            });
+            let receivedDefaults: unknown;
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'root-proof', binding: {
+                    accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 4 },
+                    accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: machine.id, installationId: 'installed',
+                    actionId: 'session.spawn_new', requestId: request.envelope.requestId, target: request.envelope.target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+                const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: machine.id, installationId: 'installed',
+                    serverIdentityId: 'srv_home', installationPrivateKey: keys.secretKey, includeInvocation: true });
+                receivedDefaults = opened?.invocation?.sessionCreationDefaults?.context;
+                return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } } } };
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            expect(await executor.execute('session.spawn_new', input, { surface: 'cli', actionRequestId: 'inherited-team-model' }))
+                .toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+            expect(receivedDefaults).toMatchObject({ primaryTeamId: team.id, teamDefaults: team.policy.managedDefaults });
         });
     });
 
