@@ -686,6 +686,11 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+# Control-scope re-entry receives the remaining command operands after this
+# parser has consumed --control-stdin. Preserve the parsed bit through that
+# existing launcher owner so the remote custody channel remains controlled.
+HSTACK_EXEC_CONTROL_STDIN=$control_stdin
+export HSTACK_EXEC_CONTROL_STDIN
 if [ -n "$runtime_build_target" ]; then
   case "$runtime_build_target" in linux-x64|linux-arm64|darwin-x64|darwin-arm64|windows-x64|windows-arm64) ;; *) exit 64 ;; esac
   runtime_component_remaining=$runtime_build_components
@@ -2398,7 +2403,7 @@ else
   # writer after dispatch). Quoted into this one argument, every single quote grows
   # fivefold per nesting level, past the per-argument exec limit.
   remote_script_bytes=$(($(printf '%s' "$remote_script" | wc -c)))
-  remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 HAPPIER_REMOTE_EXEC_LIFELINE=1 $remote_command"
+  remote_command="HAPPIER_REMOTE_EXEC_SCRIPT_STDIN=1 HAPPIER_REMOTE_EXEC_SCRIPT_WAIT_SECONDS=$((payload_ssh_server_alive_interval * payload_ssh_server_alive_count_max)) HAPPIER_REMOTE_EXEC_LIFELINE=1 $remote_command"
 fi
 if [ "$control_stdin" = 1 ]; then
   remote_command="HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1 HAPPIER_RUNTIME_BUILD_WORKER_NAME=$(quote_remote "$selected_name") $remote_command"
@@ -2621,8 +2626,21 @@ fi
 if [ "$control_stdin" = 1 ]; then
   (
     exec 8>&- 9>&-
-    [ "$explicit_tty" = 1 ] || printf '%s\n%s' "$remote_script_bytes" "$remote_script" > "$custody_pipe"
-    while IFS= read -r control_line; do printf '%s\n' "$control_line" > "$custody_pipe"; done
+    if [ "$explicit_tty" != 1 ]; then
+      # Keep one FIFO writer open for the framed script and all following
+      # control lines. Closing the writer between them makes the remote
+      # lifeline reader observe EOF and cancel before control input arrives.
+      exec 7> "$custody_pipe"
+      printf '%s\n%s' "$remote_script_bytes" "$remote_script" >&7
+    fi
+    while IFS= read -r control_line; do
+      if [ "$explicit_tty" = 1 ]; then
+        printf '%s\n' "$control_line" > "$custody_pipe"
+      else
+        printf '%s\n' "$control_line" >&7
+      fi
+    done
+    [ "$explicit_tty" = 1 ] || exec 7>&-
     executor_signal_pid controller_input_eof "$$"
   ) <&5 &
   control_input_pid=$!
