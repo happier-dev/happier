@@ -340,6 +340,78 @@ export type SettingsDeclarationsActionInputById = {
             };
         } | {
             kind: 'collection_space';
+            entityKind: 'review';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: {
+                        projectSourceId?: string | undefined;
+                        subjectKind?: 'comparison' | 'pull_request' | 'repository' | undefined;
+                        sourceKind?: 'direct' | 'workflow' | undefined;
+                        state?: 'cancelled' | 'completed' | 'failed' | 'partial' | 'running' | undefined;
+                        workflowId?: string | undefined;
+                        needsDecision?: boolean | undefined;
+                        sharedWithTeamId?: string | undefined;
+                    };
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'review';
+                    membership?: undefined | {
+                        mode: 'filter_or_manual' | 'manual_only';
+                    };
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    membership?: undefined | {
+                        mode: 'filter_or_manual' | 'manual_only';
+                    };
+                    name?: string | undefined;
+                    icon?: undefined | {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter?: undefined | {
+                        projectSourceId?: string | undefined;
+                        subjectKind?: 'comparison' | 'pull_request' | 'repository' | undefined;
+                        sourceKind?: 'direct' | 'workflow' | undefined;
+                        state?: 'cancelled' | 'completed' | 'failed' | 'partial' | 'running' | undefined;
+                        workflowId?: string | undefined;
+                        needsDecision?: boolean | undefined;
+                        sharedWithTeamId?: string | undefined;
+                    };
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: null | string;
+            } | {
+                op: 'resetDefault';
+            };
+        } | {
+            kind: 'collection_space';
             entityKind: 'sessionWork';
             mutation: {
                 op: 'create';

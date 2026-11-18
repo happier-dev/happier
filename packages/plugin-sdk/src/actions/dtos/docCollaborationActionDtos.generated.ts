@@ -204,8 +204,8 @@ export type DocCollaborationActionResultById = {
             access: 'admin' | 'edit' | 'owner' | 'view';
             seq: number;
             artifactId: string;
-            ownerAccountId: string;
             header: Record<string, JsonValue>;
+            ownerAccountId: string;
             publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {
                 blobId: string;

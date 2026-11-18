@@ -17,6 +17,9 @@ export type ReviewReadsActionInputById = {
         needsDecision?: boolean | undefined;
         sharedWithTeamId?: string | undefined;
     };
+    readonly "review.get": {
+        reviewId: string;
+    };
     readonly "review.history.list": {
         reviewId: string;
         findingIdentity: string;
@@ -45,6 +48,70 @@ export type ReviewReadsActionResultById = {
             finishedAt: null | number;
         }[];
         cursor: null | string;
+    };
+    readonly "review.get": {
+        review: {
+            reviewId: string;
+            createdAt: number;
+            updatedAt: number;
+            counts: {
+                total: number;
+                needsDecision: number;
+            };
+            projectSourceId: null | string;
+            workflowId: null | string;
+            subjectKind: 'comparison' | 'pull_request' | 'repository';
+            sourceKind: 'direct' | 'workflow';
+            state: 'cancelled' | 'completed' | 'failed' | 'partial' | 'running';
+            currentRoundOrdinal: number;
+            startedAt: number;
+            finishedAt: null | number;
+        };
+        human: {
+            reviewId: string;
+            roundOrdinal: number;
+            requests: {
+                needsAccess: boolean;
+                principal: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                required: boolean;
+                id: string;
+                roundOrdinal: number;
+            }[];
+            verdicts: {
+                accountId: string;
+                roundOrdinal: number;
+                verdict: 'approve' | 'comment' | 'request_changes';
+                submittedAt: number;
+                revision: number;
+                content?: undefined | {
+                    t: 'encrypted';
+                    c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+            }[];
+            needsYou: {
+                reviewId: string;
+                roundOrdinal: number;
+                reason: 'review_needs_you';
+                needsYou: boolean;
+                requestedVerdict: boolean;
+                pendingDecisions: boolean;
+                canSubmitVerdict: boolean;
+            };
+        };
     };
     readonly "review.history.list": {
         matches: {

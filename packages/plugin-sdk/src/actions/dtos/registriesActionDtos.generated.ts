@@ -494,6 +494,8 @@ export type RegistriesActionResultById = {
                         mode?: 'dark' | 'light' | undefined;
                     }[];
                     license?: string | undefined;
+                    licenseKind?: 'custom' | undefined;
+                    licenseUrl?: string | undefined;
                     preview?: undefined | {
                         mode: 'dark' | 'light';
                         canvas: string;
@@ -675,6 +677,8 @@ export type RegistriesActionResultById = {
                         mode?: 'dark' | 'light' | undefined;
                     }[];
                     license?: string | undefined;
+                    licenseKind?: 'custom' | undefined;
+                    licenseUrl?: string | undefined;
                     preview?: undefined | {
                         mode: 'dark' | 'light';
                         canvas: string;
@@ -1248,6 +1252,8 @@ export type RegistriesActionResultById = {
                         mode?: 'dark' | 'light' | undefined;
                     }[];
                     license?: string | undefined;
+                    licenseKind?: 'custom' | undefined;
+                    licenseUrl?: string | undefined;
                     preview?: undefined | {
                         mode: 'dark' | 'light';
                         canvas: string;
@@ -1278,6 +1284,8 @@ export type RegistriesActionResultById = {
                         mode?: 'dark' | 'light' | undefined;
                     }[];
                     license?: string | undefined;
+                    licenseKind?: 'custom' | undefined;
+                    licenseUrl?: string | undefined;
                     preview?: undefined | {
                         mode: 'dark' | 'light';
                         canvas: string;

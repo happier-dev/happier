@@ -278,19 +278,11 @@ export type ProjectSourcesActionInputById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -641,6 +633,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -783,6 +776,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -924,6 +918,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1020,6 +1015,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1113,6 +1109,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1214,6 +1211,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1307,6 +1305,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1496,19 +1495,11 @@ export type ProjectSourcesActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -1649,6 +1640,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1742,6 +1734,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -1931,19 +1924,11 @@ export type ProjectSourcesActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -2084,6 +2069,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -2177,6 +2163,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {
@@ -2366,19 +2353,11 @@ export type ProjectSourcesActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -2519,6 +2498,7 @@ export type ProjectSourcesActionResultById = {
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
+            createdAt?: number | undefined;
             attachments?: ({
                 purpose: 'context';
                 entry: {

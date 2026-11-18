@@ -7,11 +7,11 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type WorkflowDiagnosticsActionInputById = {
     readonly "workflow.trigger.test": {
         trigger: null | {
+            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
-            sourceInstanceId: string;
             sourceContractVersion: number;
             filter: null | {
                 v: 1;
@@ -32,11 +32,11 @@ export type WorkflowDiagnosticsActionInputById = {
             maximumObservationAgeMs: null | number;
         };
         observation: {
+            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
-            sourceInstanceId: string;
             sourceContractVersion: number;
             occurredAt: number;
             observationReceivedAt: number;
@@ -107,19 +107,11 @@ export type WorkflowDiagnosticsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -520,6 +512,22 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 enabled: boolean;
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                filter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
+                };
             };
         }[];
     };
@@ -571,19 +579,11 @@ export type WorkflowDiagnosticsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -984,6 +984,22 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 enabled: boolean;
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                filter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
+                };
             };
             trigger?: undefined | {
                 enabled: boolean;
@@ -1013,6 +1029,22 @@ export type WorkflowDiagnosticsActionResultById = {
                     projectKey: string;
                     kind: 'project';
                 };
+                filter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
+                };
             } | {
                 enabled: boolean;
                 triggerDefinitionEnvelope: {
@@ -1037,6 +1069,22 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 subjectKind?: 'machine' | 'project' | 'session' | undefined;
                 sourceSessionId?: string | undefined;
+                filter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
+                };
                 subjectKey?: string | undefined;
             } | {
                 kind: 'action';

@@ -23,8 +23,8 @@ export type ClientFilesActionInputById = {
                 deploymentId: string;
                 ref?: string | undefined;
                 machineId?: string | undefined;
-                targetLinkId?: string | undefined;
                 installationId?: string | undefined;
+                targetLinkId?: string | undefined;
             };
         } | {
             kind: 'text';

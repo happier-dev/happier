@@ -52,19 +52,11 @@ export type WorkflowAuthoringActionInputById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                };
-                v: 2;
-                updatedAt: number;
-            } | {
-                ref: {
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
-                };
-                v: 2;
-                updatedAt: number;
-            } | {
-                ref: {
+                } | {
                     source: 'team_resource';
                     resourceId: string;
                     teamId: string;
@@ -396,19 +388,11 @@ export type WorkflowAuthoringActionInputById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                };
-                v: 2;
-                updatedAt: number;
-            } | {
-                ref: {
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
-                };
-                v: 2;
-                updatedAt: number;
-            } | {
-                ref: {
+                } | {
                     source: 'team_resource';
                     resourceId: string;
                     teamId: string;
@@ -1099,6 +1083,22 @@ export type WorkflowAuthoringActionInputById = {
                             projectKey: string;
                             kind: 'project';
                         };
+                        filter?: undefined | {
+                            v: 1;
+                            all: ({
+                                op: 'eq';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
+                                op: 'gt' | 'gte' | 'lt' | 'lte';
+                                field: string;
+                                value: number | string;
+                            } | {
+                                op: 'in';
+                                field: string;
+                                values: (boolean | null | number | string)[];
+                            })[];
+                        };
                     } | {
                         enabled: boolean;
                         triggerDefinitionEnvelope: {
@@ -1123,6 +1123,22 @@ export type WorkflowAuthoringActionInputById = {
                         };
                         subjectKind?: 'machine' | 'project' | 'session' | undefined;
                         sourceSessionId?: string | undefined;
+                        filter?: undefined | {
+                            v: 1;
+                            all: ({
+                                op: 'eq';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
+                                op: 'gt' | 'gte' | 'lt' | 'lte';
+                                field: string;
+                                value: number | string;
+                            } | {
+                                op: 'in';
+                                field: string;
+                                values: (boolean | null | number | string)[];
+                            })[];
+                        };
                         subjectKey?: string | undefined;
                     } | {
                         kind: 'action';
@@ -2121,6 +2137,22 @@ export type WorkflowAuthoringActionResultById = {
                                 projectKey: string;
                                 kind: 'project';
                             };
+                            filter?: undefined | {
+                                v: 1;
+                                all: ({
+                                    op: 'eq';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
+                                    op: 'gt' | 'gte' | 'lt' | 'lte';
+                                    field: string;
+                                    value: number | string;
+                                } | {
+                                    op: 'in';
+                                    field: string;
+                                    values: (boolean | null | number | string)[];
+                                })[];
+                            };
                         } | {
                             enabled: boolean;
                             triggerDefinitionEnvelope: {
@@ -2145,6 +2177,22 @@ export type WorkflowAuthoringActionResultById = {
                             };
                             subjectKind?: 'machine' | 'project' | 'session' | undefined;
                             sourceSessionId?: string | undefined;
+                            filter?: undefined | {
+                                v: 1;
+                                all: ({
+                                    op: 'eq';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
+                                    op: 'gt' | 'gte' | 'lt' | 'lte';
+                                    field: string;
+                                    value: number | string;
+                                } | {
+                                    op: 'in';
+                                    field: string;
+                                    values: (boolean | null | number | string)[];
+                                })[];
+                            };
                             subjectKey?: string | undefined;
                         } | {
                             kind: 'action';

@@ -563,6 +563,7 @@ export type TeamsActionInputById = {
         v: 1;
         teamId: string;
         sessionCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
+        reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
         externalSharingPolicy?: 'allowed' | 'disabled' | 'team_admins_only' | undefined;
         defaultSessionHistoryAccess?: 'all_existing' | 'from_membership' | undefined;
         admissionMode?: 'invite_only' | 'jit' | 'provisioned' | undefined;
@@ -727,19 +728,11 @@ export type TeamsActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -960,19 +953,11 @@ export type TeamsActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -1196,19 +1181,11 @@ export type TeamsActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -2065,11 +2042,11 @@ export type TeamsActionResultById = {
     readonly "teams.credentials.requestPolicySupport.get": {
         status: 'available';
         models: {
-            descriptor: Readonly<{
+            descriptor: {
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: readonly string[] | undefined;
+                aliases?: string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -2092,28 +2069,28 @@ export type TeamsActionResultById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: readonly Readonly<{
+                modelOptions?: undefined | {
                     id: string;
                     name: string;
-                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    options?: readonly Readonly<{
+                    description?: string | undefined;
+                    options?: undefined | {
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }>[] | undefined;
-                    overridesWhenOn?: Readonly<{
-                        optionIds: readonly string[];
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
                         forcedValue?: string | undefined;
-                    }> | undefined;
-                }>[] | undefined;
-                capabilities?: Readonly<{
+                    };
+                }[];
+                capabilities?: undefined | {
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                }> | undefined;
-            }>;
+                };
+            };
             application: {
                 implementationIdentity: {
                     pluginId: string;
@@ -2546,11 +2523,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2573,28 +2550,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -2856,11 +2833,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2883,28 +2860,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -3785,6 +3762,7 @@ export type TeamsActionResultById = {
                         connectionId: string;
                     })[];
                 };
+                reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
                 authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
                 managedDefaults?: null | undefined | {
                     team: {
@@ -3919,19 +3897,11 @@ export type TeamsActionResultById = {
                                 agentTargetKey: string;
                                 providerConnectionId: string;
                                 modelId: string;
-                            };
-                            v: 2;
-                            updatedAt: number;
-                        } | {
-                            ref: {
+                            } | {
                                 source: 'native';
                                 agentTargetKey: string;
                                 modelId: string;
-                            };
-                            v: 2;
-                            updatedAt: number;
-                        } | {
-                            ref: {
+                            } | {
                                 source: 'team_resource';
                                 resourceId: string;
                                 teamId: string;
@@ -4152,19 +4122,11 @@ export type TeamsActionResultById = {
                                 agentTargetKey: string;
                                 providerConnectionId: string;
                                 modelId: string;
-                            };
-                            v: 2;
-                            updatedAt: number;
-                        } | {
-                            ref: {
+                            } | {
                                 source: 'native';
                                 agentTargetKey: string;
                                 modelId: string;
-                            };
-                            v: 2;
-                            updatedAt: number;
-                        } | {
-                            ref: {
+                            } | {
                                 source: 'team_resource';
                                 resourceId: string;
                                 teamId: string;
@@ -4387,19 +4349,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -4561,6 +4515,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -4695,19 +4650,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -4928,19 +4875,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -5163,19 +5102,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -5315,7 +5246,7 @@ export type TeamsActionResultById = {
         } | {
             status: 'available';
             count: number;
-            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'savedSecrets' | 'sessions' | 'workflows';
+            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'reviews' | 'savedSecrets' | 'sessions' | 'workflows';
         } | {
             status: 'unavailable';
             count: null;
@@ -5329,7 +5260,7 @@ export type TeamsActionResultById = {
             status: 'unavailable';
             count: null;
             reason: string;
-            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'savedSecrets' | 'sessions' | 'workflows';
+            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'reviews' | 'savedSecrets' | 'sessions' | 'workflows';
         })[];
     };
     readonly "teams.create": {
@@ -5365,6 +5296,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -5499,19 +5431,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -5732,19 +5656,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -5967,19 +5883,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -6139,6 +6047,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -6273,19 +6182,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -6506,19 +6407,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -6741,19 +6634,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -6913,6 +6798,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -7047,19 +6933,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -7280,19 +7158,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -7515,19 +7385,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -7687,6 +7549,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -7821,19 +7684,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -8054,19 +7909,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -8289,19 +8136,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -8461,6 +8300,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -8595,19 +8435,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -8828,19 +8660,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -9063,19 +8887,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -9235,6 +9051,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -9369,19 +9186,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -9602,19 +9411,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -9837,19 +9638,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;
@@ -10009,6 +9802,7 @@ export type TeamsActionResultById = {
                     connectionId: string;
                 })[];
             };
+            reviewCreationPolicy?: 'private_default' | 'team_default' | 'team_required' | undefined;
             authenticationPolicyStatus?: 'available' | 'repair_required' | undefined;
             managedDefaults?: null | undefined | {
                 team: {
@@ -10143,19 +9937,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -10376,19 +10162,11 @@ export type TeamsActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
-                        };
-                        v: 2;
-                        updatedAt: number;
-                    } | {
-                        ref: {
+                        } | {
                             source: 'team_resource';
                             resourceId: string;
                             teamId: string;
@@ -10611,19 +10389,11 @@ export type TeamsActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;

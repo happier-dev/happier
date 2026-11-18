@@ -41,6 +41,7 @@ export type HomeIdentityActionInputById = {
     };
     readonly "home.identity.connections.settings.update": {
         v: 1;
+        connectionId: string;
         settings: {
             v: 1;
             kind: 'github_app_identity';
@@ -56,7 +57,6 @@ export type HomeIdentityActionInputById = {
             v: 1;
             kind: 'workos_sso';
         };
-        connectionId: string;
         expectedRevision: number;
     };
     readonly "home.identity.connections.enable": {

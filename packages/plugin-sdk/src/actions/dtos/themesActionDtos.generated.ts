@@ -45,6 +45,7 @@ export type ThemesActionInputById = {
             };
         };
         group?: string | undefined;
+        transition?: 'none' | undefined;
     } & {
         clientId?: string | undefined;
     };
@@ -1086,6 +1087,8 @@ export type ThemesActionResultById = {
                         mode?: 'dark' | 'light' | undefined;
                     }[];
                     license?: string | undefined;
+                    licenseKind?: 'custom' | undefined;
+                    licenseUrl?: string | undefined;
                     preview?: undefined | {
                         mode: 'dark' | 'light';
                         canvas: string;
@@ -1111,6 +1114,8 @@ export type ThemesActionResultById = {
                     mode?: 'dark' | 'light' | undefined;
                 }[];
                 license?: string | undefined;
+                licenseKind?: 'custom' | undefined;
+                licenseUrl?: string | undefined;
                 preview?: undefined | {
                     mode: 'dark' | 'light';
                     canvas: string;

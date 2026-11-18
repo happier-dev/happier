@@ -91,6 +91,7 @@ export type ArtifactAccessActionResultById = {
             } | {
                 kind: 'unavailable';
             };
+            requiredByTeamPolicy?: boolean | undefined;
             acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
@@ -150,6 +151,7 @@ export type ArtifactAccessActionResultById = {
             } | {
                 kind: 'unavailable';
             };
+            requiredByTeamPolicy?: boolean | undefined;
             acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
@@ -203,6 +205,7 @@ export type ArtifactAccessActionResultById = {
             } | {
                 kind: 'unavailable';
             };
+            requiredByTeamPolicy?: boolean | undefined;
             acceptedVersions?: undefined | {
                 version: string;
                 copies: number;

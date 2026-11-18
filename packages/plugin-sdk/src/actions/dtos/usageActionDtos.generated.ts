@@ -7860,11 +7860,11 @@ export type UsageActionResultById = {
                             };
                             eventCount: number;
                             label?: string | undefined;
+                            requestCount?: number | undefined;
                             context?: undefined | {
                                 usedTokens?: null | number | undefined;
                                 windowTokens?: null | number | undefined;
                             };
-                            requestCount?: number | undefined;
                             latestContextUsedTokens?: number | undefined;
                             latestContextWindowTokens?: number | undefined;
                         };
@@ -10259,6 +10259,7 @@ export type UsageActionResultById = {
                             appliesToProviderLimitIds: string[];
                             unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                         }> | undefined;
+                        accountLabel?: null | string | undefined;
                         recoveryCredits?: undefined | {
                             availableCount: number;
                             credits: {
@@ -10279,7 +10280,6 @@ export type UsageActionResultById = {
                             source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                             confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         };
-                        accountLabel?: null | string | undefined;
                         planLabel?: null | string | undefined;
                     }[];
                     meterDefinitions: {
@@ -10301,8 +10301,8 @@ export type UsageActionResultById = {
                         modelId?: null | string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
-                        windowDurationMs?: number | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
+                        windowDurationMs?: number | undefined;
                         isExhausted?: boolean | undefined;
                         isSoftLimited?: boolean | undefined;
                         isCapacityLimited?: boolean | undefined;
@@ -12596,11 +12596,11 @@ export type UsageActionResultById = {
                                 };
                                 eventCount: number;
                                 label?: string | undefined;
+                                requestCount?: number | undefined;
                                 context?: undefined | {
                                     usedTokens?: null | number | undefined;
                                     windowTokens?: null | number | undefined;
                                 };
-                                requestCount?: number | undefined;
                                 latestContextUsedTokens?: number | undefined;
                                 latestContextWindowTokens?: number | undefined;
                             };
@@ -14369,7 +14369,6 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
-                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14424,7 +14423,6 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
-                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14487,7 +14485,6 @@ export type UsageActionResultById = {
                         isCrossRepository?: boolean | undefined;
                         headSha?: null | string | undefined;
                         baseSha?: null | string | undefined;
-                        mergeCommitSha?: string | undefined;
                         createdAtMs?: number | undefined;
                         closedAtMs?: number | undefined;
                         mergedAtMs?: number | undefined;
@@ -16303,19 +16300,11 @@ export type UsageActionResultById = {
                                         agentTargetKey: string;
                                         providerConnectionId: string;
                                         modelId: string;
-                                    };
-                                    v: 2;
-                                    updatedAt: number;
-                                } | {
-                                    ref: {
+                                    } | {
                                         source: 'native';
                                         agentTargetKey: string;
                                         modelId: string;
-                                    };
-                                    v: 2;
-                                    updatedAt: number;
-                                } | {
-                                    ref: {
+                                    } | {
                                         source: 'team_resource';
                                         resourceId: string;
                                         teamId: string;

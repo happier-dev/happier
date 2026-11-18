@@ -59,60 +59,6 @@ export type SessionAgentTransitionActionInputById = {
                 }>;
             };
         };
-    } | {
-        sessionId: string;
-        selections: {
-            v: 1;
-            agentId: string;
-            modelSelection?: undefined | {
-                agentTargetKey: string;
-                providerConnectionId: null;
-                modelId: string;
-            } | {
-                agentTargetKey: string;
-                providerConnectionId: string;
-                modelId: string;
-            } | {
-                source: 'account_provider_connection';
-                agentTargetKey: string;
-                providerConnectionId: string;
-                modelId: string;
-            } | {
-                source: 'native';
-                agentTargetKey: string;
-                modelId: string;
-            } | {
-                source: 'team_resource';
-                resourceId: string;
-                teamId: string;
-                expectedResourceRevision: number;
-                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                agentTargetKey: string;
-                modelId: string;
-                nativeDelivery?: undefined | {
-                    managedId: string;
-                    controllerInstallationId: string;
-                    guestInstallationId: string;
-                    bindingKey: string;
-                    placeholderRef: string;
-                    sourceRevision: string;
-                    providerTicket: string;
-                };
-            };
-            modelId?: string | undefined;
-            providerConnectionId?: null | string | undefined;
-            acpSessionModeId?: null | string | undefined;
-            sessionConfigOptionOverrides?: undefined | {
-                [x: string]: unknown;
-                v: 1;
-                updatedAt: number;
-                overrides: Record<string, {
-                    [x: string]: unknown;
-                    updatedAt: number;
-                    value: boolean | null | number | string;
-                }>;
-            };
-        }[];
     };
     readonly "session.agent.transition": {
         selection: {
@@ -187,21 +133,6 @@ export type SessionAgentTransitionActionResultById = {
             type: 'unavailable';
             reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
         };
-    } | {
-        status: 'batch';
-        inspections: ({
-            status: 'answered';
-            inspection: {
-                type: 'available';
-                protocolVersion: 1;
-                sameSessionTransition: boolean;
-            } | {
-                type: 'unavailable';
-                reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
-            };
-        } | {
-            status: 'indeterminate';
-        })[];
     } | {
         status: 'indeterminate';
     };

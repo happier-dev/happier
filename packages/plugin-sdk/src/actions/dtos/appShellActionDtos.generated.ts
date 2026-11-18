@@ -202,19 +202,11 @@ export type AppShellActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
-                    };
-                    v: 2;
-                    updatedAt: number;
-                } | {
-                    ref: {
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         teamId: string;

@@ -641,12 +641,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1292,12 +1292,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1945,12 +1945,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -2556,12 +2556,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2670,12 +2670,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2916,15 +2916,6 @@ export type AccountProfileActionResultById = {
                     };
                 }[];
             };
-            identity: {
-                name?: string | undefined;
-                sinceMs?: number | undefined;
-                avatarUrl?: string | undefined;
-                avatar?: undefined | {
-                    kind: 'planet';
-                    reason: 'account_image_unavailable';
-                };
-            };
             layout: {
                 v: 1;
                 items: ({
@@ -3080,6 +3071,15 @@ export type AccountProfileActionResultById = {
                     };
                     title?: string | undefined;
                 })[];
+            };
+            identity: {
+                name?: string | undefined;
+                sinceMs?: number | undefined;
+                avatarUrl?: string | undefined;
+                avatar?: undefined | {
+                    kind: 'planet';
+                    reason: 'account_image_unavailable';
+                };
             };
             metadata: {
                 bio?: string | undefined;
@@ -3599,12 +3599,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4133,12 +4133,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4666,12 +4666,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5200,12 +5200,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5733,12 +5733,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -6266,12 +6266,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
