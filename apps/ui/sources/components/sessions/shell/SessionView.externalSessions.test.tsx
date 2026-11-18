@@ -17,7 +17,10 @@ import {
 import {
   HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1} from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import {
-  PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+  DaemonContributionRegistryProjectionDescribeRequestSchema,
+  PluginProjectionV2Schema,
+  type PluginProjectionV2,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
   ParticipantRecipientV1Schema} from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import {
@@ -107,17 +110,25 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
   getResolvedBackendCatalogEntries: () => [],
 }));
 const daemonMergedProjectionState = vi.hoisted(() => ({
+  useTransport: false,
   current: { phase: 'idle', inputs: null as any },
 }));
-vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-  // The fixtures publish only the facts each test exercises; the projection shape's other maps are empty.
-  useDaemonMergedProjectionInputs: () => {
-    const state = daemonMergedProjectionState.current;
-    return state.inputs
-      ? { ...state, inputs: { mergedProviderProjectionById: {}, mergedBackendProjectionById: {}, connectedAccountProjection: null, ...state.inputs } }
-      : state;
-  },
-}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/backendCatalog/useDaemonMergedProjectionInputs')>();
+  return {
+    ...actual,
+    // The routing cases exercise the real hook; older scenarios still supply their own catalog fixtures.
+    useDaemonMergedProjectionInputs: (params: Parameters<typeof actual.useDaemonMergedProjectionInputs>[0]) => {
+      if (daemonMergedProjectionState.useTransport) return actual.useDaemonMergedProjectionInputs(params);
+      const state = daemonMergedProjectionState.current;
+      return state.inputs
+        ? { ...state, inputs: { mergedProviderProjectionById: {}, mergedBackendProjectionById: {}, connectedAccountProjection: null, ...state.inputs } }
+        : state;
+    },
+  };
+});
+
+const machineProjectionReplies = new Map<string, PluginProjectionV2>();
 
 const machineExternalSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineExternalSessionAttachSpy = vi.hoisted(() => vi.fn<
@@ -625,6 +636,15 @@ installDisconnectedServerSocketBoundary((socket) => {
       expect(carrier.auth.token).toBe(shellCredentials?.token);
       let result: unknown;
       switch (request.method) {
+        case `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`:
+        case `linked-machine:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`: {
+          const { machineId } = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(request.params);
+          expect(request.method).toBe(`${machineId}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`);
+          const projection = machineProjectionReplies.get(machineId);
+          if (!projection) throw new Error(`No catalog fixture for Machine ${machineId}`);
+          result = { protocolVersion: 1, projection };
+          break;
+        }
         case `s1:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`:
           result = ExecutionRunStartResponseSchema.parse(await executionRunStartReply(ExecutionRunStartRequestSchema.parse(request.params)));
           break;
@@ -694,7 +714,7 @@ const { SessionView } = await import('./SessionView');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 let shellCredentials: import('@/auth/storage/tokenStorage').AuthCredentials | null = null;
 let wireSession: ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse> | null = null;
-let wireMachine: FetchedMachineRow | null = null;
+const wireMachines = new Map<string, FetchedMachineRow>();
 const { composerStructuredMentionsFromReferences, placePositionlessComposerReferences } = await import('@/components/sessions/composer/composerScopeAdapters');
 
 /** The Session header composes its own controls around the resolved right element, so search the whole tree. */
@@ -711,16 +731,19 @@ function syncShellStorageStore() {
   const shellStorageStore = shellStorageStoreState.current;
   if (!shellStorageStore) return;
   storageState.sessions.s1 = createSessionFixture(storageState.sessions.s1);
-  const machine = createMachineFixture({ id: 'machine-1', storageMode: 'plain', active: true, activeAt: Date.now(),
-    ...storageState.machines['machine-1'] });
-  const row = { ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-canonical' }),
-    seq: machine.seq, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
-    active: machine.active, activeAt: machine.activeAt,
-    metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
-    daemonState: machine.daemonState === null ? null : encodePlainMachineStoredContent(machine.daemonState),
-    daemonStateVersion: machine.daemonStateVersion,
-    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } satisfies FetchedMachineRow;
-  wireMachine = row;
+  const machines = Object.entries({ 'machine-1': {}, ...storageState.machines }).map(([id, overrides]) =>
+    createMachineFixture({ id, storageMode: 'plain', active: true, activeAt: Date.now(), ...overrides }));
+  for (const machine of machines) {
+    wireMachines.set(machine.id, {
+      ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-canonical' }),
+      seq: machine.seq, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
+      active: machine.active, activeAt: machine.activeAt,
+      metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
+      daemonState: machine.daemonState === null ? null : encodePlainMachineStoredContent(machine.daemonState),
+      daemonStateVersion: machine.daemonStateVersion,
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    });
+  }
   shellStorageStore.setState({
     sessions: storageState.sessions,
     isDataReady: storageState.isDataReady,
@@ -732,7 +755,7 @@ function syncShellStorageStore() {
     reviewCommentsDraftsByWorkspaceCacheKey: {
       [buildWorkspaceCacheKey({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' })]: reviewCommentDraftsState.current,
     },
-    machines: { 'machine-1': machine },
+    machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
     sessionMessages: {
       s1: createSessionMessagesFixture({
         messageIdsOldestFirst: sessionMessagesState.current.length
@@ -747,7 +770,7 @@ function syncShellStorageStore() {
   });
   // The settled Home inventory, not the legacy active-map fallback, owns
   // whether an owner's Session still has access to its Machine.
-  shellStorageStore.getState().applyMachines([machine], true, {
+  shellStorageStore.getState().applyMachines(machines, true, {
     sourceServerId: storageState.sessions.s1.serverId,
   });
 }
@@ -857,7 +880,7 @@ describe('SessionView (direct sessions)', () => {
     });
   }
 
-  async function renderSessionView() {
+  async function renderSessionView(wrapSession: (session: React.ReactElement) => React.ReactNode = session => session) {
     if (recipientStateState.current.recipient) {
       writeCanonicalSessionDraft({ recipient: recipientStateState.current.recipient,
         executionRunRequestedAction: recipientStateState.current.executionRunRequestedAction });
@@ -874,7 +897,7 @@ describe('SessionView (direct sessions)', () => {
     return renderScreen(
       <InjectedAuthProvider credentials={shellCredentials}>
         <AppPaneProvider>
-          <SessionView id="s1" routeServerId="server-canonical" surfaceFocusedOverride={focusState.current} />
+          {wrapSession(<SessionView id="s1" routeServerId="server-canonical" surfaceFocusedOverride={focusState.current} />)}
         </AppPaneProvider>
       </InjectedAuthProvider>,
     );
@@ -909,7 +932,9 @@ describe('SessionView (direct sessions)', () => {
 
   beforeEach(async () => {
     wireSession = null;
-    wireMachine = null;
+    wireMachines.clear();
+    machineProjectionReplies.clear();
+    daemonMergedProjectionState.useTransport = false;
     storageState.profile = {
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
@@ -929,10 +954,11 @@ describe('SessionView (direct sessions)', () => {
         if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
-        if (path === '/v1/machines') return Response.json(wireMachine ? [wireMachine] : []);
+        if (path === '/v1/machines') return Response.json([...wireMachines.values()]);
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-          id => wireMachine?.id === id ? wireMachine : null);
-        if (path === '/v1/machines/machine-1' && wireMachine) return Response.json({ machine: wireMachine });
+          id => wireMachines.get(id) ?? null);
+        const machine = wireMachines.get(path.slice('/v1/machines/'.length));
+        if (path.startsWith('/v1/machines/') && machine) return Response.json({ machine });
         if (path.endsWith('/pending') && init?.method === 'POST') return pendingHttpSpy(path, JSON.parse(String(init.body)));
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/sessions/s1' && wireSession) {
@@ -1183,15 +1209,25 @@ describe('SessionView (direct sessions)', () => {
   it.each([
     ['codex', { kind: 'codexHome', home: 'user' }, 'native_prevention', true],
     ['muse', { kind: 'museNative', museHome: null }, 'unsupported', false],
-  ] as const)('projects takeover preflight for a completed %s import according to writer safety', async (agentId, source, writerSafety, offered) => {
+  ] as const)('reads the linked Machine catalog for a completed %s import with the routed Account', async (agentId, source, writerSafety, offered) => {
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { SessionViewerDestinationScope, useSessionDestinationAccountBinding } = await import('@/components/sessions/viewer/SessionViewerDestinationScope');
+    const { clearDaemonMergedProjectionCacheForTests, readDaemonMergedProjectionSummary } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    clearDaemonMergedProjectionCacheForTests();
+    onTestFinished(clearDaemonMergedProjectionCacheForTests);
+    daemonMergedProjectionState.useTransport = true;
+
+    const linkedMachineId = 'linked-machine';
+    const serverId = canonicalDraftScope.serverId;
+    storageState.machines[linkedMachineId] = {};
     const session = storageState.sessions.s1;
     session.currentStorageState = 'snapshot_complete';
     session.publishedThroughServerSeq = 1;
     session.materializedThroughSourceAt = Date.now();
     session.metadata.flavor = agentId;
-    session.metadata.externalSessionV1 = { ...session.metadata.externalSessionV1, agentId, source };
+    session.metadata.externalSessionV1 = { ...session.metadata.externalSessionV1, machineId: linkedMachineId, agentId, source };
     const identity = { pluginId: `happier.agent.${agentId}`, localId: agentId };
-    const projection = PluginProjectionV2Schema.parse({
+    const projection = (safety: typeof writerSafety) => PluginProjectionV2Schema.parse({
       v: 2,
       generation: 42,
       familiesById: {},
@@ -1204,16 +1240,43 @@ describe('SessionView (direct sessions)', () => {
           schema: { fields: [{ kind: 'literal', name: 'kind', value: source.kind }] },
           key: { segments: [{ kind: 'literal', value: source.kind }] },
         }],
-        writerSafety,
+        writerSafety: safety,
       } } },
     });
-    daemonMergedProjectionState.current = { phase: 'ready', inputs: { pluginProjectionById: {}, pluginProjectionV2: projection } };
+    machineProjectionReplies.set(linkedMachineId, projection(writerSafety));
+    machineProjectionReplies.set('machine-1', projection(writerSafety === 'unsupported' ? 'native_prevention' : 'unsupported'));
 
-    await renderSessionView();
+    // The route has already bound its Account when the shell mounts. Refuse a new
+    // credential resolution while allowing the scoped RPC to use the admitted Account.
+    let routeBound = false;
+    const readCredentials = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
+    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url, options) => {
+      if (routeBound && url === 'https://server-canonical' && options?.storageReadFailure === 'surface') {
+        throw new Error('Test secure storage unavailable to new Account bindings');
+      }
+      return await readCredentials(url, options);
+    });
+    onTestFinished(() => credentials.mockRestore());
+    function RoutedShell({ children }: React.PropsWithChildren) {
+      const binding = useSessionDestinationAccountBinding('s1', serverId);
+      React.useLayoutEffect(() => {
+        routeBound = binding?.isCurrent() === true;
+      }, [binding]);
+      return binding ? children : null;
+    }
 
-    const footer = findWarningActionBannerProps('session-chatFooter-externalControl');
-    expect(footer).toBeDefined();
-    expect(footer?.actionTestID).toBe(offered ? 'session-chatFooter-takeOverDirect' : undefined);
+    await renderSessionView(shell => (
+      <SessionViewerDestinationScope sessionId="s1" serverId={serverId}>
+        <RoutedShell>{shell}</RoutedShell>
+      </SessionViewerDestinationScope>
+    ));
+
+    await waitForHomeGovernance(() => {
+      const footer = findWarningActionBannerProps('session-chatFooter-externalControl');
+      expect(footer).toBeDefined();
+      expect(footer?.actionTestID).toBe(offered ? 'session-chatFooter-takeOverDirect' : undefined);
+      expect(readDaemonMergedProjectionSummary({ machineId: linkedMachineId, serverId }).current).toBe(true);
+    });
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
   });
 
