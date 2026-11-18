@@ -316,9 +316,11 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: {
         // Native modal presentation is the boundary; the real transient Interaction owner settles the decision.
-        show: vi.fn((config: { props: { onConfirm(): void; onCancel(): void } }) => {
-            if (nestedActionConfirmation.onShow) nestedActionConfirmation.onShow(config.props.onConfirm, config.props.onCancel);
-            else queueMicrotask(() => config.props.onCancel?.());
+        show: vi.fn((config: { props: { onConfirm?(): void; onCancel?(): void; onAnswer?(confirmed: boolean): void } }) => {
+            const confirm = config.props.onConfirm ?? (() => config.props.onAnswer?.(true));
+            const cancel = config.props.onCancel ?? (() => config.props.onAnswer?.(false));
+            if (nestedActionConfirmation.onShow) nestedActionConfirmation.onShow(confirm, cancel);
+            else queueMicrotask(cancel);
             return 'nested-action-confirmation';
         }) as never,
     } }).module;
@@ -870,6 +872,8 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
         { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
         { name: 'confirms a contributed Action.Control', change: 'contributed-control' },
+        { name: 'COORD R2 confirms an explicitly Ask-gated Account Action through the runtime relay', change: 'ask-control' },
+        { name: 'COORD R2 leaves a declined carried review editable without executing the Action', change: 'ask-cancel' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
         { name: 'does not execute a declined picker mutation', change: 'decline' },
         { name: 'executes the approved operands after the trusted Account source changes', change: 'source' },
@@ -883,6 +887,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         { name: 'does not reuse consent for another selected Machine', change: 'machine' },
     ] as const)('$name', async ({ change }) => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
         const { createExternalActionRuntime, publishAccountExternalActionRuntime } = await import('../../../../../cli/src/daemon/externalActions/externalActionRuntime.testkit');
         const { createDaemonExternalActionContributedInvoker } = await import('../../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker');
         const { executeExternalAction } = await import('../../../../../cli/src/daemon/externalActions/executeExternalAction');
@@ -892,17 +897,22 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const pluginId = 'acme.reviewed-picker';
         const localId = 'assign';
         const input = { issue: 'ISSUE-42', assignee: 'alice' };
+        const carriedReview = change === 'ask-control' || change === 'ask-cancel';
+        const isControl = change === 'contributed-control' || carriedReview;
         const previous = getStorage().getState();
         let effects = 0;
         let secondArtifacts = 0;
         let receivedCaller: unknown;
         let receivedAuthority: unknown;
+        const carriedRequests: { requestId: string; reviewDigest: string | undefined; result: unknown }[] = [];
         let boundaryFailure: unknown;
         const accountSource = change === 'bundled'
             ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
             : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
         const runtimeOptions = { localId, surfaces: ['ui', 'plugin'] as const, placementBindings: ['detailsPanel'] as const, executionTarget: 'account' as const,
-            pluginVersion: '1.2.3', sourceCustody: accountSource, onInput: (value: unknown) => expect(value).toEqual(input) };
+            pluginVersion: '1.2.3', sourceCustody: accountSource, onInput: (value: unknown) => expect(value).toEqual(input),
+            ...(carriedReview ? { confirmationWhen: { presentUserUi: false } } : {}),
+        };
         const runtime = createExternalActionRuntime('global', pluginId, () => { effects++; }, undefined, undefined,
             undefined, undefined, 'writesRemote', undefined, runtimeOptions);
         const published = await publishAccountExternalActionRuntime(runtime);
@@ -937,16 +947,38 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 create: async () => { secondArtifacts++; throw new Error('A second approval Artifact was requested'); },
                 read: async () => null, update: async () => ({ ok: true }),
             }) });
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: invoke }));
+        const askSettings = normalizeActionsSettingsV1({ v: 1, actions: {
+            'action.invoke': { approvalRequiredSurfaces: ['ui'] },
+        } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: invoke,
+            // Trigger the receiving executor's real carried review. This models
+            // an Ask discovered after the originating UI has dispatched.
+            ...(carriedReview ? { readActionsSettings: () => askSettings } : {}),
+        }));
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'machine-local',
             actionId: 'action.invoke', tokenEpoch: 0, failure: value => {
                 const failure = ActionExecuteFailureSchema.safeParse(value);
                 return failure.success ? failure.data : null;
-            }, execute: async (_value, context) => {
+            }, execute: async (value, context) => {
                 if (changedRuntime !== runtime) await published.adopt(changedRuntime, change === 'source' ? `sha256:${'b'.repeat(64)}` : undefined);
                 receivedCaller = context.invocation.caller;
                 receivedAuthority = context.invocation.authority;
+                if (carriedReview) {
+                    // The Home fixture opened the actual requester box. Use the
+                    // receiving executor with the test host's signing boundary.
+                    const result = await executor.execute('action.invoke', value, {
+                        surface: 'ui', actionCaller: context.invocation.caller, authority: context.invocation.authority,
+                        actionRequestId: context.authorization.binding.requestId,
+                        runtimeAccountId: lifetime.scope.accountId, serverId: home.id, serverIdentityId: 'srv_client_action',
+                        externalActionTarget: context.target, externalActionExecutionAuthorization: context.authorization,
+                        presentUserConfirmation: context.invocation.presentUserConfirmation,
+                        signExternalActionApprovalInput: () => 'fixture-receiver-signature',
+                    });
+                    carriedRequests.push({ requestId: context.authorization.binding.requestId,
+                        reviewDigest: context.invocation.presentUserConfirmation?.reviewDigest, result });
+                    return result.ok ? result.result : result;
+                }
                 // Mutate only the opened transport payload, then enter the real
                 // outer Action executor and target gate with the stale consent.
                 const confirmation = context.invocation.presentUserConfirmation;
@@ -1006,6 +1038,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         });
         const activation = createClientActionActivation({ pluginId, localId, accountPlacement: true, accountLifetime: lifetime,
             dangerLevel: 'writesRemote', surfaces: ['ui', 'plugin'], accountActionDeclaration: declaration,
+            confirmationWhen: runtimeOptions.confirmationWhen,
             omitProjectedAccountDeclaration: change === 'cold-declaration', occurrenceId: selectedColdOccurrence ?? published.selection.custodyId,
             accountSourceCustody: accountSource, artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({
                 ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'portable', executable: { exports: ['activate'] },
@@ -1015,14 +1048,19 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             }), accountHandler: () => { throw new Error('Browser must relay'); } });
         await activation.composition.unload();
         await activation.composition.reconcile([activation.activation]);
-        if (change === 'contributed-control') daemonRpc.mockImplementation(async (request: { method: string }) =>
+        if (isControl) daemonRpc.mockImplementation(async (request: { method: string }) =>
             request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                 ? { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {},
                     actionsById: { [buildQualifiedPluginContributionKey({ pluginId, localId })]: activation.daemonAction } }) }
                 : answerActionSchemasRead(request));
         let confirmations = 0;
-        nestedActionConfirmation.onShow = (confirm, cancel) => { confirmations++; queueMicrotask(change === 'decline' ? cancel : confirm); };
+        nestedActionConfirmation.onShow = (confirm, cancel) => {
+            confirmations++;
+            queueMicrotask(change === 'decline' || change === 'ask-cancel' ? cancel : confirm);
+        };
         accountBrowserRelay.enabled = true;
+        const withdrawProjection = isControl ? publishCommittedAppShellPluginUiProjection(() => activation.projection) : () => {};
+        onTestFinished(withdrawProjection);
         const hook = await renderHook(() => useBoundPluginSurfaceController({ facts: {
             pluginId, contributionId: 'issue-assignee-picker', surfaceId: 'approved-picker', placement: 'appSurface', platform: 'web', channel: 'internal',
             machineId: machine.id, serverId: home.id, occurrenceId: runtime.readPluginOccurrenceId!(pluginId)!, executionOrigin: callerOrigin,
@@ -1040,7 +1078,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             handleRequest: controller.hostApi.handleRequest });
         let settledStatus = 'idle';
         let settledExecution: unknown;
-        const unregisterControlPort = change === 'contributed-control'
+        const unregisterControlPort = isControl
             ? registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
                 invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
                 reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
@@ -1061,7 +1099,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 } } });
         }
         const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface },
-            React.createElement(change === 'contributed-control' ? ContributedControl : AssignmentPicker)));
+            React.createElement(isControl ? ContributedControl : AssignmentPicker)));
         try {
             await act(async () => {
                 if (rawHost) {
@@ -1071,7 +1109,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                         serverId: home.id, accountLifetime: lifetime, presentUserIntent: 'confirmed',
                     });
                     expect(result).toMatchObject({ supported: true, result: { ok: change === 'raw-host' } });
-                } else if (change === 'contributed-control') {
+                } else if (isControl) {
                     const controls = controller.actionControls;
                     if (!controls) throw new Error('Mounted host Action controls missing');
                     expect(controls.getSnapshot()).toHaveLength(1);
@@ -1081,20 +1119,35 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     await editor.onCommit('alice');
                 }
             });
-            if (change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'contributed-control') {
+            if (change === 'ask-cancel') {
+                expect(settledExecution, JSON.stringify(carriedRequests)).toMatchObject({ ok: false, errorCode: 'approval_canceled', effectAttempted: false });
+                expect(carriedRequests).toEqual([expect.objectContaining({ reviewDigest: undefined,
+                    result: expect.objectContaining({ errorCode: 'action_interactive_review_required', details: expect.objectContaining({ reviewDigest: expect.any(String) }) }) })]);
+                expect(controller.actionControls?.getSnapshot()[0]).toMatchObject({ busy: false });
+                expect({ confirmations, effects, secondArtifacts }).toEqual({ confirmations: 1, effects: 0, secondArtifacts: 0 });
+                return;
+            }
+            if (change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || isControl) {
                 const receiver = readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: home.id,
                     accountLifetime: lifetime, sections: ['actionsById'] });
-                expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, boundaryFailure,
+                expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, boundaryFailure, carriedRequests,
                     receiver: receiver && { kind: receiver.kind, reason: receiver.kind === 'error' ? receiver.reason : undefined },
                     daemonRequests: network.requests.map(request => ({ method: request.method, machineId: request.targetId })),
                     requests: network.httpRequests.map(request => ({ method: request.method, path: new URL(request.url).pathname })),
-                    execution: settledExecution })).toMatchObject(change === 'contributed-control' ? { ok: true } : { status: 'success' });
+                    execution: settledExecution })).toMatchObject(isControl ? { ok: true } : { status: 'success' });
             }
-            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host' || change === 'contributed-control'
+            if (carriedReview) {
+                expect(carriedRequests).toHaveLength(2);
+                const [first, confirmed] = carriedRequests;
+                expect(first!.result).toMatchObject({ errorCode: 'action_interactive_review_required', details: { reviewDigest: confirmed!.reviewDigest } });
+                expect(confirmed!.reviewDigest).toEqual(expect.any(String));
+                expect(confirmed!.requestId).not.toBe(first!.requestId);
+            }
+            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host' || isControl
                 ? { settledStatus: change === 'raw-host' ? 'idle' : 'success', effects: 1, secondArtifacts: 0 }
                 : { settledStatus: rawHost ? 'idle' : 'error', effects: 0, secondArtifacts: 0 });
             expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost ? 0 : 1 });
-            if (rawHost || change === 'contributed-control') {
+            if (rawHost || isControl) {
                 expect(receivedCaller).toEqual({ kind: 'host' });
                 expect(receivedAuthority).toBe('present_user');
             } else if (change !== 'decline') {
@@ -9327,6 +9380,8 @@ describe('present-user confirmation for daemon-target Actions', () => {
             ok: false,
             code: 'denied',
             reason: 'plugin_action_current_intent_rejected',
+            requestId: 'request-cancelled',
+            effectAttempted: false,
         });
 
         expect(requestCurrentIntent).toHaveBeenCalledTimes(1);

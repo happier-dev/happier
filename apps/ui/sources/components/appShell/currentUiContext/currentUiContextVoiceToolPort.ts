@@ -74,6 +74,7 @@ export type CurrentUiContextVoiceInvocationOutcome =
         retryable?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['retryable'];
         remediation?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['remediation'];
         details?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['details'];
+        effectAttempted?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['effectAttempted'];
         failureCause?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['failureCause'] }>;
 
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
@@ -394,6 +395,7 @@ export function createCurrentUiContextVoiceToolPort(
                 ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
                 ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
                 ...(outcome.details === undefined ? {} : { details: outcome.details }),
+                ...(outcome.effectAttempted === undefined ? {} : { effectAttempted: outcome.effectAttempted }),
                 ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
             };
             if (outcome.reason === 'plugin_ui_action_outcome_unknown') {

@@ -13,6 +13,8 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiAccountAction, resolveUiAccountActionReceiverMachineId } from '@/sync/ops/actions/accountActionDeps';
+import { confirmOwnUiRefusal } from '@/sync/ops/actions/executeMachineActionAtDaemon';
+import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
@@ -67,27 +69,43 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const confirmation = params.confirmedInvocation && sameStrictJsonValue(params.confirmedInvocation.input, input)
                 ? { actionId: ACTION_INVOKE_ACTION_ID_V1, inputDigest: params.confirmedInvocation.inputDigest, requestId,
                     accountId: params.accountScope.accountId, serverId: account.serverIdentityId ?? account.serverId, target } : undefined;
-            const response = await createUiAccountAction({ account })({
-                actionId: ACTION_INVOKE_ACTION_ID_V1, input, signal: params.signal,
-                context: { ...params.context, presentUserConfirmation: confirmation, actionRequestId: requestId, serverId: account.serverId,
-                    ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
-                    runtimeAccountId: params.accountScope.accountId,
-                    externalActionTarget: target,
-                    actionCaller: params.context.actionCaller ?? { kind: 'host' } },
-            });
+            const context: ActionExecutorContext = {
+                ...params.context, presentUserConfirmation: confirmation, actionRequestId: requestId, serverId: account.serverId,
+                ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
+                runtimeAccountId: params.accountScope.accountId, externalActionTarget: target,
+                actionCaller: params.context.actionCaller ?? { kind: 'host' }, signal: params.signal,
+            };
+            const execute = createUiAccountAction({ account });
             // The Account carrier already unwraps successful execution results.
             // Recognize its refusals; the plugin runtime owns payload validation.
-            const parsed = ActionExecuteResultSchema.safeParse(response);
-            if (parsed.success && !parsed.data.ok) {
-                const failure = parsed.data;
+            const dispatch = async (context: ActionExecutorContext) => {
+                const response = await execute({ actionId: ACTION_INVOKE_ACTION_ID_V1, input, signal: params.signal, context });
+                const parsed = ActionExecuteResultSchema.safeParse(response);
+                return parsed.success && !parsed.data.ok ? parsed.data : { ok: true as const, result: response };
+            };
+            const result = await dispatch(context);
+            // Present the receiver's exact review before projecting it into an author error.
+            // A UI-local reconstruction can describe the same operation with a different digest.
+            const settled = !result.ok && result.errorCode === 'action_interactive_review_required'
+                ? await confirmOwnUiRefusal(ACTION_INVOKE_ACTION_ID_V1, input, context, result,
+                    async request => (await import('@/sync/ops/actions/actionConfirmationPresenter'))
+                        .createActionConfirmationPresenter(account)(request),
+                    (reviewedInput, reviewDigest) => sameStrictJsonValue(reviewedInput, input)
+                        ? dispatch(bindPresentUserActionConfirmation(ACTION_INVOKE_ACTION_ID_V1, input,
+                            { ...context, actionRequestId: randomUUID() }, reviewDigest))
+                        : Promise.resolve(result))
+                : result;
+            if (!settled.ok) {
+                const failure = settled;
                 const authored = readPluginActionFailureAuthorPayload(failure.details);
                 const data = { code: failure.errorCode, message: failure.error, ...authored,
+                    ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
                     failureCause: failure.failureCause ?? authored.failureCause
                         ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };
                 throw readPluginActionFailureHandlerInvocation({ code: failure.errorCode, message: failure.error, data: failure.details })
                     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
             }
-            return response;
+            return settled.result;
         } finally { account.dispose(); }
     }
 }
