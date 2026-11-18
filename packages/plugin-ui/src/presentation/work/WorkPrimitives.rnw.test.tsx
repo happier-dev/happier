@@ -443,6 +443,18 @@ describe('Work primitives for plugin authors', () => {
     expect(authorBarrel.resolveHappierWorkStatusWordColor('attention', colors)).toBe('#945200');
     expect(authorBarrel.resolveHappierWorkStatusWordColor('danger', colors)).toBe('#be2525');
     expect(authorBarrel.HAPPIER_TONE_COLOR_TOKEN.attention).toBe('attention');
+    const mounted = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierWorkSection testID="needs" title="Needs you" count="2" countTone="attention" theme={resolveHappierWorkTheme(theme)} />,
+      ),
+    );
+    try {
+      const count = byTestId(mounted.container, 'needs-count')!;
+      expect(count.textContent).toBe('2');
+      expect(getComputedStyle(count).color).toBe('rgb(148, 82, 0)');
+    } finally {
+      mounted.unmount();
+    }
   });
 
   it('rings and tints needs-you work like trouble, in its own hue, and leaves healthy work neutral', () => {

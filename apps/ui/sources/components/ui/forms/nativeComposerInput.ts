@@ -61,7 +61,7 @@ export type NativeComposerInputProps = Omit<ViewProps, 'onFocus' | 'onBlur'> & R
     theme: Readonly<{
         text: string; placeholder: string; chipForeground: string; chipGlyphForeground: string; chipBackground: string;
         chipWarningGlyphForeground: string;
-        selection: string; warning: string; success: string; muted: string; link: string;
+        selection: string; warning: string; success: string; warningText: string; successText: string; muted: string; link: string;
     }>;
     typography: Readonly<{
         fontFamily?: string; fontSize: number; lineHeight: number; fontWeight?: string;

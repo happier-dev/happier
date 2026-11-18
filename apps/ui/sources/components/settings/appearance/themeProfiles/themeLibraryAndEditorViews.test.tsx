@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, renderScreen, renderSettingsView } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+import { lightTheme } from '@/theme';
 
 // The web code field reads the page's editor global; a bare window stands in for the browser host.
 (globalThis as unknown as { window: Window & typeof globalThis }).window ??= {
@@ -176,11 +178,13 @@ describe('theme library and editor views', () => {
     ).toBe(true);
   });
 
-  it('says a partly shown theme once under both slots, with its repair', async () => {
+  it('says a partly shown theme once under both slots in warning text ink, with its repair', async () => {
     const screen = await renderScreen(<ThemeLibrarySpecimen scene="E3" />);
     expect(
       screen.findAllByProps({ testID: 'settings-theme-notice' }),
     ).toHaveLength(1);
+    const notice = screen.findByTestId('settings-theme-notice')!;
+    expect(notice.findAllByType(Text)[0]!.props.style.color).toBe(lightTheme.colors.state.warning.textForeground);
   });
 
   it('puts Share as plugin right after Export file in the editor menu', async () => {

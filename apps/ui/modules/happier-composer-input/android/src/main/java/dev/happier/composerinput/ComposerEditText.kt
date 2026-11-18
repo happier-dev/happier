@@ -175,7 +175,7 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
   }
 
   private fun chipStyle() = ComposerChipStyle(
-    ink("chipForeground"), ink("chipBackground", Color.TRANSPARENT), ink("warning"), ink("muted"), ink("selection", highlightColor),
+    ink("chipForeground"), ink("chipBackground", Color.TRANSPARENT), ink("warningText", ink("warning")), ink("muted"), ink("selection", highlightColor),
     dimension(typography, "chipHeight", textSize / density) * density * fontScale,
     dimension(typography, "chipRadius", 0f) * density * fontScale,
     dimension(typography, "chipMaxLabelWidth", width.toFloat() / density) * density * fontScale,
@@ -365,8 +365,8 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
       fun add(span: Any) { editable.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); decorationSpans.add(span) }
       when (val treatment = value["treatment"]) {
         "muted" -> add(ForegroundColorSpan(ink("muted")))
-        "warning" -> add(ForegroundColorSpan(ink("warning")))
-        "success" -> add(ForegroundColorSpan(ink("success")))
+        "warning" -> add(ForegroundColorSpan(ink("warningText", ink("warning"))))
+        "success" -> add(ForegroundColorSpan(ink("successText", ink("success"))))
         "highlight" -> add(BackgroundColorSpan(ink("selection", highlightColor)))
         "code", "monospace" -> {
           val family = typography["monoFontFamily"] as? String

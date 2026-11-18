@@ -27,13 +27,15 @@ afterEach(async () => {
 });
 
 describe('MultiTextInput native composer boundary', () => {
-    it('supplies readable decoration text and the warning chip glyph ink to native', async () => {
+    it('supplies independent decoration text and marker inks to native', async () => {
         const { MultiTextInput } = await import('./MultiTextInput');
         const { lightTheme } = await import('@/theme');
         const screen = await renderScreen(<MultiTextInput value="hello" onChangeText={() => {}} />);
         expect(screen.tree.findByType('HappierComposerInput').props.theme).toMatchObject({
-            warning: lightTheme.colors.state.warning.textForeground,
-            success: lightTheme.colors.state.success.textForeground,
+            warning: lightTheme.colors.state.warning.foreground,
+            success: lightTheme.colors.state.success.foreground,
+            warningText: lightTheme.colors.state.warning.textForeground,
+            successText: lightTheme.colors.state.success.textForeground,
             chipWarningGlyphForeground: lightTheme.colors.state.warning.foreground,
         });
     });

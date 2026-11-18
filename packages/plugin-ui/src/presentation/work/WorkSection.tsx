@@ -5,6 +5,7 @@ import { HappierSkeletonRows } from '../feedback/Skeleton.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierPageSectionHeader, HappierPageSheet, useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { resolveHappierWorkStatusWordColor } from './workStatus.js';
 import {
   HAPPIER_WORK_PANE_METRICS,
   resolveHappierWorkHost,
@@ -115,7 +116,7 @@ function WorkListSection(props: HappierWorkSectionProps) {
             role="sectionCount"
             strong={attention}
             testID={props.countTestID ?? `${props.testID}-count`}
-            style={{ color: attention ? theme.colors.attention.foreground : theme.colors.mutedText }}
+            style={{ color: attention ? resolveHappierWorkStatusWordColor('attention', theme.colors) : theme.colors.mutedText }}
           >
             {count}
           </Text>
