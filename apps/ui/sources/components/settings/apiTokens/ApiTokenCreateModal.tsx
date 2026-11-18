@@ -211,10 +211,14 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
         kind: 'card' as const,
         title: reveal
             ? props.revealCopy?.title ?? t('settingsApiTokens.reveal.title')
-            : onAccessStage ? t('settingsApiTokens.create.accessTitle') : t('settingsApiTokens.create.title'),
+            : onAccessStage ? t('settingsApiTokens.create.accessTitle')
+            // Opened from an Environment's Deploy from CI, the sheet keeps that section's name and purpose.
+            : props.deploymentTitle !== undefined ? t('projects.deployments.overviewStatus.ciTitle') : t('settingsApiTokens.create.title'),
         // The reveal body already says the token is shown once; the band does not repeat it. `null`
         // clears the band (chrome merges `undefined` as "keep", which left the create subtitle up).
-        subtitle: reveal ? null : onAccessStage ? draft.label.trim() : t('settingsApiTokens.create.subtitle'),
+        subtitle: reveal ? null : onAccessStage ? draft.label.trim()
+            : props.deploymentTitle !== undefined ? t('projects.deployments.overviewStatus.ciDescription', { name: props.deploymentTitle })
+            : t('settingsApiTokens.create.subtitle'),
         testID: 'settings-api-tokens-create-modal',
         closeButtonTestID: 'settings-api-tokens-create-close',
         phonePresentation: 'sheet' as const,
@@ -223,7 +227,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
         scrollHost: reveal ? 'overlay' as const : 'body' as const,
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.9, size: 'md' as const },
         footer,
-    }), [draft.label, footer, onAccessStage, props.revealCopy?.title, reveal]));
+    }), [draft.label, footer, onAccessStage, props.deploymentTitle, props.revealCopy?.title, reveal]));
 
     return (
         <ScrollView
