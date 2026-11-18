@@ -33,7 +33,8 @@ export function createPlainAccountArtifactHttpBoundary() {
     const version = Number(rows.get(id)?.bodyVersion ?? 0) + 1;
     rows.set(id, { ...rows.get(id), ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
       encryptionMode: 'plain', headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version });
-    return { status: 200, data: z.object(ArtifactCreateHttpResponseV1Schema.shape).parse({ ...rows.get(id), created: true }) };
+    const artifact = z.object(ArtifactCreateHttpResponseV1Schema.shape).parse({ ...rows.get(id), created: true });
+    return { status: 200, data: { ...artifact, success: true } };
   });
   return { credentials: { token, encryption: null }, rows, writes };
 }
