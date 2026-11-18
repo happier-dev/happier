@@ -18,6 +18,7 @@ import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/autom
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
 import { markExecutionRunStartPreparationFailure } from '@/agent/runtime/bridges/executionRun/errors';
 import { sendBackendLongLivedRun } from '@/agent/runtime/bridges/executionRun/send/backendLongLivedPrompt';
@@ -852,7 +853,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     }, { surface: 'rpc' })).resolves.toMatchObject({ ok: true });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({
       intentInput: expect.objectContaining({
-        engineIds: ['codex'],
+        reviewers: [{ kind: 'engine', engineId: 'codex' }],
         instructions: 'Inspect the change.',
         changeType: 'committed',
         base: { kind: 'none' },
@@ -1126,8 +1127,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
       errorCode: 'execution_run_profile_preparation_failed',
       error: 'Account settings could not be read',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated', errorClass: 'Error' } },
-      failureCause: { phase: 'execution.run.start', errorClass: 'Error',
-        errorCode: 'execution_run_profile_preparation_failed', httpStatus: null },
+      failureCause: { phase: 'execution.run.start', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -1406,15 +1406,18 @@ describe('createExecutionRunRpcActionExecutor', () => {
       sidechainId: 'side_causal_missing_1',
     }));
     const executor = createAgentExecutionRunStartExecutor(start);
+    const agentStartContext = CURRENT_SESSION_AGENT_START_CONTEXT;
 
     await expect(executor.execute(
       'execution.run.start',
       AGENT_EXECUTION_RUN_START_REQUEST,
       {
         surface: 'agent',
+        actionCaller: { kind: 'session', sessionId: AGENT_EXECUTION_RUN_START_REQUEST.sessionId, starterDepth: 0, turnDepth: 0 },
         defaultSessionId: AGENT_EXECUTION_RUN_START_REQUEST.sessionId,
         callerPermissionMode: 'yolo',
-        causalPermissionAuthority: null,
+        causalPermissionAuthority: { kind: 'not-admitted' },
+        agentStartContext,
       } as unknown as Parameters<typeof executor.execute>[2],
     )).resolves.toEqual({
       ok: false,
@@ -1428,12 +1431,14 @@ describe('createExecutionRunRpcActionExecutor', () => {
       AGENT_EXECUTION_RUN_START_REQUEST,
       {
         surface: 'agent',
+        actionCaller: { kind: 'session', sessionId: AGENT_EXECUTION_RUN_START_REQUEST.sessionId, starterDepth: 0, turnDepth: 0 },
         defaultSessionId: AGENT_EXECUTION_RUN_START_REQUEST.sessionId,
         callerPermissionMode: 'yolo',
         causalPermissionAuthority: {
           kind: 'admittedSessionInputV1',
           admittedPermissionCeiling: 'not-a-permission-mode',
         },
+        agentStartContext,
       } as unknown as Parameters<typeof executor.execute>[2],
     )).resolves.toEqual({
       ok: false,
@@ -2153,10 +2158,15 @@ describe('createExecutionRunRpcActionExecutor', () => {
       policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }),
       isExecutionRunsEnabled: () => true,
-      actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,
-        accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, approvalProfiles: [{ id: 'ask-diagnostics',
-          name: 'Ask before diagnostics', actions: { 'browser.diagnostics.snapshot': {
-            approvalRequiredSurfaces: ['agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] } } }] } }) }),
+      actionsSettingsProvider: (() => {
+        const provider = createActionSettingsProvider({ allowEnvironmentOverride: false,
+          accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {} } }) });
+        const profile = ApprovalProfileV1Schema.parse({ id: 'ask-diagnostics', name: 'Ask before diagnostics',
+          actions: { 'browser.diagnostics.snapshot': {
+            approvalRequiredSurfaces: ['agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] } } });
+        return { ...provider, getApprovalProfiles: () => [{ id: profile.id, profile, access: 'owner' as const,
+          revision: { headerVersion: 1, bodyVersion: 1 } }] };
+      })(),
       approvalDeps: {
         approvalsCreate: async () => ({ artifactId: 'approval_profile_child' }),
         approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: {

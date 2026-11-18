@@ -21,6 +21,7 @@ import { isAgentStartActionV1 } from '@happier-dev/protocol/actions/executor/age
 import { AGENT_START_REFUSAL_CODES_V1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { WorkflowTargetUnavailableReasonV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -1079,6 +1080,18 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     daemonMemoryEnsureUpToDate: unsupportedActionDependency,
 
     ...(params.approvalDeps ?? {}),
+
+    // Child Actions inherit the retained Run's profile through the same
+    // catalog owner used by ordinary Session Actions. A profile id without a
+    // bound catalog is fail-closed as a missing profile.
+    readApprovalProfile: async (id, context) => {
+      let catalog = actionsSettingsProvider.getApprovalProfiles?.();
+      if (catalog === undefined) {
+        await actionsSettingsProvider.prepareApprovalProfiles?.(context.signal);
+        catalog = actionsSettingsProvider.getApprovalProfiles?.();
+      }
+      return bindApprovalProfileV1(catalog ?? [], id);
+    },
 
     isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(
       id,
