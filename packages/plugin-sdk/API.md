@@ -3746,6 +3746,7 @@
 | `./ui` | `presentActionFailure` | value | any |
 | `./ui` | `readPluginDeclarativeDataFieldV1` | value | any |
 | `./ui` | `readPluginDeclarativeDataRowsV1` | value | any |
+| `./ui` | `readSessionRecipeModelId` | value | any |
 | `./ui` | `selectTargetedContribution` | value | any |
 | `./ui` | `selectTargetedContributionOperation` | value | any |
 | `./ui` | `selectTargetedContributionSurface` | value | any |

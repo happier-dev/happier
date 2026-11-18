@@ -12,7 +12,7 @@ import {
   ProviderSelectionRefusalState,
   type ProviderSelectionRefusal,
 } from './hostRefusal.js';
-import { pluginUiTargetedContributionOperationKey } from '@happier-dev/plugin-sdk/ui';
+import { pluginUiTargetedContributionOperationKey, readSessionRecipeModelId } from '@happier-dev/plugin-sdk/ui';
 import type { AgentPermissionIntentV1 } from '@happier-dev/plugin-sdk/sessions';
 import type {
   PluginActionInputById,
@@ -4131,7 +4131,7 @@ function routerRecipeSummary(recipe: unknown, t: Translate, resolveAgentName: Re
   }
   const agentPluginId = readRecipeRecord(readRecipeRecord(record.agentTarget)?.identity)?.pluginId;
   const agent = typeof agentPluginId === 'string' ? resolveAgentName(agentPluginId) : undefined;
-  const modelId = readRecipeRecord(readRecipeRecord(record.modelSelection)?.ref)?.modelId;
+  const modelId = readSessionRecipeModelId(record);
   const directory = readRecipeRecord(record.directory);
   const folder = directory?.kind === 'path' && typeof directory.path === 'string'
     ? directory.path.split(/[\\/]/).filter((part) => part !== '').pop()

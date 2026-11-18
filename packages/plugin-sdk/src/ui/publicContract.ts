@@ -4,6 +4,8 @@ import type { InboxItemAttentionTypeV1 as DtoInboxItemAttentionTypeV1, PluginUiT
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1, SessionSpawnNewInputV2 } from '../sessions/authoring.js';
+import { SessionSpawnNewSelectionV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
+import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { JsonValue } from '../identity.js';
 import type { PluginUiNewSessionActionDefaultV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -398,6 +400,16 @@ export type PluginUiSelectActionInputRequestV1 =
  * `sourceContext`) and typed most of the draft as `unknown`.
  */
 export type PluginUiSessionServerStartDraftV1 = SessionServerStartSpawnDraftV1;
+
+/** Read the model label of a captured Session recipe, including a separately carried Team binding. */
+export function readSessionRecipeModelId(recipe: Readonly<Record<string, unknown>>): string | undefined {
+    const shape = SessionSpawnNewSelectionV2BaseSchema.shape;
+    return readAuthoredSessionModelSelection({
+        agentTarget: shape.agentTarget.safeParse(recipe.agentTarget).data,
+        modelSelection: shape.modelSelection.safeParse(recipe.modelSelection).data,
+        teamCredentialBindings: shape.teamCredentialBindings.safeParse(recipe.teamCredentialBindings).data,
+    })?.ref.modelId;
+}
 
 export type PluginUiSelectActionInputTargetedSubmittedV1 = {
     kind: 'submitted';

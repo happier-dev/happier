@@ -7267,12 +7267,15 @@ describe('Channels thread router conversation', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('seeds the current route recipe through the host selector and saves its strict edited settlement', async () => {
+  it('shows a split Team model and preserves it when editing a route recipe through the host selector', async () => {
     type ServerStartDraft = Extract<SelectActionInputResult, { kind: 'serverStartDraft' }>['draft'];
     const recipe = {
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
       directory: { kind: 'path', path: '/srv/wilson/intake' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, teamId: 'team-a', resourceId: 'resource-a',
+        expectedResourceRevision: 2, deliveryMode: 'brokered',
+        providerModelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-route-model' } }],
       profileId: 'intake', allowedTools: ['mcp__wilson-intake__*'], unlistedTools: 'deny',
       organizationPlacement: { folderId: 'intake', tagIds: ['email'] },
       capabilitySelection: { mcp: { v: 1, managedServersEnabled: false,
@@ -7310,6 +7313,7 @@ describe('Channels thread router conversation', () => {
     try {
       await vi.waitFor(async () => {
         await expect(fixture.getByText('1. People in sales, forwarded mail')).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('team-route-model · intake');
       });
       await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
       await vi.waitFor(async () => {

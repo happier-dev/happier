@@ -4,6 +4,7 @@ export { THEME_SURFACE_REGISTRY, themeSurfaceDataSet, isThemeSurfaceAddress, get
 export type { SurfaceId, SurfacePart, ThemeSurfaceState, SurfaceAddress, ThemeSurfacePaintSource, ThemeSurfacePaintRole, ThemeSurfacePaintDescriptor, ThemeSurfaceReference } from './themeSurfaceRegistry.js';
 export type { PluginUiActionBinding } from './actionBinding.js';
 export { decodePluginUiManagedMachineInventory, type PluginUiManagedMachineInventory } from './managedMachineInventory.js';
+export { readSessionRecipeModelId } from './publicContract.js';
 export { presentActionFailure } from './actionFailurePresentation.js';
 export type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from './hostApi.js';
 export type { PluginUiDeviceStateRequestV1, PluginUiDeviceStateResultV1 } from './hostApi.js';
