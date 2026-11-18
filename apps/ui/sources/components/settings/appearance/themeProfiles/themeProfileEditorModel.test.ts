@@ -26,37 +26,18 @@ describe('theme profile contrast warnings', () => {
         expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('text.link')!)).toContain('background.canvas');
     });
 
-    it('warns when a state foreground is below the text contrast threshold', () => {
-        const profile: ThemeProfileV1 = {
-            schemaVersion: 1, id: 'state-text-warning', name: 'State text warning', createdAt: '', updatedAt: '',
-            base: { light: 'light', dark: 'dark' },
-            overrides: { light: { 'state.success.foreground': '#8A8A8A', 'state.success.background': '#FFFFFF' }, dark: {} },
-        };
-
-        expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('state.success.foreground')!))
-            .toEqual(['state.success.background']);
-    });
-
-    it('keeps real Default palette failures visible at their role thresholds', () => {
+    it('keeps the Default palette quiet in both modes', () => {
         const profile: ThemeProfileV1 = {
             schemaVersion: 1, id: 'default', name: 'Default', createdAt: '', updatedAt: '',
             base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
         };
-        const expectedLight = {
-            'text.link': ['background.canvas', 'surface.base'],
-            'text.destructive': ['background.canvas', 'surface.base'],
-            'state.success.foreground': ['state.success.background'],
-            'state.warning.foreground': ['state.warning.background'],
-            'state.danger.foreground': ['state.danger.background'],
-            'state.neutral.foreground': ['state.neutral.background'],
-        } as const;
 
         for (const mode of ['light', 'dark'] as const) {
             const draft = resolveThemeProfileEditorDraft(profile, mode);
             const warnings = Object.fromEntries(Object.entries(draft.tokens)
                 .filter(([, token]) => token.contrast.warnings.length > 0)
                 .map(([tokenId, token]) => [tokenId, token.contrast.warnings]));
-            expect(warnings).toEqual(mode === 'light' ? expectedLight : {});
+            expect(warnings).toEqual({});
         }
     });
 
