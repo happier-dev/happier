@@ -555,9 +555,13 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         appendBucketPopulation(dayCell, facts, costMode);
         hoursOfDay.set(hour, dayCell);
     }
-    // A witnessed wait or unknown-ended lane still establishes Agent membership,
-    // although it supplies no measured busy span or accounting denominator.
-    for (const lane of intervals?.lanes ?? []) if (!periodPopulation.busy.has(lane.agentId)) periodPopulation.busy.set(lane.agentId, { busyMs: 0, peakParallel: 0 });
+    // A timed wait belongs to the period even though it contributes no busy time.
+    for (const lane of intervals?.lanes ?? []) {
+        if (!periodPopulation.busy.has(lane.agentId)
+            && lane.waits.some(wait => wait.startMs < period.endMs && wait.endMs > period.startMs)) {
+            periodPopulation.busy.set(lane.agentId, { busyMs: 0, peakParallel: 0 });
+        }
+    }
     const periodFigures = projectFigures(periodPopulation);
     // Context-only runtime observations currently encode absent accounting as zero.
     // The query has no measurement-presence marker, so zero cannot establish a

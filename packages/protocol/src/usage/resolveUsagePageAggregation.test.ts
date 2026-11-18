@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as coachEvaluation from './coach/evaluateUsageCoach.js';
 import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
+import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
 import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
 import { ConnectedServiceQuotaGetResultV1Schema } from '../connect/providerAccountUsageHistorySchemasV1.js';
@@ -449,13 +449,18 @@ describe('resolveUsagePageAggregation', () => {
     const result = resolveUsagePageAggregation({ queries: [query, sibling, detailed, refused],
       accounting: [query, sibling, detailed, refused].map(query => ({ query, value, status: 'available' as const })),
       howYouWork: [{ query: detailed, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
-        agentId: 'claude', machineId: null, kind: 'busy', startMs: 110, endMs: 160 }] } },
+        agentId: 'activity-only', machineId: null, kind: 'busy', startMs: 110, endMs: 160 }] } },
       { query: refused, detail: { status: 'unknown' }, errorCode: 'permission_denied' }],
     }, bundledUsageModelPriceCatalog);
     const calendar = result.results[0]!.howYouWork!.agentCalendar!;
     expect(result.results[1]!.howYouWork!.agentCalendar).toBe(calendar);
     expect(result.results[2]!.howYouWork!.agentCalendar!.periodSummary.totals.busyMs).toBe(50);
     expect(result.results[2]!.howYouWork!.agentCalendar).not.toBe(calendar);
+    for (const slice of result.results) {
+      expect(readUsageAgentAccountingCalendar(slice)?.periodSummary.agents.map(agent => agent.agentId)).toEqual(['claude']);
+    }
+    const restored = UsageQueryBatchResultSchema.parse(JSON.parse(JSON.stringify(result))).results[2]!;
+    expect(readUsageAgentAccountingCalendar(restored)?.periodSummary.agents.map(agent => agent.agentId)).toEqual(['claude']);
     expect(result.results[3]!.howYouWork!.agentCalendar!.periodSummary.totals.busyMs).toBeNull();
     expect(result.results[3]!.howYouWork!.agentCalendar!.periodSummary.totals.tokens).toBe(16);
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);

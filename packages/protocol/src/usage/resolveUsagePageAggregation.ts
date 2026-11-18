@@ -239,6 +239,17 @@ type UsagePageProjections = {
 const usagePageProjections = Symbol('usagePageProjections');
 type ProjectedUsageSlice = UsageQueryResultSlice & { [usagePageProjections]?: UsagePageProjections };
 
+/** Shares and their legends read the admitted accounting cohort even when a sibling supplies private activity. */
+export function readUsageAgentAccountingCalendar(slice: UsageQueryResultSlice): UsageAgentAccountingCalendar['projection'] | null {
+  if (!slice.accounting) return null;
+  const admitted = (slice as ProjectedUsageSlice)[usagePageProjections];
+  if (admitted) return admitted.calendar.value?.projection ?? null;
+  // A restored slice has no in-process projection metadata. Use the same accounting owner on its displayed range.
+  const calendar = slice.howYouWork?.agentCalendar;
+  return projectUsageAccountingSnapshotCalendar({ query: slice.shownQuery, status: 'available', value: slice.accounting },
+    undefined, calendar?.period).agentCalendarAccounting?.projection ?? null;
+}
+
 function projectAdmittedUsageInputs<T>(previous: AdmittedUsageProjection<T> | undefined,
   inputs: Readonly<Record<string, unknown>>, project: () => T): AdmittedUsageProjection<T> {
   const keys = Object.keys(inputs);

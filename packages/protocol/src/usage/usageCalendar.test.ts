@@ -115,6 +115,20 @@ describe('projectUsageAgentCalendar', () => {
             }
         }
     });
+    it('includes period contributors and timed waits but excludes Agent identities with no measured activity', () => {
+        const intervals = projectUsageWorkIntervals({ period, timeZoneOffsetMinutes: 120, facts: [
+            { workId: 'timed-wait', agentId: 'reviewer', machineId: null, evidenceId: 'wait', kind: 'permission_wait',
+                startMs: period.startMs, endMs: period.startMs + 1_000 },
+            { workId: 'no-duration', agentId: 'idle', machineId: null, evidenceId: 'zero-length', kind: 'busy',
+                startMs: period.startMs + 1, endMs: period.startMs + 1 },
+            { workId: 'unknown-duration', agentId: 'unmeasured', machineId: null, evidenceId: 'unknown-end', kind: 'busy',
+                startMs: period.startMs, endMs: null },
+        ] });
+        const input = { period, timeZoneOffsetMinutes: 120, intervals,
+            accounting: accounting([row('tokens', 'writer', 5), row('context', 'context-only', 0)]) };
+        expect(projectUsageAgentCalendar(input).periodSummary.agents.map(agent => agent.agentId)).toEqual(['context-only', 'reviewer', 'writer']);
+    });
+
     it('reuses a carried accounting projection while composing distinct private lanes and configured night windows', () => {
         let costReads = 0;
         const value = row('one', 'a', 5);
