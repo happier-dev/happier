@@ -38,7 +38,7 @@ export type PluginActionExecution<Result = unknown> =
   | Readonly<{ status: 'idle' }>
   | Readonly<{ status: 'pending' }>
   | Readonly<{ status: 'success'; result: Result; requestId?: string }>
-  | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
+  | Readonly<Omit<PluginActionFailureAuthorPayloadV1, 'diagnostics'> & { effectAttempted?: boolean; status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
   | Readonly<PluginActionFailureAuthorPayloadV1 & { effectAttempted?: boolean; status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
 
 /**
