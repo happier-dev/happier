@@ -15,7 +15,7 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/
 import { DeploymentFailedEventV1ProtocolSchema, DeploymentReceiptOutcomeEventV1ProtocolSchema,
     DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol';
+import { canTransitionDeploymentV1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -230,6 +230,8 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
     app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', async request => {
         const body = DeploymentTransitionInputV1Schema.parse(request.body);
         transitions.push(body);
+        // Preserve Home's canonical lifecycle contract at the persistence boundary.
+        if (!canTransitionDeploymentV1(receipt.state, body.state)) return { ok: false, error: 'deployment_conflict' };
         const stored = authored.artifacts.read(body.contentArtifactId);
         if (!stored || !body.contentUpdate) throw new Error('Expected the admitted receipt update');
         authored.artifacts.seed(body.contentArtifactId, body.contentUpdate.header ?? stored.header, body.contentUpdate.body ?? stored.body);
