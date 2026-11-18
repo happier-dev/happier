@@ -47,6 +47,7 @@ import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
 import { useUsageAppEnvironments } from './useUsageAppEnvironments';
 import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
+import { UsageAppsNothingRecorded } from './UsageAppsNothingRecorded';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
@@ -465,12 +466,13 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   />, [page.period, page.scope.costBasis, facts.coverageIncomplete, admittedFilters, selectPeriod, selectCostBasis, costBasisOptions,
     costBasisPending, metricOptions, metric, metricPending, changeMetric]);
 
+  const appsShown = readUsageAppCallsEnvironmentIds(page.scope.sources) !== null;
   // The selected document and the named-view inventory settle independently.
   return (
     <>
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
-        appsShown={readUsageAppCallsEnvironmentIds(page.scope.sources) !== null}
+        appsShown={appsShown}
         homeUnavailable={homeUnavailable} phone={phone}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
@@ -496,6 +498,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           />
         </View>
       ) : null}
+      {/* Your apps recorded nothing in the period: said once here, with its scene; the cards keep their quiet line. */}
+      {appsShown && facts.nothingRecorded ? <UsageAppsNothingRecorded /> : null}
       <UsageDrillProvider value={drill}>
       <WidgetArea
         port={props.port}

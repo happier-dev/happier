@@ -23,6 +23,9 @@ import { usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource'
 import { UsageWidgetPage } from './UsageWidgetPage';
 import { UsageFilterBar } from './UsageFilterBar';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
+import { UsageBreakdownsBody } from '@happier-dev/plugin-ui/presentation';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import {
   buildUsageRouteParams,
   resolveUsagePageInitialFilters,
@@ -171,12 +174,12 @@ const visibleGeometry = {
   ) => done(0, 0, 1000, 300),
 };
 
-describe('Usage Sources: Agents or Your apps', () => {
-  it("switches the same Costs widgets to the apps' collector calls at the viewer's prices and back, never summing the two", async () => {
+async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>[]) {
+    const callCount = items.reduce((sum, item) => sum + item.callCount, 0);
     const collector = createTelemetryCollectorActionBoundary({ machineId: 'collector-1', accountId: 'account-a',
       serverIdentityId: 'srv_usage_apps_page', readCosts: (input) => ({ ok: true, source: input.source, since: input.since,
-        until: input.until, items: [operand('gpt-5-mini', 3), operand('llama-3.3-70b', 1)],
-        coverage: { callCount: 4, tokenCategoryCallCount: 4, reportedCostCallCount: 0, lostObservations: 0, reason: null } }) });
+        until: input.until, items: [...items],
+        coverage: { callCount, tokenCategoryCallCount: callCount, reportedCostCallCount: 0, lostObservations: 0, reason: null } }) });
     daemonRpc.mockImplementation(collector.answerDaemonRpc);
     home = await serveActionHomes({
       homes: [
@@ -271,6 +274,16 @@ describe('Usage Sources: Agents or Your apps', () => {
       filters().find((filter) => filter.field === 'sources');
     const costFacts = () =>
       screen.findAllByType(UsageCostFactsWidget)[0]?.props.slice;
+    return { screen, collector, filters, sources, costFacts };
+}
+
+const frameTitles = (screen: Awaited<ReturnType<typeof mountUsagePageWithApps>>['screen']) =>
+  screen.findAllByType(WidgetFrame).map((frame) => frame.props.title);
+
+describe('Usage Sources: Agents or Your apps', () => {
+  it("switches the same Costs widgets to the apps' collector calls at the viewer's prices and back, never summing the two", async () => {
+    const { screen, collector, filters, sources, costFacts } = await mountUsagePageWithApps(
+      [operand('gpt-5-mini', 3), operand('llama-3.3-70b', 1)]);
 
     // Agents lead; the one Sources chooser offers Your apps once the viewer has an app with a collector.
     await waitForHomeGovernance(() =>
@@ -313,6 +326,14 @@ describe('Usage Sources: Agents or Your apps', () => {
     expect(collector.reads).toContainEqual(
       expect.objectContaining({ source: expect.objectContaining({ environmentId: 'env-prod' }) }),
     );
+    // App calls have no Agent: the Costs ranking by agent ranks the Environments that made them, under their name.
+    await waitForHomeGovernance(() => {
+      expect(frameTitles(screen)).toContain('Environments');
+      expect(frameTitles(screen)).not.toContain('Agents');
+      const ranking = screen.findAllByType(UsageBreakdownsBody)[0]?.props.model;
+      expect(ranking?.blocks.map((block: { id: string }) => block.id)).toEqual(['source']);
+      expect(ranking?.blocks[0].rows.map((row: { label: string }) => row.label)).toEqual(['Production']);
+    });
     expect(
       home.httpRequests
         .filter((request) => request.path === '/v2/usage/query')
@@ -332,6 +353,24 @@ describe('Usage Sources: Agents or Your apps', () => {
           (fact: { kind: string }) => fact.kind === 'unpriced',
         ),
       ).toBe(false);
+      expect(frameTitles(screen)).toContain('Agents');
     });
+    expect(screen.findByTestId('usage-page.appsNothingRecorded') ?? null).toBeNull();
+  });
+
+  it('says once, with its scene and a way to the apps, when the shown apps recorded no model call in the period', async () => {
+    const { screen, sources } = await mountUsagePageWithApps([]);
+    await waitForHomeGovernance(() => expect(sources()?.options.map((option) => option.id)).toContain(USAGE_SOURCES_SHOW_APPS));
+    await act(async () => {
+      await sources()!.select(USAGE_SOURCES_SHOW_APPS);
+    });
+    await flushHookEffects({ cycles: 40 });
+    await waitForHomeGovernance(() => {
+      const empty = screen.findAllByType(EmptyState).find((state) => state.props.testID === 'usage-page.appsNothingRecorded');
+      expect(empty?.props).toEqual(expect.objectContaining({ scene: 'searchWaiting',
+        primaryAction: expect.objectContaining({ testID: 'usage-page.appsNothingRecorded.action' }) }));
+    });
+    // Starting a session is the Agents' next step, not the apps'.
+    expect(screen.findByTestId('usage-page.header.nothingRecordedAction') ?? null).toBeNull();
   });
 });

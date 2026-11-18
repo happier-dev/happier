@@ -8,7 +8,8 @@ import {
   UsageBreakdownsBody,
   type UsageBreakdownBlock,
 } from '@happier-dev/plugin-ui/presentation';
-import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { readUsageAppCallsEnvironmentIds, resolveUsageShownBreakdown } from '@/sync/domains/usage/usageAppCallsSource';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { usageMeterFill } from '../usageAccent';
@@ -65,9 +66,13 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const [expanded, setExpanded] = React.useState<readonly string[]>([]);
   const chartTheme = useUsagePluginTheme();
   const metric = props.query.metric;
-  const dimensions = props.query.breakdown.length
-    ? props.query.breakdown
-    : DEFAULT_DIMENSIONS;
+  // In Your apps the sources are the Environments, and a ranking by agent ranks them (`resolveUsageShownBreakdown`).
+  const appsShown = readUsageAppCallsEnvironmentIds(props.query.sources) !== null;
+  const dimensions = React.useMemo(() => resolveUsageShownBreakdown(
+    props.query.breakdown.length ? props.query.breakdown : DEFAULT_DIMENSIONS, props.query.sources),
+  [props.query.breakdown, props.query.sources]);
+  const heading = (dimension: UsageAnalyticsBreakdownDimension) => appsShown && dimension === 'source'
+    ? t('usage.board.page.filterEnvironments') : t(USAGE_BREAKDOWN_DIMENSION_HEADING[dimension]);
   const machineEntries = props.slice.accounting?.breakdowns?.machine;
   // Rankings consume display names, never daemon runtime/presence. The store's
   // selector retains equal names before those publications reach React.
@@ -81,6 +86,12 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   }, [dimensions, machineEntries]));
   const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
+  // One ranked dimension is the card's own title (`readUsageBreakdownsInstanceTitle`); a heading would say it twice.
+  const namedByCard = props.query.breakdown.length === 1;
+  // The card that names Agents or Sources names the Environments it ranks in Your apps; a name the person gave still wins.
+  const environmentsTitle = appsShown && namedByCard && dimensions[0] === 'source';
+  const identity = React.useMemo(() => environmentsTitle ? { title: t('usage.board.page.filterEnvironments') } : null, [environmentsTitle]);
+  useWidgetFrameBodyIdentity(identity);
   const drill = useUsageDrill(props.query);
   const view = useUsageAnalyticsView(props.slice, props.query);
   const accounting = metric === 'cost' ? view?.pageCost.accounting : props.slice.accounting;
@@ -91,8 +102,6 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
       ? view?.pageCost.amountUsd ?? null
       : resolveUsageMeasuredTokens(accounting.totals.tokens).total
     : null;
-  // One ranked dimension is the card's own title (`readUsageBreakdownsInstanceTitle`); a heading would say it twice.
-  const namedByCard = props.query.breakdown.length === 1;
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
@@ -150,7 +159,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         const lead = leadingUsageRows(block.rows, expanded.includes(block.dimension));
         return {
             id: block.dimension,
-            label: t(USAGE_BREAKDOWN_DIMENSION_HEADING[block.dimension]),
+            label: heading(block.dimension),
             rows: lead.rows.map((row, index) => ({
               ...row,
               color: block.dimension === 'agent' ? getAgentIdentityColor(theme, row.id) : usageMeterFill(theme, index === 0),
@@ -216,7 +225,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
                   ),
                 }
               : {}),
-          footer: <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${t(USAGE_BREAKDOWN_DIMENSION_HEADING[block.dimension])}`}
+          footer: <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${heading(block.dimension)}`}
             total={block.rows.length} hidden={lead.hidden} complete={block.truncated === 0} expanded={expanded.includes(block.dimension)}
             unlisted={block.truncated > 0 && lead.hidden === 0 ? t('usage.board.page.moreRows', { count: block.truncated }) : null}
             testID={`${props.testID}.${block.dimension}.more`}

@@ -1,3 +1,5 @@
+import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+
 /**
  * "Your apps" in Usage (P7 J4, D33): the model calls an Environment's deployed app makes, carried in the
  * existing Usage `sources` scope as one source per Environment. A scope whose sources are all App calls
@@ -25,4 +27,17 @@ export function readUsageAppCallsEnvironmentIds(
   return sources.map((source) =>
     source.slice(USAGE_APP_CALLS_SOURCE_PREFIX.length),
   );
+}
+
+/**
+ * App calls have no Agent: in Your apps a ranking by agent ranks the Environments that made the calls, which the App
+ * slice carries as its sources (one per Environment). Agents' rankings are returned unchanged.
+ */
+export function resolveUsageShownBreakdown(
+  dimensions: readonly UsageAnalyticsBreakdownDimension[],
+  sources: readonly string[] | null | undefined,
+): readonly UsageAnalyticsBreakdownDimension[] {
+  if (readUsageAppCallsEnvironmentIds(sources) === null || !dimensions.includes('agent'))
+    return dimensions;
+  return [...new Set(dimensions.map((dimension) => (dimension === 'agent' ? 'source' : dimension)))];
 }
