@@ -29,13 +29,9 @@ export function createSessionPageScreenOptions(): Readonly<Record<string, Native
         'automations/new': t('sessionInfo.title'),
         'automations/when-turn-finishes': t('sessionInfo.title'),
     };
-    const options: Record<string, NativeStackNavigationOptions> = Object.fromEntries(
+    // Session Info keeps its "Session Info" bar title (owner 2026-11-17) like its sub-pages.
+    return Object.fromEntries(
         Object.entries(titles).map(([name, headerTitle]) => [name, { headerShown: true, headerTitle }]));
-    // Session Info opens with its own identity block, which names the Session: the bar stays empty (an empty
-    // string, so native-stack never falls back to the route name) and the screen keeps its name for assistive
-    // tech and the window title.
-    options.info = { headerShown: true, headerTitle: '', title: titles.info };
-    return options;
 }
 
 /**
