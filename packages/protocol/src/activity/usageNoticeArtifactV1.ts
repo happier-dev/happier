@@ -7,6 +7,7 @@ import { TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from '../tasks
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactRevisionV1.js';
 import type { InboxArtifactAdmissionDispositionV1 } from '../artifacts/artifactKindV1.js';
 import { AccountNoticeRecoveryChoicesV1Schema } from './accountNoticeRecoveryV1.js';
+import { AttentionRemindAtV1Schema, resolveAttentionReminderV1, type AttentionReminderV1 } from './attentionReminderV1.js';
 export { AccountNoticeRecoveryChoiceV1Schema, AccountNoticeRecoveryChoicesV1Schema,
   AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema,
   type AccountNoticeRecoveryChoiceV1, type AccountNoticeDismissInputV1 } from './accountNoticeRecoveryV1.js';
@@ -171,8 +172,18 @@ export const AccountNoticeArtifactBodyV1Schema = lazyZodSchema(() => noticeConte
 export const AccountNoticeArtifactHeaderV1Schema = lazyZodSchema(() => z.strictObject({
   ...accountNoticeContent, kind: z.literal(ACCOUNT_NOTICE_ARTIFACT_KIND_V1), title: z.string().check(z.minLength(1)),
   status: z.enum(['open', 'dismissed']), readAt: z.optional(z.number().check(z.int(), z.nonnegative())), excerpt: z.optional(z.string()),
+  remindAt: z.optional(AttentionRemindAtV1Schema),
 }).check(z.refine(validNoticeContent)));
 export type AccountNoticeArtifactHeaderV1 = z.infer<typeof AccountNoticeArtifactHeaderV1Schema>;
+
+export function canSetAccountNoticeReminderV1(header: AccountNoticeArtifactHeaderV1): boolean {
+  return header.source.kind === 'plugin' && header.status === 'open' && !header.resolved;
+}
+
+/** Reminder state belongs to the recipient's private notice, outside source-authored content. */
+export function readAccountNoticeReminderV1(header: AccountNoticeArtifactHeaderV1, nowMs: number): AttentionReminderV1 | null {
+  return resolveAttentionReminderV1(canSetAccountNoticeReminderV1(header) ? header.remindAt : undefined, nowMs);
+}
 
 /** Authored operands, not a grant: the live catalog and Action front door re-admit a press. */
 export const PluginNotificationPushContextV1Schema = lazyZodSchema(() => z.strictObject({
@@ -235,12 +246,15 @@ export function inboxNoticeFocusKeyV1(serverId: string, artifactId: string): str
 /** Shared transient notice row; source admission and page routing stay with their owners. */
 export function projectAccountNoticeInboxItemV1(input: Readonly<{
   artifactId: string; serverId: string; createdAt: number; header: AccountNoticeArtifactHeaderV1;
-  pageRoute: string; pluginDisplayName?: string | null;
+  pageRoute: string; pluginDisplayName?: string | null; nowMs?: number;
 }>) {
   const { header, artifactId, serverId } = input;
   if (header.status !== 'open' || header.resolved) return null;
+  const reminder = readAccountNoticeReminderV1(header, input.nowMs ?? Date.now());
+  const scheduled = reminder?.state === 'scheduled';
   return { key: `notice:${serverId}:${artifactId}`, producer: 'notice' as const, type: header.type,
-    view: inboxItemViewV1(header.type), title: header.title, context: header.body ?? null,
+    view: scheduled ? 'updates' as const : inboxItemViewV1(header.type), title: header.title, context: header.body ?? null,
+    ...(scheduled ? { remindAt: reminder.remindAt } : {}),
     createdAt: input.createdAt, read: header.readAt !== undefined,
     focus: { kind: 'notice' as const, id: artifactId, serverId }, pageRoute: input.pageRoute,
     // The generic Artifact excerpt contains the serialized notice envelope.

@@ -41,6 +41,7 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -75,6 +76,12 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     root = await mkdtemp(join(tmpdir(), 'cli-artifact-actions-'));
     await mkdir(join(root, 'workspace'));
     http.get.mockReset(); http.post.mockReset(); http.put.mockReset(); http.delete.mockReset(); http.request.mockReset();
+    http.request.mockImplementation(async ({ method, url }: { method: string; url: string }) => {
+      if (method === 'GET' && new URL(url).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
+      throw new Error(`unexpected_request:${method}:${new URL(url).pathname}`);
+    });
     machineTransport.exact.mockReset();
     // Machine identity is persistent machine-local configuration, a system boundary.
     await persistence.writeSettings({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
@@ -203,8 +210,8 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
   it('reads owned notices through the CLI Inbox without a mounted app, and reports app-only sources as partial', async () => {
     const accountId = 'notice-owner';
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
-    const content = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, source: { kind: 'plugin', pluginId: 'qa.notice', itemId: 'stable-item' },
-      type: 'update', resolved: false, body: 'Saved notice', page: { pageId: 'notice', subPath: 'stable-item' } });
+    const content = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, source: { kind: 'plugin', pluginId: 'happier.triage', itemId: 'stable-item' },
+      type: 'decision', resolved: false, body: 'Saved notice', page: { pageId: 'triage', subPath: 'stable-item' } });
     const header = AccountNoticeArtifactHeaderV1Schema.parse({ ...content, kind: 'account_notice.v1', status: 'open', title: 'Notice' });
     const row = { id: artifactId, ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
       header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
@@ -226,6 +233,16 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       throw new Error(`Unexpected notice read ${address.pathname}`);
     });
     http.post.mockImplementation(async (url: string, input: unknown) => {
+      if (new URL(url).pathname === `/v1/artifacts/${artifactId}`) {
+        const mutation = readCarrierMutation(input);
+        expect(mutation.expectedHeaderVersion).toBe(row.headerVersion);
+        expect(mutation.expectedBodyVersion).toBe(row.bodyVersion);
+        row.header = String(mutation.header);
+        row.body = String(mutation.body);
+        row.headerVersion += 1;
+        row.bodyVersion += 1;
+        return { status: 200, data: { success: true, headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } };
+      }
       if (new URL(url).pathname !== '/v1/artifacts/read') throw new Error('Unexpected notice write');
       const { artifactIds } = ArtifactReadBatchInputV1Schema.parse(input);
       // The genuine transport boundary must not open unrelated document bodies.
@@ -239,7 +256,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     const context = { surface: 'cli', authority: 'account_automation', bypassApprovals: true } as const;
     const result = await executor.execute('inbox.get', {}, context);
     expect(result).toMatchObject({ ok: true, result: { status: 'partial', accountNoticeIds: [artifactId], items: [
-      { producer: 'notice', type: 'update', title: 'Notice', read: false, source: { id: artifactId, serverId: 'notice-home' } },
+      { producer: 'notice', type: 'decision', view: 'needs_you', title: 'Notice', read: false, source: { id: artifactId, serverId: 'notice-home' } },
     ], coverage: { sources: expect.arrayContaining([{ source: 'action_operations', status: 'unavailable', reason: 'device_local' }]) } } });
     if (!result.ok) throw new Error('Expected Inbox result');
     expect(AppShellActionOutputSchemas['inbox.get'].safeParse(result.result).success).toBe(true);
@@ -268,6 +285,33 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     expect(await executor.execute('artifact.get', { artifactId }, context)).toMatchObject({ ok: true, result: { artifact: { artifactId, header } } });
     expect(await executor.execute('inbox.get', {}, { ...context, expectedAccountId: 'foreign' }))
       .toMatchObject({ ok: false, errorCode: 'forbidden' });
+    const remindAt = Date.now() + 60_000;
+    const setReminder = () => executor.execute('inbox.notice.reminder.set', {
+      artifactId, remindAt, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+    }, context);
+    const reminderResult = await setReminder();
+    expect(reminderResult, JSON.stringify(reminderResult)).toMatchObject({ ok: true, result: { artifactId, remindAt } });
+    expect(row.body).toBe(currentBody);
+    expect(await executor.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: {
+      items: [expect.objectContaining({ key: `notice:notice-home:${artifactId}`, view: 'updates', remindAt })],
+    } });
+    const reloaded = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'notice-home', serverHttpBaseUrl: 'https://notice.test', isCredentialCurrent: () => credentialCurrent });
+    expect(await reloaded.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: {
+      items: [expect.objectContaining({ view: 'updates', remindAt })],
+    } });
+    const storedReminder = row.header;
+    expect(await reloaded.execute('inbox.notice.reminder.set', { artifactId, remindAt: null },
+      { ...context, expectedAccountId: 'foreign' })).toMatchObject({ ok: false, errorCode: 'forbidden' });
+    expect(row.header).toBe(storedReminder);
+    await expect(reloaded.execute('inbox.notice.reminder.set', { artifactId, remindAt: Date.now() - 1 }, context))
+      .resolves.toMatchObject({ ok: true, result: { artifactId } });
+    expect(await reloaded.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: {
+      items: [expect.objectContaining({ key: `notice:notice-home:${artifactId}`, view: 'needs_you' })],
+    } });
+    await expect(reloaded.execute('inbox.notice.reminder.set', { artifactId, remindAt: null }, context))
+      .resolves.toMatchObject({ ok: true, result: { artifactId, remindAt: null } });
+    expect(row.body).toBe(currentBody);
     retireOnList = true;
     expect(await executor.execute('inbox.get', {}, context)).toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
   });

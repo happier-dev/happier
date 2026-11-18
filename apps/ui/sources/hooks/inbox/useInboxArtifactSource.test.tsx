@@ -23,6 +23,49 @@ const { useDiscussionListRows } = await import('@/sync/ops/discussions/useDiscus
 
 afterEach(async () => { standardCleanup(); await account.reset(); });
 
+it('wakes the mounted badge once when a recipient reminder becomes due and cancels its idle clock', async () => {
+    const home = await account.restore({ machines: [] });
+    const scope = storage.getState().settingsScope!;
+    const now = Date.now();
+    const notice = createAccountNoticeArtifactFixture({ ownerAccountId: scope.accountId,
+        sourceServerId: scope.serverId, header: { type: 'decision', remindAt: now + 1_000 } });
+    const boundary = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+    boundary.replaceStoredRow(createPlainArtifactHttpFixture(notice, scope.accountId));
+    account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => {
+        const url = new URL(request.url);
+        const response = await boundary.handle(`${url.pathname}${url.search}`, { method: 'GET' });
+        if (!response) throw new Error('Expected Artifact inventory boundary');
+        return { body: await response.json() };
+    } });
+    account.home.answer(home.serverId, 'POST /v1/artifacts/read', { select: async input => {
+        const response = await boundary.handle('/v1/artifacts/read', { method: 'POST', body: JSON.stringify(input) });
+        if (!response) throw new Error('Expected Artifact read boundary');
+        return { body: await response.json() };
+    } });
+    await act(async () => {
+        storage.setState({ isDataReady: true, profileScope: scope });
+        storage.getState().applyArtifacts([notice]);
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(now);
+    let count = -1;
+    let publications = 0;
+    let source: ReturnType<typeof useInboxArtifactSource> | undefined;
+    function Badge() { count = useInboxArtifactOpenCount(); source = useInboxArtifactSource(); publications++; return null; }
+    const screen = await renderScreen(<InboxArtifactSourceBoundary><Badge /></InboxArtifactSourceBoundary>);
+    try {
+        await vi.waitFor(() => expect(source?.phase).toBe('current'));
+        expect(storage.getState().artifactInboxEntries[notice.id]?.notice?.artifact.id).toBe(notice.id);
+        expect(count).toBe(0);
+        const settled = publications;
+        await act(async () => { await vi.advanceTimersByTimeAsync(now + 1_000 - Date.now()); });
+        expect(count).toBe(1);
+        expect(publications).toBe(settled + 1);
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(publications).toBe(settled + 1);
+    } finally { await screen.unmount(); vi.useRealTimers(); }
+});
+
 it('feeds admitted C1 health changes only to the consumed Environment and keeps unaffected rows quiet', async () => {
     const home = await account.restore({ machines: [] });
     const scope = storage.getState().settingsScope!;

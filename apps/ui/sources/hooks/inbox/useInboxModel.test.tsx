@@ -84,6 +84,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/op
 import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
@@ -1006,6 +1007,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         executed.length = 0;
         listRuns.mockReset();
         automationBoundary.request.mockReset();
+        resourceBoundary.request.mockReset();
         discussionBoundary.request.mockReset().mockResolvedValue(null);
         artifactReadBoundary.request.mockReset().mockResolvedValue(null);
         artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
@@ -1796,6 +1798,45 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             expect(readAccountNoticeArtifactHeader(saved, 'account-a')).toMatchObject({ ...phase, resolved: false });
             expect(JSON.parse(artifactStore.readPlainBody(artifact.id)!)).toMatchObject({ ...phase, resolved: false });
             if (intent === 'read') expect(model!.items.find(item => item.source.id === artifact.id)).toMatchObject({ read: true });
+        } finally { await screen.unmount(); }
+    });
+
+    it('moves a mounted recipient notice back to Needs you at its reminder deadline without a publication', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const now = Date.now();
+        const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision', remindAt: now + 1_000 } });
+        seedArtifacts({ [artifact.id]: artifact });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(now);
+        const screen = await renderModel();
+        try {
+            expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates' });
+            const retained = model!.accountNotices;
+            await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+            expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'needs_you' });
+            expect(model!.accountNotices).toBe(retained);
+        } finally { await screen.unmount(); vi.useRealTimers(); }
+    });
+
+    it('snoozes a recipient notice through the Action front door and reopens it after clearing', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision' } });
+        const other = createAccountNoticeArtifactFixture({ id: 'other-recipient', ownerAccountId: 'account-b', header: { type: 'decision' } });
+        seedArtifacts({ [artifact.id]: artifact, [other.id]: other });
+        const screen = await renderModel();
+        const remindAt = Date.now() + 3_600_000;
+        try {
+            await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, remindAt); });
+            expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt });
+            expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).toMatchObject({ remindAt });
+            expect(decodePlainArtifactStoredContent(artifactStore.read(other.id)!.header)).not.toHaveProperty('remindAt');
+            const rescheduledAt = remindAt + 3_600_000;
+            await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, rescheduledAt); });
+            expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt: rescheduledAt });
+            expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).toMatchObject({ remindAt: rescheduledAt });
+            await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, null); });
+            expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'needs_you' });
+            expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).not.toHaveProperty('remindAt');
         } finally { await screen.unmount(); }
     });
 

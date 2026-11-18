@@ -734,12 +734,12 @@ describe('createAccountArtifactStore', () => {
     expect(decodePlainArtifactStoredContent(stored.header)).not.toHaveProperty('readAt');
   });
 
-  it('keeps a semantic notice retry quiet and preserves its personal read state', async () => {
+  it('keeps a semantic notice retry quiet and preserves personal read and reminder state until resolution', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const source = { kind: 'plugin' as const, pluginId: 'qa.notice', itemId: 'stable' };
     const content = { v: 1, source, type: 'update', resolved: false, body: 'Service unavailable' };
     const header = AccountNoticeArtifactHeaderV1Schema.parse({ ...content,
-      kind: 'account_notice.v1', title: 'Service health', status: 'open', readAt: 123 });
+      kind: 'account_notice.v1', title: 'Service health', status: 'open', readAt: 123, remindAt: 5_000 });
     const stored = { id: 'retained-notice', ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
       encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
@@ -757,7 +757,12 @@ describe('createAccountArtifactStore', () => {
       resolved: false, body: 'Connection refused' });
     expect(mockPost).toHaveBeenCalledTimes(1);
     const written = mockPost.mock.calls[0]?.[1];
-    expect(decodePlainArtifactStoredContent(written.header)).toMatchObject({ body: 'Connection refused', readAt: 123 });
+    expect(decodePlainArtifactStoredContent(written.header)).toMatchObject({ body: 'Connection refused', readAt: 123, remindAt: 5_000 });
+    const writtenBody = decodePlainArtifactStoredContent(written.body) as { body: string };
+    expect(JSON.parse(writtenBody.body)).not.toHaveProperty('remindAt');
+    await store.writeNotice({ accountId: 'owner', source, type: 'update', title: 'Service health',
+      resolved: true, body: 'Recovered' });
+    expect(decodePlainArtifactStoredContent(mockPost.mock.calls.at(-1)?.[1].header)).not.toHaveProperty('remindAt');
   });
 
   it.each(['plain', 'e2ee'] as const)('prepares a %s domain mutation from one admitted Artifact load and checks mode at commit', async mode => {

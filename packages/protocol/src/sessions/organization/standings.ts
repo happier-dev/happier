@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { AttentionRemindAtV1Schema } from '../../activity/attentionReminderV1.js';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
 
@@ -8,7 +9,7 @@ const SessionOrganizationSessionIdSchema = lazyZodSchema(() => z.string().check(
 export const SessionAttentionStandingSchema = lazyZodSchema(() => z.strictObject({
     sessionId: SessionOrganizationSessionIdSchema,
     standing: z.boolean(),
-    remindAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+    remindAt: z.optional(AttentionRemindAtV1Schema),
     updatedAt: z.number().check(z.int(), z.nonnegative()),
   }));
 export type SessionAttentionStanding = z.infer<typeof SessionAttentionStandingSchema>;
@@ -16,7 +17,7 @@ export type SessionAttentionStanding = z.infer<typeof SessionAttentionStandingSc
 export const SetSessionAttentionStandingRequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z
   .object({
     standing: z.optional(z.nullable(z.boolean())),
-    remindAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+    remindAt: z.optional(z.nullable(AttentionRemindAtV1Schema)),
   }).check(z.refine((value) => (value.standing === undefined) !== (value.remindAt === undefined), { message: 'Change exactly one attention field' }))));
 export type SetSessionAttentionStandingRequest = z.infer<typeof SetSessionAttentionStandingRequestSchema>;
 

@@ -78,6 +78,7 @@ export type InboxItem = Readonly<{
     context: string | null;
     createdAt: number;
     read: boolean;
+    remindAt?: number;
     focus: InboxItemFocus;
     pageRoute: string;
     workStatus?: WorkStatusPresentation;
@@ -369,6 +370,7 @@ function sameItem(left: InboxItem, right: InboxItem): boolean {
     return left.producer === right.producer && left.type === right.type && left.view === right.view && left.title === right.title
         && areSessionAppearanceColorsEqual(left.appearanceColor, right.appearanceColor)
         && left.context === right.context && left.createdAt === right.createdAt && left.read === right.read
+        && left.remindAt === right.remindAt
         && left.pageRoute === right.pageRoute && shallow(left.focus, right.focus)
         && left.source.kind === right.source.kind && left.source.id === right.source.id && left.source.serverId === right.source.serverId
         && left.source.displayName === right.source.displayName && left.excerpt === right.excerpt

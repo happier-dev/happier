@@ -3,7 +3,7 @@ import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from '@hap
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1,
     AccountNoticeArtifactHeaderV1Schema, UsageNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { normalizeAccountNoticeArtifactV1, projectOpenUsageNoticeHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { normalizeAccountNoticeArtifactV1, projectOpenUsageNoticeHeaderV1, readAccountNoticeReminderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { OwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 import { readOpenApprovalInboxAdmission, readOpenApprovalInboxEntry, listOpenApprovalInboxArtifactHydrationRequests,
@@ -66,11 +66,13 @@ export type InboxArtifactOrderChange = Readonly<{ previous?: InboxArtifactEntry;
 
 type EntryKey = Readonly<{ entry: InboxArtifactEntry; ordinal: number }>;
 type EntryTree<Value> = InboxTree<EntryKey, Value>;
+type ReminderKey = Readonly<{ entry: EntryKey; unread: boolean; remindAt: number }>;
 type NoticeItems = Readonly<{
     all: EntryTree<AccountNoticeArtifact>;
     open: EntryTree<AccountNoticeArtifact>;
     usage: EntryTree<OpenUsageNoticeArtifact>;
     unread: number;
+    reminders: InboxTree<ReminderKey, AccountNoticeArtifact>;
     incomplete: number;
 }>;
 type OrderState = Readonly<{
@@ -81,7 +83,7 @@ type OrderState = Readonly<{
     indexedApprovals: number;
 }>;
 
-const EMPTY_NOTICES: NoticeItems = { all: null, open: null, usage: null, unread: 0, incomplete: 0 };
+const EMPTY_NOTICES: NoticeItems = { all: null, open: null, usage: null, unread: 0, reminders: null, incomplete: 0 };
 const EMPTY_ORDER: OrderState = { entries: null, approvals: null, notices: null, incomplete: 0, indexedApprovals: 0 };
 const ORDER_STATE = Symbol('Inbox admitted order');
 // A weak admission key preserves equal-time position across body revisions without scanning ties.
@@ -91,6 +93,9 @@ let nextOrdinal = 0;
 const compareKeys = (left: EntryKey, right: EntryKey) =>
     right.entry.artifact.updatedAt - left.entry.artifact.updatedAt || left.ordinal - right.ordinal;
 const compareOwners = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+// Read/unread groups let one deadline index answer both the next wake and the unread future count.
+const compareReminders = (left: ReminderKey, right: ReminderKey) => Number(left.unread) - Number(right.unread)
+    || left.remindAt - right.remindAt || compareKeys(left.entry, right.entry);
 const artifactOf = (entry: InboxArtifactEntry) => entry.artifact;
 
 function stateOf(order: readonly InboxArtifactEntry[]): OrderState {
@@ -119,11 +124,18 @@ function patchEntry(state: OrderState, entry: InboxArtifactEntry, key: EntryKey,
     let notices = state.notices;
     if (owner !== undefined && (entry.notice || ownerIncomplete)) {
         const previous = getInboxTree(notices, owner, compareOwners) ?? EMPTY_NOTICES;
+        const reminder = entry.notice ? readAccountNoticeReminderV1(entry.notice.header, Date.now()) : null;
+        const unread = entry.notice !== null && isUnreadAccountNotice(entry.notice.header);
+        const reminderKey = reminder ? { entry: key, unread, remindAt: reminder.remindAt } : null;
+        const reminders = reminderKey && entry.notice ? adding
+            ? setInboxTree(previous.reminders, reminderKey, entry.notice, compareReminders)
+            : deleteInboxTree(previous.reminders, reminderKey, compareReminders) : previous.reminders;
         const next: NoticeItems = {
             all: entry.notice ? patch(previous.all, entry.notice) : previous.all,
             open: entry.notice && isOpenAccountNotice(entry.notice.header) ? patch(previous.open, entry.notice) : previous.open,
             usage: entry.usageNotice ? patch(previous.usage, entry.usageNotice) : previous.usage,
-            unread: previous.unread + (entry.notice && isUnreadAccountNotice(entry.notice.header) ? (adding ? 1 : -1) : 0),
+            unread: previous.unread + (unread ? (adding ? 1 : -1) : 0),
+            reminders,
             incomplete: previous.incomplete + (ownerIncomplete ? (adding ? 1 : -1) : 0),
         };
         notices = !next.all && next.incomplete === 0 ? deleteInboxTree(notices, owner, compareOwners)
@@ -160,11 +172,13 @@ export function patchInboxArtifactOrder(order: readonly InboxArtifactEntry[],
  */
 export function countInboxArtifactRows(artifacts: readonly DecryptedArtifact[], accountId: string | null | undefined): number {
     let count = 0;
+    const nowMs = Date.now();
     for (const artifact of artifacts) {
         const entry = readInboxArtifactEntry(artifact);
         if (!entry) continue;
         if (entry.listedApproval) count += 1;
-        else if (entry.notice && accountId && entry.artifact.ownerAccountId === accountId && isUnreadAccountNotice(entry.notice.header)) count += 1;
+        else if (entry.notice && accountId && entry.artifact.ownerAccountId === accountId && isUnreadAccountNotice(entry.notice.header)
+            && readAccountNoticeReminderV1(entry.notice.header, nowMs)?.state !== 'scheduled') count += 1;
     }
     return count;
 }
@@ -177,6 +191,8 @@ export type InboxArtifactItems = Readonly<{
     openAccountNotices: readonly AccountNoticeArtifact[];
     openUsageNotices: readonly OpenUsageNoticeArtifact[];
     count: number;
+    /** The next persisted reminder deadline; the shared Activity boundary hook owns its wake. */
+    nextBoundaryMs: number | null;
     /** The count is certified (header index for approvals, strict body admission for notices). */
     complete: boolean;
     /** Open approval headers whose body is not read yet: counted, not yet presentable. */
@@ -193,12 +209,37 @@ export function projectInboxArtifactItems(order: readonly InboxArtifactEntry[], 
     const owner = accountId === undefined || accountId === null ? EMPTY_NOTICES
         : getInboxTree(state.notices, accountId, compareOwners) ?? EMPTY_NOTICES;
     const notices = accountId ? owner : EMPTY_NOTICES;
+    const reminder = readNoticeReminderBoundary(notices.reminders, Date.now());
     const next: InboxArtifactItems = { artifacts: inboxTreeArray(state.entries, artifactOf),
         openApprovals: inboxTreeArray(state.approvals), accountNotices: inboxTreeArray(notices.all),
         openAccountNotices: inboxTreeArray(notices.open), openUsageNotices: inboxTreeArray(notices.usage),
-        count: inboxTreeSize(state.approvals) + notices.unread,
+        count: inboxTreeSize(state.approvals) + notices.unread - reminder.scheduledUnread,
+        nextBoundaryMs: reminder.nextBoundaryMs,
         complete: state.incomplete === 0 && owner.incomplete === 0, unreadApprovalBodies: state.indexedApprovals };
     return previous && (Object.keys(next) as (keyof InboxArtifactItems)[]).every(key => previous[key] === next[key]) ? previous : next;
+}
+
+/** Seek the two groups without walking retained notices; unread is the final contiguous group. */
+function readNoticeReminderBoundary(tree: InboxTree<ReminderKey, AccountNoticeArtifact>, nowMs: number) {
+    let scheduledUnread = 0;
+    let nextUnread: number | null = null;
+    let cursor = tree;
+    while (cursor) {
+        if (!cursor.key.unread || cursor.key.remindAt <= nowMs) cursor = cursor.right;
+        else {
+            scheduledUnread += 1 + inboxTreeSize(cursor.right);
+            nextUnread = cursor.key.remindAt;
+            cursor = cursor.left;
+        }
+    }
+    let nextRead: number | null = null;
+    cursor = tree;
+    while (cursor) {
+        if (cursor.key.unread) cursor = cursor.left;
+        else if (cursor.key.remindAt <= nowMs) cursor = cursor.right;
+        else { nextRead = cursor.key.remindAt; cursor = cursor.left; }
+    }
+    return { scheduledUnread, nextBoundaryMs: nextRead === null ? nextUnread : nextUnread === null ? nextRead : Math.min(nextRead, nextUnread) };
 }
 
 type InboxArtifactHydrationRequest = Readonly<{

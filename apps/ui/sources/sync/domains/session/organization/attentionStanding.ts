@@ -9,6 +9,7 @@
  * once the default is true.
  */
 import { LruMap } from '@/utils/cache/lruMap';
+import { resolveAttentionReminderV1, type AttentionReminderV1 } from '@happier-dev/protocol/activity/attentionReminderV1';
 
 export type SessionAttentionStandingPolicy = Readonly<{
     defaultStanding: boolean;
@@ -16,10 +17,9 @@ export type SessionAttentionStandingPolicy = Readonly<{
 }>;
 export type SessionAttentionIntentRecord = Readonly<{ standing: boolean; remindAt?: number; updatedAt: number }>;
 export type SessionAttentionIntent = 'suppress' | 'keep' | 'scheduled' | 'due';
-export type SessionReminderPresentation = Readonly<{ state: 'scheduled' | 'due'; remindAt: number }>;
+export type SessionReminderPresentation = AttentionReminderV1;
 export function resolveSessionAttentionIntent(record: SessionAttentionIntentRecord, nowMs: number): SessionAttentionIntent {
-    if (record.remindAt !== undefined) return record.remindAt > nowMs ? 'scheduled' : 'due';
-    return record.standing ? 'keep' : 'suppress';
+    return resolveAttentionReminderV1(record.remindAt, nowMs)?.state ?? (record.standing ? 'keep' : 'suppress');
 }
 
 export function resolveSessionReminderPresentation(
@@ -27,7 +27,7 @@ export function resolveSessionReminderPresentation(
     nowMs: number,
 ): SessionReminderPresentation | null {
     if (typeof record !== 'object' || typeof record.remindAt !== 'number') return null;
-    return { state: record.remindAt > nowMs ? 'scheduled' : 'due', remindAt: record.remindAt };
+    return resolveAttentionReminderV1(record.remindAt, nowMs);
 }
 
 export function resolveNextSessionAttentionReminderWakeAtMs(

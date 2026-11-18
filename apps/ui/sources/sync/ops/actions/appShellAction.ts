@@ -1,6 +1,6 @@
-import { AppShellActionInputSchemas, dismissAccountNoticeArtifactV1,
+import { AppShellActionInputSchemas, mutateAccountNoticeArtifactV1,
     readNoticeInboxAccountIdV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
-import { isNewSessionDraftEditActionIdV1, SESSION_DRAFT_AGENT_SET_ACTION_ID_V1,
+import { isAccountNoticeMutationActionIdV1, isNewSessionDraftEditActionIdV1, SESSION_DRAFT_AGENT_SET_ACTION_ID_V1,
     SESSION_DRAFT_DIRECTORY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -32,7 +32,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 /** Thin projection of the incumbent bulk-acknowledgement and draft-repository owners. */
 export function createAppShellAction(accountContext?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['appShellAction']> {
     return async ({ actionId, input, context }) => {
-        if (actionId === 'inbox.notice.dismiss') {
+        if (isAccountNoticeMutationActionIdV1(actionId)) {
             const accountId = readNoticeInboxAccountIdV1(context);
             const serverId = accountContext?.serverId ?? context.serverId;
             if (!accountId || !serverId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
@@ -47,7 +47,7 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                     }
                 };
                 let basis: DecryptedArtifact | null = null;
-                return await dismissAccountNoticeArtifactV1(input, { accountId, assertCurrent,
+                return await mutateAccountNoticeArtifactV1(actionId, input, { accountId, assertCurrent,
                     read: async artifactId => {
                         basis = await account.readArtifact(artifactId, { fresh: true, signal: context.signal });
                         if (!basis?.isDecrypted || basis.draft === true || basis.bodyVersion === undefined) return null;

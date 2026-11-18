@@ -314,6 +314,30 @@ afterEach(async () => {
 });
 
 describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-I1, P4)', () => {
+    it('offers the shared reminder presets on a notice row and saves the selected instant', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision' } });
+        const entry = { artifact, header: AccountNoticeArtifactHeaderV1Schema.parse(artifact.header) };
+        const items = buildInboxItems({ workGroups: [], sessionPresentation: createModel().sessionPresentation,
+            workflowServerId: 'server-a', accountServerId: 'server-a', notices: [entry] });
+        const setAccountNoticeReminder = vi.fn(async () => {});
+        const model = { ...createModel({ needsYou: false }), items, accountNotices: [entry], openAccountNotices: [entry],
+            setAccountNoticeReminder };
+        const screen = await renderScreen(<InboxContent model={model} />, { wrapper: PagePresentation });
+        try {
+            const notice = items.find(item => item.focus.id === artifact.id)!;
+            await chooseDropdownMenuItem(screen, `inbox.item.${notice.key}.dismiss`, 'attention-reminder:3600000');
+            expect(setAccountNoticeReminder).toHaveBeenCalledWith(entry, NOW + 3_600_000);
+            const scheduledArtifact = createAccountNoticeArtifactFixture({ header: { type: 'decision', remindAt: NOW + 3_600_000 } });
+            const scheduled = { artifact: scheduledArtifact, header: AccountNoticeArtifactHeaderV1Schema.parse(scheduledArtifact.header) };
+            const scheduledItems = buildInboxItems({ workGroups: [], sessionPresentation: createModel().sessionPresentation,
+                workflowServerId: 'server-a', accountServerId: 'server-a', notices: [scheduled] });
+            await screen.update(<InboxContent model={{ ...model, items: scheduledItems, accountNotices: [scheduled], openAccountNotices: [scheduled] }} view="updates" />);
+            await chooseDropdownMenuItem(screen, `inbox.item.${notice.key}.dismiss`, 'attention-reminder:remove');
+            expect(setAccountNoticeReminder).toHaveBeenLastCalledWith(scheduled, null);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps a disabled plugin’s rows with one repair note and never calls unknown enablement disabled', async () => {
         const { InboxContent } = await import('./InboxContent');
         connection = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-a' });

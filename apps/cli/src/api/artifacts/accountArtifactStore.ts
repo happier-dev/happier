@@ -1671,6 +1671,7 @@ export function createAccountArtifactStore(params: Readonly<{
         const body = JSON.stringify(nextContent);
         const header = AccountNoticeArtifactHeaderV1Schema.parse({ ...nextContent, kind: ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
           title: input.title, status: reopen ? 'open' : notice?.status ?? 'open',
+          ...(!nextContent.resolved && notice?.remindAt !== undefined ? { remindAt: notice.remindAt } : {}),
           ...(!reopen && notice?.readAt !== undefined ? { readAt: notice.readAt } : {}) });
         const committed = (result: Readonly<{ artifactId: string; revision: AccountArtifactRevision }>): AccountNoticeWriteReceipt => {
           // Default native attention covers a new actionable opening, not

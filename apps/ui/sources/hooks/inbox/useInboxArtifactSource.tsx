@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useActivityBoundaryRefresh } from '@/activity/source/useActivityBoundaryRefresh';
 
 import { useArtifactInventoryRead } from '@/components/artifacts/useArtifactInventoryRead';
 import { isArtifactInventoryLoaded } from '@/sync/domains/artifacts/artifactInventory';
@@ -26,10 +27,12 @@ function SourceProvider(props: Readonly<{ children: React.ReactNode }>) {
     const scope = storage(state => state.profileScope);
     // A page that changes no list member republishes none of the lists (nor the value when nothing moved).
     const published = React.useRef<InboxArtifactItems | null>(null);
+    const [boundaryRevision, refreshBoundary] = React.useReducer((revision: number) => revision + 1, 0);
     const items = React.useMemo(() => {
         published.current = projectInboxArtifactItems(order, scope?.accountId, published.current);
         return published.current;
-    }, [order, scope?.accountId]);
+    }, [order, scope?.accountId, boundaryRevision, presented]);
+    useActivityBoundaryRefresh(presented ? items.nextBoundaryMs : null, refreshBoundary);
     const exhausted = useArtifactsLoaded('inboxOpen');
     const loaded = storage(state => state.isDataReady && isArtifactInventoryLoaded(state, 'inboxOpen'));
     // A count-only shell (the badge shows at most 99+) reads the census only until this read has seen

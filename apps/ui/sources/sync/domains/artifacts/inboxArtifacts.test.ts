@@ -43,6 +43,39 @@ function approvalArtifact(id: string, updatedAt: number): Extract<DecryptedArtif
 }
 
 describe('admitted Inbox Artifact projection', () => {
+    it('excludes scheduled recipient reminders from the badge until their next boundary without rewriting notices', () => {
+        const now = 10_000;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+        try {
+            const store = createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
+            store.getState().applyArtifacts([
+                createAccountNoticeArtifactFixture({ id: 'scheduled', header: { type: 'decision', remindAt: now + 100 } }),
+                createAccountNoticeArtifactFixture({ id: 'later', header: { type: 'decision', remindAt: now + 200 } }),
+                createAccountNoticeArtifactFixture({ id: 'read-update', header: { type: 'update', readAt: now - 1, remindAt: now + 50 } }),
+                createAccountNoticeArtifactFixture({ id: 'other-account', ownerAccountId: 'account-b', header: { type: 'decision', remindAt: now + 50 } }),
+            ]);
+            const order = store.getState().artifactInboxOrder;
+            const before = projectInboxArtifactItems(order, 'account-a');
+            expect(before.count).toBe(0);
+            expect(before.nextBoundaryMs).toBe(now + 50);
+            expect(before.openAccountNotices).toHaveLength(3);
+            clock.mockReturnValue(now + 50);
+            const readDue = projectInboxArtifactItems(order, 'account-a', before);
+            expect(readDue.count).toBe(0);
+            expect(readDue.nextBoundaryMs).toBe(now + 100);
+            clock.mockReturnValue(now + 100);
+            const due = projectInboxArtifactItems(order, 'account-a', before);
+            expect(due.count).toBe(1);
+            expect(due.nextBoundaryMs).toBe(now + 200);
+            expect(due.accountNotices).toBe(before.accountNotices);
+            expect(store.getState().artifactInboxOrder).toBe(order);
+            clock.mockReturnValue(now + 200);
+            const allDue = projectInboxArtifactItems(order, 'account-a', due);
+            expect(allDue.count).toBe(2);
+            expect(allDue.nextBoundaryMs).toBeNull();
+        } finally { clock.mockRestore(); }
+    });
+
     it('certifies a retained superseded approval while presenting the current item', () => {
         const legacy = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'session-legacy' }, requestedSurface: 'agent',

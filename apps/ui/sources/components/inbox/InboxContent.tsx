@@ -101,6 +101,7 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     markOpened: InboxModel['markItemOpened'];
     /** A stored notice's one quick action, the same Dismiss every Inbox notice row carries. */
     dismissNotice: (item: InboxItem) => Promise<void>;
+    setNoticeReminder: InboxModel['setAccountNoticeReminder'];
     invokePluginSessionControl: InboxModel['invokePluginSessionControl'];
     /** A stored notice's own recovery choices (roll back, or keep and fix forward), when it offers any. */
     noticeEntry?: AccountNoticeArtifact;
@@ -108,6 +109,7 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { item, navigate, onSelectItem, markOpened, dismissNotice } = props;
+    const noticeEntry = props.noticeEntry;
     // Lab P4 row: where it comes from, the title, what it says, and who. The excerpt is the detail
     // when the item carries one; a Discussion row without it says what happened.
     const fact = item.excerpt
@@ -143,7 +145,9 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         ) : <Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
             color={item.view === 'needs_you' ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />}
         trailingAccessory={item.producer === 'notice' ? (
-            <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss} />
+            <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss}
+                reminder={noticeEntry ? { entry: noticeEntry,
+                    onSetReminder: remindAt => props.setNoticeReminder(noticeEntry, remindAt) } : undefined} />
         ) : undefined}
         belowAccessory={item.pluginSessionRows?.length ? (
             <InboxPluginSessionLines rows={item.pluginSessionRows} invoke={props.invokePluginSessionControl}
@@ -327,6 +331,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
             <InboxItemRow key={item.key} item={item} narrow={!(page && wide)} showDivider={showDivider}
                 selected={focusedRouteKey !== null && createInboxItemRoute(item.focus).params.item === focusedRouteKey}
                 navigate={navigate} onSelectItem={props.onSelectItem} markOpened={model.markItemOpened} dismissNotice={dismissNotice}
+                setNoticeReminder={model.setAccountNoticeReminder}
                 invokePluginSessionControl={model.invokePluginSessionControl}
                 noticeEntry={item.producer === 'notice' ? accountNoticesById.get(item.source.id) : undefined}
                 noticeRecovery={model.noticeInvestigation} />

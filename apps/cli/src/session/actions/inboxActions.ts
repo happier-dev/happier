@@ -1,6 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { AppShellActionOutputSchemas, projectInboxReadItemV1, readNoticeInboxAccountIdV1,
-  dismissAccountNoticeArtifactV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+  mutateAccountNoticeArtifactV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { isAccountNoticeMutationActionIdV1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1, inboxNoticeFocusKeyV1, normalizeAccountNoticeArtifactV1,
   projectAccountNoticeInboxItemV1, projectOpenUsageNoticeHeaderV1, readOwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -15,7 +16,7 @@ export function createCliInboxReadAction(params: Readonly<{
   accountId: string; serverId: string; isCurrent?: () => boolean | Promise<boolean>;
 }>): NonNullable<ActionExecutorDeps['appShellAction']> {
   return async ({ actionId, input, context }) => {
-    if (actionId === 'inbox.notice.dismiss') {
+    if (isAccountNoticeMutationActionIdV1(actionId)) {
       const accountId = readNoticeInboxAccountIdV1(context);
       if (accountId !== params.accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
       const assertCurrent = async () => {
@@ -23,7 +24,7 @@ export function createCliInboxReadAction(params: Readonly<{
         if ((context.serverId && context.serverId !== params.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId))
           || params.isCurrent && !await params.isCurrent()) throw Object.assign(new Error('credential_scope_retired'), { code: 'credential_scope_retired' });
       };
-      return dismissAccountNoticeArtifactV1(input, { accountId, assertCurrent,
+      return mutateAccountNoticeArtifactV1(actionId, input, { accountId, assertCurrent,
         read: artifactId => params.store.read(artifactId, { signal: context.signal, includeSharedAudience: false, ownerOnly: true }),
         write: async request => {
           await assertCurrent();

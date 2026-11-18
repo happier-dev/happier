@@ -1,6 +1,7 @@
 export { SESSION_ATTENTION_SET_ACTION_ID } from './attentionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { AttentionRemindAtV1Schema } from '../../activity/attentionReminderV1.js';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
 import {
@@ -18,7 +19,7 @@ export const SESSION_ATTENTION_STANDING_HTTP_PATH_V1 = '/v2/session-organization
 export const SessionAttentionSetInputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
   standing: z.optional(z.nullable(z.boolean())),
-  remindAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+  remindAt: z.optional(z.nullable(AttentionRemindAtV1Schema)),
 }));
 export type SessionAttentionSetInputV1 = z.infer<typeof SessionAttentionSetInputV1Schema>;
 

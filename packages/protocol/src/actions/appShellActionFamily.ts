@@ -1,5 +1,5 @@
 import { lazyActionSpecArray, lazyActionSpecRecord } from './lazyActionSpecValue.js';
-import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
+import { APP_SHELL_ACTION_IDS, INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -19,7 +19,9 @@ import { DocEditProposalDispositionV1Schema } from '../discussions/docEditPropos
 import { SessionQuestionContextV1Schema } from '../sessions/permissions/questionV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import { AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema } from '../activity/accountNoticeRecoveryV1.js';
-export { dismissAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
+import { AccountNoticeReminderSetInputV1Schema, AccountNoticeReminderSetResultV1Schema } from '../activity/accountNoticeDismissalV1.js';
+import { AttentionRemindAtV1Schema } from '../activity/attentionReminderV1.js';
+export { mutateAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
 
 /** One host-enforced Account admission for private notices and headless Inbox reads. */
 export function readNoticeInboxAccountIdV1(context: ActionExecutorContext, intent: 'acknowledge' | 'read' = 'acknowledge'): string | null {
@@ -94,6 +96,7 @@ const InboxCanonicalItemSchema = lazyZodSchema(() => z.strictObject({
   type: z.enum(['decision', 'approval', 'blocked', 'update', 'mention']),
   view: z.enum(['needs_you', 'updates', 'mentions']),
   title: z.string(), context: z.nullable(z.string()), createdAt: z.number(), read: z.boolean(), pageRoute: z.string(),
+  remindAt: z.optional(AttentionRemindAtV1Schema),
   expectedDuring: z.optional(InboxExpectedHealthOperationV1Schema),
   source: z.strictObject({ kind: z.string(), id: z.string(), serverId: z.string(), displayName: z.optional(z.nullable(z.string())) }),
   focus: z.discriminatedUnion('kind', [
@@ -121,6 +124,7 @@ export function projectInboxReadItemV1(item: z.infer<typeof InboxCanonicalItemSc
   return InboxCanonicalItemSchema.parse({ key: item.key, producer: item.producer, type: item.type, view: item.view,
     title: item.title, context: item.context, createdAt: item.createdAt, read: item.read, focus: item.focus,
     pageRoute: item.pageRoute,
+    ...(item.remindAt === undefined ? {} : { remindAt: item.remindAt }),
     ...(item.expectedDuring ? { expectedDuring: item.expectedDuring } : {}),
     source: { kind: item.source.kind, id: item.source.id, serverId: item.source.serverId,
       ...(item.source.displayName === undefined ? {} : { displayName: item.source.displayName }) },
@@ -154,6 +158,7 @@ export const AppShellActionInputSchemas = lazyActionSpecRecord(() => ({
   'inbox.get': z.strictObject({}),
   'inbox.mark_all_read': z.strictObject({ targets: z.array(InboxTargetSchema) }),
   'inbox.notice.dismiss': AccountNoticeDismissInputV1Schema,
+  [INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1]: AccountNoticeReminderSetInputV1Schema,
   'session.draft.open': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.delete': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.directory.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
@@ -190,6 +195,7 @@ export const AppShellActionOutputSchemas = lazyActionSpecRecord(() => ({
   }))) }),
   'session.draft.delete': z.strictObject({ status: z.enum(['deleted', 'missing', 'launch_custody', 'unavailable']) }),
   'inbox.notice.dismiss': AccountNoticeDismissResultV1Schema,
+  [INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1]: AccountNoticeReminderSetResultV1Schema,
   'session.draft.open': z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('opened'), draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
     z.strictObject({ status: z.enum(['missing', 'unavailable']) }),
@@ -204,6 +210,20 @@ export const AppShellActionOutputSchemas = lazyActionSpecRecord(() => ({
 
 function createAppShellActionSpecs() {
   return [
+  {
+    id: INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1, approval: { result: 'required' }, approvalPolicy: { agentDefault: 'authority' },
+    title: 'Set an Inbox reminder',
+    description: 'Set or clear the reminder on a private Inbox notice in the invoking Account.',
+    safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'account',
+    placements: [], bindings: { mcpToolName: 'inbox_notice_reminder_set' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['inbox', 'notice', 'reminder', 'set'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: AccountNoticeReminderSetInputV1Schema, outputSchema: AccountNoticeReminderSetResultV1Schema,
+    inputHints: { fields: [{ path: 'artifactId', title: 'Notice id', widget: 'text', required: true },
+      { path: 'remindAt', title: 'Reminder time (epoch milliseconds) or null', widget: 'json', required: true },
+      { path: 'expectedRevision', title: 'Displayed notice revision', widget: 'json' }] },
+  },
   {
     id: 'inbox.notice.dismiss', approval: { result: 'required' }, title: 'Dismiss an Inbox notice',
     description: 'Dismiss one current private notice on the invoking Home and own Account. Keeps its evidence and never recovers a deployment.',

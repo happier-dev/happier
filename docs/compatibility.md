@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Private Inbox notice reminders (unreleased 0.3)
+
+The recipient-private `account_notice.v1` header accepts optional `remindAt`.
+Source-authored notice content stays unchanged; source refreshes retain the
+recipient's reminder until the notice resolves. `inbox.notice.reminder.set`
+sets or clears this field through the existing Account Artifact mutation.
+Inbox projections expose a scheduled reminder in Updates and restore its
+normal attention view when due. Session and notice reminders share the same
+timestamp grammar and scheduled/due calculation.
+
+Existing notices without a reminder remain valid. Matching Protocol, CLI and
+UI readers load together: earlier strict development readers can reject the
+added header field or Action. No database migration, new persisted store,
+notification source, wire epoch or mixed-development adapter is introduced.
+
 ## File preview source absence (unreleased 0.3)
 
 Workspace file downloads classify an absent source at the source stat operation

@@ -3,8 +3,9 @@ import { expect } from 'vitest';
 
 import type { renderScreen } from '@/dev/testkit/render/renderScreen';
 
+type MenuItem = Readonly<{ id: string; submenu?: Readonly<{ items: readonly MenuItem[] }> }>;
 type MenuNode = Readonly<{ props: Readonly<{
-    items: ReadonlyArray<Readonly<{ id: string }>>;
+    items: readonly MenuItem[];
     onOpenChange: (open: boolean) => void;
     onSelect: (id: string) => void;
 }> }>;
@@ -23,7 +24,9 @@ export async function chooseDropdownMenuItem(screen: Awaited<ReturnType<typeof r
     if (!hadWindow) Object.assign(globalThis, { window: { addEventListener: () => {}, removeEventListener: () => {} } });
     try {
         await act(async () => { menu()!.props.onOpenChange(true); });
-        expect(menu()!.props.items.map((item) => item.id)).toContain(itemId);
+        const contains = (items: readonly MenuItem[]): boolean => items.some(item =>
+            item.id === itemId || (item.submenu !== undefined && contains(item.submenu.items)));
+        expect(contains(menu()!.props.items), itemId).toBe(true);
         await act(async () => { menu()!.props.onSelect(itemId); });
         await act(async () => { menu()?.props.onOpenChange(false); });
     } finally {

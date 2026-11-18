@@ -26,7 +26,7 @@ export function createInboxApprovalArtifactFixture(input: Readonly<{
 
 /** Complete attention inputs shared by Inbox presentation fixtures. */
 export function createInboxAttentionFixture(serverId: string | null = null): Pick<InboxModel, 'workflowAttention' | 'automationAttention' | 'automationAttentionItems'
-    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'markItemOpened' | 'discussionAttention' | 'executionRunAttention' | 'artifactSource' | 'machineReachabilityEntries' | 'machineDeletionEntries' | 'noticeInvestigation'> {
+    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'setAccountNoticeReminder' | 'markItemOpened' | 'discussionAttention' | 'executionRunAttention' | 'artifactSource' | 'machineReachabilityEntries' | 'machineDeletionEntries' | 'noticeInvestigation'> {
     return {
         noticeInvestigation: createAccountNoticeInvestigation({ scope: null, isCurrent: () => true,
             execute: createFrontDoorActionExecute() }),
@@ -37,7 +37,8 @@ export function createInboxAttentionFixture(serverId: string | null = null): Pic
         machineReachabilityEntries: [],
         machineDeletionEntries: [],
         executionRunAttention: { loading: false, failed: false, retry: () => {} },
-        items: [], sessionCandidates: [], accountNotices: [], openAccountNotices: [], dismissAccountNotice: async () => {}, markItemOpened: async () => {},
+        items: [], sessionCandidates: [], accountNotices: [], openAccountNotices: [], dismissAccountNotice: async () => {},
+        setAccountNoticeReminder: async () => {}, markItemOpened: async () => {},
         discussionAttention: { source: null, coverage: 'unavailable', available: false, loading: false,
             status: 'idle', errorCode: null, markOpened: async () => {}, refresh: () => undefined, loadMore: () => undefined },
     };

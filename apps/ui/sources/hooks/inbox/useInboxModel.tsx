@@ -89,6 +89,7 @@ export type InboxModel = Readonly<{
     accountNotices: readonly AccountNoticeArtifact[];
     openAccountNotices: readonly AccountNoticeArtifact[];
     dismissAccountNotice: (entry: AccountNoticeArtifact) => Promise<void>;
+    setAccountNoticeReminder: (entry: AccountNoticeArtifact, remindAt: number | null) => Promise<void>;
     items: readonly InboxItem[];
     /** Current canonical Activity facts, including Sessions that no longer need an answer. */
     sessionCandidates: readonly SessionActivityAttention[];
@@ -153,7 +154,7 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
         executionRuns, workflowAttention, workflowRunOnceDeliveries, automationAttention, automationRuns,
         attentionStandings, sessionsById, sessionPresentation, workGroups } = projection;
     const friends = useInboxFriendRequests();
-    const { openApprovals, openUsageNotices, accountNotices: storedAccountNotices } = useInboxArtifactItems();
+    const { openApprovals, openUsageNotices, accountNotices: storedAccountNotices, nextBoundaryMs } = useInboxArtifactItems();
     const readableOperations = useActiveActionOperations();
     const previousNotices = React.useRef<readonly AccountNoticeArtifact[]>([]);
     const accountNotices = React.useMemo(() => {
@@ -206,7 +207,7 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
             discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames }, previousItems.current);
         previousItems.current = next;
         return next;
-    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, profileScope?.serverId, openAccountNotices, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
+    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
 
     const spansHomes = React.useMemo(
         () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,
@@ -305,6 +306,15 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
     }, [profileScope]);
     const dismissUsageNotice = React.useCallback((entry: OpenUsageNoticeArtifact) => updateNotice(entry, 'dismiss'), [updateNotice]);
     const dismissAccountNotice = React.useCallback((entry: AccountNoticeArtifact) => updateNotice(entry, 'dismiss'), [updateNotice]);
+    const setAccountNoticeReminder = React.useCallback(async (entry: AccountNoticeArtifact, remindAt: number | null) => {
+        const result = await executeInboxAction('inbox.notice.reminder.set', {
+            artifactId: entry.artifact.id,
+            expectedRevision: { headerVersion: entry.artifact.headerVersion, bodyVersion: entry.artifact.bodyVersion },
+            remindAt,
+        }, { surface: 'ui', authority: 'present_user', serverId: profileScope?.serverId,
+            expectedAccountId: profileScope?.accountId });
+        if (!result.ok) throw new Error(result.errorCode ?? 'usage_notice_unavailable');
+    }, [profileScope]);
     const noticeInvestigation = useAccountNoticeInvestigation();
     const markItemOpened = React.useCallback(async (item: InboxItem) => {
         if (item.view === 'needs_you' || item.read) return;
@@ -355,6 +365,7 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
         accountNotices,
         openAccountNotices,
         dismissAccountNotice,
+        setAccountNoticeReminder,
         items,
         sessionCandidates: overview.candidates,
         discussionAttention,
@@ -405,6 +416,7 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
         accountNotices,
         openAccountNotices,
         dismissAccountNotice,
+        setAccountNoticeReminder,
         items,
         overview.candidates,
         discussionAttention,
