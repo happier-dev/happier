@@ -3582,8 +3582,9 @@ describe('render scope', () => {
     });
     try {
       view.measure(390);
-      // A row's hairline is decoration hidden from assistive technology, never a separator a grid row may not own (C77).
-      const hasDivider = (key: string) => view.query(`row:${key}:cell`)!.querySelector('[aria-hidden="true"]:empty') !== null;
+      // Page-list cells paint their own row rule. A grid row still has no semantic separator (C77).
+      const hasDivider = (key: string) => view.query(`row:${key}:cell`)!
+        .querySelector('[data-testid="happier-list-row-rule"]') !== null;
       expect(view.container.querySelector('[role="row"] [role="separator"]')).toBeNull();
       expect(hasDivider('a')).toBe(true);
       expect(hasDivider('b')).toBe(totals);
@@ -4092,6 +4093,56 @@ describe('the search field', () => {
       expect(field(), `the field is remounted with largeTitle=${largeTitle}`).toBe(before);
       expect(document.activeElement).toBe(before);
     }
+    view.unmount();
+  });
+
+  it('Escape in the search clears the query first, then closes the open item (QB80)', async () => {
+    // Live READY238: with a detail open, Escape in the emptied search did nothing; a web text input keeps its keys
+    // from reaching the document, so the field itself hands an unhandled Escape to the Collection's close.
+    let value = 'fix';
+    const changes: string[] = [];
+    const searchFor = () => ({ label: 'Search entries', value, onValueChange: (next: string) => { changes.push(next); }, testID: 'search' });
+    const view = mount({
+      search: searchFor(),
+      header: (slots) => <CollectionToolbar slots={slots} lens={<Text testID="lens">Mine</Text>} />,
+      openKey: 'a',
+    });
+    view.measure(1440);
+    const field = () => (view.query('search')!.matches('input') ? view.query('search')! : view.query('search')!.querySelector('input'))!;
+    const escape = () => act(async () => {
+      field().focus();
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    await escape();
+    expect(changes).toEqual(['']);
+    expect(view.openChanges).toEqual([]);
+    value = '';
+    await act(async () => { view.update({ search: searchFor() }); });
+    await escape();
+    expect(view.openChanges).toEqual([null]);
+    view.unmount();
+  });
+
+  it('keeps the caret after the typed letter when it replaces a selected query (QB80)', async () => {
+    // Live READY238: select-all "qa33", type "forge": the field read "orge", because the kept caret narrowed the
+    // stale whole-query range over the new text and selected the typed "f" before the next key replaced it.
+    let value = 'qa33';
+    const view = mount({
+      search: { label: 'Search entries', value, onValueChange: (next: string) => { value = next; }, testID: 'search' },
+      header: (slots) => <CollectionToolbar slots={slots} lens={<Text testID="lens">Mine</Text>} />,
+    });
+    view.measure(1440);
+    const field = () => (view.query('search')!.matches('input') ? view.query('search')! : view.query('search')!.querySelector('input'))! as HTMLInputElement;
+    await act(async () => { field().focus(); field().setSelectionRange(0, 4); field().dispatchEvent(new Event('select', { bubbles: true })); });
+    await act(async () => {
+      const input = field();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'f');
+      input.setSelectionRange(1, 1);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { view.update({ search: { label: 'Search entries', value, onValueChange: (next: string) => { value = next; }, testID: 'search' } }); });
+    expect(value).toBe('f');
+    expect([field().selectionStart, field().selectionEnd]).toEqual([1, 1]);
     view.unmount();
   });
 

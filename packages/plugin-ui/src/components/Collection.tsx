@@ -2982,8 +2982,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const dismissSearch = useCallback(() => dismissSearchRef.current(), []);
   const openSearchRef = useRef<() => void>(() => undefined);
   const openSearch = useCallback(() => openSearchRef.current(), []);
+  const escapeEmptySearchRef = useRef<() => boolean>(() => false);
+  const escapeEmptySearch = useCallback(() => escapeEmptySearchRef.current(), []);
   const search = useListCollectionSearch(props.search, rootRef, compactToolbar, renderSearchToggle === undefined ? undefined : dismissSearch,
-    renderSearchToggle === undefined ? undefined : openSearch);
+    renderSearchToggle === undefined ? undefined : openSearch, escapeEmptySearch);
   const searchDisclosure = useHappierSearchDisclosure(search.query, renderSearchToggle === undefined ? undefined : search.clear);
   dismissSearchRef.current = searchDisclosure.close;
   openSearchRef.current = () => { if (!searchDisclosure.open) searchDisclosure.toggle(); else search.focus(); };
@@ -3022,6 +3024,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }) : props.header;
   const close = model.actions.close;
   const hasOpen = openKey !== null;
+  // The emptied search's Escape is this same Escape: it closes the open item.
+  escapeEmptySearchRef.current = () => {
+    if (!hasOpen) return false;
+    close();
+    return true;
+  };
   useEffect(() => {
     if (!hasOpen || Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
     const onKeyDown = (event: KeyboardEvent) => {

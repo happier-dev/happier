@@ -542,14 +542,22 @@ export function HappierTextField(props: HappierTextFieldProps) {
   }, [props.onEscape]);
   const handleChange = useCallback((event: Readonly<{
     nativeEvent: Readonly<{ text?: string; isComposing?: boolean }>;
+    target?: unknown;
   }>) => {
     const composing = event.nativeEvent.isComposing;
     if (typeof composing === 'boolean' && composing !== composingRef.current) {
       composingRef.current = composing;
       props.onCompositionChange?.(composing);
     }
+    // A browser sends no selection event for typing, so a held selection would still be the range the typed text
+    // replaced and React Native Web would select over the new text. The web input carries the caret it typed at.
+    const caret = event.target as { selectionStart?: unknown; selectionEnd?: unknown } | null | undefined;
+    if (authorSelectionChange !== undefined && typeof caret === 'object' && caret !== null
+      && typeof caret.selectionStart === 'number' && typeof caret.selectionEnd === 'number') {
+      authorSelectionChange({ start: caret.selectionStart, end: caret.selectionEnd });
+    }
     if (typeof event.nativeEvent.text === 'string') props.onChangeText(event.nativeEvent.text);
-  }, [props.onChangeText, props.onCompositionChange]);
+  }, [authorSelectionChange, props.onChangeText, props.onCompositionChange]);
   const compositionTargetRef = useRef<Readonly<{
     addEventListener(type: string, listener: () => void): void;
     removeEventListener(type: string, listener: () => void): void;

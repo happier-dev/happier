@@ -66,9 +66,16 @@ export function useListCollectionSearch(
   /** Escape also folds the field away (a search behind a magnifier, `useHappierSearchDisclosure`). */
   onEscape?: () => void,
   onFocusSearch?: () => void,
+  /**
+   * Escape in an empty field goes on to the enclosing Collection's own Escape (it closes the open item). A web text
+   * input keeps its keys from reaching the document, so the field hands it on itself; true when it was handled.
+   */
+  onEscapeEmpty?: () => boolean,
 ) {
   const focusSearchRef = useRef(onFocusSearch);
   focusSearchRef.current = onFocusSearch;
+  const escapeEmptyRef = useRef(onEscapeEmpty);
+  escapeEmptyRef.current = onEscapeEmpty;
   const [uncontrolledQuery, setUncontrolledQuery] = useState(search?.defaultValue ?? '');
   const query = search?.value ?? uncontrolledQuery;
   const [composingQuery, setComposingQuery] = useState<string | null>(null);
@@ -134,7 +141,7 @@ export function useListCollectionSearch(
   const tokens = search?.tokens ?? [];
   const control = search === undefined ? null : <ListCollectionSearchField
     appearance="search" label={search.label} placeholder={search.placeholder ?? search.label} value={displayed}
-    onChangeText={change} onCompositionChange={composition} onEscape={onEscape === undefined ? clear : () => { onEscape(); return true; }}
+    onChangeText={change} onCompositionChange={composition} onEscape={onEscape === undefined ? () => clear() || (escapeEmptyRef.current?.() ?? false) : () => { onEscape(); return true; }}
     autoCapitalize="none" autoCorrect={false} selection={selection} onSelectionChange={setSelection}
     controlRef={controlRef} leading={<Icon name="search" size="small" tone="muted" />} theme={theme} testID={search.testID}
     // The shortcut is a hardware-keyboard fact; touch platforms have no `/` to press.
