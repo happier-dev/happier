@@ -142,6 +142,7 @@ import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { BOT_TEMPLATE_ACTION_IDS_V1, BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { logger } from '@/ui/logger';
 
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;
 export type DeploymentArchiveOriginForHost = NonNullable<NonNullable<ExternalActionMachineRpcExecutionV1['deploymentChildExecution']>['archiveOrigin']>;
@@ -460,22 +461,31 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const spawn = SessionSpawnNewActionInputV2Schema.safeParse(child?.input);
   const admission = context.machineAdmission;
   const identity = authorization && deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
-  if (!authorization || !identity || !root.success || !spawn.success || root.data.sessionRef
-    || parent?.actionId !== 'deployments.prepare' || child?.actionId !== 'session.spawn_new' || child.role !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1
-    || context.actionRequestId !== identity.requestId || !context.verifyMachineAdmissionCurrent || !admission
-    || admission.machineId !== authorization.binding.machineId || admission.installationId !== input.installationId
-    || admission.installationId !== authorization.binding.installationId
-    || admission.actorAccountId !== authorization.binding.accountId
-    || admission.custodianAccountId !== authorization.binding.custodianAccountId
-    || spawn.data.executionTarget.machineId !== admission.machineId
-    || spawn.data.executionTarget.serverId !== root.data.workspace.serverId
-    || !sameStrictJsonValue(spawn.data, materializeSessionCreationActionInput('session.spawn_new',
-      deriveDeploymentPrepareSessionSpawnInputV1(root.data), context))
-    || !sameStrictJsonValue(input.publicInput, admitSessionSpawnNewActionInputV2(spawn.data))) return null;
+  // Content-free diagnostic: each clause keeps the same public refusal; the file
+  // log names which one fired (no ids, operands or credentials).
+  const refused = (reason: string): null => {
+    try { logger.warnLocalFile('[SessionCreation] Prepare creation authorization refused', { reason }); } catch { /* Best effort. */ }
+    return null;
+  };
+  if (!authorization || !identity) return refused('root_unavailable');
+  if (!root.success || !spawn.success || root.data.sessionRef) return refused('operands_invalid');
+  if (parent?.actionId !== 'deployments.prepare' || child?.actionId !== 'session.spawn_new' || child.role !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1) return refused('child_not_reviewed');
+  if (context.actionRequestId !== identity.requestId) return refused('child_request_id');
+  if (!context.verifyMachineAdmissionCurrent || !admission) return refused('machine_admission_missing');
+  if (admission.machineId !== authorization.binding.machineId || admission.installationId !== input.installationId
+    || admission.installationId !== authorization.binding.installationId) return refused('machine_admission_installation');
+  if (admission.actorAccountId !== authorization.binding.accountId) return refused('machine_admission_actor');
+  if (admission.custodianAccountId !== authorization.binding.custodianAccountId) return refused('machine_admission_custodian');
+  if (spawn.data.executionTarget.machineId !== admission.machineId
+    || spawn.data.executionTarget.serverId !== root.data.workspace.serverId) return refused('spawn_target');
+  if (!sameStrictJsonValue(spawn.data, materializeSessionCreationActionInput('session.spawn_new',
+    deriveDeploymentPrepareSessionSpawnInputV1(root.data), context))) return refused('spawn_not_derived');
+  if (!sameStrictJsonValue(input.publicInput, admitSessionSpawnNewActionInputV2(spawn.data))) return refused('public_input');
   const envelope = context.originalActionEnvelope;
-  if (!envelope || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding, {
+  if (!envelope) return refused('envelope_missing');
+  if (!isExternalActionAuthorizationBoundToEnvelope(authorization.binding, {
     actionId: 'deployments.prepare', machineId: admission.machineId, envelope,
-  }) || envelope.v === 1 && !sameStrictJsonValue(envelope.input, root.data)) return null;
+  }) || envelope.v === 1 && !sameStrictJsonValue(envelope.input, root.data)) return refused('envelope_unbound');
   const method = `${admission.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`;
   // The native issuer already owns the opened E2EE child. Its signed body proof
   // carries no plaintext preparation brief or checkout path to Home.
@@ -483,7 +493,7 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const execution = createExternalActionMachineRpcExecution({ context, effectActionId: 'session.spawn_new',
     installationId: input.installationId, method, requestId: identity.requestId,
     ...(params === undefined ? {} : { params }), privateKey: input.privateKey });
-  if (!execution) return null;
+  if (!execution) return refused('execution_unavailable');
   // The proof crosses HTTP: it carries the public authorization, never the host-private custody sidecar.
   const sourceExecution = { requestId: identity.requestId, method, ...(params === undefined ? {} : { params }),
     externalActionExecution: { ...execution, authorization: ExternalActionExecutionAuthorizationV1Schema.parse(execution.authorization) },
