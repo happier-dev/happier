@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -463,4 +463,63 @@ test('the commit gate refuses only diagnostics the packet adds over its parent; 
   const unjudged = await commitGateTypecheck({ repo, base: `${later}^`, tree: later, env, remote, log: () => {} });
   assert.deepEqual(unjudged.unavailable, ['packages/plugins/codex']);
   assert.equal(commitPackageTypecheckRefuses(unjudged), false);
+});
+
+// P03 ORCH 2026-11-18: before it blocks, the gate check runs after each packages/plugins commit lands and posts an URGENT
+// naming the commit and the error to the lane that posted its SHA (report-and-URGENT mode), recording its wall time.
+test('report mode checks a landed commit against its parent and posts one URGENT naming the commit and its new error', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-report-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const rowsByTree = new Map();
+  const remote = (treeIds, dirs) => new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, rowsByTree.get(treeId) ?? []]))]));
+  const broken = await commit('packages/plugins/codex/src/index.ts', 'export const broken: string = 1;\n');
+  rowsByTree.set(git('rev-parse', `${broken}^{tree}`), [{ file: 'packages/plugins/codex/src/index.ts', line: 1, column: 14, code: 2322, text: "Type 'number' is not assignable to type 'string'." }]);
+  const board = join(state, 'board.md');
+  await writeFile(board, `### 2026-11-18 20:00 UTC — LANE-PLUGIN → P03 ORCH — RESULT — x\n- committed ${broken.slice(0, 11)}\n`);
+  const posts = [];
+  const options = { repo, env, remote, post: entry => posts.push(entry), boardPaths: [board], log: () => {} };
+  const red = await reportCommitGateTypecheck({ ...options, commit: broken });
+  assert.equal(red.fresh.length, 1);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → LANE-PLUGIN, P03 ORCH — URGENT — new type errors from /mu);
+  assert.match(posts[0], new RegExp(broken.slice(0, 11)));
+  assert.match(posts[0], /index\.ts\(1,14\): TS2322/u);
+  const clean = await commit('packages/plugins/codex/src/index.ts', 'export const fixed = 1;\n');
+  await reportCommitGateTypecheck({ ...options, commit: clean });
+  assert.equal(posts.length, 1, 'a clean commit posts nothing');
+  const verdicts = readFileSync(join(state, 'verdicts.log'), 'utf8').trim().split('\n');
+  assert.match(verdicts.at(-2), new RegExp(`GATE-REPORT-RED commit=${broken} .*new=1 .* wall=\\d+\\.\\ds`, 'u'));
+  assert.match(verdicts.at(-1), new RegExp(`GATE-REPORT-ok commit=${clean} `, 'u'));
+  const app = await commit('apps/cli/src/index.ts', 'export const value = 42;\n');
+  assert.equal(await reportCommitGateTypecheck({ ...options, commit: app }), null, 'apps stay with the rolling owner');
+});
+
+// P03 ORCH 2026-11-18: the worker's dependency install ran inside the admitted compile, so the gate identity recorded a
+// 15.26 GiB kernel peak for a 1-6 GiB compile. The install is its own step, once per dependency generation.
+test('dependencies are prepared once per dependency generation, outside the compile', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-typecheck-deps-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const installs = [];
+  const bootstrap = () => { installs.push(readFileSync(join(state, 'worktree', 'packages/leaf/package.json'), 'utf8')); execFileSync('mkdir', ['-p', join(state, 'worktree', 'node_modules')]); };
+  const compiled = [];
+  const options = { repo, state, env: process.env, log: () => {}, compile: fakeCompiler(compiled), bootstrap };
+  const first = await commit('packages/leaf/src/index.ts', 'export const value = 101;\n');
+  const prepare = treeDependencyPreparer(options);
+  const tree = rev => git('rev-parse', `${rev}^{tree}`);
+  assert.equal(prepare(tree(first)), true, 'a new generation installs');
+  assert.equal(prepare(tree(first)), false, 'the same generation does not');
+  const sourceOnly = await commit('packages/leaf/src/index.ts', 'export const value = 102;\n');
+  assert.equal(prepare(tree(sourceOnly)), false, 'a source change is the same dependency generation');
+  const { rowsAt } = treeTypechecker(options);
+  rowsAt(tree(sourceOnly), ['packages/leaf'], 'head');
+  assert.equal(installs.length, 1, 'the compile step never installs a prepared generation');
+  const manifest = await commit('packages/leaf/package.json', JSON.stringify({ name: '@x/leaf', scripts: { typecheck: 'tsc' }, version: '2.0.0' }));
+  assert.equal(prepare(tree(manifest)), true, 'a manifest change is a new generation');
+  assert.equal(installs.length, 2);
 });

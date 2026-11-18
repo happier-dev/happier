@@ -302,18 +302,68 @@ const compileScope = (worktree, dir, env) => (isAppScope(dir) ? compileApp : com
 // `declarations`: package rows include declaration emit; earlier rows (source check only) are not comparable.
 const resultCachePath = (state, treeId, dir) => join(state, 'results', treeId, `${dir.replaceAll('/', '__')}${isAppScope(dir) ? '' : '.declarations'}.json`);
 
-/** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
- * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
- * The caller holds the worktree lock and, when anything compiles here, compiler admission. */
-function treeTypechecker({ repo, state, env, log, compile = compileScope, bootstrap, remote = null, worktreeRev = 'HEAD' }) {
-  const git = gitAt(repo);
-  const worktree = join(state, 'worktree');
+const DEPENDENCY_INPUT = /(?:^|\/)package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^patches\//u;
+const compileEnvOf = env => {
   const compileEnv = { ...env };
   delete compileEnv.HAPPIER_TYPECHECK_REPORT_DIR;
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete compileEnv[name];
+  return compileEnv;
+};
+
+/** Moves the warm worktree to a tree (the caller holds the worktree lock). */
+function moveWorktree({ repo, state, log, worktreeRev }, treeId) {
+  const worktree = join(state, 'worktree');
+  ensureWorktree(repo, worktree, worktreeRev);
+  const currentPath = join(state, 'worktree-tree');
+  writeFileSync(currentPath, '');
+  // The caller holds the worktree lock, and only its holder runs git in this worktree, so an index.lock
+  // here was left by a check killed inside git (2026-11-16: every pass exited 2 for hours after one).
+  const indexLock = join(gitAt(worktree)(['rev-parse', '--absolute-git-dir']).trim(), 'index.lock');
+  if (existsSync(indexLock)) {
+    log(`[commit-package-typecheck] removing ${indexLock} left by an interrupted check`);
+    rmSync(indexLock, { force: true });
+  }
+  gitAt(worktree)(['read-tree', '--reset', '-u', treeId]);
+  writeFileSync(currentPath, treeId);
+}
+
+/**
+ * The warm worktree's dependencies, installed once per dependency generation (the manifests, lockfile, workspace file
+ * and patches of a tree) by the canonical bootstrap owner (the one hstack-exec runs before typecheck payloads). Returns
+ * `(treeId) => installed`. The worker runs it as its own step before the compile (P03-GATE-TC 2026-11-18: inside the
+ * admitted compile, a cold install made the gate's compile identity record a 15.26 GiB peak for a 1-6 GiB compile).
+ * The caller holds the worktree lock.
+ */
+export function treeDependencyPreparer({ repo, state, env = process.env, log = () => {}, bootstrap, worktreeRev = 'HEAD' }) {
+  const git = gitAt(repo);
+  const worktree = join(state, 'worktree');
   const install = bootstrap ?? (() => execFileSync(process.execPath, [join(worktree, 'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs'),
     '--validation-kind=typecheck', '--component-relative-dir=', `--repo-dir=${worktree}`, '--execution-placement=local'],
-  { cwd: worktree, env: compileEnv, stdio: ['ignore', 'ignore', 'inherit'] }));
+  { cwd: worktree, env: compileEnvOf(env), stdio: ['ignore', 'ignore', 'inherit'] }));
+  const generationPath = join(state, 'dependencies-generation');
+  const generation = treeId => createHash('sha256').update(nulList(git(['ls-tree', '-r', '-z', '--full-tree', treeId]))
+    .filter(entry => DEPENDENCY_INPUT.test(entry.slice(entry.indexOf('\t') + 1))).join('\0')).digest('hex');
+  const prepared = treeId => existsSync(join(worktree, 'node_modules')) && existsSync(generationPath)
+    && readFileSync(generationPath, 'utf8').trim() === generation(treeId);
+  const prepare = treeId => {
+    if (prepared(treeId)) return false;
+    moveWorktree({ repo, state, log, worktreeRev }, treeId);
+    rmSync(generationPath, { force: true });
+    install();
+    writeFileSync(generationPath, generation(treeId));
+    return true;
+  };
+  prepare.prepared = prepared;
+  return prepare;
+}
+
+/** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
+ * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
+ * The caller holds the worktree lock and, when anything compiles here, compiler admission. */
+export function treeTypechecker({ repo, state, env, log, compile = compileScope, bootstrap, remote = null, worktreeRev = 'HEAD' }) {
+  const worktree = join(state, 'worktree');
+  const compileEnv = compileEnvOf(env);
+  const prepareDependencies = treeDependencyPreparer({ repo, state, env, log, bootstrap, worktreeRev });
   const timings = [];
   const rowsAt = (treeId, packages, side = treeId.slice(0, 10)) => {
     const rows = new Map();
@@ -342,29 +392,12 @@ function treeTypechecker({ repo, state, env, log, compile = compileScope, bootst
       }
       return rows;
     }
-    ensureWorktree(repo, worktree, worktreeRev);
+    // Dependencies first (a no-op when the worker's preparation step already installed this generation).
+    const bootstrapStarted = Date.now();
+    if (prepareDependencies(treeId)) timings.push({ side, step: 'dependencies', ms: Date.now() - bootstrapStarted });
     const moveStarted = Date.now();
-    const currentPath = join(state, 'worktree-tree');
-    const current = existsSync(currentPath) ? readFileSync(currentPath, 'utf8').trim() : '';
-    writeFileSync(currentPath, '');
-    // The caller holds the worktree lock, and only its holder runs git in this worktree, so an index.lock
-    // here was left by a check killed inside git (2026-11-16: every pass exited 2 for hours after one).
-    const indexLock = join(gitAt(worktree)(['rev-parse', '--absolute-git-dir']).trim(), 'index.lock');
-    if (existsSync(indexLock)) {
-      log(`[commit-package-typecheck] removing ${indexLock} left by an interrupted check`);
-      rmSync(indexLock, { force: true });
-    }
-    gitAt(worktree)(['read-tree', '--reset', '-u', treeId]);
-    writeFileSync(currentPath, treeId);
+    moveWorktree({ repo, state, log, worktreeRev }, treeId);
     timings.push({ side, step: 'move', ms: Date.now() - moveStarted });
-    // Dependencies: the canonical bootstrap owner (the one hstack-exec runs before typecheck
-    // payloads). It costs ~6 s even when current, so it runs only when dependency inputs moved.
-    if (!current || !existsSync(join(worktree, 'node_modules'))
-      || git(['diff', '--name-only', current, treeId, '--', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches', '*package.json']).trim()) {
-      const bootstrapStarted = Date.now();
-      install();
-      timings.push({ side, step: 'dependencies', ms: Date.now() - bootstrapStarted });
-    }
     for (const dir of missing) {
       const compiled = compile(worktree, dir, compileEnv);
       timings.push({ side, step: dir, ms: compiled.ms, complete: Boolean(compiled.rows) });
@@ -517,16 +550,41 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
  * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote }) {
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true }) {
   const plan = commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
     remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY }) });
-  if (!result.skipped) {
+  if (!result.skipped && record) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
   }
   return { ...result, detached: plan.detached };
+}
+
+/**
+ * Report-and-URGENT mode of the gate check (P03 ORCH 2026-11-18, before it blocks): a landed commit's touched
+ * packages/* and packages/plugins/* workspaces against its parent; new errors go to the lane that posted the commit's
+ * SHA as one board URGENT. `GATE-REPORT-*` lines in verdicts.log carry the check's wall time, the gate wait it would add
+ * at most, which decides when it blocks. Returns null when the commit touches none of those workspaces.
+ */
+export async function reportCommitGateTypecheck({ repo, commit, env = process.env, log = message => process.stderr.write(`${message}\n`), remote,
+  post = entry => postBoardEntry(repo, entry), boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(board => join(repo, board)) }) {
+  const git = gitAt(repo);
+  const sha = git(['rev-parse', `${commit}^{commit}`]).trim();
+  const base = git(['rev-parse', `${sha}^`]).trim();
+  if (!commitGateTypecheckPlan({ repo, base, tree: sha }).blocking.length) return null;
+  const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, record: false });
+  const red = commitPackageTypecheckRefuses(result);
+  if (result.fresh.length) {
+    const subject = git(['log', '-1', '--format=%s', sha]).trim();
+    try { post(urgentEntry({ commit: sha, subject, lane: commitLane(sha, boardPaths), rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
+    catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
+  }
+  const state = commitPackageTypecheckStateDir(repo, env);
+  mkdirSync(state, { recursive: true });
+  appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-REPORT-${red ? 'RED' : 'ok'} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s\n`);
+  return result;
 }
 
 const ROLLING_HEAD = 'rolling-head';
@@ -551,12 +609,13 @@ export function commitLane(commit, boardPaths) {
   return undefined;
 }
 
-function urgentEntry({ commit, subject, lane, rows, base, head }) {
+function urgentEntry({ commit, subject, lane, rows, base, head, how }) {
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const addressees = lane && lane !== 'P03 ORCH' ? `${lane}, P03 ORCH` : 'P03 ORCH';
   return [
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — new type errors from ${commit.slice(0, 11)}`,
-    `- ${lane ? `${lane}: fix forward` : 'P03 ORCH: route to the author'}: the rolling HEAD typecheck attributes ${rows.length} new error(s) to \`${commit.slice(0, 11)}\` ("${subject}") by bisecting ${base.slice(0, 11)}..${head.slice(0, 11)}.`,
+    `- ${lane ? `${lane}: fix forward` : 'P03 ORCH: route to the author'}: ${how ? `${how} ${rows.length} new error(s) in \`${commit.slice(0, 11)}\` ("${subject}") against its parent ${base.slice(0, 11)}.`
+      : `the rolling HEAD typecheck attributes ${rows.length} new error(s) to \`${commit.slice(0, 11)}\` ("${subject}") by bisecting ${base.slice(0, 11)}..${head.slice(0, 11)}.`}`,
     ...rows.slice(0, 8).map(row => `  - ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text.replace(/\s+/gu, ' ').slice(0, 200)}`),
     ...(rows.length > 8 ? [`  - … ${rows.length - 8} more: \`node scripts/workspaces/commitPackageTypecheck.mjs ${commit.slice(0, 11)}\``] : []),
     '',
@@ -813,10 +872,21 @@ async function workerRows(argv, entry) {
   if (!option('slug') || !request.trees.length || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
   const payload = [process.execPath, ...process.execArgv, entry, '--compiler-admitted'];
   mkdirSync(state, { recursive: true });
+  // A lane's compile identity names its packages, so the broker sizes each from its own recorded compile peak.
+  const projects = option('lane') ? request.packages.join(',') : scope === 'packages' ? undefined : scope;
+  const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(request) };
   return await withWorkspaceBundleLock(async () => {
-    const command = admittedCommand(state, payload, false, scope === 'packages' ? undefined : scope);
-    const result = spawnSync(command[0], command.slice(1), { env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
-      HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(request) }, stdio: 'inherit' });
+    // Dependencies are their own admitted step, once per dependency generation, so the compile's identity records and
+    // reserves only the compile (P03-GATE-TC 2026-11-18: a cold install inside it recorded 15.26 GiB).
+    const prepare = treeDependencyPreparer({ repo: request.repo, state, env: process.env, worktreeRev: request.ref });
+    if (!prepare.prepared(request.trees[0])) {
+      const step = admittedCommand(state, [process.execPath, ...process.execArgv, entry, '--prepare-dependencies'], false, undefined, 'dependency-install');
+      const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
+      if (prepared.error) throw prepared.error;
+      if (prepared.status !== 0) return prepared.status ?? 2;
+    }
+    const command = admittedCommand(state, payload, false, projects);
+    const result = spawnSync(command[0], command.slice(1), { env: workerEnv, stdio: 'inherit' });
     if (result.error) throw result.error;
     return result.status ?? 2;
   }, { lockPath: join(state, 'worktree.lock'), timeoutMs: null });
@@ -839,7 +909,7 @@ export async function attributeRollingRange({ repo, env = process.env, scope = '
  * finalizer). It never waits: it starts the single rolling owner detached, which exits at once when a
  * check already holds the warm worktree (that holder re-reads HEAD before it lets go).
  */
-export function kickRollingHeadTypecheck({ repo, env = process.env }) {
+export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
   // A repository without typecheckable packages/* (test fixtures) has nothing to follow.
   if (!commitTypecheckPackages({ repo, base: EMPTY_TREE, tree: 'HEAD' }).packages.length
     && !commitTypecheckApps({ repo, base: EMPTY_TREE, tree: 'HEAD' }).length) return 'rolling HEAD typecheck: no packages/* or apps to check';
@@ -852,6 +922,17 @@ export function kickRollingHeadTypecheck({ repo, env = process.env }) {
     spawn(process.execPath, [fileURLToPath(import.meta.url), '--rolling'], { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', descriptor, descriptor] }).unref();
   } finally {
     closeSync(descriptor);
+  }
+  // The landed commit's gate typecheck in report-and-URGENT mode (P03 ORCH 2026-11-18): its own detached process and
+  // worker lane, only for a commit that touches packages/* or packages/plugins/* workspaces.
+  if (commit && commitGateTypecheckPlan({ repo, base: `${commit}^`, tree: commit }).blocking.length) {
+    const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
+    try {
+      spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report', `--commit=${commit}`],
+        { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
+    } finally {
+      closeSync(reportLog);
+    }
   }
   // The same kick moves the QA green pointer (owner 2026-11-18): its own lock and state, never this worktree.
   const greenCheck = fileURLToPath(new URL('../../apps/stack/scripts/stack/qa_green.mjs', import.meta.url));
@@ -867,13 +948,13 @@ export function kickRollingHeadTypecheck({ repo, env = process.env }) {
 }
 
 let rollingOwner = false;
-function admittedCommand(repo, payload, cached, projects) {
+function admittedCommand(repo, payload, cached, projects, className = 'compilation') {
   // Native Windows has no shell admission; it runs the payload directly (as the checker does).
   // The admitted argv is the admission identity: only stable arguments, so the broker sizes it from
   // this identity's recorded kernel peak; the request travels in env.
   // The rolling owner compiles nothing here: its rows come from a worker that admits there (workerTreeRows).
   return cached || rollingOwner || process.platform === 'win32' ? payload : [fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url)),
-    '--heavyweight-admission', '--class=compilation', `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
+    '--heavyweight-admission', `--class=${className}`, `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
     ...(projects ? [`--projects=${projects}`] : []), '--exec-admitted', '--', ...payload];
 }
 
@@ -949,6 +1030,13 @@ async function rolling(repo) {
 export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(import.meta.url)) {
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
   if (argv.includes('--worker-rows')) return await workerRows(argv, entry);
+  if (argv.includes('--prepare-dependencies') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
+    // Admitted on the worker as a dependency-install step: the first requested tree's dependency generation.
+    const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
+    treeDependencyPreparer({ repo: request.repo, state: process.env.HAPPIER_COMMIT_TYPECHECK_DIR, env: process.env,
+      log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' })(request.trees[0]);
+    return 0;
+  }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
     // Admitted on the worker: rows for the shipped trees, compiled in turn in the worker's warm worktree.
     const state = process.env.HAPPIER_COMMIT_TYPECHECK_DIR;
@@ -981,7 +1069,11 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     return refused ? 1 : 0;
   }
   const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-  if (argv.includes('--kick')) { console.log(kickRollingHeadTypecheck({ repo })); return 0; }
+  if (argv.includes('--kick')) {
+    const commit = argv.find(arg => arg.startsWith('--commit='))?.slice('--commit='.length);
+    console.log(kickRollingHeadTypecheck({ repo, commit: commit && execFileSync('git', ['rev-parse', '--verify', `${commit}^{commit}`], { cwd: repo, encoding: 'utf8' }).trim() }));
+    return 0;
+  }
   if (argv.includes('--rolling')) { rollingOwner = true; return await rolling(repo); }
   // By hand: one or more packets, each against its parent (or --base/--tree).
   const rev = spec => execFileSync('git', ['rev-parse', '--verify', spec], { cwd: repo, encoding: 'utf8' }).trim();

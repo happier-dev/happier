@@ -136,7 +136,7 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       console.error(`Committed ${commit}; synchronizing shared index`);
       // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
       const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
-      console.error(kickRollingHeadTypecheck({ repo: cwd }));
+      console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
       if (treeGate === 'report') {
         const pid = treeEntryLoads.startCommitTreeEntryLoadReport({ repo: cwd, base: head, tree: commit, label: 'commitFromPrivateIndex' });
         if (pid) console.error(`Commit tree entry loads: report started (pid ${pid}); verdict in ${treeEntryLoads.defaultCommitTreeLedger(cwd)}`);

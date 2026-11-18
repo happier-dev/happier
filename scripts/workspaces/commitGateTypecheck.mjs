@@ -4,6 +4,7 @@
 // worker compile is never queued behind lane work or the rolling HEAD typecheck.
 //
 //   node scripts/workspaces/commitGateTypecheck.mjs --base=<rev> --tree=<tree-ish>
+//   node scripts/workspaces/commitGateTypecheck.mjs --report --commit=<landed sha>   (report-and-URGENT mode)
 //
 // Exit status: 0 no new diagnostics (or nothing to check, or the worker could not judge: printed, never refused),
 // 1 new diagnostics or a candidate compile that did not complete while its parent's did, 2 usage or runtime failure.
@@ -11,13 +12,20 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commitGateTypecheck, commitPackageTypecheckMain, commitPackageTypecheckRefuses, formatCommitPackageTypecheck } from './commitPackageTypecheck.mjs';
+import { commitGateTypecheck, commitPackageTypecheckMain, commitPackageTypecheckRefuses, formatCommitPackageTypecheck, reportCommitGateTypecheck } from './commitPackageTypecheck.mjs';
 
 const entry = fileURLToPath(import.meta.url);
 
 async function main(argv) {
-  if (argv.includes('--worker-rows') || argv.includes('--compiler-admitted')) return await commitPackageTypecheckMain(argv, entry);
+  if (argv.includes('--worker-rows') || argv.includes('--compiler-admitted') || argv.includes('--prepare-dependencies')) return await commitPackageTypecheckMain(argv, entry);
   const option = name => argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+  if (argv.includes('--report') && option('commit')) {
+    for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
+    const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+    const result = await reportCommitGateTypecheck({ repo, commit: option('commit') });
+    if (result) for (const line of formatCommitPackageTypecheck(result)) console.log(line);
+    return 0;
+  }
   if (!option('base') || !option('tree')) {
     console.error('usage: commitGateTypecheck.mjs --base=<rev> --tree=<tree-ish>');
     return 2;
