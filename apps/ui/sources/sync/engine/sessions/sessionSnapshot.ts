@@ -81,8 +81,10 @@ import {
 import {
     DEFAULT_SESSION_LIST_PATH,
     fetchSessionListPageCompat,
+    type SessionListPageCompat,
     type SessionListPageSource,
 } from './sessionHttpCompat';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { orderRowsForSessionListHydration } from './sessionListHydrationPriority';
 import { createHydrationApplyQueue, type HydrationApplyFlushReason } from '../hydrationApplyQueue';
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -1539,6 +1541,19 @@ function createHydratedSessionApplyBatcher(params: {
     };
 }
 
+/** A shared read outlives one of its callers; that caller stops waiting when it is cancelled. */
+function awaitUnlessAborted<T>(read: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    if (!signal) return read;
+    throwIfAborted(signal);
+    return new Promise<T>((resolve, reject) => {
+        const onAbort = () => {
+            try { throwIfAborted(signal); } catch (error) { reject(error); }
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        read.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
+}
+
 export async function fetchAndApplySessions(params: {
     serverId?: string | null;
     source?: SessionListPageSource;
@@ -1554,6 +1569,8 @@ export async function fetchAndApplySessions(params: {
     sessionListPageSize?: number;
     sessionListMaxPages?: number;
     sessionListAttentionMaxPages?: number;
+    /** This acquisition's first list page, already being read by the Home's shared page-one read. */
+    firstPage?: Promise<SessionListPageCompat>;
     includeActiveSessionRows?: boolean;
     includeSessionListAttentionRows?: boolean;
     priorityHydrationSessionIds?: ReadonlyArray<string>;
@@ -1772,7 +1789,8 @@ export async function fetchAndApplySessions(params: {
             activePage: 0,
             listPage: 1,
         };
-        const page = await syncPerformanceTelemetry.measureAsync(
+        const firstPage = fetchedPages === 0 ? params.firstPage : undefined;
+        const page = firstPage ? await awaitUnlessAborted(firstPage, params.signal) : await syncPerformanceTelemetry.measureAsync(
             'sync.sessions.snapshot.fetchPage',
             fetchPageFields,
             async () => fetchSessionListPageCompat({

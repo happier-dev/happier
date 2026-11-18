@@ -20,6 +20,7 @@ import { readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDay
 import {
     publishHomeAccountChange,
     publishHomeAccountChangeWake,
+    readHomeAccountReadRevision,
     subscribeHomeAccountChange,
     subscribeHomeCredentialChange,
 } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -728,7 +729,10 @@ import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTar
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from './domains/session/readSessionOwnerMetadataView';
 import { buildSessionOwnerMetadataUnavailableShell, projectSessionLayout1OwnerMetadata, readSessionLayout1OwnerMetadata } from './engine/sessions/readSessionLayout1OwnerProjection';
 import { fetchAndApplySessionById, isSessionTeamAuthenticationRefusalCode } from './engine/sessions/sessionById';
-import { fetchSessionListPageCompat, looksLikeCurrentV2SessionNotFound404 } from './engine/sessions/sessionHttpCompat';
+import { buildSessionListQueryRequestBody, fetchSessionListPageCompat, looksLikeCurrentV2SessionNotFound404 } from './engine/sessions/sessionHttpCompat';
+import { HOME_PERSONAL_SESSION_LIST_QUERY, readOrdinaryPart, SessionListPageOneRead } from './engine/sessions/sessionListPageOneRead';
+import { readSessionListQueryReadEpoch } from './domains/session/listing/sessionListQueryInvalidation';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT, supportsSessionListOrdinaryPageV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
 import {
     computeForkedTranscriptHasMoreOlder,
@@ -769,6 +773,7 @@ import {
 } from './engine/pending/pendingInputServerWireContract';
 import {
     getServerFeaturesSnapshot,
+    getCachedServerFeaturesSnapshot,
     expireServerFeaturesSnapshotForReconnect,
     refreshAuthenticatedServerFeaturesSnapshot,
     observePublicServerFeaturesFresh,
@@ -1466,6 +1471,8 @@ class Sync {
     private messagesSync = new Map<string, InvalidateSync>();
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
+    /** The cold load's one list read for both page-one memberships (ordinary and query). */
+    private readonly sessionListPageOne = new SessionListPageOneRead();
     private serverScopeGeneration = 0;
     private appliedPendingQueueOwner: {
         binding: object;
@@ -3675,6 +3682,7 @@ class Sync {
         this.deferredForwardLoadingSessions.clear();
         this.activeServerSessionIds.clear();
         this.hasFetchedSessionsSnapshotForActiveServer = false;
+        this.sessionListPageOne.clear();
         this.fetchMoreSessionsInFlight = null;
         this.sessionListNextCursor = null;
         this.sessionListHasMore = false;
@@ -7720,6 +7728,9 @@ class Sync {
         };
         let observedSnapshot: SessionSnapshotObservation | undefined;
         const snapshotAccountId = this.serverID;
+        const coldPageOne = !isAppend && activeServerId && !this.hasFetchedSessionsSnapshotForActiveServer
+            ? this.readColdOrdinarySessionListPage(appliedTransportTarget, credentials, sessionRequest)
+            : undefined;
         const result = await fetchAndApplySessions({
             clientEncryptionRequirement: resolveUiClientEncryptionRequirement({
                 syncedSettings: storage.getState().settings,
@@ -7729,6 +7740,7 @@ class Sync {
             sessionListCursor: continuation?.kind === 'ordinary' ? continuation.cursor : null,
             sessionListAttentionCursor: continuation?.kind === 'attention' ? continuation.cursor : null,
             sessionListMaxPages: 1,
+            ...(coldPageOne ? { firstPage: coldPageOne.firstPage } : {}),
             includeActiveSessionRows: !isAppend,
             includeSessionListAttentionRows: !isAppend || continuation?.kind === 'attention',
             credentials,
@@ -7888,6 +7900,78 @@ class Sync {
         }
     };
 
+    /** The ordinary acquisition a cold page-one read answers; a retired or replaced snapshot is another. */
+    private readSessionListPageOneScope(target: SyncServerTarget): string {
+        return JSON.stringify([this.serverScopeGeneration, this.sessionListSnapshotGeneration, target.serverId, target.generation]);
+    }
+
+    /** The fence a shared query read must not cross, as for concurrent query page reads. */
+    private readSessionListQueryFreshness(serverId: string): string {
+        return JSON.stringify([readHomeAccountReadRevision(serverId), readSessionListQueryReadEpoch(serverId)]);
+    }
+
+    private startSessionListPageOneRead(input: Readonly<{
+        target: SyncServerTarget;
+        credentials: AuthCredentials;
+        request: (path: string, init: RequestInit) => Promise<Response>;
+        source: Extract<SessionListQueryPageRequest['source'], { kind: 'query' }>;
+        limit: number;
+        takenBy: 'ordinary' | 'query';
+    }>) {
+        // The ordinary first page is the cold Sync snapshot's `GET /v2/sessions` page one.
+        const read = fetchSessionListPageCompat({ request: input.request, token: input.credentials.token,
+            source: input.source, limit: input.limit,
+            ordinaryPage: { limit: SESSION_LIST_PAGE_DEFAULT_LIMIT, includeAttention: true } });
+        return this.sessionListPageOne.start({ read, takenBy: input.takenBy,
+            ordinaryScope: this.readSessionListPageOneScope(input.target),
+            queryKey: JSON.stringify(buildSessionListQueryRequestBody({ body: input.source.body, limit: input.limit })),
+            queryFreshness: this.readSessionListQueryFreshness(input.target.serverId) });
+    }
+
+    /**
+     * The cold ordinary page one on a Home that answers `ordinaryPage`: the part a query
+     * reader's page one already carries, or one read of the Home's personal list carrying it.
+     */
+    private readColdOrdinarySessionListPage = (
+        target: SyncServerTarget,
+        credentials: AuthCredentials,
+        request: (path: string, init: RequestInit) => Promise<Response>,
+    ) => {
+        const scope = this.readSessionListPageOneScope(target);
+        const carried = this.sessionListPageOne.takeOrdinary(scope);
+        if (carried) return { firstPage: carried };
+        // Decided on the Home's current features, without delaying a Home that cannot answer it.
+        const features = getCachedServerFeaturesSnapshot({ serverId: target.serverId });
+        if (features?.status !== 'ready' || !supportsSessionListOrdinaryPageV1(features.features)) return undefined;
+        return { firstPage: readOrdinaryPart(this.startSessionListPageOneRead({
+            target, credentials, request, takenBy: 'ordinary', limit: SESSION_LIST_PAGE_DEFAULT_LIMIT,
+            source: { kind: 'query', body: HOME_PERSONAL_SESSION_LIST_QUERY, allowV1Fallback: false },
+        })) };
+    };
+
+    /**
+     * A query page one: the open cold read's query part for the same query, or, while the
+     * cold ordinary page one is still to be read, one read carrying that page too.
+     */
+    private readSessionListQueryPageOne(
+        target: SyncServerTarget,
+        page: SessionListQueryPageRequest,
+        credentials: AuthCredentials,
+        request: (path: string, init: RequestInit) => Promise<Response>,
+    ) {
+        if (page.source.kind !== 'query' || page.cursor || page.attentionCursor) return undefined;
+        const limit = Math.max(1, Math.min(200, Math.trunc(page.limit ?? page.source.body.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT)));
+        const queryKey = JSON.stringify(buildSessionListQueryRequestBody({ body: page.source.body, limit }));
+        const carried = this.sessionListPageOne.takeQuery(queryKey, this.readSessionListQueryFreshness(target.serverId));
+        if (carried) return carried;
+        const features = getCachedServerFeaturesSnapshot({ serverId: target.serverId });
+        if (this.hasFetchedSessionsSnapshotForActiveServer
+            || this.sessionListPageOne.hasOrdinaryReader(this.readSessionListPageOneScope(target))
+            || features?.status !== 'ready' || !supportsSessionListOrdinaryPageV1(features.features)) return undefined;
+        return this.startSessionListPageOneRead({ target, credentials, request, takenBy: 'query', limit,
+            source: page.source });
+    }
+
     public fetchSessionListQueryPage = async (
         serverIdRaw: string,
         page: SessionListQueryPageRequest,
@@ -7917,6 +8001,7 @@ class Sync {
             && this.appliedServerTarget.serverUrl === capturedAppliedServer.serverUrl
             && this.appliedServerTarget.generation === capturedAppliedServer.generation
         );
+        const firstPage = this.readSessionListQueryPageOne(capturedAppliedServer, page, credentials, sessionRequest);
         const result = await fetchAndApplySessions({
             clientEncryptionRequirement: resolveUiClientEncryptionRequirement({
                 syncedSettings: storage.getState().settings,
@@ -7925,6 +8010,7 @@ class Sync {
             serverId,
             cachedSessionListEntries: this.readSessionListCacheEntriesForFetch(capturedAppliedServer.serverId),
             source: page.source,
+            ...(firstPage ? { firstPage } : {}),
             contentDemand: 'list-projection',
             signal: page.signal,
             sessionListPageSize: page.limit ?? (page.source.kind === 'query' ? page.source.body.limit : undefined),

@@ -92,7 +92,7 @@ export function createCompactSessionListFetchBoundary(
         if (!body || typeof body !== 'object' || !('sessions' in body) || !Array.isArray(body.sessions)) return response;
         const captured = sources.get(scope(path, init)) ?? new Map<string, V2SessionRecord>();
         sources.set(scope(path, init), captured);
-        const sessions = body.sessions.map((row: unknown) => {
+        const compactRow = (row: unknown) => {
             // Explicit current-wire claims belong to the tested parser, even if malformed.
             if (row && typeof row === 'object' && ('documents' in row || 'metadataAudience' in row || 'agentStateDocument' in row)) return row;
             const parsed = V2SessionRecordSchema.safeParse(row);
@@ -101,8 +101,13 @@ export function createCompactSessionListFetchBoundary(
             if (!compact.success) return row;
             captured.set(parsed.data.id, parsed.data);
             return compact.data;
-        });
-        return new Response(JSON.stringify({ ...body, sessions }), { status: response.status, statusText: response.statusText, headers: response.headers });
+        };
+        const sessions = body.sessions.map(compactRow);
+        // A query page may carry the ordinary first page; the server emits its rows as compact list rows too.
+        const ordinary = 'ordinary' in body && body.ordinary && typeof body.ordinary === 'object'
+            && 'sessions' in body.ordinary && Array.isArray(body.ordinary.sessions)
+            ? { ordinary: { ...body.ordinary, sessions: body.ordinary.sessions.map(compactRow) } } : {};
+        return new Response(JSON.stringify({ ...body, sessions, ...ordinary }), { status: response.status, statusText: response.statusText, headers: response.headers });
     };
 }
 

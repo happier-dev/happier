@@ -12,6 +12,7 @@ import {
 import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/sessionListQueryController';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
+import { HOME_PERSONAL_SESSION_LIST_QUERY } from '@/sync/engine/sessions/sessionListPageOneRead';
 import { useSessionListQueryHomeStates } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 import type { AcquiredSessionFollowRulesSnapshot, SessionFollowRulesSnapshot, SessionFollowRulesReadResult } from '@/sync/api/session/sessionFollowRulesApi';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -227,16 +228,7 @@ function usePersonalReceiverEvaluation(input: Readonly<{
  * personal-relevance producer before pagination; Activity only retains its exact
  * per-Home membership and lets the shared row owner hydrate the returned rows.
  */
-export const ACTIVITY_PERSONAL_SESSION_QUERY: SessionListQueryV1 = {
-    v: 1,
-    storage: 'active',
-    includeInactive: true,
-    scope: 'my_work',
-    attention: 'any',
-    audiences: [],
-    tagIds: [],
-    includeAttention: true,
-};
+export const ACTIVITY_PERSONAL_SESSION_QUERY: SessionListQueryV1 = HOME_PERSONAL_SESSION_LIST_QUERY;
 
 type ActivityPersonalQueryHome = Readonly<{
     serverId: string;

@@ -284,17 +284,7 @@ function readMetadataUpgradeRequiredCount(value: unknown): number {
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
 }
 
-export async function fetchSessionListPageCompat(params: Readonly<{
-    request: SessionRequest;
-    token: string;
-    source?: SessionListPageSource;
-    sessionListPath?: string;
-    cursor?: string | null;
-    attentionCursor?: string | null;
-    limit: number;
-    allowLegacyV1Fallback?: boolean;
-    telemetryFields?: SyncPerformanceTelemetryFields;
-}>): Promise<{
+export type SessionListPageCompat = {
     sessions: V2SessionListResponse['sessions'];
     nextCursor: string | null;
     hasNext: boolean;
@@ -305,7 +295,96 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     membershipUnavailableReason?: SessionListQueryResponseV1['membershipUnavailableReason'];
     observationCursor?: number;
     source: 'v2' | 'v1';
-}> {
+    /** The ordinary first page a query page carried (`ordinaryPage`), parsed exactly as `GET /v2/sessions`. */
+    ordinary?: SessionListPageCompat;
+};
+
+/** The `GET /v2/sessions` page reader, shared by the GET and by a query that carried that page. */
+function readOrdinarySessionListPageBody(v2Body: unknown, fields: SyncPerformanceTelemetryFields | undefined): SessionListPageCompat {
+    const parsed = parseCompatSessionListResponse(v2Body, fields);
+    if (parsed) {
+        return {
+            sessions: parsed.sessions,
+            ...(typeof parsed.observationCursor === 'number' ? { observationCursor: parsed.observationCursor } : {}),
+            nextCursor: typeof parsed.nextCursor === 'string' ? parsed.nextCursor : null,
+            hasNext: parsed.hasNext === true,
+            attentionNextCursor: typeof parsed.attentionNextCursor === 'string'
+                ? parsed.attentionNextCursor
+                : null,
+            attentionHasNext: parsed.attentionHasNext === true,
+            metadataUpgradeRequiredCount: readMetadataUpgradeRequiredCount(
+                parsed.metadataUpgradeRequiredCount ?? (isRecord(v2Body) ? v2Body.metadataUpgradeRequiredCount : undefined),
+            ),
+            source: 'v2',
+        };
+    }
+    if (hasUnsupportedExplicitSessionMetadataLayout(v2Body)) {
+        throw new HappyError('Unsupported Session metadata layout', false, { code: 'invalid_response' });
+    }
+    if (hasExplicitNonLegacySessionMetadataEnvelope(v2Body)) {
+        throw new HappyError('Invalid layout-1 Session metadata response', false, { code: 'invalid_response' });
+    }
+    if (hasExplicitCurrentOrResponsibilitySessionListProjection(v2Body)) {
+        throw new HappyError('Invalid current Session projection', false, { code: 'invalid_response' });
+    }
+    throw new HappyError('Invalid /v2/sessions response', false, { code: 'invalid_response' });
+}
+
+/**
+ * Rebuild the GET page body a query response carried: each id names the ordinary row
+ * when it differs from the query row, otherwise the identical query row. Raw rows, so
+ * the GET reader parses exactly what the GET would have returned.
+ */
+function readCarriedOrdinarySessionListBody(v2Body: unknown): unknown {
+    if (!isRecord(v2Body) || !isRecord(v2Body.ordinary) || !Array.isArray(v2Body.sessions)) return undefined;
+    const { sessionIds, sessions: differing, ...members } = v2Body.ordinary;
+    if (!Array.isArray(sessionIds) || !Array.isArray(differing)) return undefined;
+    const rowsById = new Map<unknown, unknown>();
+    for (const row of [...v2Body.sessions, ...differing]) if (isRecord(row)) rowsById.set(row.id, row);
+    const sessions = sessionIds.map(id => rowsById.get(id));
+    return sessions.every(row => row !== undefined) ? { ...members, sessions } : undefined;
+}
+
+/** The query transport body for one page; also the identity a shared page-one read is matched by. */
+export function buildSessionListQueryRequestBody(params: Readonly<{
+    body: SessionListQueryV1;
+    cursor?: string | null;
+    attentionCursor?: string | null;
+    limit: number;
+}>): SessionListQueryV1 {
+    const { cursor: _sourceCursor, attentionCursor: _sourceAttentionCursor, limit: _sourceLimit,
+        ordinaryPage: _ordinaryPage, ...queryBase } = buildSessionListServerQueryV1(params.body);
+    const cursor = params.cursor !== undefined ? params.cursor : _sourceCursor ?? null;
+    const attentionCursor = params.attentionCursor !== undefined
+        ? params.attentionCursor
+        : _sourceAttentionCursor ?? null;
+    if (cursor && attentionCursor) {
+        throw new HappyError('Session query cannot carry both cursor families', false, {
+            kind: 'config',
+            code: 'invalid_query',
+        });
+    }
+    return {
+        ...queryBase,
+        ...(cursor ? { cursor } : {}),
+        ...(attentionCursor ? { attentionCursor } : {}),
+        limit: params.limit,
+    };
+}
+
+export async function fetchSessionListPageCompat(params: Readonly<{
+    request: SessionRequest;
+    token: string;
+    source?: SessionListPageSource;
+    sessionListPath?: string;
+    cursor?: string | null;
+    attentionCursor?: string | null;
+    limit: number;
+    /** Query page one only: also read the ordinary first page in the same response. */
+    ordinaryPage?: Readonly<{ limit: number; includeAttention: boolean }>;
+    allowLegacyV1Fallback?: boolean;
+    telemetryFields?: SyncPerformanceTelemetryFields;
+}>): Promise<SessionListPageCompat> {
     const source = params.source;
     const isQuery = source?.kind === 'query';
     const sessionListPath = resolveSessionListRequestPath(params);
@@ -331,22 +410,10 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                 cache: 'no-store',
             } satisfies RequestInit;
         }
-        const { cursor: _sourceCursor, attentionCursor: _sourceAttentionCursor, limit: _sourceLimit, ...queryBase } = buildSessionListServerQueryV1(source.body);
-        const cursor = params.cursor !== undefined ? params.cursor : _sourceCursor ?? null;
-        const attentionCursor = params.attentionCursor !== undefined
-            ? params.attentionCursor
-            : _sourceAttentionCursor ?? null;
-        if (cursor && attentionCursor) {
-            throw new HappyError('Session query cannot carry both cursor families', false, {
-                kind: 'config',
-                code: 'invalid_query',
-            });
-        }
         const body: SessionListQueryV1 = {
-            ...queryBase,
-            ...(cursor ? { cursor } : {}),
-            ...(attentionCursor ? { attentionCursor } : {}),
-            limit: params.limit,
+            ...buildSessionListQueryRequestBody({ body: source.body, cursor: params.cursor,
+                attentionCursor: params.attentionCursor, limit: params.limit }),
+            ...(params.ordinaryPage ? { ordinaryPage: params.ordinaryPage } : {}),
         };
         return {
             method: 'POST',
@@ -387,6 +454,14 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                     code: 'invalid_response',
                 });
             }
+            let ordinary: SessionListPageCompat | undefined;
+            if (params.ordinaryPage) {
+                const carried = readCarriedOrdinarySessionListBody(v2Body);
+                if (carried === undefined) {
+                    throw new HappyError('Invalid /v2/sessions/query ordinary page', false, { code: 'invalid_response' });
+                }
+                ordinary = readOrdinarySessionListPageBody(carried, v2ParseFields);
+            }
             return {
                 sessions: parsedQuery.data.sessions,
                 nextCursor: parsedQuery.data.nextCursor,
@@ -396,35 +471,10 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                 metadataUpgradeRequiredCount: parsedQuery.data.metadataUpgradeRequiredCount ?? 0,
                 membershipUnavailableReason: parsedQuery.data.membershipUnavailableReason,
                 source: 'v2',
+                ...(ordinary ? { ordinary } : {}),
             };
         }
-        const parsed = parseCompatSessionListResponse(v2Body, v2ParseFields);
-        if (parsed) {
-            return {
-                sessions: parsed.sessions,
-                ...(typeof parsed.observationCursor === 'number' ? { observationCursor: parsed.observationCursor } : {}),
-                nextCursor: typeof parsed.nextCursor === 'string' ? parsed.nextCursor : null,
-                hasNext: parsed.hasNext === true,
-                attentionNextCursor: typeof parsed.attentionNextCursor === 'string'
-                    ? parsed.attentionNextCursor
-                    : null,
-                attentionHasNext: parsed.attentionHasNext === true,
-                metadataUpgradeRequiredCount: readMetadataUpgradeRequiredCount(
-                    parsed.metadataUpgradeRequiredCount ?? (isRecord(v2Body) ? v2Body.metadataUpgradeRequiredCount : undefined),
-                ),
-                source: 'v2',
-            };
-        }
-        if (hasUnsupportedExplicitSessionMetadataLayout(v2Body)) {
-            throw new HappyError('Unsupported Session metadata layout', false, { code: 'invalid_response' });
-        }
-        if (hasExplicitNonLegacySessionMetadataEnvelope(v2Body)) {
-            throw new HappyError('Invalid layout-1 Session metadata response', false, { code: 'invalid_response' });
-        }
-        if (hasExplicitCurrentOrResponsibilitySessionListProjection(v2Body)) {
-            throw new HappyError('Invalid current Session projection', false, { code: 'invalid_response' });
-        }
-        throw new HappyError('Invalid /v2/sessions response', false, { code: 'invalid_response' });
+        return readOrdinarySessionListPageBody(v2Body, v2ParseFields);
     }
     throwSessionListHttpError(v2Response.status, requestPath, v2Body);
 }
