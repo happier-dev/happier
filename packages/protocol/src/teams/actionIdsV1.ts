@@ -3,6 +3,7 @@ import { TEAM_IDENTITY_ACTION_IDS_V1 } from './identity/actionIds.js';
 import { TEAM_EXTERNAL_GROUP_BINDING_ACTION_IDS_V1 } from './externalGroupBindings/actionIds.js';
 import { TEAM_CREDENTIAL_HOME_ACTION_IDS_V1, TEAM_CREDENTIAL_HOST_ACTION_IDS_V1 } from './credentials/actionIdsV1.js';
 
+export const TEAM_CREATE_ACTION_ID_V1 = 'teams.create';
 export const TEAM_GROUP_UPDATE_ACTION_ID_V1 = 'teams.groups.update';
 export const TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 = 'teams.sharedResources.summary';
 export function isTeamGroupUpdateActionIdV1(actionId: string): actionId is typeof TEAM_GROUP_UPDATE_ACTION_ID_V1 {
@@ -29,7 +30,7 @@ export const TEAM_HOME_ACTION_IDS_V1 = [
   'teams.list',
   'teams.get',
   TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
-  'teams.create',
+  TEAM_CREATE_ACTION_ID_V1,
   'teams.update',
   'teams.logo.set',
   'teams.logo.remove',

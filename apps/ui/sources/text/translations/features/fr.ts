@@ -16169,7 +16169,7 @@ const french: TeamsTranslationRoot = {
             newTeam: 'Nouvelle équipe',
             createDenied: ({ homes }: { homes: string }) => `Seuls les administrateurs de ${homes} peuvent créer des équipes. Demande-leur d’en créer une ou de toi y ajouter.`,
             createAdministered: ({ names }: { names: string }) => `Sur ce Home, les équipes sont créées par ses administrateurs. Demande à ${names} de créer une équipe pour toi ou de permettre à tous d’en créer.`,
-            createAdministeredUnnamed: 'Sur ce Home, les équipes sont créées par ses administrateurs. Demande à l’un d’eux de créer une équipe pour toi ou de permettre à tous d’en créer.',
+            createAdministeredUnnamed: "Seuls les propriétaires et les administrateurs de ce Home peuvent créer des équipes. Demande à l’un d’eux.",
             createOff: 'La création d’équipes est désactivée sur ce Home.',
             letEveryoneCreate: 'Permettre à tous de créer des équipes',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} et ${last}`,

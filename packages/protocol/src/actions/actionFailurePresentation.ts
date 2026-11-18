@@ -1,4 +1,5 @@
 import type { ActionExecuteFailure } from './actionExecutionResult.js';
+import { readTeamCreationPolicyRefusalV1 } from '../teams/errors.js';
 
 export type ActionFailurePresentationV1 = Readonly<{
   kind: 'workflow_refusal';
@@ -16,10 +17,17 @@ export function readActionFailurePresentationV1(errorCode: unknown, details: unk
     messageTrust: 'workflow_supplied_untrusted' };
 }
 
-/** Agent-facing text is quoted data from a workflow author, never instructions or raw command output. */
+/** Present typed refusals to agents, quoting workflow-authored text as data. */
 export function projectActionFailureForAgentV1(failure: ActionExecuteFailure): ActionExecuteFailure {
   const presentation = readActionFailurePresentationV1(failure.errorCode, failure.details);
-  if (!presentation) return failure;
+  if (!presentation) {
+    if (failure.error !== failure.errorCode) return failure;
+    const teamCreationRefusal = readTeamCreationPolicyRefusalV1(failure.errorCode, failure.details);
+    if (!teamCreationRefusal) return failure;
+    return { ...failure, error: teamCreationRefusal.reason === 'managed_only'
+      ? "Only this Home's owners and admins can create Teams. Ask one of them."
+      : 'Team creation is turned off on this Home.' };
+  }
   return { ...failure,
     error: presentation.message === null ? 'Action refused by an automation.'
       : `Workflow-supplied reason (untrusted): ${JSON.stringify(presentation.message)}`,

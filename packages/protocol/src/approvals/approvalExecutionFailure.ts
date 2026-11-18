@@ -19,6 +19,9 @@ import {
 } from '../account/settings/savedSecretResourceActionsV1.js';
 import { HomeAccountDeleteInputV1Schema } from '../home/governance/accounts.js';
 import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
+import { TEAM_CREATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { readTeamCreationPolicyRefusalV1 } from '../teams/errors.js';
+import { TeamCreateInputV1Schema } from '../teams/team.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { AccountSettingsMutationInvalidResultSchema } from '../account/settings/accountSettingMutationV1.js';
 import { SettingsDeclarationActionInputSchemasV1 } from '../actions/settingsDeclarationActionFamily.js';
@@ -92,6 +95,14 @@ function parseStrictApprovalFailure(input: Readonly<{
     const details = (storedRead ? createStoredReadSchema(ApprovalRequestConflictFailureDetailsV1Schema)
       : ApprovalRequestConflictFailureDetailsV1Schema).safeParse(input.failure.details);
     return details.success ? { ...input.failure, details: details.data } : null;
+  }
+  if (input.request.actionId === TEAM_CREATE_ACTION_ID_V1) {
+    const refusal = readTeamCreationPolicyRefusalV1(input.failure.errorCode, input.failure.details);
+    if (refusal) {
+      const schema = storedRead ? createStoredReadSchema(TeamCreateInputV1Schema) : TeamCreateInputV1Schema;
+      if (!schema.safeParse(input.request.actionArgs).success) return null;
+      return { ...input.failure, details: { error: input.failure.errorCode, details: refusal } };
+    }
   }
   const finiteCommand = (storedRead ? createStoredReadSchema(FiniteCommandFailureDetailsV1Schema)
     : FiniteCommandFailureDetailsV1Schema).safeParse(input.failure.details);

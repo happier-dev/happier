@@ -10,6 +10,7 @@ import {
     type TeamSummaryV1,
     type TeamPolicySetInputV1,
 } from '@happier-dev/protocol/teams';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     TeamAuthenticationPolicyV1,
 } from '@happier-dev/protocol/auth/entry';
@@ -58,8 +59,8 @@ async function mutateTeam(params: Readonly<{
      * the mutation when the approval was granted.
      */
     onApprovalSucceeded?: (team: TeamSummaryV1) => void | Promise<void>;
-    /** Receives the approval's or the Home's own typed refusal code. */
-    onApprovalFailed?: (code: string) => void;
+    /** Receives the refusal code and any typed Action failure from approval settlement. */
+    onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>): Promise<TeamMutationOutcome> {
     /**
      * One settlement for the immediate answer and the approved one.
@@ -116,7 +117,7 @@ export function createTeam(params: Readonly<{
      * they just made.
      */
     onApprovalSucceeded?: (team: TeamSummaryV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>): Promise<TeamMutationOutcome> {
     return mutateTeam({
         scope: params.scope,

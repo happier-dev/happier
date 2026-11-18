@@ -12,6 +12,18 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('explains Team creation policy refusals and keeps a bare Team refusal generic', () => {
+        const failure = { ok: false, errorCode: 'team_forbidden', error: 'team_forbidden' };
+        const fallback = t('teams.errors.forbidden');
+        expect(resolveActionExecutionFailureMessage(failure, fallback)).toBe(fallback);
+        expect(resolveActionExecutionFailureMessage({ ...failure,
+            details: { error: 'team_forbidden', details: { reason: 'managed_only' }, httpStatus: 403 },
+        }, fallback)).toBe(t('teams.directory.createAdministeredUnnamed'));
+        expect(resolveActionExecutionFailureMessage({ ...failure,
+            details: { error: 'team_forbidden', details: { reason: 'disabled' }, httpStatus: 403 },
+        }, fallback)).toBe(t('teams.directory.createOff'));
+    });
+
     it('shows the typed spawn cause from the canonical terminal Action failure', () => {
         const failure = completeSpawnActionResult({ type: 'error', code: 'spawn_failed', retryable: true,
             launchError: { kind: 'launch_error', code: 'admission_unavailable', message: 'admission_unavailable' } });

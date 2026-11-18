@@ -98,6 +98,11 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
   expect(fixture.takeRequestObservations()).toContainEqual({ method: 'POST', path: '/v1/teams/create', statusCode: 200 });
   if (!created.ok) throw new Error(created.errorCode);
   const team = TeamSummaryV1Schema.parse(created.result);
+  const memberCreate = await member.execute('teams.create', { v: 1, name: 'Member cannot create', requestKey: randomUUID() },
+    { presentUserConfirmation: { actionId: 'teams.create' } });
+  expect(memberCreate, JSON.stringify(memberCreate)).toMatchObject({ ok: false, errorCode: 'team_forbidden',
+    details: { error: 'team_forbidden', details: { reason: 'managed_only' } } });
+  expect(fixture.takeRequestObservations()).toContainEqual({ method: 'POST', path: '/v1/teams/create', statusCode: 403 });
   const missingOwner = await owner.execute('teams.create', { v: 1, name: 'Missing initial owner', requestKey: randomUUID() },
     { presentUserConfirmation: { actionId: 'teams.create' } });
   expect(missingOwner, JSON.stringify(missingOwner)).toMatchObject({ ok: false, errorCode: 'invalid_team_input',

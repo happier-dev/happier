@@ -460,7 +460,9 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         setSubmitting(false);
                     }
                 },
-                onApprovalFailed: (code) => setError(teamCreateFailureLabel({ kind: 'unknown', code, retryable: false }, submittedOwner)),
+                onApprovalFailed: (code, failure) => setError(teamCreateFailureLabel({
+                    kind: 'unknown', code, retryable: false, details: failure?.details,
+                }, submittedOwner)),
             });
             if (outcome.kind === 'succeeded') {
                 await commitCreatedTeam(outcome.team);

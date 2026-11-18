@@ -3,6 +3,15 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from './normalizeActionExecuteResult';
 
 describe('CLI Action failure presentation', () => {
+  it('explains the Home Team creation refusal and keeps its typed detail in JSON', () => {
+    const errorCode = 'team_forbidden';
+    const details = { error: errorCode, details: { reason: 'managed_only' } };
+    const normalized = normalizeActionExecuteResult({ ok: false, errorCode, error: errorCode, details });
+    if (normalized.ok) throw new Error('Expected refusal');
+    expect(normalized.errorMessage).toContain('owners and admins');
+    expect(projectCliActionFailure(normalized)).toMatchObject({ code: errorCode, details });
+  });
+
   it('retains the CLI target parser refusal and its cause at the command boundary', () => {
     const failure = normalizeCliActionThrownError(Object.assign(new Error('--machine-id is required for a Workflow project target.'), {
       code: 'invalid_arguments',

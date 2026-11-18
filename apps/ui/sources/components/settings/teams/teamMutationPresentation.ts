@@ -3,6 +3,7 @@ import { isActionApprovalDeclinedErrorCode, isActionTurnedOffErrorCode } from '@
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 /**
@@ -101,6 +102,11 @@ export function teamCreateFailureLabel(
     }
     if (failure.kind === 'invalid') return t('teams.errors.invalidName');
     if (failure.kind === 'outcome_unknown') return t('teams.create.outcomeUnknown');
+    if (failure.code === 'team_forbidden') {
+        return resolveActionExecutionFailureMessage(
+            { ok: false, errorCode: failure.code, details: failure.details }, teamFailureLabel(failure),
+        );
+    }
     return teamMutationFailureLabel(failure);
 }
 

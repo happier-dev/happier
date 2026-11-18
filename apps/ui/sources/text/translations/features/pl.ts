@@ -16136,7 +16136,7 @@ const polish: TeamsTranslationRoot = {
             newTeam: 'Nowy zespół',
             createDenied: ({ homes }: { homes: string }) => `Tylko administratorzy ${homes} mogą tworzyć zespoły. Poproś jednego z nich o utworzenie zespołu lub dodanie cię do zespołu.`,
             createAdministered: ({ names }: { names: string }) => `Zespoły na tym Home tworzą jego administratorzy: ${names}. Poproś o utworzenie zespołu dla ciebie lub o pozwolenie wszystkim na tworzenie zespołów.`,
-            createAdministeredUnnamed: 'Zespoły na tym Home tworzą jego administratorzy. Poproś jednego z nich o utworzenie zespołu dla ciebie lub o pozwolenie wszystkim na tworzenie zespołów.',
+            createAdministeredUnnamed: "Tylko właściciele i administratorzy tego Home mogą tworzyć zespoły. Poproś o to jednego z nich.",
             createOff: 'Tworzenie zespołów jest wyłączone na tym Home.',
             letEveryoneCreate: 'Pozwól wszystkim tworzyć zespoły',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} i ${last}`,

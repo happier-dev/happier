@@ -163,6 +163,26 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { buildApprovalExecutionOriginV1 } from '../actions/actionExecutor.js';
 
+it('keeps the Team creation policy explanation through deferred approval history', () => {
+  const actionId = 'teams.create';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId, summary: 'Create Team',
+    actionArgs: { v: 1, name: 'Team', requestKey: 'create' },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'member', actionId, requestId: 'create' } });
+  const body = { error: 'team_forbidden', details: { reason: 'managed_only' } };
+  const failure = { ok: false as const, errorCode: 'team_forbidden', error: 'team_forbidden',
+    details: { ...body, httpStatus: 403, strayDetail: 'not for approval history' } };
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect(readApprovalExecutionFailure(stored)).toEqual({ ...failure, details: body });
+  const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
+  expect(readApprovalExecutionFailure(publicRead)).toEqual({ ...failure, details: body });
+  expect(projectApprovalExecutionFailureV2({ request: { ...request, actionId: 'settings.get' }, failure, executedAtMs: 3 }))
+    .not.toHaveProperty('details');
+});
+
 it.each([
   { environmentId: 'environment', domainId: 'domain', domainHostname: 'tools.example.test',
     step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore the ingress route and retry removal.' },

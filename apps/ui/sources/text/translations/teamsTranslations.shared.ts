@@ -210,7 +210,7 @@ export const english = {
             newTeam: 'New Team',
             createDenied: ({ homes }: { homes: string }) => `Only administrators of ${homes} can create Teams. Ask one to create a Team or add you to one.`,
             createAdministered: ({ names }: { names: string }) => `Teams on this Home are created by its administrators. Ask ${names} to create a Team for you or to let everyone create Teams.`,
-            createAdministeredUnnamed: 'Teams on this Home are created by its administrators. Ask one of them to create a Team for you or to let everyone create Teams.',
+            createAdministeredUnnamed: "Only this Home's owners and admins can create Teams. Ask one of them.",
             createOff: 'Team creation is turned off on this Home.',
             letEveryoneCreate: 'Let everyone create Teams',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} and ${last}`,

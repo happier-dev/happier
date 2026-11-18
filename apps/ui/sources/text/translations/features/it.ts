@@ -16112,7 +16112,7 @@ const italian: TeamsTranslationRoot = {
             newTeam: 'Nuovo team',
             createDenied: ({ homes }: { homes: string }) => `Solo gli amministratori di ${homes} possono creare team. Chiedi a uno di loro di crearne uno o di aggiungerti.`,
             createAdministered: ({ names }: { names: string }) => `I team su questo Home vengono creati dai suoi amministratori. Chiedi a ${names} di creare un team per te o di consentire a tutti di creare team.`,
-            createAdministeredUnnamed: 'I team su questo Home vengono creati dai suoi amministratori. Chiedi a uno di loro di creare un team per te o di consentire a tutti di creare team.',
+            createAdministeredUnnamed: "Solo i proprietari e gli amministratori di questo Home possono creare team. Chiedi a uno di loro.",
             createOff: 'La creazione di team è disattivata su questo Home.',
             letEveryoneCreate: 'Consenti a tutti di creare team',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} e ${last}`,

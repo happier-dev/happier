@@ -15927,7 +15927,7 @@ const german: TeamsTranslationRoot = {
             newTeam: 'Neues Team',
             createDenied: ({ homes }: { homes: string }) => `Nur Administratoren von ${homes} können Teams erstellen. Bitte eine Person mit Adminrechten, ein Team zu erstellen oder dich hinzuzufügen.`,
             createAdministered: ({ names }: { names: string }) => `Teams auf diesem Home werden von seinen Administratoren erstellt. Bitte ${names}, ein Team für dich zu erstellen oder allen das Erstellen von Teams zu erlauben.`,
-            createAdministeredUnnamed: 'Teams auf diesem Home werden von seinen Administratoren erstellt. Bitte eine Person mit Adminrechten, ein Team für dich zu erstellen oder allen das Erstellen von Teams zu erlauben.',
+            createAdministeredUnnamed: "Nur die Eigentümer und Administratoren dieses Home können Teams erstellen. Bitte eine dieser Personen darum.",
             createOff: 'Das Erstellen von Teams ist auf diesem Home ausgeschaltet.',
             letEveryoneCreate: 'Allen das Erstellen von Teams erlauben',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} und ${last}`,

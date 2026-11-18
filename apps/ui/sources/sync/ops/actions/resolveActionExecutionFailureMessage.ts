@@ -11,6 +11,8 @@ import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/pr
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { FeatureDecisionSchema } from '@happier-dev/protocol/features/decision';
+import { readTeamCreationPolicyRefusalV1 } from '@happier-dev/protocol/teams';
+import { teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
@@ -142,6 +144,10 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
     const stalePluginViewMessage = typeof code === 'string' ? resolvePluginSurfaceStaleReasonMessage(code) : null;
     if (stalePluginViewMessage) return stalePluginViewMessage;
+    const teamCreationRefusal = readTeamCreationPolicyRefusalV1(code, record.details);
+    if (teamCreationRefusal) return teamsCreateRefusalText(teamCreationRefusal.reason === 'managed_only'
+        ? { kind: 'administered', administratorNames: [] }
+        : { kind: 'off' });
     if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;

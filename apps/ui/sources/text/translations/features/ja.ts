@@ -16047,7 +16047,7 @@ const japanese: TeamsTranslationRoot = {
             newTeam: '新しいチーム',
             createDenied: ({ homes }: { homes: string }) => `${homes} でチームを作成できるのは管理者だけです。管理者にチームの作成か、チームへの追加を依頼してください。`,
             createAdministered: ({ names }: { names: string }) => `このHomeのチームは管理者が作成します。${names} にチームの作成を依頼するか、全員がチームを作成できるようにするよう依頼してください。`,
-            createAdministeredUnnamed: 'このHomeのチームは管理者が作成します。管理者にチームの作成を依頼するか、全員がチームを作成できるようにするよう依頼してください。',
+            createAdministeredUnnamed: "このHomeでチームを作成できるのは、オーナーと管理者だけです。いずれかの人に依頼してください。",
             createOff: 'このHomeではチームの作成がオフになっています。',
             letEveryoneCreate: '全員にチームの作成を許可',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names}、${last}`,

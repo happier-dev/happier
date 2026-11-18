@@ -16140,7 +16140,7 @@ const russian: TeamsTranslationRoot = {
             newTeam: 'Новая команда',
             createDenied: ({ homes }: { homes: string }) => `Создавать команды в ${homes} могут только администраторы. Попросите одного из них создать команду или добавить вас в неё.`,
             createAdministered: ({ names }: { names: string }) => `Команды в этом Home создают его администраторы: ${names}. Попросите создать для вас команду или разрешить всем создавать команды.`,
-            createAdministeredUnnamed: 'Команды в этом Home создают его администраторы. Попросите одного из них создать для вас команду или разрешить всем создавать команды.',
+            createAdministeredUnnamed: "Только владельцы и администраторы этого Home могут создавать команды. Попросите одного из них.",
             createOff: 'Создание команд в этом Home выключено.',
             letEveryoneCreate: 'Разрешить всем создавать команды',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} и ${last}`,

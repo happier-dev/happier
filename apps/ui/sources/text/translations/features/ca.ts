@@ -16126,7 +16126,7 @@ const catalan: TeamsTranslationRoot = {
             newTeam: 'Equip nou',
             createDenied: ({ homes }: { homes: string }) => `Només els administradors de ${homes} poden crear equips. Demana a un d’ells que en creï un o que t’hi afegeixi.`,
             createAdministered: ({ names }: { names: string }) => `En aquest Home, els equips els creen els seus administradors. Demana a ${names} un equip per a tu, o que tothom pugui crear equips.`,
-            createAdministeredUnnamed: 'En aquest Home, els equips els creen els seus administradors. Demana a un d’ells un equip per a tu, o que tothom pugui crear equips.',
+            createAdministeredUnnamed: "Només els propietaris i administradors d’aquest Home poden crear equips. Demana-ho a un d’ells.",
             createOff: 'La creació d’equips està desactivada en aquest Home.',
             letEveryoneCreate: 'Permet que tothom creï equips',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} i ${last}`,

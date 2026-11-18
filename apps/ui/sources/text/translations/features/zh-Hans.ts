@@ -15987,7 +15987,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             newTeam: '新建团队',
             createDenied: ({ homes }: { homes: string }) => `只有 ${homes} 的管理员可以创建团队。请管理员创建团队或将你加入团队。`,
             createAdministered: ({ names }: { names: string }) => `此 Home 的团队由其管理员创建。请让 ${names} 为你创建团队，或允许所有人创建团队。`,
-            createAdministeredUnnamed: '此 Home 的团队由其管理员创建。请让管理员为你创建团队，或允许所有人创建团队。',
+            createAdministeredUnnamed: "只有此 Home 的所有者和管理员才能创建团队。请向其中一人提出请求。",
             createOff: '此 Home 已关闭团队创建。',
             letEveryoneCreate: '允许所有人创建团队',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names}和${last}`,

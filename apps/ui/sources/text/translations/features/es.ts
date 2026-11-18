@@ -16048,7 +16048,7 @@ const spanish: TeamsTranslationRoot = {
             newTeam: 'Nuevo equipo',
             createDenied: ({ homes }: { homes: string }) => `Solo los administradores de ${homes} pueden crear equipos. Pide a uno que cree un equipo o que te añada a uno.`,
             createAdministered: ({ names }: { names: string }) => `En este Home, los equipos los crean sus administradores. Pide a ${names} un equipo para ti, o que todos puedan crear equipos.`,
-            createAdministeredUnnamed: 'En este Home, los equipos los crean sus administradores. Pide a uno de ellos un equipo para ti, o que todos puedan crear equipos.',
+            createAdministeredUnnamed: "Solo los propietarios y administradores de este Home pueden crear equipos. Pídeselo a uno de ellos.",
             createOff: 'La creación de equipos está desactivada en este Home.',
             letEveryoneCreate: 'Permitir que todos creen equipos',
             namesAnd: ({ names, last }: { names: string; last: string }) => `${names} y ${last}`,
