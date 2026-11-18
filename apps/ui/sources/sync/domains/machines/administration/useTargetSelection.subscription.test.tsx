@@ -28,6 +28,12 @@ vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
 
+const providerRecoveryRoute = vi.hoisted(() => ({ params: {} as Record<string, string | string[] | undefined> }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ params: () => providerRecoveryRoute.params }).module;
+});
+
 // Direct store seeding bypasses applyMachines, which normally publishes the Home's presence answer.
 function createPublishedMachineFixture(overrides: Parameters<typeof createMachineFixture>[0] = {}) {
     const machine = createMachineFixture(overrides);
@@ -41,6 +47,7 @@ afterEach(async () => {
     standardCleanup();
     await network.dispose();
     publishAppliedActiveServerRuntimeAvailability(false);
+    providerRecoveryRoute.params = {};
 });
 
 describe('machine administration target demand', () => {
@@ -237,6 +244,56 @@ describe('machine administration target demand', () => {
             } finally { await hook.unmount(); }
         } finally { storage.setState(previous); await removeServerProfile(home.id); }
     });
+    it('opens Session Provider recovery in its Home instead of the saved Providers Home', async () => {
+        const { dispatchProviderRecoveryAction } = await import('@/providers/connection/recovery');
+        const { useProviderSettingsTarget } = await import('@/providers/hooks/targetMachine');
+        const { providerConnectionModelsRoute } = await import('@/components/settings/providers/collection/providerCollectionModel');
+        const previous = storage.getState();
+        const providersHome = await network.addHome('https://providers-recovery-saved.example.test', 'saved-owner', {
+            serverIdentityId: 'srv_providers_recovery_saved',
+        });
+        const sessionHome = await network.addHome('https://providers-recovery-session.example.test', 'session-owner', {
+            serverIdentityId: 'srv_providers_recovery_session',
+        });
+        await setActiveServerId(providersHome.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const savedTarget = { serverIdentityId: 'srv_providers_recovery_saved', machineId: 'saved-machine' };
+        const sessionTarget = { serverIdentityId: 'srv_providers_recovery_session', machineId: 'session-machine' };
+        try {
+            const scope = { serverId: providersHome.id, accountId: providersHome.accountId };
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: {
+                    [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers]: savedTarget,
+                } } }));
+            let destination = '';
+            await dispatchProviderRecoveryAction({
+                router: { push: route => { destination = String(route); } },
+                recovery: { action: 'review_connection', connectionId: 'home-local-connection', machine: sessionTarget },
+            });
+            const params = new URL(destination, 'https://happier.example.test').searchParams;
+            providerRecoveryRoute.params = Object.fromEntries(params);
+            const hook = await renderHook(() => useProviderSettingsTarget());
+            try {
+                expect(hook.getCurrent().accountServerId).toBe(sessionHome.id);
+                expect(hook.getCurrent().selection.selectedTarget).toEqual(sessionTarget);
+                expect(storage.getState().settings.machineAdministrationTargetsLocalV1[
+                    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers
+                ]).toEqual(savedTarget);
+                const modelsDestination = providerConnectionModelsRoute('home-local-connection', { machine: sessionTarget });
+                providerRecoveryRoute.params = Object.fromEntries(new URL(modelsDestination, 'https://happier.example.test').searchParams);
+                const modelsHook = await renderHook(() => useProviderSettingsTarget());
+                try {
+                    expect(modelsHook.getCurrent().accountServerId).toBe(sessionHome.id);
+                    expect(modelsHook.getCurrent().selection.selectedTarget).toEqual(sessionTarget);
+                } finally { await modelsHook.unmount(); }
+            } finally { await hook.unmount(); }
+        } finally {
+            storage.setState(previous);
+            await removeServerProfile(sessionHome.id);
+            await removeServerProfile(providersHome.id);
+        }
+    });
+
     it('keeps Providers quiet for unrelated Machine metadata and Session arrivals while labels and eligibility stay live', async () => {
         const { useProviderSettingsTarget } = await import('@/providers/hooks/targetMachine');
         const previous = storage.getState();

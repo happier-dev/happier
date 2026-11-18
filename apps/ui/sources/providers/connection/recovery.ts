@@ -1,6 +1,8 @@
 import { ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import { providerConnectionDetailRoute, providerConnectionModelsRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 
 type RecoveryRouter = Readonly<Pick<ReturnType<typeof useRouter>, 'push'>>;
 
@@ -8,11 +10,8 @@ type RecoveryRouter = Readonly<Pick<ReturnType<typeof useRouter>, 'push'>>;
 export type ProviderConnectionReviewRecovery = Readonly<{
     action: 'review_connection';
     connectionId: NonNullable<ProviderErrorV1['connectionId']>;
+    machine?: MachineAdministrationTargetV1;
 }>;
-
-function providerConnectionSettingsPath(connectionId: string) {
-    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}` as const;
-}
 
 export type ProviderRecoveryAvailability = Readonly<{
     retry?: boolean;
@@ -97,7 +96,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
 }> & (Readonly<{ error: ProviderErrorV1; recovery?: never }>
     | Readonly<{ recovery: ProviderConnectionReviewRecovery; error?: never }>)): Promise<boolean> {
     if (input.recovery) {
-        input.router.push(providerConnectionSettingsPath(input.recovery.connectionId));
+        input.router.push(providerConnectionDetailRoute(input.recovery.connectionId, { machine: input.recovery.machine }) as never);
         return true;
     }
     const parsed = ProviderErrorV1Schema.safeParse(input.error);
@@ -113,7 +112,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
         enableOnMachine: input.enableOnMachine !== undefined,
     })) return false;
     const connectionPath = error.connectionId
-        ? providerConnectionSettingsPath(error.connectionId)
+        ? providerConnectionDetailRoute(error.connectionId)
         : null;
     const target = error.connectedAccountTarget;
     const connectionRoute = target
@@ -136,9 +135,9 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
             await input.loadModel();
             return true;
         case 'choose_model': {
-            const path = target ? connectionRoute : connectionPath ? `${connectionPath}/models` as const : null;
+            const path = target ? connectionRoute : error.connectionId ? providerConnectionModelsRoute(error.connectionId) : null;
             if (!path) return false;
-            input.router.push(path);
+            input.router.push(path as never);
             return true;
         }
         case 'review_profile_migration':
@@ -151,7 +150,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
             } else if (error.sourceProfileId) {
                 input.router.push('/(app)/settings/profiles');
             } else if (connectionPath) {
-                input.router.push(connectionPath);
+                input.router.push(connectionPath as never);
             } else {
                 return false;
             }
@@ -168,7 +167,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
         case 'review_compatibility':
         case 'review_credential_transport':
             if (!connectionPath) return false;
-            input.router.push(connectionPath);
+            input.router.push(connectionPath as never);
             return true;
         case 'enable_on_machine':
             if (input.enableOnMachine) {
@@ -176,7 +175,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
                 return true;
             }
             if (!connectionPath) return false;
-            input.router.push(connectionPath);
+            input.router.push(connectionPath as never);
             return true;
         case 'review_connection': {
             if (input.reviewConnection) {
@@ -184,7 +183,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
                 return true;
             }
             if (!connectionRoute) return false;
-            input.router.push(connectionRoute);
+            input.router.push(connectionRoute as never);
             return true;
         }
         case 'replace_secret':
@@ -194,7 +193,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
                 return true;
             }
             if (!connectionPath) return false;
-            input.router.push(connectionPath);
+            input.router.push(connectionPath as never);
             return true;
     }
 }

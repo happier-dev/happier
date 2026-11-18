@@ -164,6 +164,8 @@ import { createSessionAgentSignInRoute } from "@/components/sessions/presentatio
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import { readMachineAdministrationTargetRouteParams } from '@/sync/domains/machines/administration/targetSelection';
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from "@/sync/domains/session/resolveSessionActionDefaultBackend";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
@@ -2621,6 +2623,10 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
       const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
           appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata) });
       const startFailureProviderRecovery = startFailureNotice?.providerRecovery;
+      const startFailureProviderTarget = startFailureProviderRecovery ? readMachineAdministrationTargetRouteParams({
+          machineId: ownerMetadata?.machineId,
+          serverIdentityId: resolvePortableServerIdentityForRoutingId(session.serverId) ?? undefined,
+      }) : null;
       const startFailureRecovery = startFailureNotice?.code === 'plugin_disabled'
           ? resolveResumeFailurePresentation({ errorCode: startFailureNotice.code }, startFailureNotice.message,
               resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })))
@@ -2632,7 +2638,10 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
           ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry}
               {...(startFailureSignInRoute ? { signIn: () => router.push(startFailureSignInRoute as never) } : {})}
               {...(startFailureProviderRecovery ? { reviewConnection: () => {
-                  fireAndForget(dispatchProviderRecoveryAction({ router, recovery: startFailureProviderRecovery }),
+                  fireAndForget(dispatchProviderRecoveryAction({ router, recovery: {
+                      ...startFailureProviderRecovery,
+                      ...(startFailureProviderTarget ? { machine: startFailureProviderTarget } : {}),
+                  } }),
                       { tag: 'SessionView.startFailure.reviewConnection' });
               } } : {})}
               {...(startFailureRetry && openModelPicker && session.lastRuntimeIssue?.failureCause?.failureReason === 'model_selection_required'

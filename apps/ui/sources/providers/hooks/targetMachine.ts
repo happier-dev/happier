@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import {
@@ -7,6 +8,7 @@ import {
 import {
     isMachineAdministrationCandidateSelectable,
     machineAdministrationTargetsEqual,
+    readMachineAdministrationTargetRouteParams,
 } from '@/sync/domains/machines/administration/targetSelection';
 import {
     useMachineAdministrationTargetSelection,
@@ -82,8 +84,12 @@ export function providerSettingsMachineRowKey(target: MachineAdministrationTarge
  * machine the user chose rather than each screen re-deriving its own.
  */
 export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
+    const route = useLocalSearchParams<{ machineId?: string | string[]; serverIdentityId?: string | string[] }>();
+    const initialTarget = React.useMemo(() => readMachineAdministrationTargetRouteParams(route),
+        [route.machineId, route.serverIdentityId]);
     const selection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers,
+        initialTarget ? { initialTarget } : undefined,
     );
     const executionTarget = React.useMemo(() => {
         const selectedTarget = selection.selectedTarget;

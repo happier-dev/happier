@@ -569,7 +569,9 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 if (!accountStillCurrent() || signal.aborted || result?.status !== 'success') return false;
                 isDirtyRef.current = false;
                 ignoreUnsavedGuardRef.current = true;
-                router.replace(providerConnectionDetailRoute(connectionId) as never);
+                router.replace(providerConnectionDetailRoute(connectionId, {
+                    machine: providerTarget.selection.selectedTarget ?? undefined,
+                }) as never);
                 return true;
             }
             let savedConnectionId: string | null;
@@ -610,14 +612,17 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 ignoreUnsavedGuardRef.current = true;
                 // A catalog provider opens on its detail, which may close the setup with one note.
                 if (props.onCreated) props.onCreated(savedConnectionId);
-                else router.replace(`${providerConnectionDetailRoute(savedConnectionId)}${props.contributionKey ? '?connected=1' : ''}` as never);
+                else router.replace(providerConnectionDetailRoute(savedConnectionId, {
+                    machine: providerTarget.selection.selectedTarget ?? undefined,
+                    connected: Boolean(props.contributionKey),
+                }) as never);
                 return true;
             }
         } catch {
             if (accountStillCurrent() && !signal.aborted) setLocalError('provider_connection_invalid');
         }
         return false;
-    }, [accountStillCurrent, authoringPreview, connectionId, contribution?.credential, contribution?.name, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, managed, managedChoice, managedDeployment, managedReady, mutation, props.contributionKey, props.edit, props.onCreated, router]);
+    }, [accountStillCurrent, authoringPreview, connectionId, contribution?.credential, contribution?.name, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, managed, managedChoice, managedDeployment, managedReady, mutation, props.contributionKey, props.edit, props.onCreated, providerTarget.selection.selectedTarget, router]);
     const save = React.useCallback((): Promise<boolean> => {
         if (!accountStillCurrent()) return Promise.resolve(false);
         if (saveOperation.current?.promise) return saveOperation.current.promise;
@@ -950,7 +955,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
  * not custom) opens its detail instead.
  */
 export function ProviderCustomConnectionEditScreen(props: Readonly<{ connectionId: string }>) {
-    const { serverId } = useProviderSettingsTarget();
+    const { serverId, selection } = useProviderSettingsTarget();
     const catalog = useProviderCatalogForServer(serverId);
     const saved = catalog?.data?.connections.find((connection) => connection.id === props.connectionId) ?? null;
     const editRef = React.useRef<ProviderCustomConnectionEdit | 'unsupported' | null>(null);
@@ -963,7 +968,9 @@ export function ProviderCustomConnectionEditScreen(props: Readonly<{ connectionI
             : 'unsupported';
     }
     const edit = editRef.current;
-    if (edit === 'unsupported') return <Redirect href={providerConnectionDetailRoute(props.connectionId) as never} />;
+    if (edit === 'unsupported') return <Redirect href={providerConnectionDetailRoute(props.connectionId, {
+        machine: selection.selectedTarget ?? undefined,
+    }) as never} />;
     if (edit === null) return <ItemList testID="settings-provider-edit-loading">{null}</ItemList>;
     return <ProviderConnectionAuthoringScreen edit={edit} />;
 }

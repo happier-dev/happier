@@ -4,6 +4,8 @@ import type { DaemonProviderConnectionsDescribeResponseV1, DaemonProviderConnect
 import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AccountProviderCatalogCountV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import { buildMachineAdministrationTargetRouteParams } from '@/sync/domains/machines/administration/targetSelection';
 import type { ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { readAccountProviderDeclaration } from '@/providers/catalog/accountProviderDeclarations';
 
@@ -186,8 +188,25 @@ export function filterProviderCollection(collection: ProviderCollection, searchQ
 }
 
 /** Both Settings collections open the one Provider connection detail. */
-export function providerConnectionDetailRoute(connectionId: string): string {
-    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}`;
+function providerConnectionRouteQuery(options: Readonly<{
+    machine?: MachineAdministrationTargetV1;
+    connected?: boolean;
+    edit?: boolean;
+    add?: boolean;
+}>): string {
+    const params = new URLSearchParams(options.machine ? buildMachineAdministrationTargetRouteParams(options.machine) : {});
+    if (options.connected) params.set('connected', '1');
+    if (options.edit) params.set('edit', '1');
+    if (options.add) params.set('add', '1');
+    const query = params.toString();
+    return query ? `?${query}` : '';
+}
+
+export function providerConnectionDetailRoute(connectionId: string, options: Readonly<{
+    machine?: MachineAdministrationTargetV1;
+    connected?: boolean;
+}> = {}): string {
+    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}${providerConnectionRouteQuery(options)}`;
 }
 
 /** One authoring destination for catalog, Custom and discovered Provider picks. */
@@ -283,8 +302,8 @@ export function buildProviderGatewayCollection(input: Readonly<{
 }
 
 /** A saved custom connection's editor: the same page as its detail, opened in the custom editor (F08). */
-export function providerConnectionEditRoute(connectionId: string): string {
-    return `${providerConnectionDetailRoute(connectionId)}?edit=1`;
+export function providerConnectionEditRoute(connectionId: string, options: Readonly<{ machine?: MachineAdministrationTargetV1 }> = {}): string {
+    return `${providerConnectionDetailRoute(connectionId)}${providerConnectionRouteQuery({ ...options, edit: true })}`;
 }
 
 /** The former query value that opened a connection's detail on its Models section (old links). */
@@ -294,6 +313,6 @@ export const PROVIDER_CONNECTION_MODELS_SECTION = 'models';
  * A connection's Models page, behind the "Models" row of its detail (lab PD1), optionally with the
  * manual-model editor open.
  */
-export function providerConnectionModelsRoute(connectionId: string, options: Readonly<{ add?: boolean }> = {}): string {
-    return `${providerConnectionDetailRoute(connectionId)}/models${options.add ? '?add=1' : ''}`;
+export function providerConnectionModelsRoute(connectionId: string, options: Readonly<{ add?: boolean; machine?: MachineAdministrationTargetV1 }> = {}): string {
+    return `${providerConnectionDetailRoute(connectionId)}/models${providerConnectionRouteQuery(options)}`;
 }

@@ -317,9 +317,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         pickerSourceKind ? { kind: pickerSourceKind, serverId, enabled: focused } : undefined);
     // The Connection section's Models row opens the connection's Models page (lab PD1).
     const openModels = React.useCallback(() => {
-        const result = runGuardedNavigation(() => router.push(providerConnectionModelsRoute(props.connectionId) as never));
+        const result = runGuardedNavigation(() => router.push(providerConnectionModelsRoute(props.connectionId, {
+            machine: providerTarget.selection.selectedTarget ?? undefined,
+        }) as never));
         if (result !== true) fireAndForget(result, { tag: 'ProviderConnectionDetailScreen.openModels' });
-    }, [props.connectionId, router]);
+    }, [props.connectionId, providerTarget.selection.selectedTarget, router]);
     // Availability, machine grants, Team sharing and endpoint addresses are rare: one Advanced
     // disclosure holds them, opened by the person, or by itself when one of them needs attention.
     const [advancedOpen, setAdvancedOpen] = React.useState(false);
@@ -489,9 +491,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             allowNavigation();
             setDuplicateMode(null);
             if (props.onDuplicated) props.onDuplicated(result.connection.connectionId);
-            else router.replace(providerConnectionDetailRoute(result.connection.connectionId) as never);
+            else router.replace(providerConnectionDetailRoute(result.connection.connectionId, {
+                machine: providerTarget.selection.selectedTarget ?? undefined,
+            }) as never);
         }
-    }, [connection, machineId, mutation, props.connectionId, props.onDuplicated, router]);
+    }, [connection, machineId, mutation, props.connectionId, props.onDuplicated, providerTarget.selection.selectedTarget, router]);
 
     const remove = React.useCallback(async () => {
         if (!connection || deleteInFlightRef.current) return;
@@ -1068,7 +1072,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             id: 'edit',
             testID: 'provider-connection-menu-edit',
             title: t('settingsProvidersCollection.editConnection'),
-            onSelect: () => { void runGuardedNavigation(() => router.push(providerConnectionEditRoute(props.connectionId) as never)); },
+            onSelect: () => { void runGuardedNavigation(() => router.push(providerConnectionEditRoute(props.connectionId, {
+                machine: providerTarget.selection.selectedTarget ?? undefined,
+            }) as never)); },
         }] : []),
         ...(providerMenu ? [{
             id: 'duplicate',
