@@ -39,7 +39,7 @@ test('performance workflow admits fork PR labels and hot paths with no write aut
   assert.ok(source.on.pull_request.types.includes('labeled'));
   assert.equal(source.on.pull_request_target, undefined);
   assert.deepEqual(source.permissions, { contents: 'read', actions: 'read' });
-  assert.deepEqual(source.on.push.branches, ['dev', 'main']);
+  assert.deepEqual(source.on.push.branches, ['dev', 'main', 'v0.3']);
   assert.equal(source.jobs.performance['runs-on'], 'ubuntu-24.04');
   assert.equal(source.jobs.performance['continue-on-error'], true);
   const checkout = source.jobs.performance.steps.find((step) => step.uses?.startsWith('actions/checkout@'));

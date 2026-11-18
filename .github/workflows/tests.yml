@@ -769,6 +769,8 @@ jobs:
     timeout-minutes: 95
     permissions:
       contents: read
+      # Reads the exact-base run's web boot weight artifact.
+      actions: read
     env:
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
     steps:
@@ -839,6 +841,37 @@ jobs:
         run: ./apps/stack/bin/hstack-exec -- cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - name: Build the web artifact
         run: ./apps/stack/bin/hstack-exec -- node scripts/pipeline/release/build-ui-web-bundle.mjs --channel preview --version 0.0.0-ci.${{ github.run_id }}
+      - name: Fetch the exact-base web boot weight
+        # The Gate's selection baseline (PR base, or the newest earlier started push run).
+        # Exact base only: no "latest" fallback, so a missing base shows no deltas.
+        if: ${{ needs.gate-prepare.outputs.base_sha != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.gate-prepare.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/tests.yml/runs?event=push&head_sha=$BASE_SHA&per_page=20" \
+            --jq '[.workflow_runs[] | select(.head_branch == "v0.3")][0].id // empty')"
+          if [ -n "$run_id" ] && gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -n perf-web-boot-weight -D "$RUNNER_TEMP/base-boot"; then
+            echo "Exact-base web boot weight: run $run_id ($BASE_SHA)"
+          else
+            echo "::notice title=Web boot weight::No exact-base measurement for $BASE_SHA; reporting absolute values only."
+          fi
+      - name: Measure web boot weight
+        # Report only: growth is shown in the job summary and never fails the job (owner decision pending).
+        run: |
+          set -euo pipefail
+          tarballs=(dist/release-assets/ui-web/*.tar.gz)
+          baseline=()
+          [ -f "$RUNNER_TEMP/base-boot/web-boot-weight.json" ] && baseline=(--baseline "$RUNNER_TEMP/base-boot/web-boot-weight.json")
+          node scripts/pipeline/perf/web-boot-weight.mjs --export "${tarballs[0]}" --out "$RUNNER_TEMP/web-boot-weight.json" "${baseline[@]}"
+      - name: Publish the web boot weight
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: perf-web-boot-weight
+          path: ${{ runner.temp }}/web-boot-weight.json
+          if-no-files-found: error
       - name: Upload artifact-build bundled-plugin preparation diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

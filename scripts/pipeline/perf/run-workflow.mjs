@@ -22,7 +22,7 @@ export function selectExactBaseRun(runs, { repository, baseSha }) {
   return runs.filter(run => Number.isSafeInteger(run.id) && run.id > 0
     && run.path === '.github/workflows/performance.yml' && run.event === 'push'
     && run.status === 'completed' && run.conclusion === 'success'
-    && run.head_sha === baseSha && ['dev', 'main'].includes(run.head_branch)
+    && run.head_sha === baseSha && ['dev', 'main', 'v0.3'].includes(run.head_branch)
     && run.repository?.full_name === repository && run.head_repository?.full_name === repository)
     .sort((a, b) => b.id - a.id)[0] ?? null;
 }

@@ -16,6 +16,8 @@ const artifact = (override = {}) => ({ id: 34, name: 'performance-results', expi
 test('baseline artifact selection requires the exact SHA and a successful trusted branch producer', () => {
   const wrong = [run({ id: 99, head_sha: 'c'.repeat(40) }), run({ id: 98, event: 'pull_request' }), run({ id: 97, head_branch: 'feature' }), run({ id: 96, conclusion: 'failure' }), run({ id: 95, head_repository: { full_name: 'attacker/fork' } })];
   assert.equal(workflow.selectExactBaseRun?.([...wrong, run()], { baseSha, repository })?.id, 12);
+  // v0.3 pushes produce bases for pull requests into v0.3.
+  assert.equal(workflow.selectExactBaseRun?.([...wrong, run({ id: 11, head_branch: 'v0.3' })], { baseSha, repository })?.id, 11);
   assert.equal(workflow.selectExactBaseRun?.(wrong, { baseSha, repository }), null, 'never use an unlabelled latest fallback');
   assert.equal(workflow.selectPerformanceArtifact?.([artifact()], { baseSha, runId: 12 })?.id, 34);
   for (const invalid of [artifact({ expired: true }), artifact({ digest: undefined }), artifact({ workflow_run: { id: 99, head_sha: baseSha } }), artifact({ workflow_run: { id: 12, head_sha: 'd'.repeat(40) } })]) {
