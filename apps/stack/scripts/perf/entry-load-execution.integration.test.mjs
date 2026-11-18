@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
@@ -91,4 +92,27 @@ test('entry loads enforce the Protocol evaluation-cycle baseline', async t => {
   assert.ok(graph, 'missing Protocol cycle guard in entry loads');
   const result = await loadEntryGraph(graph, { signal: t.signal });
   assert.equal(result.status, 'passed', JSON.stringify(result));
+});
+
+// Fork C 2026-11-18 01:53Z: the bundled manifest check failed 13/14 for every
+// lane and printed no cause. The generator's diagnostic is the evidence the
+// manifest owner acts on. The generator process is replaced by a fixture.
+test('a failing bundled manifest check prints the generator diagnostic', async t => {
+  const { BUNDLED_MANIFEST_GRAPH } = await import('./entry-graphs.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'entry-manifest-diagnostic-' });
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+  for (const [name, thrown, expected] of [
+    ['drift', 'generated output differs: /fixture/plugin.json at byte 12 (actual="\\"databaseEngines\\": [", expected="\\"id\\"")',
+      { module: '/fixture/plugin.json', message: /generated output differs: \/fixture\/plugin\.json at byte 12 .*databaseEngines/u }],
+    ['source', 'definePlugin input contains unknown field \'skills\'',
+      { module: null, message: /definePlugin input contains unknown field 'skills'/u }],
+  ]) {
+    const generator = fixture.path(`${name}.mjs`);
+    await writeFile(generator, `throw new Error(${JSON.stringify(thrown)});\n`);
+    const result = await loadEntryGraph({ ...BUNDLED_MANIFEST_GRAPH, entry: relative(repoDir, generator), args: [] },
+      { signal: t.signal });
+    assert.equal(result.status, 'failed', name);
+    assert.match(result.loadError.message, expected.message, name);
+    if (expected.module) assert.equal(result.firstFailingModule, expected.module, name);
+  }
 });

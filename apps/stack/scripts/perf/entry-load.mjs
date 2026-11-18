@@ -92,11 +92,13 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
         result.loadError = { ...result.loadError, code: 'runtime_import_cycle', symbol: eagerRead[3] };
       }
       if (graph.id === BUNDLED_MANIFEST_GRAPH.id && result.loadError) {
-        // Declaration drift includes actual/expected bytes; every consumer,
-        // including the entry-load CLI, receives only the owner and error identity.
+        // The generator's diagnostic (the drifted output, its byte offset and
+        // the generator's bounded actual/expected window, or the source error)
+        // is what the manifest owner acts on: a blanked message left a
+        // fleet-wide 13/14 with no cause (Fork C 2026-11-18). The load
+        // sentinel still publishes identifiers only.
         const output = result.loadError.message.match(/(?:generated output differs|missing generated output): (.+?)(?: at byte \d+|$)/)?.[1];
         if (output) result.firstFailingModule = output;
-        result.loadError = { ...result.loadError, message: '' };
       }
       return { graph: graph.id, entry: graph.entry, basis: 'current-source', ...result,
         ...(traceImports ? { importEdges } : {}),
