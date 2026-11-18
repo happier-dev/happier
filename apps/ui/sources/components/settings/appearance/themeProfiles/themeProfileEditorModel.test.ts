@@ -4,6 +4,28 @@ import { getThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTok
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 
 describe('theme profile contrast warnings', () => {
+    it('warns when the editable accent seed is too close to the editable page seed', () => {
+        const profile: ThemeProfileV1 = {
+            schemaVersion: 1, id: 'seeds', name: 'Seeds', createdAt: '', updatedAt: '',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
+            seeds: { canvas: '#F4EFE6', accent: '#EBD9C6' },
+        };
+
+        const draft = resolveThemeProfileEditorDraft(profile, 'light');
+        expect(draft.seeds.accent.warnings).toEqual(['seed.canvas']);
+        expect(draft.seeds.accent.fix).not.toBeNull();
+    });
+
+    it('keeps the default palette quiet', () => {
+        const profile: ThemeProfileV1 = {
+            schemaVersion: 1, id: 'default', name: 'Default', createdAt: '', updatedAt: '',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
+        };
+
+        const draft = resolveThemeProfileEditorDraft(profile, 'light');
+        expect(Object.values(draft.tokens).flatMap(token => token.contrast.warnings)).toEqual([]);
+    });
+
     it('resolves each changed draft mode once for all token values and contrast pairs', () => {
         let resolutions = 0;
         const profile: ThemeProfileV1 = {

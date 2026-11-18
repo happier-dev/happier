@@ -5,12 +5,12 @@ import type { PluginMarketplaceDiscoverSourceStatus } from '../readPluginMarketp
 
 const curatedUnreachable: PluginMarketplaceDiscoverSourceStatus = {
     id: 'happier-curated',
-    title: 'Happier curated marketplace',
+    title: 'Happier catalog',
     kind: 'curated',
     freshness: 'unavailable',
     diagnostics: [
-        { id: 'source:happier-curated:marketplace_source_unavailable:0', sourceId: 'happier-curated', sourceTitle: 'Happier curated marketplace', code: 'marketplace_source_unavailable', message: 'getaddrinfo ENOTFOUND marketplace.happier.dev' },
-        { id: 'source:happier-curated:marketplace_source_unavailable:1', sourceId: 'happier-curated', sourceTitle: 'Happier curated marketplace', code: 'marketplace_source_unavailable', message: 'getaddrinfo ENOTFOUND marketplace.happier.dev' },
+        { id: 'source:happier-curated:marketplace_source_unavailable:0', sourceId: 'happier-curated', sourceTitle: 'Happier catalog', code: 'marketplace_source_unavailable', message: 'getaddrinfo ENOTFOUND marketplace.happier.dev' },
+        { id: 'source:happier-curated:marketplace_source_unavailable:1', sourceId: 'happier-curated', sourceTitle: 'Happier catalog', code: 'marketplace_source_unavailable', message: 'getaddrinfo ENOTFOUND marketplace.happier.dev' },
     ],
 };
 
@@ -21,7 +21,7 @@ describe('buildPluginMarketplaceDiscoverIssues', () => {
             diagnostics: [],
         });
         expect(issues).toHaveLength(1);
-        expect(issues[0]).toMatchObject({ sourceId: 'happier-curated', sourceTitle: 'Happier curated marketplace', reachable: false });
+        expect(issues[0]).toMatchObject({ sourceId: 'happier-curated', sourceTitle: 'Happier catalog', reachable: false });
         // The repeated report collapses to one technical detail.
         expect(issues[0]!.details).toEqual([{ code: 'marketplace_source_unavailable', message: 'getaddrinfo ENOTFOUND marketplace.happier.dev' }]);
     });

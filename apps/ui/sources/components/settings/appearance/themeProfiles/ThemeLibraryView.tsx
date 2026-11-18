@@ -133,6 +133,7 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
               density={phone && slotOptions.length > 1 ? 'regular' : 'compact'}
               descriptionPlacement={phone && slotOptions.length > 1 ? 'below' : 'beside'}
               previewAspectRatio={PHONE_SLOT_PREVIEW_ASPECT}
+              subtitleLines={1}
               minimumColumns={slotOptions.length}
               maximumColumns={slotOptions.length}
               accessibilityLabel={t(

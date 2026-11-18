@@ -157,7 +157,7 @@ it.each([false, true])('opens the cold database picker with bundled PostgreSQL a
             .toMatchObject({ occurrenceId }));
         await waitForHomeGovernance(() => expect(JSON.stringify(tree!.tree.toJSON())).toContain('PostgreSQL'));
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Data services');
-        expect(JSON.stringify(tree.tree.toJSON())).toContain('Happier curated marketplace');
+        expect(JSON.stringify(tree.tree.toJSON())).toContain('Happier catalog');
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Retry');
         expect(tree.tree.root.findAllByProps({ testID: 'store.kind.app.failure-card' })).toHaveLength(0);
         expect(packagedReads).toHaveLength(1);

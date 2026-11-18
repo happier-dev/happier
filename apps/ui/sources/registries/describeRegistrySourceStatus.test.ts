@@ -10,9 +10,9 @@ describe('registry outage words', () => {
     expect(
       describeRegistrySourceFailure(
         { state: 'unreachable' },
-        'Happier curated marketplace',
+        'Happier catalog',
       ),
-    ).toBe('Couldn’t reach Happier curated marketplace');
+    ).toBe('Couldn’t reach Happier catalog');
     expect(describeRegistrySourceFailure(null, 'MCP Registry')).toBe(
       'Couldn’t reach MCP Registry',
     );

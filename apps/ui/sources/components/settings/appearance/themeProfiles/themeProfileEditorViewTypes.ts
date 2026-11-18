@@ -10,7 +10,7 @@ import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEnti
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
 import type { ThemeLibraryPreview } from './themeLibraryViewTypes';
-import type { ResolvedThemeProfileEditorDraft } from './themeProfileEditorModel';
+import type { ResolvedThemeProfileEditorDraft, ThemeProfileContrastAnalysis } from './themeProfileEditorModel';
 
 /**
  * The presentation seam of the theme editor (plan-6 U4, lab D1–D4). The controller
@@ -75,6 +75,10 @@ export type ThemeProfileEditorViewProps = Readonly<{
     accent: string;
     canvasChanged: boolean;
     accentChanged: boolean;
+    contrast: Readonly<{
+      canvas: ThemeProfileContrastAnalysis;
+      accent: ThemeProfileContrastAnalysis;
+    }>;
     onChange: (seed: 'canvas' | 'accent', value: string) => void;
     onReset: (seed: 'canvas' | 'accent') => void;
   }>;

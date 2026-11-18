@@ -256,8 +256,9 @@ describe('editable theme color token definitions', () => {
                 { tokenId: 'surface.base', minRatio: 4.5 },
             ]),
         );
-        expect(getEditableThemeColorTokenDefinition('state.danger.foreground')?.contrastPairs).toEqual([
-            { tokenId: 'state.danger.background', minRatio: 4.5 },
+        expect(getEditableThemeColorTokenDefinition('state.danger.foreground')?.contrastPairs).toBeUndefined();
+        expect(getEditableThemeColorTokenDefinition('overlay.foreground')?.contrastPairs).toEqual([
+            { tokenId: 'overlay.scrim', minRatio: 3 },
         ]);
     });
 });

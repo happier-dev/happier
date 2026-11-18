@@ -633,6 +633,13 @@ describe('Theme profile settings screen', () => {
 
         expect(screen.findByTestId('settings-theme-profile-start:paperLight')?.props.accessibilityState?.selected).toBe(true);
     });
+
+    it('does not offer the edited theme as its own start-from source', async () => {
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('ocean')] });
+        const screen = await renderEditorScreen('ocean');
+
+        expect(screen.findByTestId('settings-theme-profile-start:ocean')).toBeNull();
+    });
 });
 
 describe('Theme profile editor', () => {
@@ -1091,6 +1098,19 @@ describe('Theme profile editor', () => {
         expect(await findHeaderMenuAction(screen, 'deactivate')).toBeDefined();
         await screen.pressByTestIdAsync('settings-theme-contrast-fix-light-text.primary');
         expect(screen.findByTestId('settings-theme-contrast-warning-light-text.primary')).toBeNull();
+    });
+
+    it('shows and fixes a low-contrast accent against the page seed', async () => {
+        setThemeProfiles({
+            activeProfileIds: { light: 'ocean', dark: null },
+            profiles: [{ ...baseProfile('ocean'), seeds: { canvas: '#F4EFE6', accent: '#EBD9C6' } }],
+        });
+
+        const screen = await renderEditorScreen('ocean');
+
+        await vi.waitFor(() => expect(screen.findByTestId('settings-theme-contrast-warning-seed-accent')).not.toBeNull());
+        await screen.pressByTestIdAsync('settings-theme-contrast-fix-seed-accent');
+        expect(screen.findByTestId('settings-theme-contrast-warning-seed-accent')).toBeNull();
     });
 
     it('only shows deactivate for the profile that is currently active', async () => {

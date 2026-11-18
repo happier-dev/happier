@@ -413,14 +413,14 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         setDraft((current) => current ? { ...current, name, updatedAt: nowThemeProfileTimestamp() } : current);
     }, []);
     const startOptions = React.useMemo(() => presetOptions
-        .filter((option) => option.preferredMode === assetAppearance)
+        .filter((option) => option.preferredMode === assetAppearance && option.id !== draft?.id)
         .map((option) => ({
             key: option.id,
             name: option.kind === 'base' ? t('settingsAppearance.themeProfiles.defaultTheme') : option.title,
             sourceLabel: option.kind === 'custom' ? option.subtitle : t('settingsAppearance.themeProfiles.builtInTheme'),
             preview: option.miniature ? { kind: 'miniature' as const, miniature: option.miniature }
                 : { kind: 'palette' as const, palette: resolveThemeProfile({ mode: assetAppearance, profile: option.profile }) },
-        })), [assetAppearance, presetOptions]);
+        })), [assetAppearance, draft?.id, presetOptions]);
     const tokenGroups = React.useMemo(() => groups.map((group) => ({
         id: group.group,
         title: t(groupTitleKeys[group.group as keyof typeof groupTitleKeys] ?? 'settingsAppearance.themeProfiles.groups.background'),
@@ -489,13 +489,16 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                 appearance: assetAppearance,
                 onAppearanceChange: updateAssetAppearance,
             },
-            startFrom: { options: startOptions, selectedKey: selectedPreset?.id ?? null, onChoose: (key: string) => { void selectPreset(key); } },
+            startFrom: { options: startOptions,
+                selectedKey: startOptions.some(option => option.key === selectedPreset?.id) ? selectedPreset?.id ?? null : null,
+                onChoose: (key: string) => { void selectPreset(key); } },
         } : {}),
         seeds: {
             canvas: draft.seeds?.canvas ?? markPalette.colors.background.canvas,
             accent: draft.seeds?.accent ?? markPalette.colors.button.primary.background,
             canvasChanged: draft.seeds !== undefined,
             accentChanged: draft.seeds !== undefined,
+            contrast: resolvedDraft.seeds,
             onChange: updateSeed,
             onReset: resetSeed,
         },

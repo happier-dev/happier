@@ -9,13 +9,13 @@ const { DiscoverListingsSection, DiscoverStatusSummary } = await import('./Plugi
 
 const unreachable: PluginMarketplaceDiscoverSourceStatus = {
     id: 'happier-curated',
-    title: 'Happier curated marketplace',
+    title: 'Happier catalog',
     kind: 'curated',
     freshness: 'unavailable',
     diagnostics: [{
         id: 'source:happier-curated:marketplace_source_unavailable:0',
         sourceId: 'happier-curated',
-        sourceTitle: 'Happier curated marketplace',
+        sourceTitle: 'Happier catalog',
         code: 'marketplace_source_unavailable',
         message: 'getaddrinfo ENOTFOUND marketplace.happier.dev',
     }],

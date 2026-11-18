@@ -18,7 +18,7 @@ const MarketplaceSourceUrlV1Schema = lazyZodSchema(() => z.pipe(z.string().check
   }
 })));
 
-export const DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE = 'Happier curated marketplace';
+export const DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE = 'Happier catalog';
 export const PUBLIC_NPM_REGISTRY_ORIGIN_V1 = 'https://registry.npmjs.org';
 export const COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 = 'marketplace:community-npm';
 export const DEFAULT_CURATED_MARKETPLACE_SOURCE_DESCRIPTION = 'Official curated source';

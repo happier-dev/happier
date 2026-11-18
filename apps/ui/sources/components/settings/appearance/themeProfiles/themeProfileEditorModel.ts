@@ -39,6 +39,10 @@ export type ThemeProfileEditorTokenValue = Readonly<{
 export type ResolvedThemeProfileEditorDraft = Readonly<{
     theme: Theme;
     tokens: Readonly<Record<string, ThemeProfileEditorTokenValue>>;
+    seeds: Readonly<{
+        canvas: ThemeProfileContrastAnalysis;
+        accent: ThemeProfileContrastAnalysis;
+    }>;
 }>;
 
 const emptyContrast: ThemeProfileContrastAnalysis = { warnings: [], fix: null };
@@ -68,6 +72,20 @@ const getResolvedContrastAnalysis = (
     return { warnings: failing.map(pair => pair.tokenId), fix };
 };
 
+const getSeedContrastAnalysis = (
+    accent: string,
+    canvas: ReturnType<typeof compositeThemeColor> | null,
+): ThemeProfileContrastAnalysis => {
+    const value = parseThemeColorValue(accent);
+    if (!value || !canvas) return emptyContrast;
+    const surface = { surface: canvas, minContrast: 3 } as const;
+    if (themeContrastRatio(compositeThemeColor(value, canvas), canvas) >= surface.minContrast) return emptyContrast;
+    return {
+        warnings: ['seed.canvas'],
+        fix: readableThemeColorOnSurfaces(accent, [surface]),
+    };
+};
+
 /** One resolved palette supplies every editor row, contrast pair, seed and preview for this mode. */
 export const resolveThemeProfileEditorDraft = (
     profile: ThemeProfileV1,
@@ -81,11 +99,18 @@ export const resolveThemeProfileEditorDraft = (
     const baseCanvas = parseThemeColorValue(getBaseTheme(mode).colors.background.canvas);
     const authoredCanvas = parseThemeColorValue(theme.colors.background.canvas);
     const canvas = baseCanvas && authoredCanvas ? compositeThemeColor(authoredCanvas, baseCanvas.rgb) : null;
-    return { theme, tokens: Object.fromEntries(THEME_PROFILE_TOKEN_DEFINITIONS.map(token => [token.id, {
-        value: values[token.id] ?? '',
-        changed: Object.prototype.hasOwnProperty.call(overrides, token.id),
-        contrast: getResolvedContrastAnalysis(values, canvas, token),
-    }])) };
+    return {
+        theme,
+        tokens: Object.fromEntries(THEME_PROFILE_TOKEN_DEFINITIONS.map(token => [token.id, {
+            value: values[token.id] ?? '',
+            changed: Object.prototype.hasOwnProperty.call(overrides, token.id),
+            contrast: getResolvedContrastAnalysis(values, canvas, token),
+        }])),
+        seeds: {
+            canvas: emptyContrast,
+            accent: getSeedContrastAnalysis(theme.colors.button.primary.background, canvas),
+        },
+    };
 };
 
 export const getThemeProfileContrastAnalysis = (

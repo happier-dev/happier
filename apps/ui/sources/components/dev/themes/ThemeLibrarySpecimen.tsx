@@ -54,7 +54,7 @@ const mini = (
 });
 const MENU = [
   { id: 'edit', title: 'Edit', onSelect: NOOP },
-  { id: 'duplicate', title: 'Duplicate theme', onSelect: NOOP },
+  { id: 'duplicate', title: 'Duplicate', onSelect: NOOP },
   { id: 'export', title: 'Export file', onSelect: NOOP },
 ];
 const LIGHT: readonly ThemeLibraryTile[] = [
@@ -280,11 +280,11 @@ function EditorScene(props: Readonly<{ scene: string }>) {
       save: { disabled: false, onPress: NOOP },
       onShare: NOOP,
       menu: [
-        { id: 'duplicate', title: 'Duplicate theme', onSelect: NOOP },
+        { id: 'duplicate', title: 'Duplicate', onSelect: NOOP },
         { id: 'export', title: 'Export file', onSelect: NOOP },
         {
           id: 'delete',
-          title: 'Delete theme',
+          title: 'Delete',
           destructive: true,
           onSelect: NOOP,
         },
@@ -320,6 +320,7 @@ function EditorScene(props: Readonly<{ scene: string }>) {
       accent: '#D08B5B',
       canvasChanged: false,
       accentChanged: false,
+      contrast: RESOLVED_DRAFT.seeds,
       onChange: NOOP,
       onReset: NOOP,
     },

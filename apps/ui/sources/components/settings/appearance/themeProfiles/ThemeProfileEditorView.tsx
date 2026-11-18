@@ -342,6 +342,10 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
             colors.onInvalidChange('seed:canvas', invalid)
           }
           onReset={() => seeds.onReset('canvas')}
+          warning={seeds.contrast.canvas.warnings.length > 0
+            ? t('settingsAppearance.themeProfiles.contrastWarning', { pair: t('settingsAppearance.themeProfiles.seedAccent') })
+            : undefined}
+          onFixContrast={seeds.contrast.canvas.fix ? () => seeds.onChange('canvas', seeds.contrast.canvas.fix!) : undefined}
         />
         <ThemeColorRow
           rowId="seed-accent"
@@ -361,6 +365,10 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
             colors.onInvalidChange('seed:accent', invalid)
           }
           onReset={() => seeds.onReset('accent')}
+          warning={seeds.contrast.accent.warnings.length > 0
+            ? t('settingsAppearance.themeProfiles.contrastWarning', { pair: t('settingsAppearance.themeProfiles.seedPage') })
+            : undefined}
+          onFixContrast={seeds.contrast.accent.fix ? () => seeds.onChange('accent', seeds.contrast.accent.fix!) : undefined}
         />
       </ItemGroup>
       <ItemGroup
