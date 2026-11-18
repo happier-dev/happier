@@ -9,6 +9,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { logger } from '@/ui/logger';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 type CliProjectRowsAdmission = CliProjectAdmissionFailure | Readonly<{ ok: true; input: ProjectAccountRowsInput; assertCurrent: () => Promise<void> }>;
 type RequesterArtifactReadOptions = Omit<NonNullable<Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[1]>, 'authorization'>;
@@ -49,6 +50,12 @@ export function createCliProjectAdmission(
     }
     return null;
   };
+  // Content-free refusal reason in the file log: the four refusals share one public code.
+  const refuseRequester = (reason: 'signed_root_projection' | 'external_credential_without_root'
+    | 'rpc_session_without_account' | 'runtime_account_mismatch') => {
+    logger.infoFile('[ProjectAdmission] requester authority refused', { reason });
+    return executionRunActionFailure('project_requester_authority_unavailable');
+  };
   const projectAccountAdmission = async (serverId?: string, context?: ActionExecutorContext) => {
     const homeDenied = await projectHomeAdmission(serverId, context);
     if (homeDenied) return homeDenied;
@@ -67,21 +74,17 @@ export function createCliProjectAdmission(
         || http.serverHttpBaseUrl.replace(/\/+$/, '') !== (params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '')
         || context?.externalActionCredential && context.externalActionCredential.accountId !== accountId
         || context?.runtimeAccountId && context.runtimeAccountId !== accountId) {
-        return executionRunActionFailure('project_requester_authority_unavailable');
+        return refuseRequester('signed_root_projection');
       }
       return null;
     }
     // Public principal equality does not establish private requester custody.
     // External actions must arrive with the admitted host-private projection.
-    if (context?.externalActionCredential) return executionRunActionFailure('project_requester_authority_unavailable');
+    if (context?.externalActionCredential) return refuseRequester('external_credential_without_root');
     if (!params.credentials) return executionRunActionFailure('not_authenticated');
     const accountId = readAccountIdFromToken(params.credentials.token);
-    if (context?.rpcSessionAuthorization && !context.runtimeAccountId) {
-      return executionRunActionFailure('project_requester_authority_unavailable');
-    }
-    if (context?.runtimeAccountId && context.runtimeAccountId !== accountId) {
-      return executionRunActionFailure('project_requester_authority_unavailable');
-    }
+    if (context?.rpcSessionAuthorization && !context.runtimeAccountId) return refuseRequester('rpc_session_without_account');
+    if (context?.runtimeAccountId && context.runtimeAccountId !== accountId) return refuseRequester('runtime_account_mismatch');
     return null;
   };
   const withProjectHome = <T>(operation: () => Promise<T>): Promise<T> => runWithServerHttpBaseUrl(
