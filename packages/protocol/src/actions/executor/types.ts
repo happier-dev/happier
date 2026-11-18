@@ -354,7 +354,7 @@ import type { AutomationRunCause } from '../../automations/automationRunCause.js
 import type { MachinePoolActionIdV1, MachinePoolActionInputV1 } from '../../machines/pools/actionsV1.js';
 import type { ProjectWorkerActionIdV1, ProjectWorkerActionInputV1, ProjectWorkerActionOutputV1 } from '../specs/projectWorkers.js';
 import type { ActionOperationActionIdV1, ActionOperationActionInputV1 } from '../specs/actionOperations.js';
-import type { ActionOperationDomainRefV1, ActionOperationObservationV1 } from '../operations/v1.js';
+import type { ActionOperationDomainRefV1, ActionOperationObservationV1, ActionOperationProgressStepV1 } from '../operations/v1.js';
 import type { EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionIdsV1.js';
 import type {
   WorkflowActionInputSchemasV1,
@@ -813,7 +813,7 @@ export type ActionExecutorContext = Readonly<{
   /** Existing operation-owner sinks, strictly in-process and never Action input. */
   operationProgress?: Readonly<{
     update(progress: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;
-      approval?: ActionApprovalRequestCreatedResult }>): void;
+      approval?: ActionApprovalRequestCreatedResult; steps?: readonly ActionOperationProgressStepV1[] }>): void;
   }>;
   operationOwnerUpdate?: Readonly<{
     update(update: Readonly<{
@@ -824,7 +824,7 @@ export type ActionExecutorContext = Readonly<{
       /** Native effect evidence; the runner still waits for the entire handler. Never plugin JSON. */
       outcome?: ActionExecuteResult;
       progress?: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;
-        approval?: ActionApprovalRequestCreatedResult }>;
+        approval?: ActionApprovalRequestCreatedResult; steps?: readonly ActionOperationProgressStepV1[] }>;
       domainRef?: ActionOperationDomainRefV1;
       /** Null clears a previous unconfirmed outcome after actual owner evidence. */
       observation?: ActionOperationObservationV1 | null;

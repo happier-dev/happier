@@ -14,6 +14,23 @@ import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersis
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('retains owner steps through approval and indeterminate progress overlays until explicitly replaced', () => {
+    const store = createActionOperationStore();
+    store.create({ operationId: 'prepare-steps', scope: ACCOUNT_SCOPE, actionId: 'machines.presets.prepare',
+      title: 'Prepare', cancellation: 'supported', inputIdentity: '{}' });
+    store.markRunning('prepare-steps');
+    const steps = [{ id: 'build-image', label: 'Build prepared image', state: 'running' as const }];
+    store.updateProgress('prepare-steps', { kind: 'phase', phase: 'build-image', label: 'Build prepared image', steps });
+    for (const progress of [
+      { kind: 'phase' as const, phase: 'waiting_for_approval', label: 'Waiting for approval' },
+      { kind: 'indeterminate' as const },
+    ]) {
+      expect(store.updateProgress('prepare-steps', progress)?.progress).toEqual({ ...progress, steps });
+    }
+    expect(store.updateProgress('prepare-steps', { kind: 'phase', phase: 'save-image', label: 'Save image', steps: [] })?.progress)
+      .toEqual({ kind: 'phase', phase: 'save-image', label: 'Save image', steps: [] });
+  });
+
   it('projects active Project commands before PTY attachment and removes them at actual settlement', () => {
     const store = createActionOperationStore();
     const command = { kind: 'projectCommand' as const, purpose: 'setup' as const,

@@ -5,6 +5,7 @@ import type { MachinePresetUpdateDraftInput } from '@/sync/domains/machines/pres
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import type { ActionOperationProgressStepV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationAcceptedResultSchema, type ActionOperationAcceptedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -37,6 +38,7 @@ import { useActionOperationStopControl } from '@/components/inbox/actionOperatio
 import { canRequestActionOperationStop } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 
+const EMPTY_PREPARATION_STEPS: readonly ActionOperationProgressStepV1[] = [];
 const NO_PREPARATION_APPROVAL_REFRESH = () => {};
 const EMPTY_TEAM_DEMO_PRESETS: readonly ManagedMachinePresetListEntryV1[] = [];
 
@@ -128,7 +130,13 @@ export function useMachinePresetPreparation(input: Readonly<{
         // Compute pricing does not price a retained prepared artifact.
         cost: resolveManagedConfigurationCost({ provider: null }),
     } : null, [prepared]);
-    return { prepared, estimates, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
+    const steps = operation?.snapshot.progress?.steps ?? EMPTY_PREPARATION_STEPS;
+    const readySummary = React.useMemo(() => prepared?.status === 'ready' ? {
+        builtAt: prepared.builtAt ?? null,
+        builtFromRevision: prepared.builtFromRevision ?? null,
+        storageBytes: prepared.artifactSizeBytes ?? null,
+    } : null, [prepared]);
+    return { prepared, estimates, steps, readySummary, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
         pending: pendingScope === scopeKey && !approval.approvalPending,
         error: failure?.scopeKey === scopeKey ? failure.code : null,
         approval, operation, openOperation, canCancel, stopControl };

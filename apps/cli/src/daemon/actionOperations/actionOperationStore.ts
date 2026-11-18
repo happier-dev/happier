@@ -503,11 +503,15 @@ export function createActionOperationStore(options?: Readonly<{
     },
 
     updateProgress(operationId: string, progress: ActionOperationProgressV1): ActionOperationSnapshotV1 | null {
-      return mutate(operationId, (current) => isDeepStrictEqual(current.progress, progress) ? current : ({
-        ...current,
-        revision: current.revision + 1,
-        progress,
-      }));
+      return mutate(operationId, (current) => {
+        // Approval/SSH overlays report their own phase without replacing the
+        // execution owner's observed steps. An explicit array replaces them.
+        const next = progress.steps === undefined && current.progress?.steps !== undefined
+          ? { ...progress, steps: current.progress.steps } : progress;
+        return isDeepStrictEqual(current.progress, next) ? current : {
+          ...current, revision: current.revision + 1, progress: next,
+        };
+      });
     },
 
     updateDomainRef(operationId: string, domainRef: ActionOperationDomainRefV1): ActionOperationSnapshotV1 | null {

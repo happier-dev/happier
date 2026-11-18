@@ -83,8 +83,10 @@ describe('private preset preparation operation', () => {
     const fixture = storageFixture();
     const original = new Error('SSH host trust declined');
     const effects: string[] = [];
+    const reports: unknown[] = [];
     let allocated = false;
     const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      onProgress: progress => reports.push(progress),
       composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
       native: nativeFixture({ build: async () => { effects.push('build'); allocated = true; throw original; },
         inspect: async input => {
@@ -101,6 +103,9 @@ describe('private preset preparation operation', () => {
           return { kind: 'confirmed' };
         } }) });
     await expect(settling).rejects.toBe(original);
+    expect(reports.at(-1)).toMatchObject({ phase: 'build-image', steps: [
+      { id: 'prepare-inputs', state: 'succeeded' }, { id: 'build-image', state: 'failed' }, { id: 'save-image', state: 'pending' },
+    ] });
     expect(effects).toEqual(['build', 'inspect', 'destroy']);
     expect(fixture.opened().prepared).toMatchObject({ status: 'cancelled' });
     expect(allocated).toBe(cleanup !== 'confirmed');
@@ -218,13 +223,27 @@ describe('private preset preparation operation', () => {
       : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
         randomBytes: length => new Uint8Array(length).fill(nonce++) };
     const fixture = storageFixture(custody);
+    const reports: unknown[] = [];
     const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody, storage: fixture.storage,
+      onProgress: (progress: unknown) => reports.push(progress),
       native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }),
         inspect: async () => ({ kind: 'ready', artifact, artifactSizeBytes: 1024 }) }) };
     await advanceManagedMachinePresetPreparationOperationV1(request);
     expect(fixture.opened().prepared).not.toHaveProperty('artifactSizeBytes');
     await advanceManagedMachinePresetPreparationOperationV1(request);
-    expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifactSizeBytes: 1024 });
+    expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifactSizeBytes: 1024,
+      builtFromRevision: 1, builtAt: expect.any(Number) });
+    expect(reports).toContainEqual(expect.objectContaining({ phase: 'prepare-inputs', steps: [
+      expect.objectContaining({ id: 'prepare-inputs', label: expect.any(String), state: 'running' }),
+      expect.objectContaining({ id: 'build-image', state: 'pending' }),
+      expect.objectContaining({ id: 'save-image', state: 'pending' }),
+    ] }));
+    expect(reports.at(-1)).toMatchObject({ steps: [
+      { id: 'prepare-inputs', state: 'succeeded' }, { id: 'build-image', state: 'succeeded' }, { id: 'save-image', state: 'succeeded' },
+    ] });
+    const ready = fixture.opened().prepared;
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).toEqual(ready);
   });
   it('foreground following retains the operation until native readiness and leaves no settled timer', async () => {
     vi.useFakeTimers();

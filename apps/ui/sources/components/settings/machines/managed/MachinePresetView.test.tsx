@@ -520,7 +520,7 @@ describe('reachable preset detail', () => {
     const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
     const opened = { ...createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened,
       prepared: { operationId: 'previous-build', status: 'building' as const,
-        binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', configuration: {
+        binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
           launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
         } } } };
     let displayed = opened;
@@ -530,6 +530,7 @@ describe('reachable preset detail', () => {
     try {
       expect(hook.getCurrent().reportedStatus).toBe('building');
       expect(hook.getCurrent().estimates).toBeNull();
+      expect(hook.getCurrent().readySummary).toBeNull();
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
       expect(onChanged).not.toHaveBeenCalled();
@@ -537,14 +538,23 @@ describe('reachable preset detail', () => {
       const snapshot = { version: 1 as const, operationId: 'previous-build', revision: 1,
         actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, state: 'running' as const,
         scope: { accountId: 'owner', machineId: 'actual-builder' }, title: 'Prepare preset',
-        createdAt: 1, startedAt: 2, cancellation: 'supported' as const };
+        createdAt: 1, startedAt: 2, cancellation: 'supported' as const,
+        progress: { kind: 'phase' as const, phase: 'build-image', label: 'Build image', steps: [
+          { id: 'prepare-inputs', label: 'Prepare build inputs', state: 'succeeded' as const, startedAt: 1, settledAt: 2 },
+          { id: 'build-image', label: 'Build image', state: 'running' as const, startedAt: 2 },
+          { id: 'save-image', label: 'Save prepared image', state: 'pending' as const },
+        ] } };
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId, snapshots: [snapshot] }));
       expect(hook.getCurrent().operation?.snapshot.scope.machineId).toBe('actual-builder');
+      expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
+        snapshots: [{ ...snapshot, revision: 2, progress: { kind: 'indeterminate', steps: snapshot.progress.steps } }] }));
+      expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
       expect(hook.getCurrent().canCancel).toBe(true);
       await hook.rerender();
       expect(onChanged).not.toHaveBeenCalled();
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
-        snapshots: [{ ...snapshot, revision: 2, state: 'succeeded', settledAt: 3 }] }));
+        snapshots: [{ ...snapshot, revision: 3, state: 'succeeded', settledAt: 3 }] }));
       expect(onChanged).toHaveBeenCalledTimes(1);
       expect(hook.getCurrent().canCancel).toBe(false);
       await hook.rerender();
@@ -562,20 +572,22 @@ describe('reachable preset detail', () => {
     const serverId = await seed();
     const { useMachinePresetPreparation } = await import('./useMachinePresets');
     const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
-    const prepared = { operationId: 'measured-build', status: 'ready' as const, artifactSizeBytes: 1024,
+    const prepared = { operationId: 'measured-build', status: 'ready' as const, artifactSizeBytes: 1024, builtAt: 1700000000000, builtFromRevision: 7,
       artifact: { contributionRef: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, value: { image: 'native-snapshot' } },
       binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     let measured = true;
     const hook = await renderHook(() => useMachinePresetPreparation({ serverId, preset: { ...opened,
-      prepared: measured ? prepared : (({ artifactSizeBytes: _size, ...unknown }) => unknown)(prepared) },
+      prepared: measured ? prepared : (({ artifactSizeBytes: _size, builtAt: _time, builtFromRevision: _revision, ...unknown }) => unknown)(prepared) },
       machineId: null, onChanged: () => {} }));
     try {
       expect(hook.getCurrent().estimates).toEqual({ storageBytes: 1024, cost: { kind: 'unpriced', provider: null } });
+      expect(hook.getCurrent().readySummary).toEqual({ builtAt: 1700000000000, builtFromRevision: 7, storageBytes: 1024 });
       measured = false;
       await hook.rerender();
       expect(hook.getCurrent().estimates).toEqual({ storageBytes: null, cost: { kind: 'unpriced', provider: null } });
+      expect(hook.getCurrent().readySummary).toEqual({ builtAt: null, builtFromRevision: null, storageBytes: null });
       expect(boundary.rpc).not.toHaveBeenCalled();
     } finally { await hook.unmount(); }
   });

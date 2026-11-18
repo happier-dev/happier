@@ -178,6 +178,7 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
             expectedRevision: input.expectedRevision, machineId: host.machineId, custody, credentialConfigurations,
+            onProgress: progress => context.operationOwnerUpdate?.update({ progress }),
             ...(cliIdentity === undefined ? {} : { cliIdentity }), ...(signal ? { signal } : {}),
             storage: { read: async () => { if (firstRead) { firstRead = false; return preset; } return await read(); },
                 compareAndSwap: async update => PresetMutationResultV1Schema.parse(await post('update', {

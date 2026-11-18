@@ -9,6 +9,7 @@ import type { MachineProvisionerPreparationBuildInputV1, MachineProvisionerPrepa
   MachineProvisionerPreparationDestroyInputV1, MachineProvisionerPreparationDestroyResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
+import { createPresetPreparationProgress, type ManagedMachinePresetPreparationProgressV1 } from './presetPreparationProgress.js';
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
 
 export type ManagedMachinePresetPreparationStorageV1 = Readonly<{
@@ -34,6 +35,7 @@ export type ManagedMachinePresetPreparationCustodyV1 =
   | Readonly<{ mode: 'e2ee'; accountId: string; accountKey: Uint8Array; randomBytes: (length: number) => Uint8Array }>;
 export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   operationId: string; expectedRevision: number;
+  onProgress?: (progress: ManagedMachinePresetPreparationProgressV1) => void;
   /** Installed host that owns Machine-placement native image effects. */
   machineId?: string;
   credentialConfigurations: ManagedMachinePresetPreparedV1['binding']['credentialConfigurations'];
@@ -128,11 +130,20 @@ export async function advanceManagedMachinePresetPreparationOperationV1(
 ): Promise<OperationResult> {
   const current = await readPreset(input);
   if ('kind' in current) return current;
-  return await advanceOperation(input, current);
+  const progress = createPresetPreparationProgress(input.onProgress);
+  try {
+    const outcome = await advanceOperation(input, current, current.content, undefined, progress);
+    if (outcome.kind !== 'ready' && outcome.kind !== 'pending' && outcome.kind !== 'unknown') {
+      progress.finish(outcome.kind === 'cancelled' ? 'cancelled' : 'failed');
+    }
+    return outcome;
+  }
+  catch (error) { progress.finish('failed'); throw error; }
 }
 
 async function advanceOperation(input: OperationInput, current: OpenPreset,
-  capturedContent = current.content, signal?: AbortSignal): Promise<OperationResult> {
+  capturedContent = current.content, signal?: AbortSignal,
+  progress = createPresetPreparationProgress(input.onProgress), builtFromRevision = input.expectedRevision): Promise<OperationResult> {
   const prior = current.content.prepared;
   const incumbent = prior?.operationId === input.operationId ? prior : undefined;
   if (prior && !incumbent && !(prior.status === 'cancelled' && !prior.artifact && !prior.nativeOperationRef)) {
@@ -145,6 +156,7 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
     // Dispatch may have happened before the process lost its native response.
     // Recovery needs only the original provider launch, not old CLI archives or
     // setup commands, nor the preset's possibly edited current configuration.
+    progress.start('build-image');
     nativeResult = await input.native.inspect(incumbent.nativeOperationRef
       ? { nativeOperation: incumbent.nativeOperationRef }
       : { operationId: incumbent.operationId, launch: incumbent.binding.configuration.launch.choices }, root(current));
@@ -152,11 +164,12 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
     if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild) {
       return { kind: 'refused', code: 'invalid_request' };
     }
+    progress.start('prepare-inputs');
     const composition = await input.composeBuild(capturedContent);
     if (signal?.aborted && prior?.status === 'cancelled' && !prior.artifact && !prior.nativeOperationRef) {
       return result(current, 'cancelled');
     }
-    const building: ManagedMachinePresetPreparedV1 = { operationId: input.operationId, status: 'building',
+    const building: ManagedMachinePresetPreparedV1 = { operationId: input.operationId, status: 'building', builtFromRevision,
       cliBinaryPath: composition.input.cli.binaryPath,
       ...(composition.bakedSetup === undefined ? {} : { buildSetup: composition.bakedSetup }),
       binding: createManagedMachinePresetPreparationBindingV1({ content: { ...capturedContent, launch: capturedContent.launch },
@@ -166,6 +179,7 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
     const persisted = await persist(input, current, building, 'pending', input.expectedRevision);
     if (!('prepared' in persisted)) return persisted;
     if (signal?.aborted) return await cancelOperation(input, current);
+    progress.start('build-image');
     nativeResult = await input.native.build({ operationId: input.operationId, input: composition.input }, root(current));
   }
   const prepared = current.content.prepared!;
@@ -173,15 +187,18 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
   switch (nativeResult.kind) {
     case 'ready': {
       const { buildSetup, bakedSetup: _bakedSetup, artifactSizeBytes: _priorSize, ...ready } = withoutCode;
-      return await persist(input, current, { ...ready, status: 'ready', artifact: nativeResult.artifact,
+      progress.start('save-image');
+      const saved = await persist(input, current, { ...ready, status: 'ready', builtAt: prepared.builtAt ?? Date.now(), artifact: nativeResult.artifact,
         ...(nativeResult.artifactSizeBytes === undefined ? {} : { artifactSizeBytes: nativeResult.artifactSizeBytes }),
         ...(buildSetup === undefined ? {} : { bakedSetup: buildSetup }) }, 'ready');
+      progress.finish(saved.kind === 'ready' ? 'succeeded' : 'failed');
+      return saved;
     }
     case 'pending': return await persist(input, current, { ...prepared, status: 'building', nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
     case 'unknown': return await persist(input, current, { ...prepared, status: 'building', ...nativeFailure(nativeResult, prepared),
       nativeOperationRef: nativeResult.nativeOperationRef }, 'unknown');
-    case 'refused': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared) }, 'failed');
-    case 'failed': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared),
+    case 'refused': progress.finish('failed'); return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared) }, 'failed');
+    case 'failed': progress.finish('failed'); return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared),
       nativeOperationRef: nativeResult.nativeOperationRef }, 'failed');
     case 'absent': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure({ code: 'managed_not_found' }, prepared) }, 'failed');
   }
@@ -269,6 +286,7 @@ export async function settleManagedMachinePresetPreparationOperationV1(
   if ('kind' in initial) return initial;
   const incumbent = initial.content.prepared;
   let current = initial;
+  const progress = createPresetPreparationProgress(input.onProgress);
   const follow = async (request: OperationInput, cancelling = input.signal?.aborted === true,
     expectedRevision?: number, capturedContent?: ManagedMachinePresetContentV1): Promise<OperationResult> => {
     let first = true;
@@ -288,7 +306,7 @@ export async function settleManagedMachinePresetPreparationOperationV1(
       }
       try {
         const outcome = cancelling ? await cancelOperation(request, current, expectedRevision)
-          : await advanceOperation(request, current, capturedContent, input.signal);
+          : await advanceOperation(request, current, capturedContent, input.signal, progress, input.expectedRevision);
         expectedRevision = undefined;
         if (!cancelling && input.signal?.aborted) { cancelling = true; continue; }
         if (!cancelling && outcome.kind === 'cancelled'
@@ -296,9 +314,14 @@ export async function settleManagedMachinePresetPreparationOperationV1(
           cancelling = true;
           continue;
         }
-        if (outcome.kind !== 'pending' && outcome.kind !== 'unknown') return outcome;
+        if (outcome.kind !== 'pending' && outcome.kind !== 'unknown') {
+          if (cancelling || outcome.kind === 'cancelled') progress.finish('cancelled');
+          else if (outcome.kind !== 'ready') progress.finish('failed');
+          return outcome;
+        }
         await (cancelling ? cleanupWait : wait)();
       } catch (error) {
+        progress.finish(input.signal?.aborted ? 'cancelled' : 'failed');
         if (!cancelling && input.signal?.aborted) { cancelling = true; continue; }
         if (!cancelling && current.content.prepared?.operationId === request.operationId
           && current.content.prepared.status === 'building') {

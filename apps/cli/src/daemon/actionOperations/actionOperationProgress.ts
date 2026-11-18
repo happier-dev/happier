@@ -20,6 +20,7 @@ export function parseActionOperationProgressUpdate(
         ? { kind: 'indeterminate' as const, label: update.label }
         : { kind: 'indeterminate' as const };
   if (!candidate) return null;
-  const parsed = ActionOperationProgressV1Schema.safeParse(candidate);
+  const parsed = ActionOperationProgressV1Schema.safeParse({ ...candidate,
+    ...(update.steps === undefined ? {} : { steps: update.steps }) });
   return parsed.success ? parsed.data : null;
 }

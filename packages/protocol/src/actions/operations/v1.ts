@@ -132,15 +132,27 @@ export const ActionOperationStateV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type ActionOperationStateV1 = z.infer<typeof ActionOperationStateV1Schema>;
 
+/** Observed finite-run steps; labels and times come from the execution owner. */
+export const ActionOperationProgressStepV1Schema = lazyZodSchema(() => z.strictObject({
+  id: ActionOperationProgressPhaseV1Schema,
+  label: ActionOperationProgressLabelV1Schema,
+  state: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
+  startedAt: z.optional(ActionOperationTimestampV1Schema),
+  settledAt: z.optional(ActionOperationTimestampV1Schema),
+}));
+export type ActionOperationProgressStepV1 = Readonly<z.infer<typeof ActionOperationProgressStepV1Schema>>;
+
 export const ActionOperationProgressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('indeterminate'),
     label: z.optional(ActionOperationProgressLabelV1Schema),
+    steps: z.optional(z.readonly(z.array(ActionOperationProgressStepV1Schema))),
   }),
   z.strictObject({
     kind: z.literal('phase'),
     phase: ActionOperationProgressPhaseV1Schema,
     label: ActionOperationProgressLabelV1Schema,
+    steps: z.optional(z.readonly(z.array(ActionOperationProgressStepV1Schema))),
     /** Current target FIFO observation, not a percentage or admission token. */
     queueAhead: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))),
     /** The shared Action executor's blocking Ask; observation only, never decision authority. */
@@ -152,6 +164,7 @@ export const ActionOperationProgressV1Schema = lazyZodSchema(() => z.discriminat
   })),
   z.strictObject({
     kind: z.literal('determinate'),
+    steps: z.optional(z.readonly(z.array(ActionOperationProgressStepV1Schema))),
     current: z.number().check(z.nonnegative()),
     total: z.number().check(z.positive()),
     label: z.optional(ActionOperationProgressLabelV1Schema),

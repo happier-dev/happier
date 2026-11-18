@@ -3540,6 +3540,15 @@ the managed-cost owner, separately from Machine compute pricing. An unpriced
 result can be presented as “Provider charges apply”. Startup savings require
 paired measured cold and warm starts; unknown durations supply no estimate.
 
+In development source, the same admitted Prepare run reports named input,
+image-build and private-save steps through Action phase progress. Step states
+and observed times come from that run; opaque native build internals are not
+invented. The prepared-preset hook exposes these steps and a ready summary from
+the private artifact's optional `builtAt`, `builtFromRevision` and native size.
+The revision is historical provenance, never an image-freshness input. Older
+artifacts without these fields remain usable and report unknown values; there
+is no new store, timer or background rebuild.
+
 Home checks Machine and preset authority at admission. The original signed binding
 retains `presetPreparationAdmission` with Home, preset and initial revision;
 Prepare also binds its selected Machine. Archive spends the same finite admission

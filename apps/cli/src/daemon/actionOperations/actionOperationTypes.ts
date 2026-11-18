@@ -9,7 +9,7 @@ import { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionActorV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { ActionOperationDomainRefV1Schema, ActionOperationObservationV1Schema,
-  ActionOperationProgressPhaseV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+  ActionOperationProgressPhaseV1Schema, ActionOperationProgressStepV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 
@@ -79,7 +79,7 @@ export type ResolvedTrackedAction = Readonly<{
 /** Exact existing host-sink updates; private remote continuations consume this owner. */
 export const ActionOperationProgressUpdateSchema = z.strictObject({ label: z.optional(z.string()),
   phase: z.optional(ActionOperationProgressPhaseV1Schema), queueAhead: z.optional(z.number()),
-  current: z.optional(z.number()), total: z.optional(z.number()), approval: z.optional(ActionApprovalRequestCreatedResultSchema) });
+  current: z.optional(z.number()), total: z.optional(z.number()), steps: z.optional(z.readonly(z.array(ActionOperationProgressStepV1Schema))), approval: z.optional(ActionApprovalRequestCreatedResultSchema) });
 export type ActionOperationProgressUpdate = Readonly<z.infer<typeof ActionOperationProgressUpdateSchema>>;
 
 export const ActionOperationOwnerUpdateSchema = z.strictObject({ actor: z.optional(z.nullable(ActionActorV1Schema)),
