@@ -8,6 +8,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
+import { projectMachineManagedPresence, describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 installMachinesSettingsCommonModuleMocks();
 // Collect the real component graph before the per-test deadline starts.
@@ -88,6 +90,23 @@ describe('session isolation outcome line', () => {
         // Choosing the preset's own option goes back to the default rather than pinning a copy of it.
         menuOf(twoWay).props.onSelect('copy_once');
         expect(onChange).toHaveBeenLastCalledWith(undefined);
+    });
+
+    it.each([stored, { status: 'unavailable' } as const])('uses the picker’s absent fact instead of promising a deleted Machine will return (snapshot=$status)', async snapshot => {
+        const machine = { id: 'guest', active: false, activeAt: 0 };
+        const managed = ManagedMachineV1Schema.parse({ id: 'native', homeId: 'home', custodianAccountId: 'owner',
+            enrolledMachineId: machine.id, launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1,
+                name: 'devbox', choices: {} }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'delete', desiredWhen: 'now', intentRevision: 2, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 2, availability: 'absent' } });
+        const managedPresence = projectMachineManagedPresence(machine, managed);
+        const picker = describeMachinePresenceLine(machine, undefined, managedPresence, { serverId: 'home', accountId: 'member' });
+        const { text, link } = await render({ snapshot, offline: true, managedPresence, onOverrideChange: vi.fn() });
+        expect(text).toContain(picker.label);
+        expect(text).toContain('managedPower.resourceAbsent');
+        expect(text).not.toContain('machineDetailPage.isolation.outcome.offline');
+        expect(link).toBeUndefined();
     });
 
     it('says the one-time override and puts the sandbox back', async () => {

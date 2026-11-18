@@ -327,6 +327,10 @@ describe('useNewSessionAgentInputPresentation', () => {
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus?.text).toBe('managedWake.startsOnSend');
         expect(hook.getCurrent().connectionStatus?.recovery).toBeUndefined();
+        const absent = { state: 'resource_absent', word: 'managedPower.resourceAbsent' };
+        initialParams = { ...initialParams, selectedMachineManagedPresence: { online: absent, offline: absent } };
+        await hook.rerender();
+        expect(hook.getCurrent().connectionStatus).toMatchObject({ text: absent.word, recovery: 'machine' });
         await hook.unmount();
     });
 

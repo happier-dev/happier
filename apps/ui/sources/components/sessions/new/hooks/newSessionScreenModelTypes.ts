@@ -85,6 +85,7 @@ export type NewSessionScreenModel =
             machineName: string | null;
             /** The chosen Machine answered as offline (not merely unknown): the outcome line says the draft waits. */
             offline?: boolean;
+            managedPresence?: import('@/utils/sessions/machinePresenceLine').MachineManagedPresence | null;
             /** Proposed stored Machine policy choice; receiver authorization and readiness remain unresolved. */
             proposedOutcome?: ReturnType<typeof import('@/hooks/machine/useMachineIsolationPolicy').useMachineIsolationProposedOutcome>;
             /** Actual accepted Session operation; presentation derives its stages from the existing progress owner. */

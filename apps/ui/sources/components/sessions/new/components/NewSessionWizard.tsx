@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { useMachineManagedPresence } from '@/components/machines/useMachineManagedPresence';
 import { useServerCredentialAccountScopeBinding, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 import { useAtmosphereSendSignal } from '@/components/atmosphere/atmosphereStage';
@@ -535,6 +536,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         if (!selectedMachine) return false;
         return resolveMachineReachability(scope, selectedMachine) === 'unreachable';
     }, [reachabilityRevision, selectedMachine, scope]);
+    const selectedMachineManagedPresence = useMachineManagedPresence(serverId, selectedMachine);
+    const selectedMachineAbsentWord = selectedMachineManagedPresence?.offline?.state === 'resource_absent'
+        ? selectedMachineManagedPresence.offline.word : null;
     const selectedMachineHomeDir = selectedMachine?.metadata?.homeDir || '/home';
     const favoriteDirectoryKeys = React.useMemo(() => new Set(
         favoriteDirectories.map((path) =>
@@ -1159,10 +1163,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 />
                                             ) : undefined}
                                         >
-                                            {selectedMachineIsOffline ? (
+                                            {selectedMachineAbsentWord || selectedMachineIsOffline ? (
                                                 <Item
-                                                    title={t('newSession.machineOfflineInlineTitle')}
-                                                    subtitle={t('newSession.machineOfflineInlineBody')}
+                                                    title={selectedMachineAbsentWord ?? t('newSession.machineOfflineInlineTitle')}
+                                                    subtitle={selectedMachineAbsentWord ? undefined : t('newSession.machineOfflineInlineBody')}
                                                     leftElement={renderIconNode('warning', 20, warningForegroundColor)}
                                                     showChevron={false}
                                                 />

@@ -43,6 +43,7 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
+import { useMachineManagedPresence } from '@/components/machines/useMachineManagedPresence';
 
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
@@ -209,6 +210,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         [scope?.serverId, params.selectedMachineId]);
     const selectedMachineReachability = useMachinePresenceSnapshot(readPresenceMachines, readReachability, presenceTargets);
     const selectedMachineOnline = selectedMachineReachability === 'reachable';
+    const selectedMachineManagedPresence = useMachineManagedPresence(params.capabilityServerId, params.selectedMachine);
 
     const selectedMachineSpawnReadiness = React.useMemo(() => {
         const rpcAvailable = selectedMachineCapabilities.status === 'loaded' ? true
@@ -298,6 +300,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         cliAvailability,
         selectedMachineOnline,
         selectedMachineReachability,
+        selectedMachineManagedPresence,
         selectedMachineCapabilities,
         capabilitiesCacheKeySalt: cacheKeySalt,
         selectedMachineCapabilitiesSnapshot,

@@ -13,6 +13,7 @@ import { Typography } from '@/constants/Typography';
 import type { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
 import { isOpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { t } from '@/text';
+import type { MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { ProjectFilesOutcomeChoice } from './ProjectFilesOutcomeChoice';
 
 const NO_SERVERS: readonly string[] = Object.freeze([]);
@@ -22,15 +23,17 @@ export type SessionIsolationOutcome = ReturnType<
 >;
 
 /**
- * Whether the outcome line says the chosen Machine is offline (with what happens to the draft, lab case 9). The
+ * Whether the outcome line says the chosen Machine is offline or absent. The
  * composer's status line then says nothing more about it: one cause, one line.
  */
-export function sessionIsolationOutcomeSaysOffline(input: Readonly<{
+export function sessionIsolationOutcomeSaysMachineStatus(input: Readonly<{
   machineName: string | null;
   snapshot: MachineIsolationGetResultV1;
   offline?: boolean;
+  managedPresence?: MachineManagedPresence | null;
 }>): boolean {
-  return input.offline === true && Boolean(input.machineName) && input.snapshot.status === 'ready';
+  return Boolean(input.machineName) && (input.managedPresence?.offline?.state === 'resource_absent'
+    || input.offline === true && input.snapshot.status === 'ready');
 }
 
 /**
@@ -48,6 +51,8 @@ export function SessionIsolationOutcomeLine(
     override?: 'directly';
     /** The chosen Machine is offline: the draft waits, and the line says what happens once it is back. */
     offline?: boolean;
+    /** The same native lifecycle presentation used by the Machine picker; absence overrides connectivity. */
+    managedPresence?: MachineManagedPresence | null;
     onOverrideChange?: (value: 'directly' | undefined) => void;
     /**
      * The per-Session Project files choice (lab F2): a fresh sandbox's line then leads with what happens to the
@@ -69,9 +74,12 @@ export function SessionIsolationOutcomeLine(
       ? outcome.configuredSandbox?.presetId
       : undefined;
   const preset = usePreset(props.serverId, presetId);
-  if (!machineName || snapshot.status !== 'ready') return null;
+  if (!machineName) return null;
+  if (props.managedPresence?.offline?.state === 'resource_absent')
+    return <OutcomeRow testID={testID} glyph="cloud-slash" text={props.managedPresence.offline.word} link={null} />;
+  if (snapshot.status !== 'ready') return null;
   const machine = machineName;
-  if (sessionIsolationOutcomeSaysOffline(props))
+  if (sessionIsolationOutcomeSaysMachineStatus(props))
     return (
       <OutcomeRow
         testID={testID}

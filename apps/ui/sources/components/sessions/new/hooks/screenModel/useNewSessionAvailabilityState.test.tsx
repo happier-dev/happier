@@ -35,6 +35,37 @@ afterEach(async () => {
 afterAll(() => network.dispose());
 
 describe('machine launch readiness', () => {
+    it('carries the picker’s deleted lifecycle through one exact enrolled-Machine read without probing the daemon', async () => {
+        const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const home = await network.addHome('https://deleted-availability.test', 'member', { serverIdentityId: 'srv_deleted' });
+        const machine = createMachineFixture({ id: 'deleted-guest', active: false, activeAt: 1 });
+        const managed = ManagedMachineV1Schema.parse({ id: 'native', homeId: 'srv_deleted', custodianAccountId: 'owner',
+            enrolledMachineId: machine.id, launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1,
+                name: 'devbox', choices: {} }, allocation: 'confirmed-absent', creationState: 'active',
+            desired: 'delete', desiredWhen: 'now', intentRevision: 2, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const reads: unknown[] = [];
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path !== '/v1/machines/managed/actions/list') return null;
+            reads.push(typeof init?.body === 'string' ? JSON.parse(init.body) : null);
+            return Response.json({ machines: [managed] });
+        });
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            machineAgents, selectedMachineId: machine.id, selectedMachine: machine, capabilityServerId: home.id,
+            machineProbesEnabled: false, externalSessionsFeatureEnabled: false, settings: settingsDefaults, resumeSessionId: null,
+            backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [], selectedBackendEntry: null,
+            setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
+        }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().selectedMachineManagedPresence?.offline?.state).toBe('resource_absent'));
+            expect(reads).toEqual([expect.objectContaining({ enrolledMachineId: machine.id })]);
+            await hook.rerender();
+            expect(reads).toHaveLength(1);
+            expect(network.requests).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+
     it('does no availability computation for unrelated settings and updates declared Account carriers', async () => {
         const catalog = await import('@/agents/catalog/catalog');
         const { settingsParse } = await import('@/sync/domains/settings/settings');

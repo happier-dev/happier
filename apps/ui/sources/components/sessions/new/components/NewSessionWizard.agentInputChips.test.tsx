@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
 
 import { renderScreen } from '@/dev/testkit';
@@ -14,7 +15,11 @@ import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/p
 
 installNewSessionComponentsCommonModuleMocks();
 await prepareSessionPaneRuntimeForTests();
-const runtime = installSessionPaneRuntimeTestHarness();
+let managedMachine: ManagedMachineV1 | null = null;
+const runtime = installSessionPaneRuntimeTestHarness({ request: async (url) =>
+    new URL(String(url)).pathname === '/v1/machines/managed/actions/list'
+        ? Response.json({ machines: managedMachine ? [managedMachine] : [] }) : null });
+beforeEach(() => { managedMachine = null; });
 afterEach(clearMachineRequestReachabilityForTest);
 const profile = AIBackendProfileSchema.parse({
     id: 'profile-1', name: 'Work', environmentVariables: [], envVarRequirements: [],
@@ -41,6 +46,19 @@ async function renderWizard(props: NewSessionWizardTestProps = buildProps(), bou
 }
 
 describe('NewSessionWizard real AgentInput composition', () => {
+    it('uses the picker’s absent copy for a deleted Machine instead of the offline warning', async () => {
+        const props = buildProps();
+        props.machine.selectedMachine = { ...props.machine.selectedMachine!, active: false, activeAt: 1 };
+        managedMachine = ManagedMachineV1Schema.parse({ id: 'native', homeId: runtime.serverId, custodianAccountId: 'account-a',
+            enrolledMachineId: props.machine.selectedMachine.id, launch: { provider: { pluginId: 'custom.native', localId: 'vm' },
+                schemaVersion: 1, name: 'devbox', choices: {} }, allocation: 'confirmed-absent', creationState: 'active',
+            desired: 'delete', desiredWhen: 'now', intentRevision: 2, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const { screen } = await renderWizard(props);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('managedPower.resourceAbsent'));
+        expect(screen.getTextContent()).not.toContain('newSession.machineOfflineInlineTitle');
+        expect(screen.getTextContent()).not.toContain('newSession.machineOfflineInlineBody');
+    });
+
     it.each(['list', 'dropdown'] as const)('shows the managed permission value instead of %s choices', async (presentation) => {
         const props = buildProps();
         props.sectionPresentation = { permissions: presentation };

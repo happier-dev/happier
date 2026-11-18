@@ -19,6 +19,7 @@ import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/store/hooks';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { useMachineManagedPresence } from '@/components/machines/useMachineManagedPresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -225,9 +226,11 @@ export function SessionPlacementChips(
   // work waits for it instead of where it would run.
   const presence = useMachinePresenceSummary(props.serverId || null, props.isolationWorkKind ? props.machine?.id ?? null : null,
     undefined, sameReachability);
+  const managedPresence = useMachineManagedPresence(props.serverId || null, props.isolationWorkKind ? props.machine : null);
   const outcomeLine = props.isolationWorkKind && props.machine ? (
     <SessionIsolationOutcomeLine serverId={props.serverId || null} machineName={props.machine ? getMachineDisplayName(props.machine) : null}
       snapshot={isolationSnapshot} outcome={isolationOutcome} offline={presence.reachability === 'unreachable'}
+      managedPresence={managedPresence}
       testID="session-placement-isolation-outcome" />
   ) : null;
   const machineAnchor = React.useRef<View | null>(null);

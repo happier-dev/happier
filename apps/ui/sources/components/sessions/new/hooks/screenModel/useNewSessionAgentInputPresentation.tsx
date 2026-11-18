@@ -28,6 +28,7 @@ import { resolveMachineReachability } from '@/sync/domains/machines/reachability
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
+import type { MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { createTemporaryComputerTeamAccessActionChip } from '@/components/sessions/agentInput/definitions/createTemporaryComputerTeamAccessActionChip';
 
@@ -44,6 +45,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     theme: ThemeLike;
     selectedMachine: Machine | null;
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
+    selectedMachineManagedPresence?: MachineManagedPresence | null;
     automationFeatureEnabled: boolean;
     automationDraft: NewSessionAutomationDraft;
     repoScmSnapshot: ScmWorkingSnapshot | null;
@@ -136,6 +138,13 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     // `.l12-sr`). A green "Online" beside a blocked-launch badge contradicted it.
     const connectionStatus = React.useMemo(() => {
         if (!params.selectedMachineId) return undefined;
+        if (params.selectedMachineManagedPresence?.offline?.state === 'resource_absent') return {
+            text: params.selectedMachineManagedPresence.offline.word,
+            color: params.theme.colors.state.danger.foreground,
+            dotColor: params.theme.colors.state.danger.foreground,
+            isPulsing: false,
+            recovery: 'machine' as const,
+        };
         if (hostResolvedMachine) return undefined;
         if (wakeDescription) return {
             text: wakeDescription,
@@ -165,6 +174,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     }, [
         params.selectedMachine?.id,
         params.selectedMachineId,
+        params.selectedMachineManagedPresence,
         hostResolvedMachine,
         wakeDescription,
         selectedMachineReachability,

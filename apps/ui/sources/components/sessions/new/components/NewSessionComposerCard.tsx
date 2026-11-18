@@ -17,7 +17,7 @@ import { resolveAvailablePanelHeight } from '@/components/sessions/keyboardAvoid
 import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
-import { SessionIsolationOutcomeLine, sessionIsolationOutcomeSaysOffline } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
+import { SessionIsolationOutcomeLine, sessionIsolationOutcomeSaysMachineStatus } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
 import { NewSessionCreationReviewLine } from '@/components/sessions/new/components/NewSessionCreationReviewLine';
 import { NewSessionLaunchApprovalNotice } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
@@ -130,12 +130,12 @@ export function NewSessionComposerCard(input: Readonly<{
     const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup,
         host: { connectionStatus, contentPaddingHorizontal: 0, ...(embedded ? { maxWidthCap: null } : {}) } });
     const workflowSelected = workflowStart.composer !== null;
-    // One cause, one line: when the outcome line under the composer says the Machine is offline (and what happens to
+    // One cause, one line: when the outcome line under the composer says the Machine is offline or absent (and what happens to
     // the draft), the status line above says nothing more about the Machine. A chosen workflow shows no outcome line,
     // so its composer keeps the status.
-    const outcomeSaysOffline = !workflowSelected && props.sessionIsolation !== undefined
-        && sessionIsolationOutcomeSaysOffline(props.sessionIsolation);
-    const sessionConnectionStatus = outcomeSaysOffline && connectionStatus?.recovery === 'machine' ? undefined : connectionStatus;
+    const outcomeSaysMachineStatus = !workflowSelected && props.sessionIsolation !== undefined
+        && sessionIsolationOutcomeSaysMachineStatus(props.sessionIsolation);
+    const sessionConnectionStatus = outcomeSaysMachineStatus && connectionStatus?.recovery === 'machine' ? undefined : connectionStatus;
     React.useLayoutEffect(() => {
         input.onWorkflowSelectionChange?.(workflowSelected);
     }, [input.onWorkflowSelectionChange, workflowSelected]);
@@ -310,6 +310,7 @@ export function NewSessionComposerCard(input: Readonly<{
                             <SessionIsolationOutcomeLine serverId={props.sessionIsolation.serverId} machineName={props.sessionIsolation.machineName}
                                 snapshot={props.sessionIsolation.snapshot} outcome={props.sessionIsolation.proposedOutcome}
                                 offline={props.sessionIsolation.offline}
+                                managedPresence={props.sessionIsolation.managedPresence}
                                 override={props.sessionIsolation.override} onOverrideChange={props.sessionIsolation.onOverrideChange}
                                 {...(props.sessionIsolation.onProjectFilesChange ? { projectFiles: {
                                     source: props.sessionIsolation.projectFilesOutcome?.source,
