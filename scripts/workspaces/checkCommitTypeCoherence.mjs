@@ -39,7 +39,6 @@ import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDec
 import { commitProducerClosure } from './commitProducerClosure.mjs';
 import { kickRollingHeadTypecheck } from './commitPackageTypecheck.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
-import { formatCommitGateRefusal, moveRefUnderCommitLock, runCommitGate } from './commitGate.mjs';
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
 
 // The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
@@ -689,6 +688,9 @@ export async function finalizeCommitTypeCoherence({ repo, checked, message, ref 
     recheckedGroups: [...rechecked].sort(),
     reusedGroups: checked.groups.map(group => group.id).filter(id => !rechecked.has(id)).sort(),
   });
+  // Loaded here, not at module scope: the gate's import-cycle check loads the TypeScript compiler, and the CLI loads no
+  // compiler module before its admission (the plain TS CLI re-enters admitted).
+  const { moveRefUnderCommitLock, runCommitGate } = await import('./commitGate.mjs');
   let gatedTree;
   while (true) {
     if (checked.fresh.length || checked.unowned.length || checked.gate) return outcome();
@@ -852,7 +854,7 @@ async function main(argv) {
         for (const row of finalized.checked.fresh)
           console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
         for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-        if (finalized.checked.gate) console.log(formatCommitGateRefusal(finalized.checked.gate));
+        if (finalized.checked.gate) console.log((await import('./commitGate.mjs')).formatCommitGateRefusal(finalized.checked.gate));
         console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} gate=${finalized.checked.gate?.check ?? 'pass'}`);
         return 1;
       }
