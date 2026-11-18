@@ -605,7 +605,7 @@ describe('reachable preset detail', () => {
       expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
     } finally { await hook.unmount(); }
   });
-  it('exposes measured prepared storage and canonical unpriced cost, omitting unknown size', async () => {
+  it('exposes prepared measurements and canonical configuration staleness without treating a rename as stale', async () => {
     const serverId = await seed();
     const { useMachinePresetPreparation } = await import('./useMachinePresets');
     const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
@@ -615,16 +615,23 @@ describe('reachable preset detail', () => {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     let measured = true;
-    const hook = await renderHook(() => useMachinePresetPreparation({ serverId, preset: { ...opened,
+    let launch = opened.launch;
+    const hook = await renderHook(() => useMachinePresetPreparation({ serverId, preset: { ...opened, launch,
       prepared: measured ? prepared : (({ artifactSizeBytes: _size, builtAt: _time, builtFromRevision: _revision, ...unknown }) => unknown)(prepared) },
       machineId: null, onChanged: () => {} }));
     try {
       expect(hook.getCurrent().estimates).toEqual({ storageBytes: 1024, cost: { kind: 'unpriced', provider: null } });
-      expect(hook.getCurrent().readySummary).toEqual({ builtAt: 1700000000000, builtFromRevision: 7, storageBytes: 1024 });
+      expect(hook.getCurrent().readySummary).toEqual({ builtAt: 1700000000000, builtFromRevision: 7, storageBytes: 1024, stale: false });
       measured = false;
       await hook.rerender();
       expect(hook.getCurrent().estimates).toEqual({ storageBytes: null, cost: { kind: 'unpriced', provider: null } });
-      expect(hook.getCurrent().readySummary).toEqual({ builtAt: null, builtFromRevision: null, storageBytes: null });
+      expect(hook.getCurrent().readySummary).toEqual({ builtAt: null, builtFromRevision: null, storageBytes: null, stale: false });
+      launch = { ...opened.launch!, choices: { image: 'changed-image' } };
+      await hook.rerender();
+      expect(hook.getCurrent().readySummary?.stale).toBe(true);
+      launch = { ...opened.launch!, name: 'Renamed launch' };
+      await hook.rerender();
+      expect(hook.getCurrent().readySummary?.stale).toBe(false);
       expect(boundary.rpc).not.toHaveBeenCalled();
     } finally { await hook.unmount(); }
   });

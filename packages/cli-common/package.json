@@ -24,6 +24,12 @@
       "import": "./dist/machines/managed/index.js",
       "default": "./dist/machines/managed/index.js"
     },
+    "./machines/managed/presetPreparation": {
+      "happier-source": "./src/machines/managed/presetPreparation.ts",
+      "types": "./dist/machines/managed/presetPreparation.d.ts",
+      "import": "./dist/machines/managed/presetPreparation.js",
+      "default": "./dist/machines/managed/presetPreparation.js"
+    },
     "./connectedAccounts/authenticationTypes": {
       "happier-source": "./src/connectedAccounts/authenticationTypes.ts",
       "types": "./dist/connectedAccounts/authenticationTypes.d.ts",

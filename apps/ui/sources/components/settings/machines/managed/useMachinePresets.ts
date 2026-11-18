@@ -9,6 +9,7 @@ import { ActionOperationAcceptedResultSchema, type ActionOperationAcceptedResult
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/configurationPresentation';
+import { readManagedMachinePresetPreparationV1 } from '@happier-dev/cli-common/machines/managed/presetPreparation';
 
 import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeStates, useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -133,11 +134,19 @@ export function useMachinePresetPreparation(input: Readonly<{
         cost: resolveManagedConfigurationCost({ provider: null }),
     } : null, [prepared]);
     const steps = operation?.snapshot.progress?.steps ?? EMPTY_PREPARATION_STEPS;
-    const readySummary = React.useMemo(() => prepared?.status === 'ready' ? {
-        builtAt: prepared.builtAt ?? null,
-        builtFromRevision: prepared.builtFromRevision ?? null,
-        storageBytes: prepared.artifactSizeBytes ?? null,
-    } : null, [prepared]);
+    const readySummary = React.useMemo(() => {
+        if (prepared?.status !== 'ready' || preset === null) return null;
+        // The launch owner decides authored-configuration staleness. Current CLI and
+        // credential observations belong to acquire; this view retains the build's identities.
+        const decision = readManagedMachinePresetPreparationV1({ content: preset,
+            cliIdentity: prepared.binding.cliIdentity, credentialConfigurations: prepared.binding.credentialConfigurations });
+        return {
+            builtAt: prepared.builtAt ?? null,
+            builtFromRevision: prepared.builtFromRevision ?? null,
+            storageBytes: prepared.artifactSizeBytes ?? null,
+            stale: decision.kind === 'cold' && decision.reason === 'stale',
+        };
+    }, [prepared, preset]);
     return { prepared, estimates, steps, readySummary, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
         pending: pendingScope === scopeKey && !approval.approvalPending,
         error: failure?.scopeKey === scopeKey ? failure.code : null,
