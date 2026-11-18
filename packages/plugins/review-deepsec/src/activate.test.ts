@@ -566,6 +566,10 @@ describe('activate', () => {
   });
 
   it('fails required confirmation without launching and lets the caller retry explicitly', async () => {
+    const profile = PLUGIN_MANIFEST.contributes?.executionRunProfiles?.find(profile => profile.id === 'repository-security-audit');
+    const consentOption = profile?.metadata?.reviewCostConsentOption;
+    expect(consentOption).toBe('confirmedCostWarning');
+    if (typeof consentOption !== 'string') throw new Error('Expected per-start cost consent option');
     const fixture = createRuntimeContext();
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open(createOpenRequest({
@@ -587,16 +591,28 @@ describe('activate', () => {
     expect(fixture.resolve).not.toHaveBeenCalled();
     expect(fixture.run).not.toHaveBeenCalled();
 
-    const retried = await runtime.executionRuns?.open(createOpenRequest({
+    const acceptedRequest = createOpenRequest({
       runId: 'run-confirmed-retry',
       profileLocalId: 'repository-security-audit',
       includeExplicitMode: false,
-      confirmedCostWarning: true,
-    }), fixture.context);
+    });
+    const retried = await runtime.executionRuns?.open({ ...acceptedRequest, input: { ...acceptedRequest.input,
+      structuredInput: { ...acceptedRequest.input.structuredInput as Record<string, unknown>,
+        engines: { deepsec: { [consentOption]: true } } },
+    } }, fixture.context);
     if (!retried) throw new Error('Expected explicit DeepSec retry');
     const retryEvents = await watchToTerminal(retried);
     await retried.dispose();
     expect(retryEvents.at(-1)?.kind).toBe('run-complete');
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
+
+    const next = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-next-unconfirmed',
+      profileLocalId: 'repository-security-audit', includeExplicitMode: false,
+    }), fixture.context);
+    if (!next) throw new Error('Expected next DeepSec review');
+    const nextEvents = await watchToTerminal(next);
+    await next.dispose();
+    expect(nextEvents.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_confirmation_required' } });
     expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
   });
 

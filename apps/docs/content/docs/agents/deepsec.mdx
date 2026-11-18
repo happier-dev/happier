@@ -65,9 +65,11 @@ Gateway Runs use an available Claude or Codex harness and keep the selected
 Gateway route for that Run. Saved DeepSec model configuration cannot replace it
 with a native local login.
 
-The per-engine `thinkingLevel` option selects DeepSec's reasoning effort. The
-existing cost estimate must be accepted for each start that requires it;
-`confirmedCostWarning` is consent for that start, never a saved preference.
+The per-engine `thinkingLevel` option selects DeepSec's reasoning effort. Its
+cost warning is qualitative; Happier does not calculate a dollar estimate.
+Repository audits and large review scopes require acceptance before DeepSec
+launches. `confirmedCostWarning` is consent for that start, never a saved
+preference. Smaller scopes can start without it.
 
 For direct reviews, DeepSec exits with status 1 when it produces findings.
 Happier preserves those findings as completed only when the requested findings

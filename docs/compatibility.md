@@ -9653,6 +9653,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Review engine inventory optionally carries closed `costConsent`
+presentation metadata (`optionKey`, `title`, optional `description`), projected
+from the selected profile's existing boolean option. Absence preserves existing
+inventory results. Matching development Protocol, daemon and UI readers reload
+together; older strict development readers reject the added field. The inspected
+`../0.2` frontier at `73c533b470ac33a7605b50689b6cd93089a3ae6f` has only the
+earlier native-engine list, not this inventory contract. This adds no persisted
+consent, runtime ABI, wire epoch or mixed-development adapter.
+
 Unreleased 0.3 Review engine inventory and discovery retain the declared
 `repository` scope alongside `worktree` and `paths`. Repository Review admission
 rejects explicit selected-file aliases, captured comparisons and pull requests

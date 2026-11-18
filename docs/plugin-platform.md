@@ -13933,6 +13933,16 @@ new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
 
 
+### Review cost acknowledgement (0.3 development)
+
+A Review profile can name an existing boolean option in
+`metadata.reviewCostConsentOption`. Review inventory projects that option's
+`title` and optional `description` as `costConsent`, alongside its `optionKey`.
+This is optional acknowledgement for one start, not a cost estimate or an
+admission decision. The engine's existing warning owner decides whether an
+unchecked start requires confirmation before launching vendor work. Hosts keep
+the value in the draft's engine options and never save it as a preference.
+
 ### Review source transcript delivery (0.3 development)
 
 A reviewer receives a source Session transcript only when its

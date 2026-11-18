@@ -222,6 +222,33 @@ leaf or an execution-run completion declaration. Use the canonical
 These are current 0.3 development contracts, not release or loaded-runtime
 certification.
 
+## Per-start cost acknowledgement (development source)
+
+For an optional per-start cost acknowledgement, name an existing boolean option
+with `metadata.reviewCostConsentOption` on the profile:
+
+```ts
+metadata: { reviewCostConsentOption: 'acceptCost' },
+optionsSchema: {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    acceptCost: {
+      type: 'boolean',
+      title: 'Accept cost warning',
+      description: 'Some review scopes can be expensive. Consent applies to this start only.',
+    },
+  },
+},
+```
+
+In matching 0.3 development hosts, Review inventory exposes `costConsent` with
+that option's `optionKey`, `title` and optional `description`. This declares
+presentation, not whether consent is required. Your engine decides that once at
+start before launching vendor work. The caller passes the chosen value through
+`intentInput.engines[agentId][optionKey]` for this start only; never save it as a
+preference or treat an unchecked option as a refusal for every scope.
+
 ## Related
 
 - [Execution Run architecture](/development/architecture/runtime/execution-runs)

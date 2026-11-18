@@ -28,6 +28,12 @@ export const ReviewEngineListItemSchema = lazyZodSchema(() => z.strictObject({
   reviewScopes: z.optional(z.array(ReviewEngineScopeSchema)),
   profileId: z.optional(z.string()),
   profileSourceCustody: z.optional(PluginSourceCustodyV1Schema),
+  /** Optional acknowledgement for this start; the engine decides whether it is required at admission. */
+  costConsent: z.optional(z.strictObject({
+    optionKey: z.string(),
+    title: z.string(),
+    description: z.optional(z.string()),
+  })),
   description: z.optional(z.string()),
   /** Concrete Account-configured launch model; absent for the Agent's own default. */
   launchModelId: z.optional(z.string()),

@@ -18,6 +18,7 @@ export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKi
     actions: [{ kind: 'hostAction' as const, actionId: 'reviews.comments.create' as const }],
     defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
     compatibleAgents: ['deepsec'],
+    metadata: { reviewCostConsentOption: 'confirmedCostWarning' },
     optionsSchema: {
       type: 'object' as const,
       additionalProperties: false as const,
@@ -26,7 +27,7 @@ export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKi
         profileId: { type: 'string' as const, enum: [DEEPSEC_REVIEW_PROFILE_ID, DEEPSEC_SECURITY_AUDIT_PROFILE_ID] },
         thinkingLevel: { type: 'string' as const, enum: [...DEEPSEC_THINKING_LEVELS], title: 'Reasoning effort' },
         agentCli: { type: 'string' as const, enum: [...DEEPSEC_AGENT_CLIS], title: 'Local agent' },
-        confirmedCostWarning: { type: 'boolean' as const, title: 'Accept DeepSec estimate', description: 'Consent for this start only; never saved as a preference.' },
+        confirmedCostWarning: { type: 'boolean' as const, title: 'Accept DeepSec estimate', description: 'Some review scopes can be expensive. Accept the cost warning for this start only; never saved as a preference.' },
         preferredExecutablePath: { type: 'string' as const, title: 'Executable path' },
         executablePath: { type: 'string' as const },
         cost: {

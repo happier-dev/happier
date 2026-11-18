@@ -40,6 +40,37 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it('projects optional start consent from the selected profile option without deciding whether it is required', async () => {
+    const agent = projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id: 'reviewer', title: 'Reviewer',
+        primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    });
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'cost-profile', installSource: 'archive' } as const;
+    const profileCatalog = buildExecutionRunProfileCatalog(['costly', 'ordinary'].map(id => ({
+      pluginId: 'acme.review', sourceCustody: profileSourceCustody,
+      definition: { id, intent: 'review' as const, title: id, promptAsset: 'prompt', compatibleAgents: ['reviewer'],
+        defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
+        ...(id === 'costly' ? {
+          metadata: { reviewCostConsentOption: 'acceptCost' },
+          optionsSchema: { type: 'object' as const, additionalProperties: false as const, properties: {
+            acceptCost: { type: 'boolean' as const, title: 'Accept estimate', description: 'This review may be expensive.' },
+          } },
+        } : {}),
+      },
+    })), { resolveAgentIdentity: id => id === agent.id ? agent.identity ?? null : null });
+    const inventory = await buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog, profileCatalog,
+      registrySnapshot: { agentDefinitionsById: new Map([[agent.id, agent]]), executionRunProfiles: [] },
+      profileSelections: [{ engineId: agent.id, profileId: 'acme.review/ordinary', profileSourceCustody }],
+    });
+    expect(inventory.items[0]).toHaveProperty('costConsent', {
+      optionKey: 'acceptCost', title: 'Accept estimate', description: 'This review may be expensive.',
+    });
+    expect(inventory.selectionItems?.[0]).not.toHaveProperty('costConsent');
+  });
+
   it('preserves repository-only profiles and generic repository reviewers through inventory selection', async () => {
     const agents = ['generic', 'slices'].map(id => projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },

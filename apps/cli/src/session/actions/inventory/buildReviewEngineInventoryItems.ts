@@ -85,17 +85,25 @@ function resolveReviewProfileFacts(
   agentId: string,
   catalog?: ExecutionRunProfileContributionCatalog,
   selection?: ReviewEngineProfileSelection,
-): Pick<ReviewEngineListItem, 'retentionPolicy' | 'profileId' | 'profileSourceCustody'> & {
+): Pick<ReviewEngineListItem, 'retentionPolicy' | 'profileId' | 'profileSourceCustody' | 'costConsent'> & {
   reviewScopes: ReviewEngineScope[];
   sessionTranscript: boolean;
 } {
   const selected = catalog ? resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId, ...selection }) : null;
   const profile = selected && catalog ? resolveExecutionRunProfileContributionDescriptor(catalog, selected.profileId) : null;
+  const consentOptionKey = readTrimmedString(profile?.metadata?.reviewCostConsentOption);
+  const consentOption = profile?.optionsSchema?.properties?.[consentOptionKey];
+  const consentTitle = readTrimmedString(consentOption?.title);
+  const consentDescription = readTrimmedString(consentOption?.description);
   const declaredScopes = profile?.metadata?.reviewScopes;
   const reviewScopes = Array.isArray(declaredScopes)
     ? declaredScopes.filter((scope): scope is ReviewEngineScope => ReviewEngineScopeSchema.safeParse(scope).success)
     : [...ReviewEngineScopeSchema.options];
   return { reviewScopes, retentionPolicy: profile?.defaults.retention ?? 'resumable',
+    ...(consentOption?.type === 'boolean' && consentTitle ? { costConsent: {
+      optionKey: consentOptionKey, title: consentTitle,
+      ...(consentDescription ? { description: consentDescription } : {}),
+    } } : {}),
     sessionTranscript: profile?.metadata?.reviewTranscriptInput !== 'unsupported',
     ...(selected ? { profileId: selected.profileId,
       ...(selected.profileSourceCustody ? { profileSourceCustody: selected.profileSourceCustody } : {}) } : {}) };
@@ -201,7 +209,8 @@ export async function buildReviewEngineInventory(
     if (!item) return [];
     const { sessionTranscript, ...facts } = resolveReviewProfileFacts(item.backendId, params.profileCatalog, selection);
     if (params.scope && !facts.reviewScopes.includes(params.scope)) return [];
-    return [{ ...item, ...facts, capabilities: { ...item.capabilities, sessionTranscript } }];
+    const { costConsent: _defaultCostConsent, ...selectionItem } = item;
+    return [{ ...selectionItem, ...facts, capabilities: { ...item.capabilities, sessionTranscript } }];
   });
   return { items, selectionItems };
 }
