@@ -236,6 +236,8 @@ export type WriteSessionMarkerOptions = Readonly<{
   preserveRunnerAgentSourceCustody?: boolean;
   preserveRunnerManagedDependencyRetention?: boolean;
   preserveMaterializedStateObservationBinding?: boolean;
+  /** The held-Agent owner replaces the list itself; every other writer keeps it. */
+  preserveHeldAgents?: boolean;
   adoptCanonicalSessionIdFromPidPlaceholder?: boolean;
 }>;
 
@@ -520,8 +522,22 @@ async function writeSessionMarkerUnlocked(
     && (canonicalAdoptionRequested || sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
       happySessionId: marker.happySessionId, processStartTimeMs: marker.processStartTimeMs,
     })) ? existingMarkerFromDisk.linuxLaunchUnit : undefined;
+  // The runner's held Agents survive it: a respawned runner or a restarted daemon adopts them
+  // from this record, so a refresh of the same runner process keeps it.
+  const preservedHeldAgents =
+    options.preserveHeldAgents !== false
+    && marker.heldAgentsV1 === undefined
+    && existingMarkerFromDisk?.heldAgentsV1?.length
+    && marker.processStartTimeMs !== undefined
+    && sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
+      happySessionId: marker.happySessionId,
+      processStartTimeMs: marker.processStartTimeMs,
+    })
+      ? existingMarkerFromDisk.heldAgentsV1
+      : undefined;
   const { trackingKey: _trackingKey, ...markerBody } = marker;
   const payload: StoredDaemonSessionMarker = DaemonSessionMarkerSchema.parse({
+    ...(preservedHeldAgents ? { heldAgentsV1: preservedHeldAgents } : {}),
     ...markerBody,
     ...(marker.linuxLaunchUnit ?? retainedLinuxLaunchUnit ? { linuxLaunchUnit: marker.linuxLaunchUnit ?? retainedLinuxLaunchUnit } : {}),
     ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
@@ -1218,7 +1234,8 @@ export async function updateSessionMarkerHeldAgents(params: Readonly<{
     const existing = await readSessionMarker(params.trackingKey);
     if (!existing || existing.happySessionId !== params.sessionId) return false;
     const { happyHomeDir: _happyHomeDir, updatedAt: _updatedAt, heldAgentsV1: _previous, ...rest } = existing;
-    await writeSessionMarkerUnlocked({ ...rest, ...(params.heldAgentsV1.length ? { heldAgentsV1: [...params.heldAgentsV1] } : {}) });
+    await writeSessionMarkerUnlocked({ ...rest, ...(params.heldAgentsV1.length ? { heldAgentsV1: [...params.heldAgentsV1] } : {}) },
+      { preserveHeldAgents: false });
     return true;
   });
 }

@@ -1342,6 +1342,8 @@ export async function startDaemonSessionControlRuntime(
     startupTerminalRecovery?: Readonly<{
       disconnectedTerminalHostCandidates: ReadonlyArray<DisconnectedTerminalHostCandidate>;
       unresolvedTerminalHostSessionIds: ReadonlyArray<string>;
+      /** Dead runners whose primary Agent is still held (`reattachTrackedSessionsFromMarkers`). */
+      heldAgentRespawnCandidates?: ReadonlyArray<TrackedSession>;
     }>;
     onAlreadyRunningSessionAdopted?: (sessionId: string) => Promise<void>;
     connectedServiceGroupHomeCleanupScheduler?: Pick<
@@ -3865,6 +3867,9 @@ export async function startDaemonSessionControlRuntime(
       },
       retireCandidate: retireDisconnectedTerminalHostCandidate,
     });
+  // One supervision per exact attachment at a time: startup recovery runs beside the resume
+  // gate and Stop, which share it instead of retiring the same host twice.
+  const disconnectedTerminalHostSupervisionsInFlight = new Map<string, Promise<DisconnectedTerminalHostSupervisionResult>>();
   const superviseDisconnectedTerminalHost = async (
     candidate: DisconnectedTerminalHostCandidate,
   ): Promise<DisconnectedTerminalHostSupervisionResult> => {
@@ -3872,6 +3877,17 @@ export async function startDaemonSessionControlRuntime(
       candidate.sessionId,
     );
     if (existing) return existing;
+    const flightKey = `${candidate.sessionId}\0${candidate.attachmentId}`;
+    const inFlight = disconnectedTerminalHostSupervisionsInFlight.get(flightKey);
+    if (inFlight) return await inFlight;
+    const supervision = superviseDisconnectedTerminalHostOnce(candidate)
+      .finally(() => disconnectedTerminalHostSupervisionsInFlight.delete(flightKey));
+    disconnectedTerminalHostSupervisionsInFlight.set(flightKey, supervision);
+    return await supervision;
+  };
+  const superviseDisconnectedTerminalHostOnce = async (
+    candidate: DisconnectedTerminalHostCandidate,
+  ): Promise<DisconnectedTerminalHostSupervisionResult> => {
     const adapters = (await params.loadTerminalHostAdapters?.()) ?? {};
     const result = await superviseDisconnectedTerminalHostCandidate({
       candidate,
@@ -3924,9 +3940,17 @@ export async function startDaemonSessionControlRuntime(
     }
     return result;
   };
-  await Promise.all(
+  // Recovery of hosts left by ended runners runs beside startup, never ahead of it: retiring a
+  // dead host writes Account metadata through owners this startup has not finished preparing
+  // (a restarted daemon waited on it forever, 2026-11-18 windows2). Each consumer that needs a
+  // verdict awaits the same memoized supervision.
+  void Promise.all(
     disconnectedTerminalHostCandidates.map(superviseDisconnectedTerminalHost),
-  );
+  ).catch((error) => {
+    logger.warn('[DAEMON RUN] Startup terminal-host recovery failed; the next supervision pass retries it', {
+      error: serializeAxiosErrorForLog(error),
+    });
+  });
   const physicallyRetiredTerminalAttachmentIdBySessionId = new Map<
     string,
     string
@@ -7367,6 +7391,42 @@ export async function startDaemonSessionControlRuntime(
       });
     },
   });
+  /** The respawn owner's entry for a runner that ended unexpectedly (its spared Agent rides along). */
+  const handleRunnerUnexpectedExit = async (tracked: TrackedSession, exit: ChildExit): Promise<void> => {
+    const transientSpawnOptions = tracked.happySessionId
+      ? takeVersionRuntimeRefreshTransientSpawnOptions(
+          tracked.happySessionId,
+          tracked.pid,
+        )
+      : undefined;
+    const disposition = sessionRunnerRespawnManager.handleUnexpectedExit(
+      tracked,
+      exit,
+      {
+        forceRestart: params.connectedServicesRestartRequestedSessions.has(
+          tracked.trackingKey,
+        ),
+        ...(tracked.plannedRestartReason ? { restartReason: tracked.plannedRestartReason } : {}),
+        ...(transientSpawnOptions
+          ? { spawnOptionsOverride: transientSpawnOptions }
+          : {}),
+      },
+    );
+    if (disposition === 'scheduled') {
+      runnerRespawnScheduledSessions.add(tracked.trackingKey);
+    } else if (disposition === 'ignored' && tracked.happySessionId) {
+      await sparedHeldAgents.end(tracked.happySessionId);
+      runnerRespawnScheduledSessions.delete(tracked.trackingKey);
+      await settleCapturedRunnerTerminal({
+        sessionId: tracked.happySessionId,
+        previousTrackingKey: tracked.trackingKey,
+        reason: 'no_restart',
+      });
+    } else {
+      runnerRespawnScheduledSessions.delete(tracked.trackingKey);
+      if (tracked.happySessionId && disposition === 'terminal') await sessionRunnerRespawnManager.awaitTerminalSettlement(tracked.happySessionId);
+    }
+  };
   const onChildExitedBase = createOnChildExited({
     releaseSessionOwnedNativeBindings: params.releaseSessionOwnedNativeBindings,
     skillStore: params.skillStore,
@@ -7486,41 +7546,7 @@ export async function startDaemonSessionControlRuntime(
         );
       }
     },
-    onUnexpectedExit: async (tracked, exit) => {
-      const transientSpawnOptions = tracked.happySessionId
-        ? takeVersionRuntimeRefreshTransientSpawnOptions(
-            tracked.happySessionId,
-            tracked.pid,
-          )
-        : undefined;
-      const disposition = sessionRunnerRespawnManager.handleUnexpectedExit(
-        tracked,
-        exit,
-        {
-          forceRestart: params.connectedServicesRestartRequestedSessions.has(
-            tracked.trackingKey,
-          ),
-          ...(tracked.plannedRestartReason ? { restartReason: tracked.plannedRestartReason } : {}),
-          ...(transientSpawnOptions
-            ? { spawnOptionsOverride: transientSpawnOptions }
-            : {}),
-        },
-      );
-      if (disposition === 'scheduled') {
-        runnerRespawnScheduledSessions.add(tracked.trackingKey);
-      } else if (disposition === 'ignored' && tracked.happySessionId) {
-        await sparedHeldAgents.end(tracked.happySessionId);
-        runnerRespawnScheduledSessions.delete(tracked.trackingKey);
-        await settleCapturedRunnerTerminal({
-          sessionId: tracked.happySessionId,
-          previousTrackingKey: tracked.trackingKey,
-          reason: 'no_restart',
-        });
-      } else {
-        runnerRespawnScheduledSessions.delete(tracked.trackingKey);
-        if (tracked.happySessionId && disposition === 'terminal') await sessionRunnerRespawnManager.awaitTerminalSettlement(tracked.happySessionId);
-      }
-    },
+    onUnexpectedExit: handleRunnerUnexpectedExit,
     isExitUnexpectedOverride: (tracked) => {
       if (!params.connectedServicesRestartRequestedSessions.has(tracked.trackingKey)) {
         return null;
@@ -7618,6 +7644,23 @@ export async function startDaemonSessionControlRuntime(
       if (candidate) registerDisconnectedTerminalHostCandidate(candidate);
     },
   });
+  // A runner that ended while no daemon watched it (its own crash, or the previous daemon's
+  // death took it) and whose Agent is still held: the same spare, respawn and adoption as a
+  // crash this daemon observes. Startup never waits on it; a held, not yet adopted Agent is a
+  // known state.
+  for (const tracked of params.startupTerminalRecovery?.heldAgentRespawnCandidates ?? []) {
+    void (async () => {
+      const spared = await sparedHeldAgents.spare(tracked);
+      if (!spared) return;
+      tracked.sparedHeldAgentV1 = { ...spared.held, ...(spared.turnId ? { turnId: spared.turnId } : {}) };
+      spared.handOff();
+      await handleRunnerUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+    })().catch((error) => {
+      logger.warn('[DAEMON RUN] Held Agent of an ended runner was not handed to respawn', {
+        sessionId: tracked.happySessionId, error: serializeAxiosErrorForLog(error),
+      });
+    });
+  }
   onChildExited = async (pid, exit) => {
     // A Session-addressed end (one Session of a session host) concerns only that Session.
     const hostedBeforeExit = trackedSessionsForProcess(params.trackedSessionsByKey, pid)

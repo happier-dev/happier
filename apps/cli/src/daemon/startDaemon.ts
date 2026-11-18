@@ -1348,6 +1348,7 @@ export async function startDaemon(
       Awaited<ReturnType<typeof reattachTrackedSessionsFromMarkers>>['disconnectedTerminalHostCandidates']
     > = [];
     let unresolvedTerminalHostSessionIds: ReadonlyArray<string> = [];
+    let heldAgentRespawnCandidates: ReadonlyArray<TrackedSession> = [];
     let terminalHostAdapterInventoryPromise: ReturnType<typeof createDefaultTerminalHostAdapterInventory> | null = null;
     const loadTerminalHostAdapters = async () => {
       terminalHostAdapterInventoryPromise ??= createDefaultTerminalHostAdapterInventory({
@@ -1381,6 +1382,7 @@ export async function startDaemon(
     }
     disconnectedTerminalHostCandidates = startupReattachResult.disconnectedTerminalHostCandidates ?? [];
     unresolvedTerminalHostSessionIds = startupReattachResult.unresolvedTerminalHostSessionIds ?? [];
+    heldAgentRespawnCandidates = startupReattachResult.heldAgentRespawnCandidates ?? [];
     await skillStore.reconcileSkillSessionDirs({
       liveSessionIds: startupReattachResult.inventoryReliable === true
         ? [...trackedSessionsByKey.values()].map(tracked => tracked.happySessionId).filter((id): id is string => Boolean(id))
@@ -2809,6 +2811,7 @@ export async function startDaemon(
       startupTerminalRecovery: {
         disconnectedTerminalHostCandidates,
         unresolvedTerminalHostSessionIds,
+        heldAgentRespawnCandidates,
       },
       onAlreadyRunningSessionAdopted: async (sessionId) => {
         pendingSessionMachineAccessBindingIds.add(sessionId);

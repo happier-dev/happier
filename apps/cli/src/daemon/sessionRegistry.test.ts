@@ -71,6 +71,25 @@ describe('sessionRegistry', () => {
   const originalReleaseChannel = process.env.HAPPIER_RELEASE_CHANNEL;
   let happyHomeDir: string;
 
+  // The held Agent record is what a restarted daemon adopts from; the accepted-spawn marker
+  // refresh that follows the runner's report must not erase it (observed on windows2).
+  it('keeps the held Agent record through same-process marker rewrites until the runner replaces it', async () => {
+    const { writeSessionMarker, listSessionMarkers, updateSessionMarkerHeldAgents } = await import('./sessionRegistry');
+    const marker = { trackingKey: legacyPidSessionTrackingKey(123461), pid: 123461,
+      happySessionId: 'held-session', startedBy: 'daemon' as const, processStartTimeMs: 123 };
+    const held = { role: 'primary' as const, socketPath: '/tmp/holder.sock', holderPid: 51001, agentPid: 51002 };
+    await writeSessionMarker(marker);
+    await expect(updateSessionMarkerHeldAgents({ trackingKey: marker.trackingKey, sessionId: 'held-session', heldAgentsV1: [held] }))
+      .resolves.toBe(true);
+    await writeSessionMarker(marker);
+    expect((await listSessionMarkers())[0]?.heldAgentsV1).toEqual([held]);
+    await updateSessionMarkerHeldAgents({ trackingKey: marker.trackingKey, sessionId: 'held-session', heldAgentsV1: [] });
+    expect((await listSessionMarkers())[0]).not.toHaveProperty('heldAgentsV1');
+    await updateSessionMarkerHeldAgents({ trackingKey: marker.trackingKey, sessionId: 'held-session', heldAgentsV1: [held] });
+    await writeSessionMarker({ ...marker, processStartTimeMs: 124 });
+    expect((await listSessionMarkers())[0]).not.toHaveProperty('heldAgentsV1');
+  });
+
   it('keeps daemon retirement evidence when a terminal-only caller cleans stopped markers', async () => {
     const { writeSessionMarker, removeSessionMarkerIfOwned, listSessionMarkers } = await import('./sessionRegistry');
     await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(123451), pid: 123451, happySessionId: 'stopped-session', startedBy: 'daemon', processStartTimeMs: 123 });

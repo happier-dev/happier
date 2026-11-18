@@ -522,6 +522,66 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     expect(removeSessionMarker).not.toHaveBeenCalled();
   });
 
+  describe('a dead runner whose Agent is still held', () => {
+    const held = { role: 'primary' as const, socketPath: '/tmp/happy/holder.sock', holderPid: 51001, agentPid: 51002 };
+    const attachmentId = 'attachment-held-pty' as NonNullable<TerminalHostHandle['attachmentId']>;
+    const marker = {
+      trackingKey: legacyPidSessionTrackingKey(43219), pid: 43219,
+      happySessionId: 'session-held-pty',
+      happyHomeDir: '/tmp/happy',
+      createdAt: 1,
+      updatedAt: 1,
+      startedBy: 'daemon',
+      cwd: '/workspace/project',
+      heldAgentsV1: [held],
+      metadata: { terminal: { mode: 'pty', pty: { host: 'holder' } } },
+    };
+    const handle: TerminalHostHandle & { attachmentId: NonNullable<TerminalHostHandle['attachmentId']> } = {
+      attachmentId,
+      kind: 'pty',
+      sessionName: 'happier-held-pty',
+      paneId: 'happier-held-pty',
+      attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' },
+    };
+    beforeEach(() => {
+      vi.mocked(listSessionMarkers).mockResolvedValue([marker as any]);
+      terminalHostAttachmentMocks.readState.mockResolvedValue({ status: 'present', info: {
+        version: 2, attachmentId, sessionId: marker.happySessionId, handle, updatedAt: 1,
+      } });
+      vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+      });
+    });
+
+    // Whatever ended the runner (its crash, or the daemon's own death), the live held Agent goes
+    // to the respawn-and-adopt owner, never to dead-host retirement.
+    it('hands a live held Agent to respawn and adoption instead of terminal-host recovery', async () => {
+      const probeHeldAgent = vi.fn(async () => true);
+
+      const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map(), probeHeldAgent });
+
+      expect(probeHeldAgent).toHaveBeenCalledWith(held);
+      expect(result.heldAgentRespawnCandidates).toEqual([expect.objectContaining({
+        happySessionId: marker.happySessionId, trackingKey: marker.trackingKey, pid: marker.pid,
+        startedBy: 'daemon', heldAgentsV1: [held],
+      })]);
+      expect(result.disconnectedTerminalHostCandidates).toBeUndefined();
+      expect(result.orphanedDeadDaemonSessions).toEqual([]);
+      expect(removeSessionMarker).not.toHaveBeenCalled();
+    });
+
+    it('keeps the held record on the terminal-host candidate when the holder is gone', async () => {
+      const result = await reattachTrackedSessionsFromMarkers({
+        trackedSessionsByKey: new Map(), probeHeldAgent: async () => false,
+      });
+
+      expect(result.heldAgentRespawnCandidates).toBeUndefined();
+      expect(result.disconnectedTerminalHostCandidates).toEqual([expect.objectContaining({
+        sessionId: marker.happySessionId, terminalMode: 'pty', heldAgent: held,
+      })]);
+    });
+  });
+
   it('binds the marker-authored actual Windows mode to a disconnected host candidate', async () => {
     const marker = {
       trackingKey: legacyPidSessionTrackingKey(43218), pid: 43218,

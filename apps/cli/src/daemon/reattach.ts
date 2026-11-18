@@ -126,6 +126,71 @@ export function hasAuthorityRestorationMarker(marker: DaemonSessionMarker): bool
     && !!marker.agentRuntimeDaemonServiceAuthorityFilePath;
 }
 
+/**
+ * A marker's restorable launch: the respawn descriptor's spawn options under the retained
+ * runtime snapshot, and the Agent's resume id. `null` when the marker cannot be restored
+ * (unreadable resume binding, or a descriptor that does not round-trip).
+ */
+export function restoreMarkerSpawnOptions(params: Readonly<{
+  marker: DaemonSessionMarker;
+  /** The runner's command line (live process, or the marker's record of it). */
+  command?: string;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+  encryptionMaterial?: NonNullable<StoredCredentials['encryption']>;
+}>): Readonly<{ spawnOptions?: SpawnSessionOptions; vendorResumeId?: string }> | null {
+  const { marker } = params;
+  const encryptionMaterial = params.encryptionMaterial;
+  const respawnParsed = SessionRunnerRespawnDescriptorV1Schema.safeParse(marker.respawn);
+  if (marker.respawn !== undefined && !respawnParsed.success) return null;
+  const persistedMetadata = marker.metadata && typeof marker.metadata === 'object' && !Array.isArray(marker.metadata)
+    ? marker.metadata as Record<string, unknown>
+    : null;
+  let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
+  try {
+    persistedProviderResumeState = readPersistedProviderResumeState(persistedMetadata);
+  } catch (error) {
+    if (error instanceof PersistedProviderResumeBindingError) return null;
+    throw error;
+  }
+  if (persistedProviderResumeState.binding && (!respawnParsed.success || respawnParsed.data.version !== 2)) {
+    return null;
+  }
+
+  // Opaque Agent identity on every reattach branch: presence only, bytes kept.
+  const commandVendorResumeId =
+    readNonBlankOpaqueIdentifier(extractResumeIdFromCommand(params.command ?? '')) ?? undefined;
+  let spawnOptions: SpawnSessionOptions | undefined;
+  let vendorResumeId = commandVendorResumeId;
+  if (respawnParsed.success) {
+    const restoredSpawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(
+      respawnParsed.data,
+      {
+        ...(params.deviceLocalSecretStorage
+          ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+          : {}),
+        ...(encryptionMaterial ? { encryptionMaterial } : {}),
+      },
+    );
+    const runtimeSnapshot = resolveSessionRuntimeSnapshot({
+      resolutionMode: 'retained_live_process',
+      incomingOptions: restoredSpawnOptions,
+      persistedMetadata,
+      trackedVendorResumeId: commandVendorResumeId,
+      persistedVendorResumeId: respawnParsed.data.vendorResumeId,
+    });
+    spawnOptions = runtimeSnapshot.spawnOptions;
+    vendorResumeId = runtimeSnapshot.snapshot.vendorResumeId?.value
+      ?? commandVendorResumeId
+      ?? readNonBlankOpaqueIdentifier(respawnParsed.data.vendorResumeId) ?? undefined;
+
+    const validatedRespawnDescriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions);
+    if (!validatedRespawnDescriptor || validatedRespawnDescriptor.version !== respawnParsed.data.version) {
+      return null;
+    }
+  }
+  return { ...(spawnOptions ? { spawnOptions } : {}), ...(vendorResumeId ? { vendorResumeId } : {}) };
+}
+
 export function adoptSessionsFromMarkers(params: {
   markers: DaemonSessionMarker[];
   happyProcesses: HappyProcessInfo[];
@@ -229,52 +294,14 @@ export function adoptSessionsFromMarkers(params: {
       continue;
     }
 
-    const persistedMetadata = marker.metadata && typeof marker.metadata === 'object' && !Array.isArray(marker.metadata)
-      ? marker.metadata as Record<string, unknown>
-      : null;
-    let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
-    try {
-      persistedProviderResumeState = readPersistedProviderResumeState(persistedMetadata);
-    } catch (error) {
-      if (error instanceof PersistedProviderResumeBindingError) continue;
-      throw error;
-    }
-    if (persistedProviderResumeState.binding && (!respawnParsed.success || respawnParsed.data.version !== 2)) {
-      continue;
-    }
-
-    // Opaque Agent identity on every reattach branch: presence only, bytes kept.
-    const commandVendorResumeId =
-      readNonBlankOpaqueIdentifier(extractResumeIdFromCommand(currentCommand)) ?? undefined;
-    let spawnOptions: SpawnSessionOptions | undefined;
-    let vendorResumeId = commandVendorResumeId;
-    if (respawnParsed.success) {
-      const restoredSpawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(
-        respawnParsed.data,
-        {
-          ...(params.deviceLocalSecretStorage
-            ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
-            : {}),
-          ...(encryptionMaterial ? { encryptionMaterial } : {}),
-        },
-      );
-      const runtimeSnapshot = resolveSessionRuntimeSnapshot({
-        resolutionMode: 'retained_live_process',
-        incomingOptions: restoredSpawnOptions,
-        persistedMetadata,
-        trackedVendorResumeId: commandVendorResumeId,
-        persistedVendorResumeId: respawnParsed.data.vendorResumeId,
-      });
-      spawnOptions = runtimeSnapshot.spawnOptions;
-      vendorResumeId = runtimeSnapshot.snapshot.vendorResumeId?.value
-        ?? commandVendorResumeId
-        ?? readNonBlankOpaqueIdentifier(respawnParsed.data.vendorResumeId) ?? undefined;
-
-      const validatedRespawnDescriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions);
-      if (!validatedRespawnDescriptor || validatedRespawnDescriptor.version !== respawnParsed.data.version) {
-        continue;
-      }
-    }
+    const restored = restoreMarkerSpawnOptions({
+      marker,
+      command: currentCommand,
+      ...(params.deviceLocalSecretStorage ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage } : {}),
+      ...(encryptionMaterial ? { encryptionMaterial } : {}),
+    });
+    if (!restored) continue;
+    const { spawnOptions, vendorResumeId } = restored;
 
     params.trackedSessionsByKey.set(marker.trackingKey, buildTrackedSessionFromMarker({
       marker,

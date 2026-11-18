@@ -18,6 +18,8 @@ import { removeSessionMarker as removeDefaultSessionMarker } from '../sessionReg
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
 import type { ExactTerminalControlServiceabilityRetirement } from './retireTerminalControlServiceability';
 import type { TrackedSession } from '../types';
+import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { SessionTrackingKey } from './sessionTrackingKey';
 import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
 
@@ -32,6 +34,8 @@ export type DisconnectedTerminalHostCandidate = Readonly<{
   controlDescriptorAvailable?: boolean;
   spawnOptions?: TrackedSession['spawnOptions'];
   metadata?: TrackedSession['happySessionMetadataFromLocalWebhook'];
+  /** The Session holder's record of the primary Agent: a `pty` host's only liveness source. */
+  heldAgent?: SessionHeldAgentV1;
 }>;
 
 export type DisconnectedTerminalHostSupervisionResult =
@@ -85,6 +89,9 @@ export async function shouldRetainTrackedTerminalHostExitMarker(input: Readonly<
     || Boolean(terminal?.mode && terminal.mode !== 'plain');
 }
 
+const heldAgentOf = (tracked: TrackedSession): SessionHeldAgentV1 | undefined =>
+  tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
+
 /** Final-exit owned-host selection; borrowed-shell release has its own disposition. */
 export async function resolveTrackedSessionTerminalHostExitCandidate(input: Readonly<{
   tracked: TrackedSession;
@@ -121,6 +128,7 @@ export async function resolveTrackedSessionTerminalHostExitCandidate(input: Read
     attachmentId: attachmentInfo.attachmentId, handle: attachmentInfo.handle, terminalMode,
     ...(tracked.spawnOptions ? { spawnOptions: tracked.spawnOptions } : {}),
     ...(tracked.happySessionMetadataFromLocalWebhook ? { metadata: tracked.happySessionMetadataFromLocalWebhook } : {}),
+    ...(heldAgentOf(tracked) ? { heldAgent: heldAgentOf(tracked)! } : {}),
     ...(tracked.publishedTerminalControlServiceabilityAttachmentId === attachmentInfo.attachmentId
       ? { controlDescriptorAvailable: true } : {}),
   };
@@ -201,6 +209,24 @@ export function resolveDisconnectedTerminalMode(input: Readonly<{
   return mode === 'windows_terminal' || mode === 'windows_console' ? mode : null;
 }
 
+/** A held Agent is alive while its holder and its Agent processes are. */
+async function isHeldAgentProcessAlive(held: SessionHeldAgentV1): Promise<boolean> {
+  return isPidPresent(held.holderPid) && isPidPresent(held.agentPid);
+}
+
+/**
+ * A `pty` host's Agent is held by its Session holder, outside every runner and this daemon, so
+ * only the holder's record proves it alive or dead. The PTY adapter of a process that never owned
+ * the terminal knows nothing; without a record the answer is inconclusive, never dead.
+ */
+async function probeHeldAgentForRecovery(
+  held: SessionHeldAgentV1 | undefined,
+  isAlive: (held: SessionHeldAgentV1) => Promise<boolean>,
+): Promise<Readonly<{ status: 'alive' | 'dead' | 'inconclusive' }>> {
+  if (!held) return { status: 'inconclusive' };
+  return { status: await isAlive(held) ? 'alive' : 'dead' };
+}
+
 export async function superviseDisconnectedTerminalHostCandidate(input: Readonly<{
   candidate: DisconnectedTerminalHostCandidate;
   terminalHostAdapters: TerminalHostAdapters;
@@ -215,6 +241,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
     attachmentInfo: ExactTerminalHostAttachmentInfo;
     terminalMode: TerminalMode;
   }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
+  isHeldAgentAlive?: (held: SessionHeldAgentV1) => Promise<boolean>;
 }>): Promise<DisconnectedTerminalHostSupervisionResult> {
   const readAttachment = input.readTerminalAttachmentInfo ?? readDefaultTerminalHostAttachmentInfo;
   const current = await readAttachment({
@@ -232,7 +259,9 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   const adapter = input.terminalHostAdapters[current.handle.kind];
   if (!adapter) return { state: 'unknown', reason: 'adapter_unavailable' };
 
-  const probe = await probeTerminalHostForRecovery({ adapter, handle: current.handle });
+  const probe = current.handle.kind === 'pty'
+    ? await probeHeldAgentForRecovery(input.candidate.heldAgent, input.isHeldAgentAlive ?? isHeldAgentProcessAlive)
+    : await probeTerminalHostForRecovery({ adapter, handle: current.handle });
   if (input.isCurrent?.() === false) return { state: 'unknown', reason: 'attachment_changed' };
   let destroyOptionalClient = false;
   if (probe.status === 'alive') {

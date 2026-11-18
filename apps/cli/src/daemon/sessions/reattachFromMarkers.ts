@@ -25,7 +25,10 @@ import {
   adoptSessionsFromMarkers,
   hasAuthorityRestorationMarker,
   isOwnedLiveDaemonSessionProcessCommand,
+  restoreMarkerSpawnOptions,
 } from '../reattach';
+import { buildTrackedSessionFromMarker } from './trackedSessionFromMarker';
+import { probeAdoptableSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
   hashProcessCommand,
@@ -63,6 +66,7 @@ function indicatesDaemonStartedSessionCommand(command: string): boolean {
   const normalized = command.replace(/\s+/g, ' ').trim();
   return /(?:^|[\s"])--started-by"?(?:=|\s+)\s*"?daemon"?(?=$|[\s"])/i.test(normalized);
 }
+
 
 function extractBackendTargetFromCommand(command: string): SpawnSessionOptions['backendTarget'] | undefined {
   const happyStartingModeIndex = command.indexOf(' --happy-starting-mode');
@@ -613,6 +617,8 @@ export type ReattachTrackedSessionsFromMarkersResult = Readonly<{
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
   recoveredLiveSessionIds?: ReadonlyArray<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
+  /** Dead runners whose primary Agent is still held: the respawn owner adopts each one. */
+  heldAgentRespawnCandidates?: ReadonlyArray<TrackedSession>;
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
   connectedServiceRestartIntents: ReadonlyArray<never>;
   directoryMissingSessions?: ReadonlyArray<Readonly<{ sessionId: string; errorCode: 'SESSION_DIRECTORY_MISSING' }>>;
@@ -623,6 +629,7 @@ function buildReattachResult(params: Readonly<{
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
   recoveredLiveSessionIds: ReadonlySet<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
+  heldAgentRespawnCandidates?: ReadonlyArray<TrackedSession>;
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
   directoryMissingSessions: ReadonlyArray<Readonly<{ sessionId: string; errorCode: 'SESSION_DIRECTORY_MISSING' }>>;
 }>): ReattachTrackedSessionsFromMarkersResult {
@@ -644,6 +651,9 @@ function buildReattachResult(params: Readonly<{
     ...(params.disconnectedTerminalHostCandidates?.length
       ? { disconnectedTerminalHostCandidates: params.disconnectedTerminalHostCandidates }
       : {}),
+    ...(params.heldAgentRespawnCandidates?.length
+      ? { heldAgentRespawnCandidates: params.heldAgentRespawnCandidates }
+      : {}),
     ...(params.unresolvedTerminalHostSessionIds?.length
       ? { unresolvedTerminalHostSessionIds: Array.from(new Set(params.unresolvedTerminalHostSessionIds)) }
       : {}),
@@ -661,10 +671,14 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   terminalHostAdapters?: unknown;
   loadTerminalHostAdapters?: unknown;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
+  /** Whether a held Agent is alive and adoptable, from its holder (record, socket, PIDs). */
+  probeHeldAgent?: (held: SessionHeldAgentV1) => Promise<boolean>;
 }>): Promise<ReattachTrackedSessionsFromMarkersResult> {
   const { trackedSessionsByKey, credentials, deviceLocalSecretStorage } = params;
   const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
   const disconnectedTerminalHostCandidates: DisconnectedTerminalHostCandidate[] = [];
+  const heldAgentRespawnCandidates: TrackedSession[] = [];
+  const probeHeldAgent = params.probeHeldAgent ?? probeAdoptableSessionHolder;
   const unresolvedTerminalHostSessionIds: string[] = [];
   const directoryMissingSessions: Array<Readonly<{ sessionId: string; errorCode: 'SESSION_DIRECTORY_MISSING' }>> = [];
   // On daemon restart, reattach to still-running sessions via disk markers (stack-scoped by HAPPIER_HOME_DIR).
@@ -676,6 +690,25 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         aliveMarkers.push(marker);
       } else {
         const sessionId = normalizeSessionId(marker.happySessionId);
+        const heldAgent = marker.heldAgentsV1?.find(agent => agent.role === 'primary');
+        // The runner ended (its crash, or this daemon's predecessor's death) but its Agent is
+        // still held: an adoptable Agent is a known state for the respawn owner, not a dead host.
+        if (heldAgent && marker.startedBy === 'daemon' && sessionId && await probeHeldAgent(heldAgent)) {
+          const restored = restoreMarkerSpawnOptions({
+            marker,
+            ...(marker.processCommand ? { command: marker.processCommand } : {}),
+            ...(deviceLocalSecretStorage ? { deviceLocalSecretStorage } : {}),
+            ...(credentials?.encryption ? { encryptionMaterial: credentials.encryption } : {}),
+          });
+          heldAgentRespawnCandidates.push(buildTrackedSessionFromMarker({
+            marker,
+            startedByFallback: 'daemon',
+            ...(restored?.spawnOptions ? { spawnOptions: restored.spawnOptions } : {}),
+            ...(restored?.vendorResumeId ? { vendorResumeId: restored.vendorResumeId } : {}),
+            reattachedFromDiskMarker: true,
+          }));
+          continue;
+        }
         const hasRetainedPlainRunnerOrigin = marker.startedBy === 'daemon' || marker.startedBy === 'terminal';
         const attachmentState = hasRetainedPlainRunnerOrigin && sessionId
           ? await readTerminalHostAttachmentState({ happyHomeDir: marker.happyHomeDir, sessionId })
@@ -706,6 +739,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
             handle: attachmentState.info.handle,
             terminalMode,
             ...(marker.metadata ? { metadata: marker.metadata } : {}),
+            ...(heldAgent ? { heldAgent } : {}),
             controlDescriptorAvailable: hasActiveTerminalControlServiceabilityDescriptor({
               terminal: marker.metadata?.terminal,
               attachmentId: attachmentState.info.attachmentId,
@@ -873,6 +907,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       orphanedDeadDaemonSessions,
       recoveredLiveSessionIds,
       disconnectedTerminalHostCandidates,
+      heldAgentRespawnCandidates,
       unresolvedTerminalHostSessionIds,
       directoryMissingSessions,
     });

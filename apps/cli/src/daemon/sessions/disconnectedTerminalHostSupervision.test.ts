@@ -235,6 +235,32 @@ describe('disconnected terminal-host supervision', () => {
     expect(hostAdapter.dispose).not.toHaveBeenCalled();
   });
 
+  // A held Agent's liveness is its holder's (record and PIDs), never the PTY adapter's view in
+  // a process that never owned that terminal (a fresh daemon, or a respawned runner's peer).
+  it('takes a held PTY Agent\'s liveness from its holder, not the adapter', async () => {
+    const ptyHandle = { ...handle, kind: 'pty' as const };
+    const heldAgent = { role: 'primary' as const, socketPath: '/tmp/happy/holder.sock', holderPid: 51001, agentPid: 51002 };
+    const ptyAdapter = { ...adapter({ paneAlive: false, paneDead: true, observedAt: 1 }), kind: 'pty' as const };
+    const removeAttachment = vi.fn(async (_input: unknown) => true);
+    const candidate = { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy',
+      attachmentId: handle.attachmentId, handle: ptyHandle, terminalMode: 'pty' as const, controlDescriptorAvailable: true };
+    const supervise = (input: Readonly<{ held?: typeof heldAgent; alive?: boolean }>) => superviseDisconnectedTerminalHostCandidate({
+      candidate: { ...candidate, ...(input.held ? { heldAgent: input.held } : {}) },
+      terminalHostAdapters: { pty: ptyAdapter },
+      readTerminalAttachmentInfo: async () => ({ ...attachment(), handle: ptyHandle }),
+      removeTerminalAttachmentInfo: removeAttachment,
+      removeSessionMarker: async () => undefined,
+      probeSessionServiceability: async () => ({ state: 'runner_absent' as const }),
+      isHeldAgentAlive: async () => input.alive === true,
+    });
+
+    await expect(supervise({ held: heldAgent, alive: true })).resolves.toEqual({ state: 'recoverable_unservable', reason: 'runner_absent' });
+    await expect(supervise({})).resolves.toEqual({ state: 'unknown', reason: 'probe_inconclusive' });
+    expect(ptyAdapter.evaluateLiveness).not.toHaveBeenCalled();
+    expect(removeAttachment).not.toHaveBeenCalled();
+    await expect(supervise({ held: heldAgent, alive: false })).resolves.toEqual({ state: 'stopped' });
+  });
+
   it('retires only a positively dead exact attachment', async () => {
     const hostAdapter = adapter({ paneAlive: false, paneDead: true, observedAt: 1 });
     const removeAttachment = vi.fn(async (_input: unknown) => true);
