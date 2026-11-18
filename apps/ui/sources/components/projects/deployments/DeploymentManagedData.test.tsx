@@ -50,9 +50,9 @@ it.each([neonPlugin, supabasePlugin])('offers first-connection recovery with no 
   try {
     const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
     const { EmptyState } = await import('@/components/ui/empty/EmptyState');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-    await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu)
-      .some(node => node.props.testID === 'managed-data.provider')).toBe(true));
+    const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
+    await waitForHomeGovernance(() => expect(screen.findAllByType(SelectionTiles)
+      .some(node => node.props.testIdPrefix === 'managed-data.provider')).toBe(true));
     // The existing platform-link flow uses EmptyState's primary action to open the canonical Connect sheet.
     expect(screen.findAllByType(EmptyState).some(node => typeof node.props.primaryAction?.onPress === 'function')).toBe(true);
     expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
@@ -97,19 +97,21 @@ it.each([neonPlugin, supabasePlugin])('dispatches real $manifest.id project and 
     actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={() => {}} />);
   try {
     const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
     const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
     const operation = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'managed-data.operation');
     const run = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'managed-data.run');
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(operation()).toBeDefined(); });
-    const provider = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'managed-data.provider');
+    const provider = () => screen.findAllByType(SelectionTiles).find(node => node.props.testIdPrefix === 'managed-data.provider');
     const providerKey = `${manifest.id}/${manifest.contributes.deploymentTargets[0]!.id}`;
     await waitForHomeGovernance(async () => {
       await act(async () => {});
-      expect(provider()!.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: providerKey })]));
+      expect(provider()!.props.options).toEqual(expect.arrayContaining([expect.objectContaining({ id: providerKey })]));
     });
-    await act(async () => provider()!.props.onSelect(providerKey));
-    expect(provider()!.props.selectedId).toBe(providerKey);
+    await act(async () => provider()!.props.onChange(providerKey));
+    expect(provider()!.props.value).toBe(providerKey);
+    // The person chooses what to do in their own words; creation reads its options as its own review step.
+    expect(operation()!.props.options.map((option: { id: string }) => option.id)).not.toContain('projects.provisionOptions');
     await act(async () => operation()!.props.onChange('projects.list'));
     await act(async () => screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'management-token' } }));
     expect(run()!.props.disabled).toBe(false);
@@ -118,7 +120,7 @@ it.each([neonPlugin, supabasePlugin])('dispatches real $manifest.id project and 
       cards: screen.findAllByType(SurfaceStateCard).map(node => ({ kind: node.props.kind, code: node.props.diagnosticCode })),
       requests: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`),
     })).toHaveLength(1); expect(run()!.props.loading).toBe(false); });
-    await act(async () => operation()!.props.onChange('projects.provisionOptions'));
+    await act(async () => operation()!.props.onChange('projects.provision'));
     expect(run()!.props.disabled).toBe(false);
     await act(async () => run()!.props.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(calls).toHaveLength(2); expect(run()!.props.loading).toBe(false); });

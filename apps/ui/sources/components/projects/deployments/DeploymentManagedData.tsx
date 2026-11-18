@@ -18,6 +18,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
@@ -72,7 +73,6 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const [error, setError] = React.useState<string | null>(null);
   const [bound, setBound] = React.useState(false);
   const [replace, setReplace] = React.useState<readonly string[]>([]);
-  const [providerOpen, setProviderOpen] = React.useState(false);
   const [operationOpen, setOperationOpen] = React.useState(false);
   const [cursors, setCursors] = React.useState<readonly string[]>([]);
   const [fieldCursors, setFieldCursors] = React.useState<Readonly<Record<string, readonly string[]>>>({});
@@ -186,17 +186,25 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
-  const choices = operations.map(entry => ({ id: entry.role, label: entry.title }));
+  // Choices are what the person does, in their words: create, link, or find what is there. Reading creation
+  // options is creation's own review step, never a choice beside it.
+  const choices = operations.filter(entry => entry.role !== 'projects.provisionOptions' || !operations.some(other => other.role === 'projects.provision'))
+    .map(entry => ({ id: entry.role, label: managedDataOperationLabel(entry) }));
   return <ListPresentationProvider value="page" pageInsets="contained"><View testID="managed-data" style={deploymentSheetStyles.body}>
     {state.status === 'loading' ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
       : state.status === 'failed' ? <SurfaceStateCard size="line" kind="error" title={t('common.unavailable')} diagnosticCode={state.code}
         action={{ label: t('common.retry'), onPress: retry }} />
       : !target || !operation ? <SurfaceStateCard size="line" kind="empty" title={t('projects.deployments.managedData.empty')} /> : <>
+      {/* Where the database runs is the first choice, drawn as the providers themselves (lab database-createmanaged). */}
+      {!props.linked ? <ItemGroup title={t('projects.deployments.databaseProviderTitle')}>
+        <SelectionTiles<string> testIdPrefix="managed-data.provider" surface="sheet" minimumColumns={1}
+          accessibilityLabel={t('projects.deployments.databaseProviderTitle')}
+          options={targets.map(entry => ({ id: entry.key, title: entry.title, disabled: busy || uncertain || partial,
+            mark: <PluginMark title={entry.title} pluginId={entry.pluginId} /> }))}
+          value={target.key}
+          onChange={key => { if (!key || key === target.key) return; setTargetKey(key); setRole(null); setAccount(null); setValues({}); reset(); }} />
+      </ItemGroup> : null}
       <ItemGroup header="none">
-        {!props.linked ? <DropdownMenu testID="managed-data.provider" open={providerOpen} onOpenChange={setProviderOpen}
-          items={targets.map(entry => ({ id: entry.key, title: entry.title }))} selectedId={target.key}
-          onSelect={key => { setProviderOpen(false); setTargetKey(key); setRole(null); setAccount(null); setValues({}); reset(); }}
-          itemTrigger={{ title: t('projects.deployments.databaseProviderTitle'), showSelectedSubtitle: false, itemProps: { disabled: busy || uncertain || partial } }} /> : null}
         {choices.length <= 4 ? <SegmentedChoiceItem testID="managed-data.operation" title={t('projects.deployments.managedData.operation')}
           options={choices} value={operation.role} disabled={busy} onChange={role => { setRole(role); setCursors([]); setFieldCursors({}); setError(null); }} />
           : <DropdownMenu testID="managed-data.operation" open={operationOpen} onOpenChange={setOperationOpen}
@@ -236,6 +244,16 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
     {error ? <SurfaceStateCard testID="managed-data.failed" size="line" kind="error" title={t('common.unavailable')} diagnosticCode={error} /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
+}
+
+/** A provider operation in the person's words; roles without a host word keep the provider's own title. */
+function managedDataOperationLabel(entry: ManagedDataOperation): string {
+  switch (entry.role) {
+    case 'projects.provision': return t('projects.deployments.managedData.operationCreate');
+    case 'projects.link': return t('projects.deployments.managedData.operationLink');
+    case 'projects.list': return t('projects.deployments.managedData.operationFind');
+    default: return entry.title;
+  }
 }
 
 /** Both managed-data operations and Duplicate consume the provider's declared Action fields. */
