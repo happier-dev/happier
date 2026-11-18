@@ -25,6 +25,17 @@ const credentials = { token: 'project-token', encryption: null };
 const ref = { id: 'ref-a', serverId: 'home-a', machineId: 'machine-a', rootPath: '/work/a', createdAtMs: 1 };
 const key = { kind: 'workspace-ref' as const, serverId: 'home-a', id: ref.id };
 const graphKey = { kind: 'relationship-graph' as const };
+function mockWorkspaceMachineReads() {
+  vi.mocked(axios.get).mockImplementation(async url => {
+    if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    const [, id] = new URL(url).pathname.match(/^\/v1\/machines\/([^/]+)$/) ?? [];
+    if (!id) throw new Error(`Unexpected Workspace Machine read: ${url}`);
+    return { status: 200, data: { machine: { id, active: true, installationId: `installation-${id}`,
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+      metadata: encodePlainMachineStoredContent({ host: 'test', platform: 'linux', homeDir: '/home/test',
+        username: 'test', happyCliVersion: 'test', happyHomeDir: '/home/test/.happier' }) } } };
+  });
+}
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(settle => { resolve = settle; });
@@ -313,12 +324,7 @@ describe('Project snapshot refresh availability', () => {
         return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
       })];
     const post = boundary(rows);
-    vi.mocked(axios.get).mockImplementation(async url => url.endsWith('/v1/account/encryption')
-      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
-      : { status: 200, data: { machine: { id: ref.machineId, active: true, installationId: 'installation-a',
-        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
-        metadata: encodePlainMachineStoredContent({ host: 'test', platform: 'linux', homeDir: '/home/test',
-          username: 'test', happyCliVersion: 'test', happyHomeDir: '/home/test/.happier' }) } } });
+    mockWorkspaceMachineReads();
     let loadedRows = 0;
     post.mockImplementation(async (_url, body) => {
       const filter = body as { kinds?: string[]; serverId?: string };
@@ -333,6 +339,23 @@ describe('Project snapshot refresh availability', () => {
     expect(result.workspaceRefs).toEqual([ref]);
     expect(result.organizations).toEqual([]);
     expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
+  });
+
+  it('retains a failed controller observation during Sync target preparation', async () => {
+    const other = { ...ref, id: 'ref-b', machineId: 'machine-b', rootPath: '/work/b' };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const relationship = { v: 1 as const, relationshipId: 'sync', controllerMachineId: ref.machineId,
+      alphaWorkspaceRefId: ref.id, betaWorkspaceRefId: other.id, mode: 'keep_both_in_sync' as const, enabled: true,
+      createdAtMs: 1, updatedAtMs: 1, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } };
+    boundary([createPlainProjectAccountRefRow(ref), createPlainProjectAccountRefRow(other),
+      { key: graphKey, revision: 0, content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } }]);
+    mockWorkspaceMachineReads();
+    const refusal = Object.assign(new Error('Controller observation timed out'), { code: 'ETIMEDOUT' });
+    const readRelationshipStatuses = vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(refusal);
+    const input = { credentials, serverId: ref.serverId, serverHttpBaseUrl: 'https://home.example',
+      sourceWorkspaceRefId: ref.id, targetMachineId: other.machineId, readRelationshipStatuses };
+    await expect(readWorkspaceSyncWorkerTargetSnapshot(input)).resolves.toMatchObject({ relationshipStatuses: [] });
+    await expect(readWorkspaceSyncWorkerTargetSnapshot(input)).rejects.toBe(refusal);
   });
 
   it('reads one organization row without opening a 1,024-row Account census', async () => {

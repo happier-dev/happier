@@ -17,6 +17,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readWebLatencyTracePoint, timeWebLatencyPhase, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 export type WorkspaceSyncWorkerTargetBasis = Readonly<{
   source: WorkspaceRefV1;
@@ -64,27 +65,20 @@ export async function readWorkspaceSyncWorkerTargetSnapshot(input: Parameters<ty
   const component = endpoint?.ok ? deriveWorkspaceSyncTopology({ ...snapshot, serverId: input.serverId }).sets.find(set =>
     set.relationships.some(relationship => relationship.alphaWorkspaceRefId === endpoint.endpoint.id
       || relationship.betaWorkspaceRefId === endpoint.endpoint.id)) : undefined;
-  const controllers = new Set(source.kind === 'resolved' && source.ref.machineId !== input.targetMachineId
-    ? component?.relationships.map(relationship => relationship.controllerMachineId) : []);
+  const controller = source.kind === 'resolved' && source.ref.machineId !== input.targetMachineId
+    ? component?.controllerMachineId : undefined;
+  if (!controller) return { ...snapshot, relationshipStatuses: [] };
   const readStatuses = input.readRelationshipStatuses ?? (async (machineId: string) => {
     const { callMachineRpc } = await import('@/session/transport/rpc/machineRpc');
-    const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
-      machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, request: {}, signal: input.signal });
+    const response = readMachineActionRpcResult(await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
+      machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, request: {}, signal: input.signal }));
     return typeof response === 'object' && response !== null && 'statuses' in response && Array.isArray(response.statuses)
       ? response.statuses : [];
   });
-  const relationshipStatuses = (await Promise.all([...controllers].map(async machineId => {
-    try {
-      const statuses = await readStatuses(machineId);
-      return statuses.flatMap(value => {
-        const parsed = WorkspaceSyncStatusV1Schema.safeParse(value);
-        return parsed.success && parsed.data.controllerMachineId === machineId ? [parsed.data] : [];
-      });
-    } catch {
-      input.signal?.throwIfAborted();
-      return [];
-    }
-  }))).flat();
+  const relationshipStatuses = (await readStatuses(controller)).flatMap(value => {
+    const parsed = WorkspaceSyncStatusV1Schema.safeParse(value);
+    return parsed.success && parsed.data.controllerMachineId === controller ? [parsed.data] : [];
+  });
   return { ...snapshot, relationshipStatuses };
 }
 
