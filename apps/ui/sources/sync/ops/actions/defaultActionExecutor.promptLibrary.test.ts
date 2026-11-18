@@ -499,6 +499,43 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         installHomeGovernanceBoundaries(homes);
     });
 
+    it('discovers theme clients only through a reachable Machine and settles disconnects as unavailable', async () => {
+        const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionIdsV1');
+        const { publishMachineInventoryForTest, publishMachineActivityForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { RpcError, RPC_ERROR_CODES } = await import('@happier-dev/protocol/rpcErrors');
+        const { isMachineReachable } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { resolveVisibleMachinesForActiveServerFromState } = await import('@/sync/store/domains/machines/resolveMachinesForActiveServerFromState');
+        const machine = createMachineFixture({ id: 'theme-carrier', active: true, activeAt: Date.now(), presenceProtocolVersion: 1,
+            access: { custodian: { accountId: 'account-a', displayName: 'Owner' },
+                role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+        const scope = { serverId, accountId: 'account-a' };
+        const dispatch = vi.spyOn(apiSocket, 'callClientAction').mockResolvedValue({
+            result: { v: 1, execution: { ok: true, result: { themes: [] } } }, answeringClients: [{ id: 'second-app', deviceLabel: 'Phone' }],
+        });
+        try {
+            const executor = createDefaultActionExecutor();
+            const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+            await publishMachineInventoryForTest(scope, [machine]);
+            expect(await executor.execute(THEME_ACTION_IDS.list, { includeDevices: true }, context))
+                .toMatchObject({ ok: true, result: { devices: [{ id: 'second-app', deviceLabel: 'Phone' }] } });
+            expect(dispatch).toHaveBeenCalledTimes(1);
+            dispatch.mockClear();
+            const carriers = resolveVisibleMachinesForActiveServerFromState(storage.getState(), scope);
+            publishMachineActivityForTest(carriers, { active: false, activeAt: 0 });
+            expect(carriers.length).toBeGreaterThan(0);
+            expect(carriers.every(carrier => !isMachineReachable(scope, carrier))).toBe(true);
+            expect(await executor.execute(THEME_ACTION_IDS.list, { includeDevices: true }, context))
+                .toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+            expect(dispatch).not.toHaveBeenCalled();
+            publishMachineActivityForTest(carriers, { active: true, activeAt: Date.now() });
+            dispatch.mockRejectedValue(new RpcError('Client disconnected', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE));
+            expect(await executor.execute(THEME_ACTION_IDS.list, { includeDevices: true }, context))
+                .toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+            expect(dispatch).toHaveBeenCalledTimes(1);
+        } finally { dispatch.mockRestore(); }
+    });
+
     it('tries and reverts a theme through the shared device runtime without saving it', async () => {
         const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionIdsV1');
         const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');

@@ -37,6 +37,7 @@ import { readSessionContinuationOnMachine, readSessionContinuationsOnMachine } f
 import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readRpcFailureCode } from './rpcFailureCode';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createThemeActionExecute } from './themeActionDeps';
 import { getThemeTryOnOwner, bindThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
@@ -2057,7 +2058,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         clientId: () => apiSocket.getSocketId(),
         readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
         dispatchClientAction: async request => {
-          const machineId = resolveUiAccountActionFallbackMachineId(accountContext, { allowUnreachableFallback: true });
+          const machineId = resolveUiAccountActionFallbackMachineId(accountContext);
           if (!machineId) return clientActionUnavailable(request.actionId);
           const input = { ...request.input, includeDevices: false };
           try {
